@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary-500: #3b82f6; /* blue-500 */
+}
+
+/* Stili globali minimi */
+@layer base {
+  body {
+    @apply bg-gray-100 text-gray-900 font-sans min-h-screen;
+  }
+}
+
+/* Regole per la stampa (ereditate dall'originale) */
+@media print {
+  .no-print { display: none !important; }
+  body { background-color: white !important; }
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+  .shadow, .shadow-sm, .shadow-lg, .shadow-xl { box-shadow: none !important; }
+  .border { border-color: #e5e7eb !important; }
+  .overflow-auto, .overflow-y-auto, .max-h-[75vh], .max-h-96 { overflow: visible !important; max-height: none !important; }
+}
