@@ -29,7 +29,6 @@
     <div id="login-screen" class="min-h-screen flex items-center justify-center p-4">
         <div class="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md">
             <div class="flex justify-center mb-6">
-                <!-- Logo Aziendale -->
                 <img src="Logo.png" alt="Ingegno06 Logo" onerror="this.src='https://placehold.co/120x120?text=Ingegno06'" class="h-24 w-24 object-contain">
             </div>
             <h1 class="text-2xl font-bold text-center text-gray-800 mb-2">Accesso Piattaforma</h1>
@@ -60,7 +59,7 @@
                 <button id="btn-dashboard" class="text-sm font-medium text-gray-600 hover:text-blue-600 flex items-center gap-1"><i data-lucide="home" class="w-4 h-4"></i> <span class="hidden sm:inline">Dashboard</span></button>
                 <div class="flex items-center gap-2 border-l pl-4">
                     <span id="user-display" class="text-sm font-bold text-gray-700 hidden sm:inline"></span>
-                    <span id="role-badge" class="hidden text-xs font-bold bg-red-100 text-red-700 px-2 py-0.5 rounded-full">ADMIN</span>
+                    <span id="role-badge" class="hidden text-xs font-bold px-2 py-0.5 rounded-full"></span>
                     <button id="btn-logout" class="text-gray-400 hover:text-red-600 p-1 rounded-full hover:bg-gray-100" title="Esci"><i data-lucide="log-out" class="w-5 h-5"></i></button>
                 </div>
             </div>
@@ -202,8 +201,8 @@
                 <h2 class="text-2xl font-bold mb-6 text-gray-800 flex items-center gap-2"><i data-lucide="settings" class="text-gray-600"></i> Impostazioni Piattaforma (Admin)</h2>
                 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <!-- GESTIONE AMMINISTRATORI -->
-                    <div class="bg-gray-50 p-5 rounded-xl border md:col-span-2 lg:col-span-1">
+                    <!-- GESTIONE AMMINISTRATORI E HR -->
+                    <div class="bg-gray-50 p-5 rounded-xl border">
                         <h3 class="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><i data-lucide="shield" class="w-5 h-5 text-red-600"></i> Gestione Amministratori</h3>
                         <form id="add-admin-form" class="flex gap-2 mb-4">
                             <input required id="new-admin-email" type="email" placeholder="Nuova email es. nome@ingegno06.it" class="flex-1 p-2 border rounded bg-white outline-none">
@@ -214,20 +213,32 @@
                         </div>
                     </div>
 
+                    <!-- NUOVO: RESPONSABILE HR -->
+                    <div class="bg-gray-50 p-5 rounded-xl border">
+                        <h3 class="text-lg font-bold text-gray-800 mb-2 flex items-center gap-2"><i data-lucide="award" class="w-5 h-5 text-purple-600"></i> Responsabile HR (Ferie)</h3>
+                        <p class="text-xs text-gray-500 mb-4">Seleziona il dipendente che riceverà le notifiche email delle ferie e potrà approvarle. Se vuoto, le riceveranno tutti gli Admin.</p>
+                        <form id="set-hr-form" class="flex gap-2">
+                            <select id="hr-select" class="flex-1 p-2 border rounded bg-white outline-none">
+                                <option value="">Nessun Responsabile</option>
+                            </select>
+                            <button type="submit" class="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 transition font-medium">Salva</button>
+                        </form>
+                    </div>
+
                     <!-- GESTIONE COMMESSE -->
-                    <div class="bg-gray-50 p-5 rounded-xl border md:col-span-2 lg:col-span-1">
+                    <div class="bg-gray-50 p-5 rounded-xl border">
                         <h3 class="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><i data-lucide="briefcase" class="w-5 h-5"></i> Catalogo Commesse</h3>
                         <form id="add-commessa-form" class="flex gap-2 mb-4">
                             <input required id="new-commessa-name" type="text" placeholder="Es. Nuova Commessa X" class="flex-1 p-2 border rounded bg-white outline-none">
                             <button type="submit" class="bg-gray-800 text-white px-4 py-2 rounded hover:bg-gray-900 transition"><i data-lucide="plus"></i></button>
                         </form>
-                        <div class="max-h-48 overflow-y-auto bg-white border rounded">
+                        <div class="max-h-64 overflow-y-auto bg-white border rounded">
                             <ul id="commesse-catalog-list" class="divide-y"></ul>
                         </div>
                     </div>
 
                     <!-- GESTIONE PERSONALE -->
-                    <div class="bg-gray-50 p-5 rounded-xl border md:col-span-2">
+                    <div class="bg-gray-50 p-5 rounded-xl border">
                         <div class="flex justify-between items-center mb-2">
                             <h3 class="text-lg font-bold text-gray-800 flex items-center gap-2"><i data-lucide="users" class="w-5 h-5 text-indigo-600"></i> Anagrafica Personale</h3>
                         </div>
@@ -301,14 +312,16 @@
         const auth = getAuth(app);
         const db = getFirestore(app);
 
-        // --- GESTIONE STATI GLOBALI ---
+        // --- GESTIONE STATI GLOBALI E RUOLI ---
         const defaultAdmins = ['ebartalucci@ingegno06.it', 'aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it'];
         let dynamicAdmins = []; 
         let userLoggato = null;
         let isUserAdmin = false;
+        let hrEmail = ""; // Email del responsabile HR
+        let isUserHR = false; // Booleano se l'utente loggato è l'HR
+
         let baseDate = new Date();
         let dbAssignments = {};
-        
         let commesseCatalog = [];
         let elencoDipendenti = [];
         let myAssociatedName = null;
@@ -350,6 +363,17 @@
         window.resetToToday = function() { baseDate = new Date(); document.getElementById('date-picker').value = baseDate.toISOString().split('T')[0]; renderTable(); updateChart(); }
         window.jumpToDate = function(val) { if(!val) return; baseDate = new Date(val); renderTable(); updateChart(); }
 
+        // SISTEMA INVIO EMAIL
+        async function inviaMailFirebase(destinatari, oggetto, contenutoHtml) {
+            if(!destinatari || destinatari.length === 0) return;
+            try {
+                await addDoc(collection(db, "mail"), {
+                    to: destinatari,
+                    message: { subject: oggetto, html: contenutoHtml }
+                });
+            } catch(e) { console.error("Errore invio mail:", e); }
+        }
+
         // LOGIN FIREBASE
         document.getElementById('login-form').addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -362,11 +386,12 @@
         document.getElementById('btn-logout').addEventListener('click', () => signOut(auth));
         document.getElementById('btn-dashboard').addEventListener('click', () => switchView('home'));
 
-        // FUNZIONE CENTRALE AGGIORNAMENTO STATO UTENTE
+        // VALUTAZIONE PERMESSI
         function evaluateUserAccess() {
             if(!userLoggato) return;
             const dynamicEmails = dynamicAdmins.map(a => a.email);
             isUserAdmin = defaultAdmins.includes(userLoggato.email) || dynamicEmails.includes(userLoggato.email);
+            isUserHR = hrEmail && (userLoggato.email.toLowerCase() === hrEmail.toLowerCase());
             
             const myDip = elencoDipendenti.find(d => d.email && d.email.toLowerCase() === userLoggato.email.toLowerCase());
             myAssociatedName = myDip ? myDip.nome : null;
@@ -375,7 +400,7 @@
             document.getElementById('app-screen').classList.remove('hidden');
             document.getElementById('date-picker').value = baseDate.toISOString().split('T')[0];
             
-            if(!isUserAdmin && !myAssociatedName) {
+            if(!isUserAdmin && !isUserHR && !myAssociatedName) {
                 document.getElementById('missing-email-warning').classList.remove('hidden');
                 document.getElementById('user-display').innerText = userLoggato.email;
             } else {
@@ -383,14 +408,24 @@
                 document.getElementById('user-display').innerText = myAssociatedName ? `${myAssociatedName} (${userLoggato.email})` : userLoggato.email;
             }
 
-            if(isUserAdmin) {
-                document.getElementById('role-badge').classList.remove('hidden');
-                document.getElementById('card-settings').classList.remove('hidden');
+            const badge = document.getElementById('role-badge');
+            if(isUserAdmin || isUserHR) {
+                badge.classList.remove('hidden');
+                if(isUserAdmin) {
+                    badge.innerText = "ADMIN";
+                    badge.className = "text-xs font-bold bg-red-100 text-red-700 px-2 py-0.5 rounded-full";
+                    document.getElementById('card-settings').classList.remove('hidden');
+                } else {
+                    badge.innerText = "HR";
+                    badge.className = "text-xs font-bold bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full";
+                    document.getElementById('card-settings').classList.add('hidden'); // HR normale non vede impostazioni generali
+                }
+                
                 document.getElementById('admin-select-dipendente').classList.remove('hidden');
-                document.getElementById('ferie-list-title').innerText = "Richieste da Gestire (Admin)";
+                document.getElementById('ferie-list-title').innerText = "Richieste da Gestire";
                 populateAdminSelects();
             } else {
-                document.getElementById('role-badge').classList.add('hidden');
+                badge.classList.add('hidden');
                 document.getElementById('card-settings').classList.add('hidden');
                 document.getElementById('admin-select-dipendente').classList.add('hidden');
                 document.getElementById('ferie-list-title').innerText = "Stato delle tue richieste";
@@ -433,27 +468,15 @@
             lucide.createIcons();
         }
 
-        // --- SISTEMA INVIO EMAIL TRAMITE FIREBASE EXTENSION ---
-        async function inviaMailFirebase(destinatari, oggetto, contenutoHtml) {
-            // Se destinatari è un array vuoto o nullo, ferma l'invio
-            if(!destinatari || (Array.isArray(destinatari) && destinatari.length === 0)) return;
-            
-            try {
-                await addDoc(collection(db, "mail"), {
-                    to: destinatari,
-                    message: {
-                        subject: oggetto,
-                        html: contenutoHtml
-                    }
-                });
-                console.log("Email messa in coda su Firebase");
-            } catch(e) {
-                console.error("Errore accodamento email:", e);
-            }
-        }
-
-        // SINCRONIZZAZIONE DATI REALTIME DA FIRESTORE
+        // SINCRONIZZAZIONE DATI REALTIME
         function initRealtimeListeners() {
+            // Listener configurazione HR
+            onSnapshot(doc(db, "configurazione_sistema", "hr"), (docSnap) => {
+                if(docSnap.exists()) hrEmail = docSnap.data().email || "";
+                else hrEmail = "";
+                evaluateUserAccess(); 
+            });
+
             onSnapshot(collection(db, "admins"), (snapshot) => {
                 dynamicAdmins = [];
                 snapshot.forEach(doc => { dynamicAdmins.push({ id: doc.id, email: doc.data().email }); });
@@ -487,9 +510,7 @@
                     isDipendentiInit = true;
                 } else {
                     elencoDipendenti = [];
-                    snapshot.forEach(doc => { 
-                        elencoDipendenti.push({ id: doc.id, nome: doc.data().nome, email: doc.data().email || "" }); 
-                    });
+                    snapshot.forEach(doc => { elencoDipendenti.push({ id: doc.id, nome: doc.data().nome, email: doc.data().email || "" }); });
                     elencoDipendenti.sort((a,b) => a.nome.localeCompare(b.nome));
                     evaluateUserAccess(); 
                 }
@@ -504,7 +525,8 @@
                     const data = docSnap.data();
                     const id = docSnap.id;
                     
-                    if(!isUserAdmin && data.dipendenteName !== myAssociatedName) return;
+                    // Se non sei ne Admin ne HR, vedi solo le tue
+                    if(!isUserAdmin && !isUserHR && data.dipendenteName !== myAssociatedName) return;
                     count++;
 
                     const div = document.createElement('div');
@@ -515,7 +537,7 @@
                     if(data.stato === 'Rifiutato') badgeColor = "bg-red-100 text-red-700";
 
                     let adminButtons = '';
-                    if(isUserAdmin && data.stato === 'In attesa') {
+                    if((isUserAdmin || isUserHR) && data.stato === 'In attesa') {
                         adminButtons = `
                             <div class="flex gap-2 mt-2 sm:mt-0 no-print">
                                 <button onclick="decideFerie('${id}', true)" class="px-2.5 py-1 text-xs font-bold bg-green-600 text-white rounded hover:bg-green-700 transition">Approva</button>
@@ -550,6 +572,7 @@
 
             let dipendentiDaMostrare = elencoDipendenti;
             if(!isUserAdmin) {
+                // Anche l'HR per le commesse vede solo le sue (a meno che non sia anche Admin)
                 if(myAssociatedName) { dipendentiDaMostrare = elencoDipendenti.filter(d => d.nome === myAssociatedName); } 
                 else { dipendentiDaMostrare = [{nome: "Profilo in attesa di configurazione"}]; }
             }
@@ -684,7 +707,7 @@
             }
         }
 
-        // ASSEGNAZIONE MODAL CON NOTIFICHE EMAIL
+        // ASSEGNAZIONE MODAL
         let currentModalData = null;
         window.openModal = function(nome, weekId, title, sub) {
             currentModalData = { nome, weekId };
@@ -738,7 +761,7 @@
             await setDoc(doc(db, "assegnazioni", key), { lista: currentList });
             renderModalAssignments();
 
-            // INVIA MAIL AL DIPENDENTE PER MODIFICA PERCENTUALE
+            // MAIL AL DIPENDENTE (Modifica)
             const dip = elencoDipendenti.find(d => d.nome === currentModalData.nome);
             if(dip && dip.email) {
                 const subject = `Aggiornamento commessa: ${commessaModificata}`;
@@ -760,7 +783,7 @@
             renderModalAssignments();
             e.target.reset(); document.getElementById('modal-percent').value = 100;
 
-            // INVIA MAIL AL DIPENDENTE PER NUOVA ASSEGNAZIONE
+            // MAIL AL DIPENDENTE (Nuova)
             const dip = elencoDipendenti.find(d => d.nome === currentModalData.nome);
             if(dip && dip.email) {
                 const subject = `Nuova commessa assegnata: ${commessa}`;
@@ -778,7 +801,7 @@
             else await setDoc(doc(db, "assegnazioni", key), { lista: newList });
             renderModalAssignments();
 
-            // INVIA MAIL AL DIPENDENTE PER RIMOZIONE COMMESSA
+            // MAIL AL DIPENDENTE (Rimozione)
             const dip = elencoDipendenti.find(d => d.nome === currentModalData.nome);
             if(dip && dip.email) {
                 const subject = `Rimozione commessa: ${commessaRimossa}`;
@@ -795,12 +818,12 @@
             }
         }
 
-        // RICHIESTA FERIE CON NOTIFICHE AGLI ADMIN
+        // RICHIESTA FERIE
         document.getElementById('ferie-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const date = document.getElementById('ferie-date').value;
             const tipo = document.getElementById('ferie-tipo').value;
-            const dipendenteName = isUserAdmin ? document.getElementById('ferie-dipendente').value : myAssociatedName;
+            const dipendenteName = (isUserAdmin || isUserHR) ? document.getElementById('ferie-dipendente').value : myAssociatedName;
             
             if(!dipendenteName) return alert("Nessun profilo anagrafico trovato. Impossibile inviare la richiesta.");
 
@@ -815,11 +838,17 @@
                 alert("Richiesta registrata!");
                 document.getElementById('ferie-form').reset();
 
-                // INVIA MAIL AGLI AMMINISTRATORI
-                const allAdminEmails = [...new Set([...defaultAdmins, ...dynamicAdmins.map(a => a.email)])];
+                // INVIA MAIL: Se c'è un HR va a lui, altrimenti a tutti gli admin
+                let destinatari = [];
+                if(hrEmail && hrEmail !== "") {
+                    destinatari = [hrEmail];
+                } else {
+                    destinatari = [...new Set([...defaultAdmins, ...dynamicAdmins.map(a => a.email)])];
+                }
+
                 const subject = `Nuova richiesta assenza: ${dipendenteName}`;
                 const html = `<p>Il dipendente <b>${dipendenteName}</b> ha inserito una nuova richiesta di <b>${tipo}</b> per il giorno <b>${date}</b>.</p><p>Accedi all'applicazione Ingegno06 per approvare o rifiutare la richiesta.</p>`;
-                inviaMailFirebase(allAdminEmails, subject, html);
+                inviaMailFirebase(destinatari, subject, html);
 
             } catch(err) { alert("Errore nell'invio a Firebase."); }
         });
@@ -830,7 +859,7 @@
             
             // INVIA MAIL AL DIPENDENTE CON L'ESITO
             const docRef = doc(db, "richieste_ferie", id);
-            const docSnap = await getDocs(collection(db, "richieste_ferie")); // Fetch to get specific user email, could optimize later
+            const docSnap = await getDocs(collection(db, "richieste_ferie")); 
             docSnap.forEach(d => {
                 if(d.id === id) {
                     const data = d.data();
@@ -844,7 +873,7 @@
             });
         }
 
-        // SCHERMATA IMPOSTAZIONI ADMIN
+        // IMPOSTAZIONI ADMIN 
         function renderSettings() {
             // Catalogo Commesse
             const list = document.getElementById('commesse-catalog-list'); list.innerHTML = '';
@@ -852,7 +881,7 @@
                 list.innerHTML += `<li class="p-3 flex justify-between items-center text-sm"><span class="font-medium text-gray-700">${c.nome}</span><button onclick="deleteCommessaDB('${c.id}')" class="text-red-500 hover:text-red-700"><i data-lucide="trash-2" class="w-4 h-4"></i></button></li>`;
             });
 
-            // Personale (Anagrafica)
+            // Personale (Anagrafica + Email)
             const dipList = document.getElementById('dipendenti-list-settings'); dipList.innerHTML = '';
             elencoDipendenti.forEach(d => {
                 const emailBadge = d.email ? `<span class="ml-2 px-2 py-0.5 text-xs bg-indigo-50 text-indigo-600 border border-indigo-200 rounded">${d.email}</span>` : `<span class="ml-2 px-2 py-0.5 text-xs bg-gray-100 text-gray-500 border border-gray-200 rounded">Nessuna email</span>`;
@@ -864,10 +893,27 @@
             defaultAdmins.forEach(email => { adminList.innerHTML += `<li class="p-3 flex justify-between items-center text-sm font-medium text-gray-800"><span>${email} <span class="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded ml-2">Predefinito</span></span></li>`; });
             dynamicAdmins.forEach(admin => { adminList.innerHTML += `<li class="p-3 flex justify-between items-center text-sm font-medium text-gray-800"><span>${admin.email}</span> <button onclick="removeAdmin('${admin.id}')" class="text-red-500 hover:text-red-700"><i data-lucide="trash-2" class="w-4 h-4"></i></button></li>`; });
 
+            // Selettore HR
+            const hrSelect = document.getElementById('hr-select');
+            hrSelect.innerHTML = '<option value="">Nessun Responsabile (Notifiche a tutti gli Admin)</option>';
+            elencoDipendenti.forEach(d => {
+                if(d.email) {
+                    const selected = (d.email.toLowerCase() === hrEmail.toLowerCase()) ? "selected" : "";
+                    hrSelect.innerHTML += `<option value="${d.email}" ${selected}>${d.nome} (${d.email})</option>`;
+                }
+            });
+
             lucide.createIcons();
         }
 
-        // ALTRE FUNZIONI DB
+        // AZIONI IMPOSTAZIONI ADMIN
+        document.getElementById('set-hr-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('hr-select').value;
+            await setDoc(doc(db, "configurazione_sistema", "hr"), { email: email });
+            alert("Responsabile HR aggiornato con successo!");
+        });
+
         document.getElementById('add-commessa-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const name = document.getElementById('new-commessa-name').value.trim();
