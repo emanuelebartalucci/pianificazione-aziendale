@@ -1,0 +1,901 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pianificazione Aziendale Ingegno06</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <!-- Icone Lucide -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Chart.js per i grafici -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Regole per la Stampa -->
+    <style>
+        @media print {
+            .no-print { display: none !important; }
+            body { background-color: white !important; }
+            * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+            .shadow, .shadow-sm, .shadow-lg, .shadow-xl { box-shadow: none !important; }
+            .border { border-color: #e5e7eb !important; }
+            .overflow-auto, .overflow-y-auto, .max-h-[75vh], .max-h-96 { overflow: visible !important; max-height: none !important; }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-900 font-sans min-h-screen">
+
+    <!-- SCHERMATA LOGIN CON LOGO -->
+    <div id="login-screen" class="min-h-screen flex items-center justify-center p-4">
+        <div class="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md">
+            <div class="flex justify-center mb-6">
+                <!-- Logo Aziendale -->
+                <img src="Logo.png" alt="Ingegno06 Logo" onerror="this.src='https://placehold.co/120x120?text=Ingegno06'" class="h-24 w-24 object-contain">
+            </div>
+            <h1 class="text-2xl font-bold text-center text-gray-800 mb-2">Accesso Piattaforma</h1>
+            <p class="text-center text-gray-500 mb-6 text-sm">Inserisci le tue credenziali @ingegno06.it</p>
+            
+            <form id="login-form" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Email Aziendale</label>
+                    <input type="email" id="login-email" required placeholder="nome@ingegno06.it" class="w-full p-3 border rounded-lg bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                    <input type="password" id="login-password" required class="w-full p-3 border rounded-lg bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-700 transition shadow-md">Accedi</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- WEBAPP PRINCIPALE -->
+    <div id="app-screen" class="hidden">
+        <header class="bg-white shadow-sm sticky top-0 z-20 h-16 flex items-center justify-between px-6 no-print">
+            <div class="flex items-center gap-3">
+                <img src="Logo.png" alt="Logo" class="h-10 w-10 object-contain" onerror="this.src='https://placehold.co/40x40?text=I06'">
+                <h1 class="text-xl font-bold text-gray-800 hidden sm:block">Pianificazione Aziendale</h1>
+            </div>
+            <div class="flex items-center gap-4">
+                <button id="btn-dashboard" class="text-sm font-medium text-gray-600 hover:text-blue-600 flex items-center gap-1"><i data-lucide="home" class="w-4 h-4"></i> <span class="hidden sm:inline">Dashboard</span></button>
+                <div class="flex items-center gap-2 border-l pl-4">
+                    <span id="user-display" class="text-sm font-bold text-gray-700 hidden sm:inline"></span>
+                    <span id="role-badge" class="hidden text-xs font-bold bg-red-100 text-red-700 px-2 py-0.5 rounded-full">ADMIN</span>
+                    <button id="btn-logout" class="text-gray-400 hover:text-red-600 p-1 rounded-full hover:bg-gray-100" title="Esci"><i data-lucide="log-out" class="w-5 h-5"></i></button>
+                </div>
+            </div>
+        </header>
+
+        <main class="max-w-[1400px] mx-auto px-4 py-8">
+            <!-- AVVISO MANCANZA EMAIL ANAGRAFICA -->
+            <div id="missing-email-warning" class="hidden bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-6 rounded shadow-sm no-print">
+                <div class="flex items-center">
+                    <i data-lucide="alert-triangle" class="text-yellow-400 w-6 h-6 mr-3"></i>
+                    <div>
+                        <h3 class="font-bold text-yellow-800">Profilo non associato</h3>
+                        <p class="text-sm text-yellow-700">La tua email non è ancora stata inserita nell'anagrafica aziendale. Contatta un amministratore per farti aggiungere l'email al tuo profilo, altrimenti non potrai vedere i tuoi turni.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- DASHBOARD HOME -->
+            <div id="view-home" class="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto mt-10 no-print">
+                <div onclick="switchView('commesse')" class="bg-white p-8 rounded-2xl shadow-lg border hover:shadow-xl hover:-translate-y-1 transition-all text-center cursor-pointer group">
+                    <div class="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:bg-blue-600 group-hover:text-white transition-colors"><i data-lucide="briefcase" class="w-8 h-8"></i></div>
+                    <h2 class="text-xl font-bold text-gray-800">Pianificazione Commesse</h2>
+                </div>
+                <div onclick="switchView('ferie')" class="bg-white p-8 rounded-2xl shadow-lg border hover:shadow-xl hover:-translate-y-1 transition-all text-center cursor-pointer group">
+                    <div class="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:bg-green-600 group-hover:text-white transition-colors"><i data-lucide="calendar" class="w-8 h-8"></i></div>
+                    <h2 class="text-xl font-bold text-gray-800">Piano Ferie</h2>
+                </div>
+                <div id="card-settings" onclick="switchView('impostazioni')" class="bg-white p-8 rounded-2xl shadow-lg border hover:shadow-xl hover:-translate-y-1 transition-all text-center cursor-pointer group hidden">
+                    <div class="w-16 h-16 bg-gray-100 text-gray-600 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:bg-gray-800 group-hover:text-white transition-colors"><i data-lucide="settings" class="w-8 h-8"></i></div>
+                    <h2 class="text-xl font-bold text-gray-800">Impostazioni Admin</h2>
+                </div>
+            </div>
+
+            <!-- VISTA COMMESSE -->
+            <div id="view-commesse" class="hidden flex flex-col gap-6">
+                <!-- Tabella Principale -->
+                <div class="bg-white rounded-2xl shadow p-6 flex flex-col max-h-[75vh]">
+                    <div class="flex flex-wrap justify-between items-center mb-6 border-b pb-4 gap-4">
+                        <h2 class="text-2xl font-bold text-gray-800 flex items-center gap-2"><i data-lucide="briefcase" class="text-blue-600 no-print"></i> <span id="commesse-title">Pianificazione</span></h2>
+                        <div class="flex items-center gap-4 no-print">
+                            <button onclick="window.print()" class="flex items-center gap-2 bg-gray-800 text-white hover:bg-gray-900 px-4 py-2 rounded-lg font-medium transition"><i data-lucide="printer" class="w-4 h-4"></i> Stampa</button>
+                            <div class="flex items-center gap-2 bg-white p-1.5 rounded-lg border shadow-sm">
+                                <button onclick="shiftWeek(-7)" class="p-1.5 hover:bg-gray-100 rounded-md text-gray-600 transition" title="Settimana precedente"><i data-lucide="chevron-left" class="w-5 h-5"></i></button>
+                                <button onclick="resetToToday()" class="px-3 py-1.5 text-sm font-semibold text-gray-700 hover:bg-gray-100 rounded-md transition">Oggi</button>
+                                <button onclick="shiftWeek(7)" class="p-1.5 hover:bg-gray-100 rounded-md text-gray-600 transition" title="Settimana successiva"><i data-lucide="chevron-right" class="w-5 h-5"></i></button>
+                                <div class="h-6 w-px bg-gray-300 mx-2"></div>
+                                <input type="date" id="date-picker" onchange="jumpToDate(this.value)" class="text-sm font-medium border-none bg-transparent outline-none text-gray-700 cursor-pointer">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="overflow-auto flex-1">
+                        <table class="w-full text-left border-collapse min-w-[900px]">
+                            <thead class="sticky top-0 bg-white shadow-sm z-10">
+                                <tr class="bg-gray-100 border-b-2">
+                                    <th class="p-4 font-semibold text-gray-700 w-1/6">Dipendente</th>
+                                    <th id="th-w1" class="p-3 text-center border-l w-1/6"></th>
+                                    <th id="th-w2" class="p-3 text-center border-l w-1/6"></th>
+                                    <th id="th-w3" class="p-3 text-center border-l w-1/6"></th>
+                                    <th id="th-w4" class="p-3 text-center border-l w-1/6"></th>
+                                    <th id="th-w5" class="p-3 text-center border-l w-1/6"></th>
+                                </tr>
+                            </thead>
+                            <tbody id="commesse-table-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Sezione Grafici -->
+                <div class="bg-white rounded-2xl shadow p-6 no-print">
+                    <h3 class="text-lg font-bold text-gray-800 mb-2 flex items-center gap-2"><i data-lucide="pie-chart" class="w-5 h-5 text-blue-600"></i> Analisi Assegnazioni</h3>
+                    <p id="chart-date-range-label" class="text-sm font-medium text-gray-500 mb-4 bg-gray-50 inline-block px-3 py-1 rounded border"></p>
+                    
+                    <div class="flex flex-col sm:flex-row gap-4 mb-4">
+                        <select id="chart-range" class="p-2.5 border rounded-lg bg-gray-50 outline-none text-sm font-medium text-gray-700 shadow-sm" onchange="updateChart()">
+                            <option value="5">Ultime 5 Settimane (Vista Attuale)</option>
+                            <option value="8">Ultimi 2 Mesi</option>
+                            <option value="12">Ultimi 3 Mesi</option>
+                            <option value="24">Ultimi 6 Mesi</option>
+                        </select>
+                        <select id="chart-type" class="p-2.5 border rounded-lg bg-gray-50 outline-none text-sm font-medium text-gray-700 shadow-sm" onchange="updateChartTargetOptions()">
+                            <option value="dipendente">Analisi per Dipendente (Grafico a Torta)</option>
+                            <option value="commessa">Analisi per Commessa (Grafico a Barre)</option>
+                        </select>
+                        <select id="chart-target" class="p-2.5 border rounded-lg bg-gray-50 outline-none text-sm font-medium text-gray-700 flex-1 shadow-sm" onchange="updateChart()"></select>
+                    </div>
+                    <div class="bg-gray-50 border rounded-xl p-4 h-80 flex items-center justify-center w-full relative">
+                        <canvas id="myChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- VISTA FERIE -->
+            <div id="view-ferie" class="hidden bg-white rounded-2xl shadow p-6">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold text-gray-800 flex items-center gap-2"><i data-lucide="calendar" class="text-green-600 no-print"></i> Piano Ferie e Assenze</h2>
+                    <button onclick="window.print()" class="no-print flex items-center gap-2 bg-gray-800 text-white hover:bg-gray-900 px-4 py-2 rounded-lg font-medium transition"><i data-lucide="printer" class="w-4 h-4"></i> Stampa</button>
+                </div>
+                
+                <div class="flex flex-wrap gap-4 mb-8 bg-gray-50 p-4 rounded-xl border">
+                    <span class="font-semibold text-gray-700 mr-2">Legenda:</span>
+                    <div class="flex items-center text-sm font-medium text-gray-600"><span class="w-3 h-3 rounded-full bg-red-500 mr-2 shadow-sm"></span>Ferie/Malattia</div>
+                    <div class="flex items-center text-sm font-medium text-gray-600"><span class="w-3 h-3 rounded-full bg-blue-500 mr-2 shadow-sm"></span>Lavora da Casa</div>
+                    <div class="flex items-center text-sm font-medium text-gray-600"><span class="w-3 h-3 rounded-full bg-yellow-400 mr-2 shadow-sm"></span>Assenza Mattina</div>
+                    <div class="flex items-center text-sm font-medium text-gray-600"><span class="w-3 h-3 rounded-full bg-orange-400 mr-2 shadow-sm"></span>Assenza Pomeriggio</div>
+                </div>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    <div class="border p-6 rounded-2xl bg-white shadow-sm h-fit no-print">
+                        <h3 class="font-bold text-lg mb-4 text-gray-800 border-b pb-2">Nuova Richiesta</h3>
+                        <form id="ferie-form" class="space-y-4">
+                            <div id="admin-select-dipendente" class="hidden">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Dipendente</label>
+                                <select id="ferie-dipendente" class="w-full p-2 border rounded-lg bg-gray-50"></select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Giorno di assenza</label>
+                                <input type="date" id="ferie-date" required class="w-full p-2 border rounded-lg bg-gray-50">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Tipo di assenza</label>
+                                <select id="ferie-tipo" class="w-full p-2 border rounded-lg bg-gray-50">
+                                    <option value="ferie">Ferie / Malattia</option>
+                                    <option value="smart">Lavora da Casa</option>
+                                    <option value="mattina">Assenza Mattina</option>
+                                    <option value="pomeriggio">Assenza Pomeriggio</option>
+                                </select>
+                            </div>
+                            <button type="submit" class="w-full bg-green-600 text-white font-bold py-3 rounded-lg hover:bg-green-700 transition">Invia Richiesta</button>
+                        </form>
+                    </div>
+                    <div class="border p-6 rounded-2xl bg-gray-50 shadow-sm print:w-full print:col-span-2">
+                        <h3 id="ferie-list-title" class="font-bold text-lg mb-4 text-gray-800 border-b pb-2">Le tue richieste</h3>
+                        <div id="ferie-list" class="space-y-3 max-h-96 overflow-y-auto"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- VISTA IMPOSTAZIONI -->
+            <div id="view-impostazioni" class="hidden bg-white rounded-2xl shadow p-6 no-print">
+                <h2 class="text-2xl font-bold mb-6 text-gray-800 flex items-center gap-2"><i data-lucide="settings" class="text-gray-600"></i> Impostazioni Piattaforma (Admin)</h2>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <!-- GESTIONE AMMINISTRATORI -->
+                    <div class="bg-gray-50 p-5 rounded-xl border md:col-span-2 lg:col-span-1">
+                        <h3 class="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><i data-lucide="shield" class="w-5 h-5 text-red-600"></i> Gestione Amministratori</h3>
+                        <form id="add-admin-form" class="flex gap-2 mb-4">
+                            <input required id="new-admin-email" type="email" placeholder="Nuova email es. nome@ingegno06.it" class="flex-1 p-2 border rounded bg-white outline-none">
+                            <button type="submit" class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition font-medium">Promuovi</button>
+                        </form>
+                        <div class="max-h-48 overflow-y-auto bg-white border rounded">
+                            <ul id="admin-list-settings" class="divide-y"></ul>
+                        </div>
+                    </div>
+
+                    <!-- GESTIONE COMMESSE -->
+                    <div class="bg-gray-50 p-5 rounded-xl border md:col-span-2 lg:col-span-1">
+                        <h3 class="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><i data-lucide="briefcase" class="w-5 h-5"></i> Catalogo Commesse</h3>
+                        <form id="add-commessa-form" class="flex gap-2 mb-4">
+                            <input required id="new-commessa-name" type="text" placeholder="Es. Nuova Commessa X" class="flex-1 p-2 border rounded bg-white outline-none">
+                            <button type="submit" class="bg-gray-800 text-white px-4 py-2 rounded hover:bg-gray-900 transition"><i data-lucide="plus"></i></button>
+                        </form>
+                        <div class="max-h-48 overflow-y-auto bg-white border rounded">
+                            <ul id="commesse-catalog-list" class="divide-y"></ul>
+                        </div>
+                    </div>
+
+                    <!-- GESTIONE PERSONALE -->
+                    <div class="bg-gray-50 p-5 rounded-xl border md:col-span-2">
+                        <div class="flex justify-between items-center mb-2">
+                            <h3 class="text-lg font-bold text-gray-800 flex items-center gap-2"><i data-lucide="users" class="w-5 h-5 text-indigo-600"></i> Anagrafica Personale</h3>
+                        </div>
+                        <p class="text-sm text-gray-500 mb-4">Aggiungi o aggiorna i dipendenti inserendo la loro email per permettergli di vedere i propri turni. Riceveranno le notifiche a questa mail.</p>
+                        
+                        <form id="add-dipendente-form" class="flex flex-col sm:flex-row gap-2 mb-4">
+                            <input required id="new-dipendente-name" type="text" placeholder="Nome Completo (es. Rossi Mario)" class="flex-1 p-2 border rounded bg-white outline-none">
+                            <input id="new-dipendente-email" type="email" placeholder="Email (es. mrossi@ingegno06.it)" class="flex-1 p-2 border rounded bg-white outline-none">
+                            <button type="submit" class="bg-gray-800 text-white px-4 py-2 rounded hover:bg-gray-900 transition whitespace-nowrap"><i data-lucide="plus" class="inline w-4 h-4 mr-1"></i> Aggiungi / Aggiorna</button>
+                        </form>
+                        
+                        <div class="max-h-96 overflow-y-auto bg-white border rounded">
+                            <ul id="dipendenti-list-settings" class="divide-y"></ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- MODAL ASSEGNAZIONE COMMESSE -->
+    <div id="assignment-modal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50 p-4 no-print">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
+            <div class="bg-blue-600 p-4 flex justify-between items-center text-white">
+                <h3 class="font-bold text-lg">Assegna Commessa</h3>
+                <button onclick="closeModal()" class="hover:bg-blue-700 p-1 rounded"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </div>
+            <div class="p-6">
+                <div class="bg-gray-50 border rounded-lg p-3 mb-4 text-sm">
+                    <p class="text-gray-600">Dipendente: <strong id="modal-employee" class="text-gray-900 text-base"></strong></p>
+                    <p class="text-gray-600">Settimana: <strong id="modal-week" class="text-gray-900"></strong></p>
+                </div>
+                <div class="mb-6 space-y-2">
+                    <div class="flex justify-between items-center border-b pb-1">
+                        <h4 id="modal-total-label" class="text-sm font-semibold text-gray-700">Assegnazioni Attuali</h4>
+                    </div>
+                    <div id="modal-current-assignments" class="space-y-2 max-h-40 overflow-y-auto"></div>
+                </div>
+                <form id="modal-form" class="space-y-4 bg-blue-50 p-4 rounded-lg border border-blue-100">
+                    <h4 class="text-sm font-semibold text-blue-800">Aggiungi nuova assegnazione</h4>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-700 mb-1">Seleziona Commessa</label>
+                        <select id="modal-select-commessa" required class="w-full p-2 text-sm border rounded bg-white outline-none focus:ring-2 focus:ring-blue-500"></select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-700 mb-1">Percentuale (%)</label>
+                        <input type="number" id="modal-percent" min="1" max="100" value="100" required class="w-full p-2 text-sm border rounded bg-white outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-2 rounded hover:bg-blue-700 transition flex justify-center items-center gap-1"><i data-lucide="plus" class="w-4 h-4"></i> Aggiungi Commessa</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- SCRIPT LOGICA E INTEGRATION FIREBASE -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+        import { getFirestore, collection, addDoc, getDocs, doc, setDoc, deleteDoc, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAStjVwPaFvU2ukZ_8udLb3IXFudW8owAo",
+            authDomain: "pianificazione-aziendale.firebaseapp.com",
+            projectId: "pianificazione-aziendale",
+            storageBucket: "pianificazione-aziendale.firebasestorage.app",
+            messagingSenderId: "440329790823",
+            appId: "1:440329790823:web:5eeb0ba31e4fa41b393bc2"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // --- GESTIONE STATI GLOBALI ---
+        const defaultAdmins = ['ebartalucci@ingegno06.it', 'aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it'];
+        let dynamicAdmins = []; 
+        let userLoggato = null;
+        let isUserAdmin = false;
+        let baseDate = new Date();
+        let dbAssignments = {};
+        
+        let commesseCatalog = [];
+        let elencoDipendenti = [];
+        let myAssociatedName = null;
+        let myChartInstance = null;
+
+        // CALCOLO DATE
+        function getStartOfWeek(d) {
+            const date = new Date(d);
+            const day = date.getDay();
+            const diff = date.getDate() - day + (day === 0 ? -6 : 1);
+            return new Date(date.setDate(diff));
+        }
+        function addDays(date, days) { const res = new Date(date); res.setDate(res.getDate() + days); return res; }
+        function getWeekNumber(d) {
+            const date = new Date(d.getTime());
+            date.setHours(0,0,0,0);
+            date.setDate(date.getDate() + 3 - (date.getDay() + 6) % 7);
+            const week1 = new Date(date.getFullYear(), 0, 4);
+            return 1 + Math.round(((date.getTime() - week1.getTime()) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
+        }
+
+        function generateWeeks() {
+            const weeks = [];
+            let currentStart = getStartOfWeek(baseDate);
+            for(let i=0; i<5; i++) {
+                const end = addDays(currentStart, 6);
+                const wkNum = getWeekNumber(currentStart);
+                weeks.push({
+                    id: `${currentStart.getFullYear()}-W${wkNum}`,
+                    label: `Sett. ${wkNum}`,
+                    sub: `${currentStart.toLocaleDateString('it-IT', {day:'2-digit', month:'short'})} - ${end.toLocaleDateString('it-IT', {day:'2-digit', month:'short'})}`
+                });
+                currentStart = addDays(currentStart, 7);
+            }
+            return weeks;
+        }
+
+        window.shiftWeek = function(days) { baseDate = addDays(baseDate, days); document.getElementById('date-picker').value = baseDate.toISOString().split('T')[0]; renderTable(); updateChart(); }
+        window.resetToToday = function() { baseDate = new Date(); document.getElementById('date-picker').value = baseDate.toISOString().split('T')[0]; renderTable(); updateChart(); }
+        window.jumpToDate = function(val) { if(!val) return; baseDate = new Date(val); renderTable(); updateChart(); }
+
+        // LOGIN FIREBASE
+        document.getElementById('login-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('login-email').value.trim();
+            const pass = document.getElementById('login-password').value;
+            try { await signInWithEmailAndPassword(auth, email, pass); } 
+            catch (err) { alert("Errore d'accesso! Verifica l'account su Firebase o la password inserita."); }
+        });
+
+        document.getElementById('btn-logout').addEventListener('click', () => signOut(auth));
+        document.getElementById('btn-dashboard').addEventListener('click', () => switchView('home'));
+
+        // FUNZIONE CENTRALE AGGIORNAMENTO STATO UTENTE
+        function evaluateUserAccess() {
+            if(!userLoggato) return;
+            const dynamicEmails = dynamicAdmins.map(a => a.email);
+            isUserAdmin = defaultAdmins.includes(userLoggato.email) || dynamicEmails.includes(userLoggato.email);
+            
+            const myDip = elencoDipendenti.find(d => d.email && d.email.toLowerCase() === userLoggato.email.toLowerCase());
+            myAssociatedName = myDip ? myDip.nome : null;
+
+            document.getElementById('login-screen').classList.add('hidden');
+            document.getElementById('app-screen').classList.remove('hidden');
+            document.getElementById('date-picker').value = baseDate.toISOString().split('T')[0];
+            
+            if(!isUserAdmin && !myAssociatedName) {
+                document.getElementById('missing-email-warning').classList.remove('hidden');
+                document.getElementById('user-display').innerText = userLoggato.email;
+            } else {
+                document.getElementById('missing-email-warning').classList.add('hidden');
+                document.getElementById('user-display').innerText = myAssociatedName ? `${myAssociatedName} (${userLoggato.email})` : userLoggato.email;
+            }
+
+            if(isUserAdmin) {
+                document.getElementById('role-badge').classList.remove('hidden');
+                document.getElementById('card-settings').classList.remove('hidden');
+                document.getElementById('admin-select-dipendente').classList.remove('hidden');
+                document.getElementById('ferie-list-title').innerText = "Richieste da Gestire (Admin)";
+                populateAdminSelects();
+            } else {
+                document.getElementById('role-badge').classList.add('hidden');
+                document.getElementById('card-settings').classList.add('hidden');
+                document.getElementById('admin-select-dipendente').classList.add('hidden');
+                document.getElementById('ferie-list-title').innerText = "Stato delle tue richieste";
+            }
+            
+            if(!document.getElementById('view-commesse').classList.contains('hidden')) { renderTable(); updateChartTargetOptions(); }
+            if(!document.getElementById('view-impostazioni').classList.contains('hidden')) renderSettings();
+        }
+
+        onAuthStateChanged(auth, (user) => {
+            if(user) {
+                userLoggato = user;
+                initRealtimeListeners();
+                switchView('home');
+            } else {
+                userLoggato = null;
+                myAssociatedName = null;
+                document.getElementById('app-screen').classList.add('hidden');
+                document.getElementById('login-screen').classList.remove('hidden');
+            }
+        });
+
+        function populateAdminSelects() {
+            const ferieSelect = document.getElementById('ferie-dipendente');
+            if(ferieSelect) {
+                ferieSelect.innerHTML = '';
+                elencoDipendenti.forEach(d => { ferieSelect.innerHTML += `<option value="${d.nome}">${d.nome}</option>`; });
+            }
+        }
+
+        window.switchView = function(view) {
+            document.getElementById('view-home').classList.add('hidden');
+            document.getElementById('view-commesse').classList.add('hidden');
+            document.getElementById('view-ferie').classList.add('hidden');
+            document.getElementById('view-impostazioni').classList.add('hidden');
+            document.getElementById(`view-${view}`).classList.remove('hidden');
+            
+            if(view === 'commesse') { renderTable(); updateChartTargetOptions(); }
+            if(view === 'impostazioni') renderSettings();
+            lucide.createIcons();
+        }
+
+        // --- SISTEMA INVIO EMAIL TRAMITE FIREBASE EXTENSION ---
+        async function inviaMailFirebase(destinatari, oggetto, contenutoHtml) {
+            // Se destinatari è un array vuoto o nullo, ferma l'invio
+            if(!destinatari || (Array.isArray(destinatari) && destinatari.length === 0)) return;
+            
+            try {
+                await addDoc(collection(db, "mail"), {
+                    to: destinatari,
+                    message: {
+                        subject: oggetto,
+                        html: contenutoHtml
+                    }
+                });
+                console.log("Email messa in coda su Firebase");
+            } catch(e) {
+                console.error("Errore accodamento email:", e);
+            }
+        }
+
+        // SINCRONIZZAZIONE DATI REALTIME DA FIRESTORE
+        function initRealtimeListeners() {
+            onSnapshot(collection(db, "admins"), (snapshot) => {
+                dynamicAdmins = [];
+                snapshot.forEach(doc => { dynamicAdmins.push({ id: doc.id, email: doc.data().email }); });
+                evaluateUserAccess(); 
+            });
+
+            onSnapshot(collection(db, "assegnazioni"), (snapshot) => {
+                dbAssignments = {};
+                snapshot.forEach(doc => { dbAssignments[doc.id] = doc.data().lista || []; });
+                if(!document.getElementById('view-commesse').classList.contains('hidden')) { renderTable(); updateChart(); }
+            });
+
+            let isCommesseInit = false;
+            onSnapshot(collection(db, "catalogo_commesse"), (snapshot) => {
+                if(snapshot.empty && !isCommesseInit) {
+                    isCommesseInit = true;
+                    ["Progetto Alpha", "Manutenzione Server", "Sviluppo WebApp", "Ferie/Assenza"].forEach(async nome => await addDoc(collection(db, "catalogo_commesse"), { nome }));
+                } else {
+                    commesseCatalog = [];
+                    snapshot.forEach(doc => { commesseCatalog.push({ id: doc.id, nome: doc.data().nome }); });
+                    commesseCatalog.sort((a,b) => a.nome.localeCompare(b.nome));
+                    renderDropdownCatalog();
+                    if(!document.getElementById('view-impostazioni').classList.contains('hidden')) renderSettings();
+                    if(!document.getElementById('view-commesse').classList.contains('hidden')) updateChartTargetOptions();
+                }
+            });
+
+            let isDipendentiInit = false;
+            onSnapshot(collection(db, "dipendenti"), (snapshot) => {
+                if(snapshot.empty && !isDipendentiInit) {
+                    isDipendentiInit = true;
+                } else {
+                    elencoDipendenti = [];
+                    snapshot.forEach(doc => { 
+                        elencoDipendenti.push({ id: doc.id, nome: doc.data().nome, email: doc.data().email || "" }); 
+                    });
+                    elencoDipendenti.sort((a,b) => a.nome.localeCompare(b.nome));
+                    evaluateUserAccess(); 
+                }
+            });
+
+            onSnapshot(collection(db, "richieste_ferie"), (snapshot) => {
+                const list = document.getElementById('ferie-list');
+                list.innerHTML = '';
+                let count = 0;
+                
+                snapshot.forEach(docSnap => {
+                    const data = docSnap.data();
+                    const id = docSnap.id;
+                    
+                    if(!isUserAdmin && data.dipendenteName !== myAssociatedName) return;
+                    count++;
+
+                    const div = document.createElement('div');
+                    div.className = "p-4 border rounded-xl bg-white shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-3 page-break-inside-avoid";
+                    
+                    let badgeColor = "bg-yellow-100 text-yellow-700";
+                    if(data.stato === 'Approvato') badgeColor = "bg-green-100 text-green-700";
+                    if(data.stato === 'Rifiutato') badgeColor = "bg-red-100 text-red-700";
+
+                    let adminButtons = '';
+                    if(isUserAdmin && data.stato === 'In attesa') {
+                        adminButtons = `
+                            <div class="flex gap-2 mt-2 sm:mt-0 no-print">
+                                <button onclick="decideFerie('${id}', true)" class="px-2.5 py-1 text-xs font-bold bg-green-600 text-white rounded hover:bg-green-700 transition">Approva</button>
+                                <button onclick="decideFerie('${id}', false)" class="px-2.5 py-1 text-xs font-bold bg-red-600 text-white rounded hover:bg-red-700 transition">Rifiuta</button>
+                            </div>
+                        `;
+                    }
+
+                    div.innerHTML = `
+                        <div>
+                            <span class="font-bold text-gray-800">${data.dipendenteName}</span>
+                            <div class="text-sm text-gray-500 mt-0.5">${data.data} - <span class="capitalize font-medium">${data.tipo}</span></div>
+                            <span class="text-xs font-bold px-2 py-0.5 rounded-full inline-block mt-2 ${badgeColor}">${data.stato}</span>
+                        </div>
+                        ${adminButtons}
+                    `;
+                    list.appendChild(div);
+                });
+
+                if(count === 0) list.innerHTML = '<p class="text-sm text-gray-400 text-center py-6">Nessuna richiesta presente.</p>';
+            });
+        }
+
+        // RENDERING TABELLA COMMESSE
+        function renderTable() {
+            const weeks = generateWeeks();
+            document.getElementById('commesse-title').innerText = isUserAdmin ? "Pianificazione Aziendale" : "La tua Pianificazione";
+
+            for(let i=0; i<5; i++) {
+                document.getElementById(`th-w${i+1}`).innerHTML = `<div class="font-bold text-gray-800">${weeks[i].label}</div><div class="text-xs font-normal text-gray-500 mt-0.5">${weeks[i].sub}</div>`;
+            }
+
+            let dipendentiDaMostrare = elencoDipendenti;
+            if(!isUserAdmin) {
+                if(myAssociatedName) { dipendentiDaMostrare = elencoDipendenti.filter(d => d.nome === myAssociatedName); } 
+                else { dipendentiDaMostrare = [{nome: "Profilo in attesa di configurazione"}]; }
+            }
+
+            const tbody = document.getElementById('commesse-table-body');
+            tbody.innerHTML = '';
+
+            dipendentiDaMostrare.forEach(dip => {
+                const tr = document.createElement('tr');
+                tr.className = "border-b hover:bg-gray-50/50 align-top";
+                tr.innerHTML = `<td class="p-4 font-medium text-gray-800 bg-white sticky left-0 shadow-[1px_0_0_0_#eee]">${dip.nome}</td>`;
+                
+                weeks.forEach(wk => {
+                    const cellKey = `${dip.nome}-${wk.id}`;
+                    const assList = dbAssignments[cellKey] || [];
+                    const totalePercent = assList.reduce((t, c) => t + Number(c.percentuale), 0);
+                    
+                    let barColor = "bg-gray-200";
+                    if(totalePercent > 0 && totalePercent < 100) barColor = "bg-yellow-400";
+                    if(totalePercent === 100) barColor = "bg-green-500";
+                    if(totalePercent > 100) barColor = "bg-red-500";
+
+                    const td = document.createElement('td');
+                    td.className = `p-2 border-l transition-colors h-full ${isUserAdmin ? 'cursor-pointer hover:bg-blue-50' : ''}`;
+                    if(isUserAdmin && dip.nome !== "Profilo in attesa di configurazione") td.onclick = (e) => {
+                        if(e.target.tagName !== 'INPUT' && e.target.tagName !== 'BUTTON' && e.target.tagName !== 'I') openModal(dip.nome, wk.id, wk.label, wk.sub);
+                    }
+
+                    let cellContent = `
+                        <div class="flex flex-col items-center justify-start h-full min-h-[60px] pt-1">
+                            <div class="w-full flex justify-between items-center px-1 mb-2">
+                                <span class="text-[11px] font-bold ${totalePercent > 0 ? 'text-gray-800' : 'text-gray-400'}">${totalePercent}%</span>
+                                <div class="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden ml-2">
+                                    <div class="h-full ${barColor} transition-all" style="width: ${Math.min(totalePercent, 100)}%"></div>
+                                </div>
+                            </div>
+                            ${assList.length > 0 ? `
+                            <div class="w-full space-y-1">
+                                ${assList.map(a => `
+                                <div class="text-[10px] bg-blue-50 text-blue-800 px-1.5 py-1 rounded border border-blue-200 flex justify-between items-center w-full shadow-sm" title="${a.commessa}">
+                                    <span class="truncate pr-2 font-medium">${a.commessa}</span>
+                                    <span class="font-bold shrink-0">${a.percentuale}%</span>
+                                </div>
+                                `).join('')}
+                            </div>
+                            ` : ''}
+                        </div>
+                    `;
+                    td.innerHTML = cellContent;
+                    tr.appendChild(td);
+                });
+                tbody.appendChild(tr);
+            });
+        }
+
+        // LOGICA GRAFICI
+        function getChartWeeksRange(numWeeks) {
+            const weeks = [];
+            let currentStart = getStartOfWeek(baseDate);
+            for(let i=0; i<numWeeks; i++) {
+                const wkNum = getWeekNumber(currentStart);
+                weeks.push(`${currentStart.getFullYear()}-W${wkNum}`);
+                currentStart = addDays(currentStart, 7);
+            }
+            return weeks;
+        }
+
+        window.updateChartTargetOptions = function() {
+            const typeSelect = document.getElementById('chart-type');
+            const targetSelect = document.getElementById('chart-target');
+            
+            if(!isUserAdmin) { typeSelect.value = 'dipendente'; typeSelect.disabled = true; } 
+            else { typeSelect.disabled = false; }
+
+            targetSelect.innerHTML = '';
+            
+            if(typeSelect.value === 'dipendente') {
+                let dipendentiDaMostrare = elencoDipendenti;
+                if(!isUserAdmin) {
+                    if(myAssociatedName) dipendentiDaMostrare = elencoDipendenti.filter(d => d.nome === myAssociatedName);
+                    else dipendentiDaMostrare = [];
+                }
+                dipendentiDaMostrare.forEach(d => { targetSelect.innerHTML += `<option value="${d.nome}">${d.nome}</option>`; });
+            } else {
+                commesseCatalog.forEach(c => { targetSelect.innerHTML += `<option value="${c.nome}">${c.nome}</option>`; });
+            }
+            updateChart();
+        }
+
+        window.updateChart = function() {
+            if(!window.Chart) { setTimeout(updateChart, 150); return; }
+            const type = document.getElementById('chart-type').value;
+            const target = document.getElementById('chart-target').value;
+            const numWeeks = parseInt(document.getElementById('chart-range').value);
+            if(!target) return;
+
+            const startD = getStartOfWeek(baseDate);
+            const endD = addDays(startD, (numWeeks * 7) - 1);
+            document.getElementById('chart-date-range-label').innerHTML = `<i data-lucide="calendar-days" class="w-4 h-4 inline mr-1"></i> Periodo analizzato: dal <strong>${startD.toLocaleDateString('it-IT')}</strong> al <strong>${endD.toLocaleDateString('it-IT')}</strong>`;
+            lucide.createIcons();
+
+            const ctx = document.getElementById('myChart');
+            if(window.myChartInstance) window.myChartInstance.destroy();
+
+            const weekIds = getChartWeeksRange(numWeeks);
+            let labels = [], data = [], bgColors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#64748b', '#06b6d4', '#84cc16'];
+
+            if(type === 'dipendente') {
+                let commesseSums = {};
+                weekIds.forEach(wId => {
+                    const cellKey = `${target}-${wId}`;
+                    const assList = dbAssignments[cellKey] || [];
+                    assList.forEach(a => { commesseSums[a.commessa] = (commesseSums[a.commessa] || 0) + Number(a.percentuale); });
+                });
+                labels = Object.keys(commesseSums); data = Object.values(commesseSums);
+                if(data.length === 0) { labels = ['Nessuna commessa']; data = [1]; bgColors = ['#e5e7eb']; }
+
+                window.myChartInstance = new Chart(ctx, { type: 'pie', data: { labels, datasets: [{ data, backgroundColor: bgColors, borderWidth: 1 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } } });
+            } else {
+                let dipendentiSums = {};
+                elencoDipendenti.forEach(d => {
+                    weekIds.forEach(wId => {
+                        const cellKey = `${d.nome}-${wId}`;
+                        const assList = dbAssignments[cellKey] || [];
+                        assList.forEach(a => { if(a.commessa === target) dipendentiSums[d.nome] = (dipendentiSums[d.nome] || 0) + Number(a.percentuale); });
+                    });
+                });
+                labels = Object.keys(dipendentiSums).filter(k => dipendentiSums[k] > 0); data = labels.map(k => dipendentiSums[k]);
+                if(data.length === 0) { labels = ['Nessuno']; data = [0]; }
+
+                window.myChartInstance = new Chart(ctx, { type: 'bar', data: { labels, datasets: [{ label: `Somma %`, data, backgroundColor: '#3b82f6', borderRadius: 4 }] }, options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true } } } });
+            }
+        }
+
+        // ASSEGNAZIONE MODAL CON NOTIFICHE EMAIL
+        let currentModalData = null;
+        window.openModal = function(nome, weekId, title, sub) {
+            currentModalData = { nome, weekId };
+            document.getElementById('modal-employee').innerText = nome;
+            document.getElementById('modal-week').innerText = `${title} (${sub})`;
+            document.getElementById('assignment-modal').style.display = 'flex';
+            renderModalAssignments();
+        }
+        window.closeModal = function() { document.getElementById('assignment-modal').style.display = 'none'; }
+
+        function renderModalAssignments() {
+            const key = `${currentModalData.nome}-${currentModalData.weekId}`;
+            const currentList = dbAssignments[key] || [];
+            const total = currentList.reduce((t, c) => t + Number(c.percentuale), 0);
+            
+            document.getElementById('modal-total-label').innerText = `Totale Settimanale Assegnato: ${total}%`;
+            if(total > 100) document.getElementById('modal-total-label').classList.add('text-red-600');
+            else document.getElementById('modal-total-label').classList.remove('text-red-600');
+
+            const container = document.getElementById('modal-current-assignments');
+            container.innerHTML = '';
+            if(currentList.length === 0) { container.innerHTML = '<p class="text-xs text-gray-400 italic">Nessuna commessa per questa settimana.</p>'; return; }
+
+            currentList.forEach((ass, index) => {
+                const div = document.createElement('div');
+                div.className = "flex justify-between items-center bg-gray-50 p-2 rounded border text-sm";
+                div.innerHTML = `
+                    <span class="font-medium text-gray-700">${ass.commessa}</span>
+                    <div class="flex items-center gap-2">
+                        <input type="number" min="1" max="100" value="${ass.percentuale}" onchange="updateAssignmentPercent(${index}, this.value)" class="w-16 p-1 text-sm border rounded text-center font-bold text-blue-600 bg-white">
+                        <span class="font-bold text-gray-500">%</span>
+                        <button onclick="removeAssignmentFromCell(${index})" class="text-red-500 hover:text-red-700 ml-2"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                    </div>
+                `;
+                container.appendChild(div);
+            });
+            lucide.createIcons();
+        }
+
+        window.updateAssignmentPercent = async function(index, newPercent) {
+            const val = Number(newPercent); if(val <= 0) return removeAssignmentFromCell(index);
+            const key = `${currentModalData.nome}-${currentModalData.weekId}`;
+            const currentList = dbAssignments[key] || [];
+            
+            let tempTotal = 0;
+            currentList.forEach((a, i) => { if(i !== index) tempTotal += Number(a.percentuale); });
+            if(tempTotal + val > 100) { alert("Il totale supererebbe il 100%!"); renderModalAssignments(); return; }
+
+            const commessaModificata = currentList[index].commessa;
+            currentList[index].percentuale = val;
+            await setDoc(doc(db, "assegnazioni", key), { lista: currentList });
+            renderModalAssignments();
+
+            // INVIA MAIL AL DIPENDENTE PER MODIFICA PERCENTUALE
+            const dip = elencoDipendenti.find(d => d.nome === currentModalData.nome);
+            if(dip && dip.email) {
+                const subject = `Aggiornamento commessa: ${commessaModificata}`;
+                const html = `<p>Ciao <b>${currentModalData.nome}</b>,</p><p>La tua assegnazione per la commessa <b>${commessaModificata}</b> nella settimana <b>${currentModalData.weekId}</b> è stata modificata al <b>${val}%</b>.</p><p>Accedi all'app Ingegno06 per vedere il calendario aggiornato.</p>`;
+                inviaMailFirebase([dip.email], subject, html);
+            }
+        }
+
+        document.getElementById('modal-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const commessa = document.getElementById('modal-select-commessa').value;
+            const percentuale = Number(document.getElementById('modal-percent').value);
+            const key = `${currentModalData.nome}-${currentModalData.weekId}`;
+            const currentList = dbAssignments[key] || [];
+            if(currentList.reduce((t, c) => t + Number(c.percentuale), 0) + percentuale > 100) return alert("L'assegnazione totale settimanale non può superare il 100%!");
+
+            const newList = [...currentList, { commessa, percentuale }];
+            await setDoc(doc(db, "assegnazioni", key), { lista: newList });
+            renderModalAssignments();
+            e.target.reset(); document.getElementById('modal-percent').value = 100;
+
+            // INVIA MAIL AL DIPENDENTE PER NUOVA ASSEGNAZIONE
+            const dip = elencoDipendenti.find(d => d.nome === currentModalData.nome);
+            if(dip && dip.email) {
+                const subject = `Nuova commessa assegnata: ${commessa}`;
+                const html = `<p>Ciao <b>${currentModalData.nome}</b>,</p><p>Ti è stata assegnata la commessa <b>${commessa}</b> al <b>${percentuale}%</b> per la settimana <b>${currentModalData.weekId}</b>.</p><p>Accedi all'app Ingegno06 per vedere i dettagli.</p>`;
+                inviaMailFirebase([dip.email], subject, html);
+            }
+        });
+
+        window.removeAssignmentFromCell = async function(index) {
+            const key = `${currentModalData.nome}-${currentModalData.weekId}`;
+            const currentList = dbAssignments[key] || [];
+            const commessaRimossa = currentList[index].commessa;
+            const newList = currentList.filter((_, i) => i !== index);
+            if(newList.length === 0) await deleteDoc(doc(db, "assegnazioni", key));
+            else await setDoc(doc(db, "assegnazioni", key), { lista: newList });
+            renderModalAssignments();
+
+            // INVIA MAIL AL DIPENDENTE PER RIMOZIONE COMMESSA
+            const dip = elencoDipendenti.find(d => d.nome === currentModalData.nome);
+            if(dip && dip.email) {
+                const subject = `Rimozione commessa: ${commessaRimossa}`;
+                const html = `<p>Ciao <b>${currentModalData.nome}</b>,</p><p>Sei stato rimosso dalla commessa <b>${commessaRimossa}</b> per la settimana <b>${currentModalData.weekId}</b>.</p><p>Accedi all'app Ingegno06 per vedere il calendario aggiornato.</p>`;
+                inviaMailFirebase([dip.email], subject, html);
+            }
+        }
+
+        function renderDropdownCatalog() {
+            const modalSelect = document.getElementById('modal-select-commessa');
+            if(modalSelect) {
+                modalSelect.innerHTML = '<option value="">-- Scegli commessa --</option>';
+                commesseCatalog.forEach(c => { modalSelect.innerHTML += `<option value="${c.nome}">${c.nome}</option>`; });
+            }
+        }
+
+        // RICHIESTA FERIE CON NOTIFICHE AGLI ADMIN
+        document.getElementById('ferie-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const date = document.getElementById('ferie-date').value;
+            const tipo = document.getElementById('ferie-tipo').value;
+            const dipendenteName = isUserAdmin ? document.getElementById('ferie-dipendente').value : myAssociatedName;
+            
+            if(!dipendenteName) return alert("Nessun profilo anagrafico trovato. Impossibile inviare la richiesta.");
+
+            try {
+                await addDoc(collection(db, "richieste_ferie"), {
+                    user: userLoggato.email,
+                    dipendenteName: dipendenteName,
+                    data: date,
+                    tipo: tipo,
+                    stato: "In attesa"
+                });
+                alert("Richiesta registrata!");
+                document.getElementById('ferie-form').reset();
+
+                // INVIA MAIL AGLI AMMINISTRATORI
+                const allAdminEmails = [...new Set([...defaultAdmins, ...dynamicAdmins.map(a => a.email)])];
+                const subject = `Nuova richiesta assenza: ${dipendenteName}`;
+                const html = `<p>Il dipendente <b>${dipendenteName}</b> ha inserito una nuova richiesta di <b>${tipo}</b> per il giorno <b>${date}</b>.</p><p>Accedi all'applicazione Ingegno06 per approvare o rifiutare la richiesta.</p>`;
+                inviaMailFirebase(allAdminEmails, subject, html);
+
+            } catch(err) { alert("Errore nell'invio a Firebase."); }
+        });
+
+        window.decideFerie = async function(id, approva) {
+            const status = approva ? "Approvato" : "Rifiutato";
+            await updateDoc(doc(db, "richieste_ferie", id), { stato: status });
+            
+            // INVIA MAIL AL DIPENDENTE CON L'ESITO
+            const docRef = doc(db, "richieste_ferie", id);
+            const docSnap = await getDocs(collection(db, "richieste_ferie")); // Fetch to get specific user email, could optimize later
+            docSnap.forEach(d => {
+                if(d.id === id) {
+                    const data = d.data();
+                    const dip = elencoDipendenti.find(dip => dip.nome === data.dipendenteName);
+                    if(dip && dip.email) {
+                        const subject = `Esito richiesta assenza: ${status}`;
+                        const html = `<p>Ciao <b>${data.dipendenteName}</b>,</p><p>La tua richiesta di <b>${data.tipo}</b> per il giorno <b>${data.data}</b> è stata <b>${status}</b>.</p>`;
+                        inviaMailFirebase([dip.email], subject, html);
+                    }
+                }
+            });
+        }
+
+        // SCHERMATA IMPOSTAZIONI ADMIN
+        function renderSettings() {
+            // Catalogo Commesse
+            const list = document.getElementById('commesse-catalog-list'); list.innerHTML = '';
+            commesseCatalog.forEach(c => {
+                list.innerHTML += `<li class="p-3 flex justify-between items-center text-sm"><span class="font-medium text-gray-700">${c.nome}</span><button onclick="deleteCommessaDB('${c.id}')" class="text-red-500 hover:text-red-700"><i data-lucide="trash-2" class="w-4 h-4"></i></button></li>`;
+            });
+
+            // Personale (Anagrafica)
+            const dipList = document.getElementById('dipendenti-list-settings'); dipList.innerHTML = '';
+            elencoDipendenti.forEach(d => {
+                const emailBadge = d.email ? `<span class="ml-2 px-2 py-0.5 text-xs bg-indigo-50 text-indigo-600 border border-indigo-200 rounded">${d.email}</span>` : `<span class="ml-2 px-2 py-0.5 text-xs bg-gray-100 text-gray-500 border border-gray-200 rounded">Nessuna email</span>`;
+                dipList.innerHTML += `<li class="p-3 flex justify-between items-center text-sm bg-white hover:bg-gray-50"><div><span class="font-medium text-gray-800">${d.nome}</span> ${emailBadge}</div><button onclick="deleteDipendenteDB('${d.id}')" class="text-red-500 hover:text-red-700 ml-2"><i data-lucide="trash-2" class="w-4 h-4"></i></button></li>`;
+            });
+
+            // Amministratori
+            const adminList = document.getElementById('admin-list-settings'); adminList.innerHTML = '';
+            defaultAdmins.forEach(email => { adminList.innerHTML += `<li class="p-3 flex justify-between items-center text-sm font-medium text-gray-800"><span>${email} <span class="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded ml-2">Predefinito</span></span></li>`; });
+            dynamicAdmins.forEach(admin => { adminList.innerHTML += `<li class="p-3 flex justify-between items-center text-sm font-medium text-gray-800"><span>${admin.email}</span> <button onclick="removeAdmin('${admin.id}')" class="text-red-500 hover:text-red-700"><i data-lucide="trash-2" class="w-4 h-4"></i></button></li>`; });
+
+            lucide.createIcons();
+        }
+
+        // ALTRE FUNZIONI DB
+        document.getElementById('add-commessa-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const name = document.getElementById('new-commessa-name').value.trim();
+            if(name) { await addDoc(collection(db, "catalogo_commesse"), { nome: name }); document.getElementById('new-commessa-name').value = ''; }
+        });
+        window.deleteCommessaDB = async function(id) { if(confirm("Cancellare questa commessa dal catalogo?")) await deleteDoc(doc(db, "catalogo_commesse", id)); }
+
+        document.getElementById('add-dipendente-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const nome = document.getElementById('new-dipendente-name').value.trim();
+            const email = document.getElementById('new-dipendente-email').value.trim().toLowerCase();
+            if(!nome) return;
+
+            const dipEsistente = elencoDipendenti.find(d => d.nome.toLowerCase() === nome.toLowerCase());
+            if(dipEsistente) await updateDoc(doc(db, "dipendenti", dipEsistente.id), { email });
+            else await addDoc(collection(db, "dipendenti"), { nome, email });
+            document.getElementById('add-dipendente-form').reset();
+        });
+        window.deleteDipendenteDB = async function(id) { if(confirm("Rimuovere questo dipendente?")) await deleteDoc(doc(db, "dipendenti", id)); }
+
+        document.getElementById('add-admin-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('new-admin-email').value.trim().toLowerCase();
+            if(email && !defaultAdmins.includes(email) && !dynamicAdmins.some(a => a.email === email)) {
+                await addDoc(collection(db, "admins"), { email }); document.getElementById('new-admin-email').value = '';
+            }
+        });
+        window.removeAdmin = async function(id) { if(confirm("Revocare i permessi di admin?")) await deleteDoc(doc(db, "admins", id)); }
+    </script>
+</body>
+</html>
