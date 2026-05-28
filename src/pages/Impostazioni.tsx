@@ -4,6 +4,10 @@ import { db } from '../services/firebase';
 import { collection, addDoc, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { Shield, UserCheck, Star, Briefcase, Users, Plus, Trash2, Settings } from 'lucide-react';
 
+const PREDEFINED_COLORS = [
+  '#ef4444', '#f97316', '#eab308', '#22c55e', 
+  '#06b6d4', '#3b82f6', '#8b5cf6', '#d946ef', '#f43f5e', '#64748b'
+];
 export default function Impostazioni() {
   const { isAdmin, dipendenti, commesse } = useAuth();
   
@@ -103,13 +107,28 @@ export default function Impostazioni() {
           <section className="bg-gradient-to-br from-red-50 to-orange-50 p-6 rounded-3xl border border-red-100 shadow-sm">
             <h3 className="text-xl font-bold text-red-900 mb-4 flex items-center gap-2"><Shield className="w-6 h-6 text-red-600" /> Amministratori</h3>
             <form onSubmit={handleAddAdmin} className="flex gap-2 mb-4">
-              <input required type="email" placeholder="Email nuovo admin" value={newAdminEmail} onChange={e => setNewAdminEmail(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-red-400 transition shadow-inner" />
+              <select required value={newAdminEmail} onChange={e => setNewAdminEmail(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-red-400 transition shadow-inner font-medium text-red-900">
+                <option value="">Seleziona dipendente</option>
+                {dipendenti.filter(d => d.email).map(d => <option key={d.id} value={d.email}>{d.nome}</option>)}
+              </select>
               <button type="submit" className="bg-red-600 text-white px-5 rounded-xl hover:bg-red-700 transition font-bold shadow-md active:scale-95">Aggiungi</button>
             </form>
             <div className="max-h-40 overflow-y-auto bg-white/50 rounded-xl divide-y border border-red-100">
-              {adminsList.map(a => (
+              {/* Mostra sempre i Super Admin (hardcoded) */}
+              {['aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it'].map(email => (
+                <div key={email} className="p-3 flex justify-between items-center text-sm font-medium text-red-900">
+                  {email} 
+                  <span className="p-1" title="Super Admin non eliminabile">
+                    <Trash2 className="w-4 h-4 text-gray-300 cursor-not-allowed"/>
+                  </span>
+                </div>
+              ))}
+              
+              {/* Mostra gli Admin dinamici dal database */}
+              {adminsList.filter(a => a.email.toLowerCase() !== 'aprofeti@ingegno06.it' && a.email.toLowerCase() !== 'mcorbellini@ingegno06.it').map(a => (
                 <div key={a.id} className="p-3 flex justify-between items-center text-sm font-medium text-red-900">
-                  {a.email} <button onClick={() => handleRemoveAdmin(a.id)} className="text-red-400 hover:text-red-600 p-1"><Trash2 className="w-4 h-4"/></button>
+                  {a.email} 
+                  <button onClick={() => handleRemoveAdmin(a.id)} className="text-red-400 hover:text-red-600 p-1"><Trash2 className="w-4 h-4"/></button>
                 </div>
               ))}
             </div>
@@ -151,11 +170,28 @@ export default function Impostazioni() {
           {/* Commesse */}
           <section className="bg-gradient-to-br from-emerald-50 to-teal-50 p-6 rounded-3xl border border-emerald-100 shadow-sm">
             <h3 className="text-xl font-bold text-emerald-900 mb-4 flex items-center gap-2"><Briefcase className="w-6 h-6 text-emerald-600" /> Catalogo Commesse</h3>
-            <form onSubmit={handleAddCommessa} className="flex gap-2 mb-4 items-center">
-              <input required type="color" value={newCommessaColor} onChange={e => setNewCommessaColor(e.target.value)} className="w-12 h-12 p-1 border-none rounded-xl bg-white/60 cursor-pointer shadow-inner shrink-0" />
-              <input required type="text" placeholder="Nome nuova commessa" value={newCommessaName} onChange={e => setNewCommessaName(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-emerald-400 transition shadow-inner" />
-              <button type="submit" className="bg-emerald-600 text-white p-3 rounded-xl hover:bg-emerald-700 transition font-bold shadow-md active:scale-95"><Plus className="w-6 h-6"/></button>
-            </form>
+            
+            <div className="mb-4 space-y-3">
+              <form onSubmit={handleAddCommessa} className="flex gap-2 items-center">
+                <input required type="color" value={newCommessaColor} onChange={e => setNewCommessaColor(e.target.value)} className="w-12 h-12 p-1 border-none rounded-xl bg-white/60 cursor-pointer shadow-inner shrink-0" title="Scegli colore personalizzato" />
+                <input required type="text" placeholder="Nome nuova commessa" value={newCommessaName} onChange={e => setNewCommessaName(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-emerald-400 transition shadow-inner" />
+                <button type="submit" className="bg-emerald-600 text-white p-3 rounded-xl hover:bg-emerald-700 transition font-bold shadow-md active:scale-95"><Plus className="w-6 h-6"/></button>
+              </form>
+              
+              <div className="flex gap-2 flex-wrap px-1">
+                {PREDEFINED_COLORS.map(color => (
+                  <button
+                    key={color}
+                    type="button"
+                    onClick={() => setNewCommessaColor(color)}
+                    className={`w-6 h-6 rounded-full shadow-sm transition-transform hover:scale-110 ${newCommessaColor === color ? 'ring-2 ring-offset-2 ring-emerald-500 scale-110' : ''}`}
+                    style={{ backgroundColor: color }}
+                    title="Usa questo colore predefinito"
+                  />
+                ))}
+              </div>
+            </div>
+
             <div className="max-h-60 overflow-y-auto bg-white/50 rounded-xl divide-y border border-emerald-100">
               {commesse.map(c => (
                 <div key={c.id} className="p-3 flex justify-between items-center text-sm font-medium text-emerald-900">
@@ -176,7 +212,7 @@ export default function Impostazioni() {
             <form onSubmit={handleAddDipendente} className="flex flex-col gap-3 mb-5">
               <input required type="text" placeholder="Nome Completo (es. Rossi Mario)" value={newDipNome} onChange={e => setNewDipNome(e.target.value)} className="w-full p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition shadow-inner" />
               <div className="flex gap-2">
-                <input type="email" placeholder="Email Aziendale (opzionale)" value={newDipEmail} onChange={e => setNewDipEmail(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition shadow-inner" />
+                <input required type="email" placeholder="Email Aziendale" value={newDipEmail} onChange={e => setNewDipEmail(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition shadow-inner" />
                 <button type="submit" className="bg-indigo-600 text-white px-5 rounded-xl hover:bg-indigo-700 transition font-bold shadow-md active:scale-95 flex items-center gap-1"><Plus className="w-5 h-5"/> Aggiungi</button>
               </div>
             </form>

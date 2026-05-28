@@ -23,6 +23,7 @@ export interface WeekInfo {
   id: string;
   label: string;
   sub: string;
+  dateObj?: Date;
 }
 
 export function generateWeeks(baseDate: Date): WeekInfo[] {
@@ -34,7 +35,8 @@ export function generateWeeks(baseDate: Date): WeekInfo[] {
       weeks.push({
           id: `${currentStart.getFullYear()}-W${wkNum}`,
           label: `Sett. ${wkNum}`,
-          sub: `${currentStart.toLocaleDateString('it-IT', {day:'2-digit', month:'short'})} - ${end.toLocaleDateString('it-IT', {day:'2-digit', month:'short'})}`
+          sub: `${currentStart.toLocaleDateString('it-IT', {day:'2-digit', month:'short'})} - ${end.toLocaleDateString('it-IT', {day:'2-digit', month:'short'})}`,
+          dateObj: new Date(currentStart)
       });
       currentStart = addDays(currentStart, 7);
   }

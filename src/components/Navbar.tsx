@@ -1,5 +1,5 @@
 import { LogOut, Home, KeyRound, X } from 'lucide-react';
-import { signOut, updatePassword } from 'firebase/auth';
+import { signOut, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from 'firebase/auth';
 import { auth } from '../services/firebase';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -9,7 +9,9 @@ export default function Navbar() {
   const navigate = useNavigate();
   const { user, isAdmin, isHR, isSenior, myAssociatedName } = useAuth();
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [pwError, setPwError] = useState('');
   const [pwSuccess, setPwSuccess] = useState('');
   const [loading, setLoading] = useState(false);
@@ -20,9 +22,14 @@ export default function Navbar() {
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || !newPassword) return;
+    if (!user || !user.email) return;
+
+    if (newPassword !== confirmPassword) {
+      setPwError('Le nuove password non coincidono.');
+      return;
+    }
     if (newPassword.length < 6) {
-      setPwError('La password deve essere di almeno 6 caratteri.');
+      setPwError('La nuova password deve essere di almeno 6 caratteri.');
       return;
     }
     
@@ -31,15 +38,20 @@ export default function Navbar() {
     setPwSuccess('');
     
     try {
+      const credential = EmailAuthProvider.credential(user.email, oldPassword);
+      await reauthenticateWithCredential(user, credential);
       await updatePassword(user, newPassword);
-      setPwSuccess('Password aggiornata con successo su Firebase!');
+
+      setPwSuccess('Password aggiornata con successo!');
+      setOldPassword('');
       setNewPassword('');
+      setConfirmPassword('');
       setTimeout(() => setIsPasswordModalOpen(false), 2000);
     } catch (error: any) {
-      if (error.code === 'auth/requires-recent-login') {
-        setPwError('Per sicurezza, devi uscire e rientrare (logout/login) prima di poter cambiare la password.');
+      if (error.code === 'auth/invalid-credential' || error.code === 'auth/wrong-password') {
+        setPwError('La vecchia password inserita non è corretta.');
       } else {
-        setPwError("Errore durante l'aggiornamento della password.");
+        setPwError("Errore durante l'aggiornamento: " + error.message);
       }
     } finally {
       setLoading(false);
@@ -68,7 +80,7 @@ export default function Navbar() {
             <div className="flex flex-col items-start hidden sm:flex">
               <span className="text-sm font-semibold text-gray-700 leading-tight">{userDisplayName}</span>
               <button 
-                onClick={() => { setIsPasswordModalOpen(true); setPwError(''); setPwSuccess(''); setNewPassword(''); }}
+                onClick={() => { setIsPasswordModalOpen(true); setPwError(''); setPwSuccess(''); setOldPassword(''); setNewPassword(''); setConfirmPassword(''); }}
                 className="text-[10px] text-blue-600 hover:text-blue-800 hover:underline transition-colors mt-0.5 font-bold flex items-center gap-1"
               >
                 <KeyRound className="w-3 h-3" /> Cambia Password
@@ -109,6 +121,17 @@ export default function Navbar() {
               
               <form onSubmit={handleChangePassword} className="space-y-4">
                 <div>
+                  <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Vecchia Password</label>
+                  <input 
+                    type="password" 
+                    required 
+                    placeholder="La tua password attuale"
+                    value={oldPassword}
+                    onChange={(e) => setOldPassword(e.target.value)}
+                    className="w-full p-3.5 text-sm border-none rounded-xl bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-medium text-gray-900"
+                  />
+                </div>
+                <div>
                   <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Nuova Password</label>
                   <input 
                     type="password" 
@@ -120,7 +143,19 @@ export default function Navbar() {
                     className="w-full p-3.5 text-sm border-none rounded-xl bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-medium text-gray-900"
                   />
                 </div>
-                <button type="submit" disabled={loading} className="w-full bg-gray-900 text-white font-bold py-3.5 rounded-xl hover:bg-gray-800 transition-colors shadow-md active:scale-95 disabled:opacity-50">
+                <div>
+                  <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Conferma Nuova Password</label>
+                  <input 
+                    type="password" 
+                    required 
+                    minLength={6}
+                    placeholder="••••••••"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    className="w-full p-3.5 text-sm border-none rounded-xl bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-medium text-gray-900"
+                  />
+                </div>
+                <button type="submit" disabled={loading} className="w-full bg-gray-900 text-white font-bold py-3.5 rounded-xl hover:bg-gray-800 transition-colors shadow-md active:scale-95 disabled:opacity-50 mt-2">
                   {loading ? 'Aggiornamento...' : 'Conferma Modifica'}
                 </button>
               </form>

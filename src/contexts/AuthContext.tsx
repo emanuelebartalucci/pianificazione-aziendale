@@ -3,7 +3,7 @@ import { type User, onAuthStateChanged } from 'firebase/auth';
 import { collection, doc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
 
-const DEFAULT_ADMINS = ['ebartalucci@ingegno06.it', 'aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it'];
+const DEFAULT_ADMINS = ['aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it'];
 
 export interface Dipendente {
   id: string;
