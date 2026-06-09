@@ -145,7 +145,11 @@ export default function Dashboard() {
     return announcements;
   }, [announcements]);
 
-  const welcomeName = myAssociatedName || user?.email || 'Utente';
+  const welcomeName = (() => {
+    if (!myAssociatedName) return user?.email || 'Utente';
+    const parts = myAssociatedName.trim().split(/\s+/);
+    return parts.length > 1 ? parts[parts.length - 1] : myAssociatedName;
+  })();
   const showAdminSettings = isAdmin;
   const canPublish = isAdmin || isHR;
 
@@ -155,8 +159,9 @@ export default function Dashboard() {
       {/* Intestazione di benvenuto */}
       <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-sm p-6 sm:p-8 border border-white/50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-black text-gray-900 tracking-tight">Pianificazione Aziendale</h1>
-          <p className="text-sm font-bold text-indigo-600/80 mt-1">Ciao, {welcomeName}! Benvenuto nel tuo portale di lavoro.</p>
+          <h1 className="text-2xl font-extrabold text-indigo-600 tracking-tight">
+            Ciao, {welcomeName}! Benvenuto nel tuo portale di lavoro.
+          </h1>
         </div>
       </div>
 
