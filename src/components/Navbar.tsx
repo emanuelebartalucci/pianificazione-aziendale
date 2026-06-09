@@ -1,7 +1,7 @@
-import { LogOut, Home, KeyRound, X } from 'lucide-react';
+import { LogOut, Home, KeyRound, X, Shield } from 'lucide-react';
 import { signOut, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from 'firebase/auth';
 import { auth } from '../services/firebase';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useState } from 'react';
 
@@ -58,6 +58,8 @@ export default function Navbar() {
     }
   };
 
+  const location = useLocation();
+  const isSuggerimenti = location.pathname === '/suggerimenti';
   const userDisplayName = myAssociatedName ? `${myAssociatedName} (${user?.email})` : user?.email;
 
   return (
@@ -72,35 +74,47 @@ export default function Navbar() {
         <div className="flex items-center gap-4">
           <button 
             onClick={() => navigate('/')}
-            className="text-sm font-medium text-gray-600 hover:text-blue-600 flex items-center gap-1 transition-colors"
+            className="text-sm font-medium text-gray-600 hover:text-blue-600 flex items-center gap-1 transition-colors animate-in fade-in duration-300"
           >
             <Home className="w-4 h-4" /> <span className="hidden sm:inline">Dashboard</span>
           </button>
           <div className="flex items-center gap-3 border-l pl-4">
             <div className="flex flex-col items-start hidden sm:flex">
-              <span className="text-sm font-semibold text-gray-700 leading-tight">{userDisplayName}</span>
-              <button 
-                onClick={() => { setIsPasswordModalOpen(true); setPwError(''); setPwSuccess(''); setOldPassword(''); setNewPassword(''); setConfirmPassword(''); }}
-                className="text-[10px] text-blue-600 hover:text-blue-800 hover:underline transition-colors mt-0.5 font-bold flex items-center gap-1"
-              >
-                <KeyRound className="w-3 h-3" /> Cambia Password
-              </button>
+              {isSuggerimenti ? (
+                <span className="text-sm font-extrabold text-indigo-600 flex items-center gap-1.5 leading-tight select-none">
+                  <Shield className="w-3.5 h-3.5" /> Anonimo
+                </span>
+              ) : (
+                <>
+                  <span className="text-sm font-semibold text-gray-700 leading-tight">{userDisplayName}</span>
+                  <button 
+                    onClick={() => { setIsPasswordModalOpen(true); setPwError(''); setPwSuccess(''); setOldPassword(''); setNewPassword(''); setConfirmPassword(''); }}
+                    className="text-[10px] text-blue-600 hover:text-blue-800 hover:underline transition-colors mt-0.5 font-bold flex items-center gap-1"
+                  >
+                    <KeyRound className="w-3 h-3" /> Cambia Password
+                  </button>
+                </>
+              )}
             </div>
             
             {/* Badges Ruolo */}
-            <div className="hidden sm:flex gap-1">
-              {isAdmin && <span className="text-[10px] font-bold bg-red-100 text-red-700 px-2 py-0.5 rounded-full uppercase tracking-wider">Admin</span>}
-              {!isAdmin && isHR && <span className="text-[10px] font-bold bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full uppercase tracking-wider">HR</span>}
-              {!isAdmin && isSenior && <span className="text-[10px] font-bold bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full uppercase tracking-wider">Senior</span>}
-            </div>
+            {!isSuggerimenti && (
+              <div className="hidden sm:flex gap-1">
+                {isAdmin && <span className="text-[10px] font-bold bg-red-100 text-red-700 px-2 py-0.5 rounded-full uppercase tracking-wider">Admin</span>}
+                {!isAdmin && isHR && <span className="text-[10px] font-bold bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full uppercase tracking-wider">HR</span>}
+                {!isAdmin && isSenior && <span className="text-[10px] font-bold bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full uppercase tracking-wider">Senior</span>}
+              </div>
+            )}
 
-            <button 
-              onClick={handleLogout}
-              className="text-gray-400 hover:text-red-600 p-1.5 rounded-full hover:bg-red-50 transition-colors" 
-              title="Esci"
-            >
-              <LogOut className="w-5 h-5" />
-            </button>
+            {!isSuggerimenti && (
+              <button 
+                onClick={handleLogout}
+                className="text-gray-400 hover:text-red-600 p-1.5 rounded-full hover:bg-red-50 transition-colors" 
+                title="Esci"
+              >
+                <LogOut className="w-5 h-5" />
+              </button>
+            )}
           </div>
         </div>
       </header>

@@ -4,20 +4,40 @@ import { db } from '../services/firebase';
 import { collection, addDoc, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import { Calendar, CheckCircle, XCircle, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
 
+const formatDate = (dateStr: string) => {
+  if (!dateStr) return '';
+  const parts = dateStr.split('-');
+  if (parts.length !== 3) return dateStr;
+  const [year, month, day] = parts;
+  return `${day}/${month}/${year}`;
+};
+
 interface RichiestaFerie {
   id: string;
   dipendenteName: string;
   data: string;
   tipo: string;
   stato: 'In attesa' | 'Approvato' | 'Rifiutato';
+  dataInizio?: string;
+  dataFine?: string;
 }
 
 export default function Ferie() {
-  const { isHR, isAdmin, myAssociatedName } = useAuth();
+  const { isHR, isAdmin, myAssociatedName, dipendenti } = useAuth();
   
   // State per la nuova richiesta
+  const [requestMode, setRequestMode] = useState<'singolo' | 'range'>('singolo');
+  const [dipendenteSelezionato, setDipendenteSelezionato] = useState(myAssociatedName || '');
   const [dataRichiesta, setDataRichiesta] = useState('');
+  const [dataInizio, setDataInizio] = useState('');
+  const [dataFine, setDataFine] = useState('');
   const [tipoRichiesta, setTipoRichiesta] = useState('ferie');
+
+  useEffect(() => {
+    if (myAssociatedName && !dipendenteSelezionato) {
+      setDipendenteSelezionato(myAssociatedName);
+    }
+  }, [myAssociatedName]);
   
   // State per calendario
   const [currentMonth, setCurrentMonth] = useState(() => {
@@ -40,33 +60,76 @@ export default function Ferie() {
         list.push({
           id: docSnap.id,
           dipendenteName: data.dipendenteName,
-          data: data.data,
+          data: data.data || '',
           tipo: data.tipo,
-          stato: data.stato || 'In attesa'
+          stato: data.stato || 'In attesa',
+          dataInizio: data.dataInizio,
+          dataFine: data.dataFine
         });
       });
-      setRichieste(list.sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime()));
+      setRichieste(list.sort((a, b) => {
+        const dateA = new Date(a.dataInizio || a.data).getTime();
+        const dateB = new Date(b.dataInizio || b.data).getTime();
+        return dateB - dateA;
+      }));
     });
     return () => unsub();
   }, [isAdmin, isHR, myAssociatedName]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!myAssociatedName || !dataRichiesta) {
-      alert(myAssociatedName ? "Seleziona una data" : "Devi avere un profilo associato nell'anagrafica per richiedere ferie.");
+    const isPowerUser = isAdmin || isHR;
+    
+    if (!isPowerUser && !myAssociatedName) {
+      alert("Devi avere un profilo associato nell'anagrafica per richiedere ferie.");
+      return;
+    }
+
+    const targetDipName = isPowerUser ? dipendenteSelezionato : myAssociatedName;
+    if (!targetDipName) {
+      alert("Seleziona un dipendente.");
+      return;
+    }
+    
+    if (requestMode === 'singolo' && !dataRichiesta) {
+      alert("Seleziona una data.");
+      return;
+    }
+    
+    if (requestMode === 'range' && (!dataInizio || !dataFine)) {
+      alert("Seleziona sia la data di inizio che quella di fine.");
+      return;
+    }
+    
+    if (requestMode === 'range' && dataInizio > dataFine) {
+      alert("La data di inizio non può essere successiva alla data di fine.");
       return;
     }
     
     setLoading(true);
     try {
-      await addDoc(collection(db, 'richieste_ferie'), {
-        dipendenteName: myAssociatedName,
-        data: dataRichiesta,
+      const payload: any = {
+        dipendenteName: targetDipName,
         tipo: tipoRichiesta,
-        stato: 'In attesa',
+        stato: isPowerUser ? 'Approvato' : 'In attesa',
         timestamp: new Date().toISOString()
-      });
+      };
+      
+      if (requestMode === 'singolo') {
+        payload.data = dataRichiesta;
+        payload.dataInizio = dataRichiesta;
+        payload.dataFine = dataRichiesta;
+      } else {
+        payload.data = dataInizio; // legacy fallback
+        payload.dataInizio = dataInizio;
+        payload.dataFine = dataFine;
+      }
+      
+      await addDoc(collection(db, 'richieste_ferie'), payload);
+      
       setDataRichiesta('');
+      setDataInizio('');
+      setDataFine('');
     } catch (err) {
       alert("Errore nell'invio della richiesta.");
     } finally {
@@ -133,7 +196,11 @@ export default function Ferie() {
   // Giorni effettivi
   for (let day = 1; day <= daysInMonth; day++) {
     const dateStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    const dayRequests = richieste.filter(r => r.data === dateStr);
+    const dayRequests = richieste.filter(r => {
+      const start = r.dataInizio || r.data;
+      const end = r.dataFine || r.data;
+      return dateStr >= start && dateStr <= end;
+    });
 
     calendarCells.push(
       <div key={day} className="min-h-[100px] bg-white rounded-xl border border-gray-200 p-2 shadow-sm hover:shadow-md transition-shadow flex flex-col">
@@ -178,22 +245,98 @@ export default function Ferie() {
           {/* FORM NUOVA RICHIESTA */}
           <div className="bg-gradient-to-br from-green-50 to-emerald-50 p-8 rounded-3xl border border-green-100 shadow-sm h-fit">
             <h3 className="font-extrabold text-2xl mb-6 text-green-950">Nuova Richiesta Personale</h3>
-            {!myAssociatedName ? (
+            
+            <div className="bg-emerald-600/10 border border-emerald-500/20 rounded-2xl p-4 mb-5 text-xs text-emerald-950 leading-relaxed font-semibold flex gap-2.5 items-start">
+              <span className="w-5 h-5 shrink-0 bg-emerald-600 text-white rounded-full flex items-center justify-center font-extrabold text-[10px]">i</span>
+              <div>
+                <strong>Nota Importante:</strong> Prima di inoltrare la richiesta all'HR, assicurati di esserti accordato a voce con il tuo superiore diretto. L'HR verificherà la sovrapposizione complessiva delle richieste dando per scontato il preventivo benestare del tuo responsabile.
+              </div>
+            </div>
+
+            {!myAssociatedName && !(isAdmin || isHR) ? (
               <div className="bg-yellow-100 text-yellow-800 p-4 rounded-xl text-sm font-medium">
                 Il tuo profilo non è associato ad un nome nell'anagrafica. Contatta un amministratore per poter richiedere le ferie.
               </div>
             ) : (
               <form onSubmit={handleSubmit} className="space-y-5">
-                <div>
-                  <label className="block text-sm font-bold text-green-900 mb-1.5 ml-1">Giorno di assenza</label>
-                  <input 
-                    type="date" 
-                    required 
-                    value={dataRichiesta}
-                    onChange={e => setDataRichiesta(e.target.value)}
-                    className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900"
-                  />
+                {(isAdmin || isHR) && (
+                  <div>
+                    <label className="block text-sm font-bold text-green-900 mb-1.5 ml-1">Dipendente</label>
+                    <select
+                      value={dipendenteSelezionato}
+                      onChange={e => setDipendenteSelezionato(e.target.value)}
+                      required
+                      className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900"
+                    >
+                      <option value="">-- Seleziona Dipendente --</option>
+                      {dipendenti.map(d => (
+                        <option key={d.id} value={d.nome}>{d.nome}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <div className="flex bg-white/50 p-1 rounded-xl shadow-inner border border-green-100/50">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRequestMode('singolo');
+                      if (tipoRichiesta === 'mattina' || tipoRichiesta === 'pomeriggio') {
+                        setTipoRichiesta('ferie');
+                      }
+                    }}
+                    className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${requestMode === 'singolo' ? 'bg-green-600 text-white shadow-sm' : 'text-green-800/70 hover:text-green-900'}`}
+                  >
+                    Giorno Singolo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRequestMode('range');
+                      if (tipoRichiesta === 'mattina' || tipoRichiesta === 'pomeriggio') {
+                        setTipoRichiesta('ferie');
+                      }
+                    }}
+                    className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${requestMode === 'range' ? 'bg-green-600 text-white shadow-sm' : 'text-green-800/70 hover:text-green-900'}`}
+                  >
+                    Intervallo di Date
+                  </button>
                 </div>
+
+                {requestMode === 'singolo' ? (
+                  <div>
+                    <label className="block text-sm font-bold text-green-900 mb-1.5 ml-1">Giorno di assenza</label>
+                    <input 
+                      type="date" 
+                      required 
+                      value={dataRichiesta}
+                      onChange={e => setDataRichiesta(e.target.value)}
+                      className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900"
+                    />
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-green-900 mb-1.5 ml-1">Data Inizio</label>
+                      <input 
+                        type="date" 
+                        required 
+                        value={dataInizio}
+                        onChange={e => setDataInizio(e.target.value)}
+                        className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900 text-xs sm:text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-green-900 mb-1.5 ml-1">Data Fine</label>
+                      <input 
+                        type="date" 
+                        required 
+                        value={dataFine}
+                        onChange={e => setDataFine(e.target.value)}
+                        className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900 text-xs sm:text-sm"
+                      />
+                    </div>
+                  </div>
+                )}
                 
                 <div>
                   <label className="block text-sm font-bold text-green-900 mb-1.5 ml-1">Tipo di assenza</label>
@@ -204,8 +347,12 @@ export default function Ferie() {
                   >
                     <option value="ferie">Ferie / Malattia</option>
                     <option value="smart">Lavora da Casa</option>
-                    <option value="mattina">Assenza Mattina</option>
-                    <option value="pomeriggio">Assenza Pomeriggio</option>
+                    {requestMode === 'singolo' && (
+                      <>
+                        <option value="mattina">Assenza Mattina</option>
+                        <option value="pomeriggio">Assenza Pomeriggio</option>
+                      </>
+                    )}
                   </select>
                 </div>
                 
@@ -235,7 +382,11 @@ export default function Ferie() {
                     <div className="space-y-1.5">
                       <div className="font-bold text-base sm:text-lg text-gray-900">{req.dipendenteName}</div>
                       <div className="flex flex-wrap items-center gap-2 sm:gap-4">
-                        <span className="text-xs sm:text-sm font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded-lg">{req.data}</span>
+                        <span className="text-xs sm:text-sm font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded-lg">
+                          {req.dataInizio && req.dataFine && req.dataInizio !== req.dataFine 
+                            ? `Dal ${formatDate(req.dataInizio)} al ${formatDate(req.dataFine)}` 
+                            : `Il ${formatDate(req.dataInizio || req.data)}`}
+                        </span>
                         {getTipoLabel(req.tipo)}
                       </div>
                     </div>

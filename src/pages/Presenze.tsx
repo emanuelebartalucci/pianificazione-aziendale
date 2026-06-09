@@ -1,0 +1,1986 @@
+import { useState, useEffect, useMemo } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import { db } from '../services/firebase';
+import { collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, addDoc } from 'firebase/firestore';
+import { FileText, Printer, Save, Send, CheckCircle, AlertCircle, Edit, MessageSquare, Clock, MapPin, Check, X, ShieldAlert, Download } from 'lucide-react';
+import { wrapMailTemplate } from '../utils/mailTemplate';
+import ConfirmModal from '../components/ConfirmModal';
+
+interface GiornoPresenza {
+  ore: number;
+  straordinari: number;
+  ferie: number;
+  permessi: number;
+  malattia: boolean;
+  trasferta: boolean;
+  luogoTrasferta?: string;
+  noteGiorno?: string;
+}
+
+interface RapportinoPresenze {
+  id: string; // {dipendenteNome}-{anno}-{mese}
+  dipendenteNome: string;
+  dipendenteEmail: string;
+  mese: number;
+  anno: number;
+  stato: 'Bozza' | 'Inviato' | 'Approvato' | 'Richiede Modifica';
+  noteDipendente: string;
+  noteHR: string;
+  submittedAt?: string;
+  approvedAt?: string;
+  approvedBy?: string;
+  giorni: { [giorno: string]: GiornoPresenza };
+}
+
+const MESI = [
+  'Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno',
+  'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre'
+];
+
+export default function Presenze() {
+  const { user, isAdmin, isHR, myAssociatedName, dipendenti } = useAuth();
+
+  // Helper to send email notification by writing to Firestore 'mail' collection
+  const queueEmailNotification = async (toEmail: string, subject: string, htmlContent: string) => {
+    try {
+      await addDoc(collection(db, 'mail'), {
+        to: toEmail.toLowerCase(),
+        message: {
+          subject,
+          html: wrapMailTemplate(subject, htmlContent)
+        }
+      });
+      console.log(`Email accodata con successo per ${toEmail}`);
+    } catch (err) {
+      console.error("Errore nell'accodamento dell'email:", err);
+    }
+  };
+  
+  // Date Selection
+  const [selectedMonth, setSelectedMonth] = useState(() => new Date().getMonth() + 1); // 1-12
+  const [selectedYear, setSelectedYear] = useState(() => new Date().getFullYear());
+  
+  // Mode Selection: 'compila' (employee mode) or 'hr' (admin/hr dashboard)
+  const [viewMode, setViewMode] = useState<'compila' | 'hr'>(() => {
+    return (isHR || isAdmin) ? 'hr' : 'compila';
+  });
+
+  // State for Employee Mode
+  const [rapportino, setRapportino] = useState<RapportinoPresenze | null>(null);
+  const [loadingSheet, setLoadingSheet] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  // State for HR Mode
+  const [allRapportini, setAllRapportini] = useState<Record<string, RapportinoPresenze>>({});
+  const [loadingHR, setLoadingHR] = useState(false);
+  
+  // HR review modal
+  const [reviewingRapportino, setReviewingRapportino] = useState<RapportinoPresenze | null>(null);
+  const [hrFeedbackNote, setHrFeedbackNote] = useState('');
+  const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
+  const [exportingAnnual, setExportingAnnual] = useState(false);
+  const [selectedDipFilter, setSelectedDipFilter] = useState('');
+  const [printTargetSheet, setPrintTargetSheet] = useState<RapportinoPresenze | null>(null);
+
+  // Stato per la modale di conferma personalizzata
+  const [confirmConfig, setConfirmConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    type?: 'danger' | 'warning' | 'info';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
+
+  const triggerConfirm = (title: string, message: string, onConfirm: () => void, type: 'danger' | 'warning' | 'info' = 'danger') => {
+    setConfirmConfig({
+      isOpen: true,
+      title,
+      message,
+      onConfirm: () => {
+        onConfirm();
+        setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+      },
+      type
+    });
+  };
+
+  // Get days in selected month
+  const daysInMonth = useMemo(() => {
+    return new Date(selectedYear, selectedMonth, 0).getDate();
+  }, [selectedMonth, selectedYear]);
+
+  // Check if a day is weekend
+  const isWeekend = (dayNum: number) => {
+    const dayOfWeek = new Date(selectedYear, selectedMonth - 1, dayNum).getDay();
+    return dayOfWeek === 0 || dayOfWeek === 6; // 0 = Sunday, 6 = Saturday
+  };
+
+  // Convert 1-31 number to padded string
+  const dayStr = (d: number) => String(d);
+
+  // --- HR / ADMIN: LISTEN TO ALL RAPPORTINI FOR THE SELECTED MONTH ---
+  useEffect(() => {
+    if (viewMode !== 'hr') return;
+    
+    setLoadingHR(true);
+    const q = query(
+      collection(db, 'presenze'),
+      where('mese', '==', selectedMonth),
+      where('anno', '==', selectedYear)
+    );
+
+    const unsub = onSnapshot(q, (snapshot) => {
+      const dataMap: Record<string, RapportinoPresenze> = {};
+      snapshot.forEach(docSnap => {
+        dataMap[docSnap.id] = { id: docSnap.id, ...docSnap.data() } as RapportinoPresenze;
+      });
+      setAllRapportini(dataMap);
+      setLoadingHR(false);
+      
+      // Update currently reviewing if it changes in database
+      if (reviewingRapportino) {
+        const updated = dataMap[reviewingRapportino.id];
+        if (updated) {
+          setReviewingRapportino(updated);
+        }
+      }
+    }, (err) => {
+      console.error("Errore nel caricamento delle presenze:", err);
+      setLoadingHR(false);
+    });
+
+    return () => unsub();
+  }, [viewMode, selectedMonth, selectedYear]);
+
+  // --- EMPLOYEE: LISTEN OR FETCH CURRENT RAPPORTINO ---
+  useEffect(() => {
+    if (viewMode !== 'compila' || !myAssociatedName) return;
+
+    setLoadingSheet(true);
+    const docId = `${myAssociatedName}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+    const docRef = doc(db, 'presenze', docId);
+
+    const unsub = onSnapshot(docRef, async (docSnap) => {
+      if (docSnap.exists()) {
+        setRapportino({ id: docSnap.id, ...docSnap.data() } as RapportinoPresenze);
+        setLoadingSheet(false);
+      } else {
+        // Document doesn't exist, prefill it!
+        await createPrefilledRapportino();
+      }
+    }, (err) => {
+      console.error("Errore caricamento foglio presenze:", err);
+      setLoadingSheet(false);
+    });
+
+    return () => unsub();
+  }, [viewMode, myAssociatedName, selectedMonth, selectedYear]);
+
+  // --- PREFILL LOGIC ---
+  const createPrefilledRapportino = async () => {
+    if (!myAssociatedName || !user?.email) return;
+
+    try {
+      // 1. Fetch approved requests from 'richieste_ferie'
+      const qRichieste = query(
+        collection(db, 'richieste_ferie'),
+        where('dipendenteName', '==', myAssociatedName),
+        where('stato', '==', 'Approvato')
+      );
+
+      const querySnap = await getDocs(qRichieste);
+      const approvedAbsences: Record<string, string> = {}; // YYYY-MM-DD -> tipo
+      
+      querySnap.forEach(docSnap => {
+        const d = docSnap.data();
+        const start = d.dataInizio || d.data;
+        const end = d.dataFine || d.data;
+        
+        if (start && end) {
+          const [startYear, startMonth, startDay] = start.split('-').map(Number);
+          const [endYear, endMonth, endDay] = end.split('-').map(Number);
+          
+          const currDate = new Date(startYear, startMonth - 1, startDay);
+          const lastDate = new Date(endYear, endMonth - 1, endDay);
+          
+          while (currDate <= lastDate) {
+            const y = currDate.getFullYear();
+            const m = String(currDate.getMonth() + 1).padStart(2, '0');
+            const dayStr = String(currDate.getDate()).padStart(2, '0');
+            const dateStr = `${y}-${m}-${dayStr}`;
+            
+            if (dateStr.startsWith(`${selectedYear}-${String(selectedMonth).padStart(2, '0')}`)) {
+              approvedAbsences[dateStr] = d.tipo;
+            }
+            currDate.setDate(currDate.getDate() + 1);
+          }
+        }
+      });
+
+      // 2. Generate days 1-31
+      const giorni: { [giorno: string]: GiornoPresenza } = {};
+      const numDays = new Date(selectedYear, selectedMonth, 0).getDate();
+
+      for (let day = 1; day <= 31; day++) {
+        if (day > numDays) {
+          // Non-existent days in this month
+          giorni[String(day)] = {
+            ore: 0,
+            straordinari: 0,
+            ferie: 0,
+            permessi: 0,
+            malattia: false,
+            trasferta: false
+          };
+          continue;
+        }
+
+        const dateStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const dateObj = new Date(selectedYear, selectedMonth - 1, day);
+        const dayOfWeek = dateObj.getDay();
+        const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
+
+        let ore = isWknd ? 0 : 8;
+        let straordinari = 0;
+        let ferie = 0;
+        let permessi = 0;
+        let malattia = false;
+        let trasferta = false;
+
+        // Apply approved absences (only on working days)
+        if (approvedAbsences[dateStr] && !isWknd) {
+          const tipo = approvedAbsences[dateStr];
+          if (tipo === 'ferie') {
+            ore = 0;
+            ferie = 8;
+          } else if (tipo === 'mattina' || tipo === 'pomeriggio') {
+            ore = 4;
+            permessi = 4;
+          } else if (tipo === 'smart') {
+            ore = 8; // smart working is 8 hours worked
+          }
+        }
+
+        giorni[String(day)] = {
+          ore,
+          straordinari,
+          ferie,
+          permessi,
+          malattia,
+          trasferta,
+          luogoTrasferta: ''
+        };
+      }
+
+      const newRapportino: RapportinoPresenze = {
+        id: `${myAssociatedName}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`,
+        dipendenteNome: myAssociatedName,
+        dipendenteEmail: user.email,
+        mese: selectedMonth,
+        anno: selectedYear,
+        stato: 'Bozza',
+        noteDipendente: '',
+        noteHR: '',
+        giorni
+      };
+
+      setRapportino(newRapportino);
+      setLoadingSheet(false);
+    } catch (e) {
+      console.error("Errore nella generazione del precompilato:", e);
+      setLoadingSheet(false);
+    }
+  };
+
+  // --- ACTIONS FOR EMPLOYEES ---
+  const handleCellChange = (day: string, field: keyof GiornoPresenza, value: any) => {
+    if (!rapportino || rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato') return;
+
+    const updatedGiorni = { ...rapportino.giorni };
+    const currentDay = { ...updatedGiorni[day] };
+
+    if (field === 'malattia') {
+      currentDay.malattia = value;
+      if (value) {
+        currentDay.ore = 0;
+        currentDay.ferie = 8; // prefill 8 hours sickness
+        currentDay.permessi = 0;
+        currentDay.straordinari = 0;
+      }
+    } else if (field === 'trasferta') {
+      currentDay.trasferta = value;
+      if (!value) {
+        currentDay.luogoTrasferta = '';
+      }
+    } else {
+      (currentDay as any)[field] = value;
+    }
+
+    updatedGiorni[day] = currentDay;
+    setRapportino({ ...rapportino, giorni: updatedGiorni });
+  };
+
+  const handleSaveDraft = async () => {
+    if (!rapportino) return;
+    setSaving(true);
+    try {
+      const docRef = doc(db, 'presenze', rapportino.id);
+      await setDoc(docRef, {
+        ...rapportino,
+        timestamp: new Date().toISOString()
+      });
+      alert("Bozza salvata con successo!");
+    } catch (err) {
+      console.error("Errore salvataggio bozza:", err);
+      alert("Errore durante il salvataggio.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSubmitToHR = () => {
+    if (!rapportino) return;
+    triggerConfirm(
+      "Invio Rapportino",
+      "Confermi l'invio del foglio presenze all'HR? Una volta inviato non potrai più modificarlo, a meno che non ti venga richiesto.",
+      async () => {
+        setSubmitting(true);
+        try {
+          const docRef = doc(db, 'presenze', rapportino.id);
+          const updated: RapportinoPresenze = {
+            ...rapportino,
+            stato: 'Inviato',
+            submittedAt: new Date().toISOString()
+          };
+          await setDoc(docRef, updated);
+          setRapportino(updated);
+          alert("Foglio presenze inviato con successo all'HR!");
+
+          // Invia notifica all'HR
+          try {
+            const hrDoc = await getDoc(doc(db, 'configurazione_sistema', 'hr'));
+            const hrEmail = hrDoc.exists() ? hrDoc.data().email : null;
+            if (hrEmail) {
+              const meseNome = MESI[selectedMonth - 1];
+              await queueEmailNotification(
+                hrEmail,
+                `[Pianificazione] Nuovo Rapportino Presenze da approvare - ${myAssociatedName}`,
+                `
+                  <p>Ciao,</p>
+                  <p>Il dipendente <strong>${myAssociatedName}</strong> ha completato e inviato il proprio rapportino presenze per il mese di <strong>${meseNome} ${selectedYear}</strong>.</p>
+                  <p>Puoi accedere all'applicazione per esaminare e approvare il foglio ore.</p>
+                  <p>Buon lavoro.</p>
+                `
+              );
+            }
+          } catch (emailErr) {
+            console.error("Errore notifica email HR:", emailErr);
+          }
+        } catch (err) {
+          console.error("Errore invio rapportino:", err);
+          alert("Errore durante l'invio.");
+        } finally {
+          setSubmitting(false);
+        }
+      },
+      'info'
+    );
+  };
+
+  // --- ACTIONS FOR HR / ADMIN ---
+  const handleReviewCellChange = (day: string, field: keyof GiornoPresenza, value: any) => {
+    if (!reviewingRapportino) return;
+
+    const updatedGiorni = { ...reviewingRapportino.giorni };
+    const currentDay = { ...updatedGiorni[day] };
+
+    if (field === 'malattia') {
+      currentDay.malattia = value;
+      if (value) {
+        currentDay.ore = 0;
+        currentDay.ferie = 8;
+        currentDay.permessi = 0;
+        currentDay.straordinari = 0;
+      }
+    } else if (field === 'trasferta') {
+      currentDay.trasferta = value;
+      if (!value) {
+        currentDay.luogoTrasferta = '';
+      }
+    } else {
+      (currentDay as any)[field] = value;
+    }
+
+    updatedGiorni[day] = currentDay;
+    setReviewingRapportino({ ...reviewingRapportino, giorni: updatedGiorni });
+  };
+
+  const handleHRApprove = () => {
+    if (!reviewingRapportino) return;
+    triggerConfirm(
+      "Approva Rapportino",
+      `Approvare il foglio presenze di ${reviewingRapportino.dipendenteNome}?`,
+      async () => {
+        try {
+          const docRef = doc(db, 'presenze', reviewingRapportino.id);
+          const updated: RapportinoPresenze = {
+            ...reviewingRapportino,
+            stato: 'Approvato',
+            approvedAt: new Date().toISOString(),
+            approvedBy: user?.email || 'HR'
+          };
+          await setDoc(docRef, updated);
+          setReviewingRapportino(null);
+          alert("Rapportino approvato!");
+
+          // Invia notifica al dipendente
+          if (updated.dipendenteEmail) {
+            const meseNome = MESI[selectedMonth - 1];
+            await queueEmailNotification(
+              updated.dipendenteEmail,
+              `[Pianificazione] Rapportino Presenze Approvato - ${meseNome} ${selectedYear}`,
+              `
+                <p>Ciao <strong>${updated.dipendenteNome}</strong>,</p>
+                <p>Il tuo rapportino presenze per il mese di <strong>${meseNome} ${selectedYear}</strong> è stato verificato ed <strong>approvato</strong> dall'amministrazione.</p>
+                <p>Grazie per la collaborazione.</p>
+              `
+            );
+          }
+        } catch (err) {
+          console.error("Errore approvazione:", err);
+          alert("Errore durante l'approvazione.");
+        }
+      },
+      'info'
+    );
+  };
+
+  const handleHRRequestChanges = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reviewingRapportino || !hrFeedbackNote.trim()) return;
+
+    try {
+      const docRef = doc(db, 'presenze', reviewingRapportino.id);
+      const updated: RapportinoPresenze = {
+        ...reviewingRapportino,
+        stato: 'Richiede Modifica',
+        noteHR: hrFeedbackNote
+      };
+      await setDoc(docRef, updated);
+      setReviewingRapportino(null);
+      setIsFeedbackModalOpen(false);
+      setHrFeedbackNote('');
+      alert("Richiesta di modifica inviata al dipendente.");
+
+      // Invia notifica al dipendente
+      if (updated.dipendenteEmail) {
+        const meseNome = MESI[selectedMonth - 1];
+        await queueEmailNotification(
+          updated.dipendenteEmail,
+          `[Pianificazione] Correzione richiesta per il tuo Rapportino Presenze - ${meseNome} ${selectedYear}`,
+          `
+            <p>Ciao <strong>${updated.dipendenteNome}</strong>,</p>
+            <p>L'amministrazione ha esaminato il tuo rapportino presenze per il mese di <strong>${meseNome} ${selectedYear}</strong> e ha richiesto alcune <strong>correzioni</strong>.</p>
+            <p><strong>Nota dell'HR:</strong></p>
+            <blockquote style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 10px 15px; margin: 10px 0; font-style: italic;">
+              "${hrFeedbackNote}"
+            </blockquote>
+            <p>Accedi alla piattaforma per effettuare le modifiche richieste e inviarlo nuovamente.</p>
+          `
+        );
+      }
+    } catch (err) {
+      console.error("Errore invio modifiche:", err);
+      alert("Errore durante l'invio.");
+    }
+  };
+
+  const handleHRSaveModifications = async () => {
+    if (!reviewingRapportino) return;
+    try {
+      const docRef = doc(db, 'presenze', reviewingRapportino.id);
+      await setDoc(docRef, reviewingRapportino);
+      alert("Modifiche salvate con successo!");
+    } catch (err) {
+      console.error("Errore salvataggio modifiche HR:", err);
+      alert("Errore durante il salvataggio.");
+    }
+  };
+
+  // --- CALCULATION TOTALS FOR A SINGLE SHEET ---
+  const calculateTotals = (giorni: { [giorno: string]: GiornoPresenza }, numDays: number) => {
+    let oreOrd = 0;
+    let oreStra = 0;
+    let oreFerie = 0;
+    let orePerm = 0;
+    let ggMalattia = 0;
+    let ggTrasferta = 0;
+
+    for (let d = 1; d <= numDays; d++) {
+      const g = giorni[String(d)];
+      if (g) {
+        oreOrd += Number(g.ore || 0);
+        oreStra += Number(g.straordinari || 0);
+        oreFerie += Number(g.ferie || 0);
+        orePerm += Number(g.permessi || 0);
+        if (g.malattia) ggMalattia++;
+        if (g.trasferta) ggTrasferta++;
+      }
+    }
+
+    return { oreOrd, oreStra, oreFerie, orePerm, ggMalattia, ggTrasferta };
+  };
+
+  // --- EXPORT TO EXCEL (CSV COMPATIBLE) ---
+  const handleExportMonthlyExcel = () => {
+    try {
+      const headers = [
+        "Dipendente",
+        "Email",
+        "Mese",
+        "Anno",
+        "Stato Rapportino",
+        "Ore Ordinarie Lavorate",
+        "Ore Straordinari",
+        "Ore Ferie",
+        "Ore Permessi",
+        "Giorni Malattia (M)",
+        "Giorni Trasferta (T)"
+      ];
+
+      const rows = dipendenti.map(dip => {
+        const docId = `${dip.nome}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+        const sheet = allRapportini[docId];
+        const status = sheet ? sheet.stato : 'Non Iniziato';
+        const totals = sheet 
+          ? calculateTotals(sheet.giorni, daysInMonth)
+          : { oreOrd: 0, oreStra: 0, oreFerie: 0, orePerm: 0, ggMalattia: 0, ggTrasferta: 0 };
+
+        return [
+          dip.nome,
+          dip.email || "",
+          MESI[selectedMonth - 1],
+          selectedYear.toString(),
+          status,
+          totals.oreOrd.toString(),
+          totals.oreStra.toString(),
+          totals.oreFerie.toString(),
+          totals.orePerm.toString(),
+          totals.ggMalattia.toString(),
+          totals.ggTrasferta.toString()
+        ];
+      });
+
+      const csvContent = "\uFEFF" + [headers.join(";"), ...rows.map(r => r.map(val => `"${val.replace(/"/g, '""')}"`).join(";"))].join("\n");
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `Presenze_Mensile_${selectedMonth}_${selectedYear}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error("Errore durante l'esportazione mensile:", err);
+      alert("Si è verificato un errore durante l'esportazione.");
+    }
+  };
+
+  const handleExportAnnualExcel = async () => {
+    setExportingAnnual(true);
+    try {
+      const q = query(
+        collection(db, 'presenze'),
+        where('anno', '==', selectedYear)
+      );
+      const snapshot = await getDocs(q);
+      const annualRapportini: Record<string, RapportinoPresenze> = {};
+      snapshot.forEach(docSnap => {
+        annualRapportini[docSnap.id] = { id: docSnap.id, ...docSnap.data() } as RapportinoPresenze;
+      });
+
+      const headers = [
+        "Dipendente",
+        "Email",
+        "Mese",
+        "Anno",
+        "Stato Rapportino",
+        "Ore Ordinarie Lavorate",
+        "Ore Straordinari",
+        "Ore Ferie",
+        "Ore Permessi",
+        "Giorni Malattia (M)",
+        "Giorni Trasferta (T)"
+      ];
+
+      const rows: string[][] = [];
+
+      dipendenti.forEach(dip => {
+        for (let m = 1; m <= 12; m++) {
+          const docId = `${dip.nome}-${selectedYear}-${String(m).padStart(2, '0')}`;
+          const sheet = annualRapportini[docId];
+          const status = sheet ? sheet.stato : 'Non Iniziato';
+          const currentDaysInMonth = new Date(selectedYear, m, 0).getDate();
+          const totals = sheet 
+            ? calculateTotals(sheet.giorni, currentDaysInMonth)
+            : { oreOrd: 0, oreStra: 0, oreFerie: 0, orePerm: 0, ggMalattia: 0, ggTrasferta: 0 };
+
+          rows.push([
+            dip.nome,
+            dip.email || "",
+            MESI[m - 1],
+            selectedYear.toString(),
+            status,
+            totals.oreOrd.toString(),
+            totals.oreStra.toString(),
+            totals.oreFerie.toString(),
+            totals.orePerm.toString(),
+            totals.ggMalattia.toString(),
+            totals.ggTrasferta.toString()
+          ]);
+        }
+      });
+
+      const csvContent = "\uFEFF" + [headers.join(";"), ...rows.map(r => r.map(val => `"${val.replace(/"/g, '""')}"`).join(";"))].join("\n");
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `Presenze_Annuale_${selectedYear}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error("Errore durante l'esportazione annuale:", err);
+      alert("Errore durante l'esportazione annuale.");
+    } finally {
+      setExportingAnnual(false);
+    }
+  };
+
+  const handleExportMonthlySingle = (dipName: string) => {
+    const docId = `${dipName}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+    const sheet = allRapportini[docId];
+    if (!sheet) {
+      alert(`Nessun dato presenze registrato per ${dipName} in questo mese.`);
+      return;
+    }
+
+    const headers = [
+      "Giorno",
+      "Data",
+      "Stato Giorno",
+      "Ore Ordinarie Lavorate",
+      "Ore Straordinari",
+      "Ferie (Ore)",
+      "Permessi (Ore)",
+      "Malattia",
+      "Trasferta",
+      "Luogo Trasferta",
+      "Note"
+    ];
+
+    const rows: string[][] = [];
+    for (let d = 1; d <= daysInMonth; d++) {
+      const g = sheet.giorni[String(d)];
+      const formattedDate = `${String(d).padStart(2, '0')}/${String(selectedMonth).padStart(2, '0')}/${selectedYear}`;
+      
+      let dayStatus = "Lavorativo";
+      const dayOfWeek = new Date(selectedYear, selectedMonth - 1, d).getDay();
+      if (dayOfWeek === 0 || dayOfWeek === 6) {
+        dayStatus = "Weekend";
+      }
+
+      rows.push([
+        d.toString(),
+        formattedDate,
+        dayStatus,
+        g ? (g.ore || 0).toString() : "0",
+        g ? (g.straordinari || 0).toString() : "0",
+        g ? (g.ferie || 0).toString() : "0",
+        g ? (g.permessi || 0).toString() : "0",
+        g && g.malattia ? "M" : "",
+        g && g.trasferta ? "T" : "",
+        g ? (g.luogoTrasferta || "") : "",
+        g ? (g.noteGiorno || "") : ""
+      ]);
+    }
+
+    const csvContent = "\uFEFF" + [headers.join(";"), ...rows.map(r => r.map(val => `"${val.replace(/"/g, '""')}"`).join(";"))].join("\n");
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `Presenze_${dipName.replace(/\s+/g, '_')}_${selectedMonth}_${selectedYear}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleExportAnnualSingle = async (dipName: string) => {
+    setExportingAnnual(true);
+    try {
+      const q = query(
+        collection(db, 'presenze'),
+        where('anno', '==', selectedYear)
+      );
+      const snapshot = await getDocs(q);
+      const annualRapportini: Record<string, RapportinoPresenze> = {};
+      snapshot.forEach(docSnap => {
+        annualRapportini[docSnap.id] = { id: docSnap.id, ...docSnap.data() } as RapportinoPresenze;
+      });
+
+      const headers = [
+        "Dipendente",
+        "Mese",
+        "Anno",
+        "Stato Rapportino",
+        "Ore Ordinarie Lavorate",
+        "Ore Straordinari",
+        "Ore Ferie",
+        "Ore Permessi",
+        "Giorni Malattia (M)",
+        "Giorni Trasferta (T)"
+      ];
+
+      const rows: string[][] = [];
+      for (let m = 1; m <= 12; m++) {
+        const docId = `${dipName}-${selectedYear}-${String(m).padStart(2, '0')}`;
+        const sheet = annualRapportini[docId];
+        const status = sheet ? sheet.stato : 'Non Iniziato';
+        const currentDaysInMonth = new Date(selectedYear, m, 0).getDate();
+        const totals = sheet 
+          ? calculateTotals(sheet.giorni, currentDaysInMonth)
+          : { oreOrd: 0, oreStra: 0, oreFerie: 0, orePerm: 0, ggMalattia: 0, ggTrasferta: 0 };
+
+        rows.push([
+          dipName,
+          MESI[m - 1],
+          selectedYear.toString(),
+          status,
+          totals.oreOrd.toString(),
+          totals.oreStra.toString(),
+          totals.oreFerie.toString(),
+          totals.orePerm.toString(),
+          totals.ggMalattia.toString(),
+          totals.ggTrasferta.toString()
+        ]);
+      }
+
+      const csvContent = "\uFEFF" + [headers.join(";"), ...rows.map(r => r.map(val => `"${val.replace(/"/g, '""')}"`).join(";"))].join("\n");
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `Presenze_Annuale_${dipName.replace(/\s+/g, '_')}_${selectedYear}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error("Errore durante l'esportazione annuale:", err);
+      alert("Errore durante l'esportazione.");
+    } finally {
+      setExportingAnnual(false);
+    }
+  };
+
+  const handleExportMonthlyClick = () => {
+    if (selectedDipFilter) {
+      handleExportMonthlySingle(selectedDipFilter);
+    } else {
+      handleExportMonthlyExcel();
+    }
+  };
+
+  const handleExportAnnualClick = () => {
+    if (selectedDipFilter) {
+      handleExportAnnualSingle(selectedDipFilter);
+    } else {
+      handleExportAnnualExcel();
+    }
+  };
+
+  const handlePrint = () => {
+    if (selectedDipFilter) {
+      const docId = `${selectedDipFilter}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+      const sheet = allRapportini[docId];
+      if (!sheet) {
+        alert(`Nessun foglio presenze registrato per ${selectedDipFilter} in questo mese.`);
+        return;
+      }
+      setPrintTargetSheet(sheet);
+      setTimeout(() => {
+        window.print();
+        setPrintTargetSheet(null);
+      }, 150);
+    } else {
+      window.print();
+    }
+  };
+
+  // --- RENDER BADGE FOR STATUS ---
+  const getStatusBadge = (stato: RapportinoPresenze['stato'] | 'Non Iniziato') => {
+    switch (stato) {
+      case 'Approvato':
+        return <span className="flex items-center gap-1.5 text-xs font-bold bg-green-100 text-green-700 px-3 py-1 rounded-full"><CheckCircle className="w-3.5 h-3.5"/> Approvato</span>;
+      case 'Inviato':
+        return <span className="flex items-center gap-1.5 text-xs font-bold bg-blue-100 text-blue-700 px-3 py-1 rounded-full"><Clock className="w-3.5 h-3.5"/> Inviato</span>;
+      case 'Richiede Modifica':
+        return <span className="flex items-center gap-1.5 text-xs font-bold bg-orange-100 text-orange-700 px-3 py-1 rounded-full"><AlertCircle className="w-3.5 h-3.5"/> Da Correggere</span>;
+      case 'Bozza':
+        return <span className="flex items-center gap-1.5 text-xs font-bold bg-yellow-100 text-yellow-700 px-3 py-1 rounded-full"><Edit className="w-3.5 h-3.5"/> Bozza</span>;
+      default:
+        return <span className="flex items-center gap-1.5 text-xs font-bold bg-gray-100 text-gray-500 px-3 py-1 rounded-full"><X className="w-3.5 h-3.5"/> Non Iniziato</span>;
+    }
+  };
+
+  // --- PREPARE DATA FOR TRANSFER LIST ---
+  const getTrasferteList = (giorni: { [giorno: string]: GiornoPresenza }, numDays: number) => {
+    const list: { giorno: number; luogo: string }[] = [];
+    for (let d = 1; d <= numDays; d++) {
+      const g = giorni[String(d)];
+      if (g && g.trasferta) {
+        list.push({ giorno: d, luogo: g.luogoTrasferta || '' });
+      }
+    }
+    return list;
+  };
+
+  return (
+    <div className="flex flex-col gap-6">
+      
+      {/* HEADER DELLA PAGINA */}
+      <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-sm p-4 sm:p-6 border border-white/50 no-print flex flex-col md:flex-row justify-between items-center gap-4">
+        <div className="flex items-center gap-3">
+          <div className="p-3 bg-indigo-100 rounded-2xl"><FileText className="text-indigo-600 w-8 h-8" /></div>
+          <div>
+            <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">Registro Presenze</h2>
+            <p className="text-xs text-gray-500 font-semibold mt-0.5">Gestione foglio ore e riepilogo mensile per amministrazione</p>
+          </div>
+        </div>
+
+        {/* SWITCHER COMPILAZIONE / ADMIN SE HR O ADMIN */}
+        {(isHR || isAdmin) && (
+          <div className="flex bg-gray-100/80 p-1.5 rounded-2xl shadow-inner">
+            <button 
+              onClick={() => { setViewMode('hr'); setReviewingRapportino(null); }}
+              className={`px-5 py-2.5 rounded-xl font-bold text-sm transition-all ${viewMode === 'hr' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              Dashboard HR
+            </button>
+            <button 
+              onClick={() => { setViewMode('compila'); }}
+              className={`px-5 py-2.5 rounded-xl font-bold text-sm transition-all ${viewMode === 'compila' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              Compila Mio Foglio
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* FILTRI MESE/ANNO */}
+      <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-sm p-5 border border-white/50 no-print flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          {/* Selettore Mese (Dropdown) */}
+          <select 
+            value={selectedMonth}
+            onChange={e => setSelectedMonth(Number(e.target.value))}
+            className="p-2.5 border-none bg-gray-100 rounded-xl font-bold text-gray-700 text-sm outline-none focus:ring-2 focus:ring-indigo-400 capitalize"
+          >
+            {MESI.map((m, idx) => (
+              <option key={idx} value={idx + 1}>{m}</option>
+            ))}
+          </select>
+
+          {/* Selettore Anno Diretto */}
+          <select 
+            value={selectedYear}
+            onChange={e => setSelectedYear(Number(e.target.value))}
+            className="p-2.5 border-none bg-gray-100 rounded-xl font-bold text-gray-700 text-sm outline-none focus:ring-2 focus:ring-indigo-400"
+          >
+            {(() => {
+              const startYear = 2020;
+              const currentYearConst = new Date().getFullYear();
+              const endYear = currentYearConst + 4;
+              const years = [];
+              for (let y = startYear; y <= endYear; y++) {
+                years.push(y);
+              }
+              return years.map(yr => (
+                <option key={yr} value={yr}>{yr}</option>
+              ));
+            })()}
+          </select>
+
+          {/* Selettore Dipendente (Filtro / Esportazione Singolo) */}
+          {viewMode === 'hr' && (
+            <div className="flex items-center gap-2">
+              <select
+                value={selectedDipFilter}
+                onChange={e => setSelectedDipFilter(e.target.value)}
+                className="p-2.5 border-none bg-gray-100 rounded-xl font-bold text-gray-700 text-sm outline-none focus:ring-2 focus:ring-indigo-400 max-w-[200px]"
+              >
+                <option value="">Tutti i dipendenti</option>
+                {dipendenti.map(d => (
+                  <option key={d.id} value={d.nome}>{d.nome}</option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+
+        {viewMode === 'hr' && (
+          <div className="flex gap-2 flex-wrap">
+            <button 
+              onClick={handlePrint} 
+              className="flex items-center gap-2 bg-gray-950 hover:bg-gray-900 text-white font-bold px-4 py-2.5 rounded-xl text-sm transition shadow-md active:scale-95"
+            >
+              <Printer className="w-4 h-4" /> {selectedDipFilter ? "Stampa Foglio Ore" : "Stampa Tabella"}
+            </button>
+            <button 
+              onClick={handleExportMonthlyClick} 
+              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2.5 rounded-xl text-sm transition shadow-md active:scale-95"
+            >
+              <Download className="w-4 h-4" /> Esporta Mese (Excel)
+            </button>
+            <button 
+              onClick={handleExportAnnualClick}
+              disabled={exportingAnnual}
+              className="flex items-center gap-2 bg-teal-600 hover:bg-teal-700 text-white font-bold px-4 py-2.5 rounded-xl text-sm transition shadow-md active:scale-95 disabled:opacity-50"
+            >
+              <Download className="w-4 h-4" /> {exportingAnnual ? 'Esportazione...' : 'Esporta Anno (Excel)'}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* ========================================== */}
+      {/* 1. MODO HR / ADMIN: DASHBOARD GENERALE      */}
+      {/* ========================================== */}
+      {viewMode === 'hr' && (
+        <div className={`bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl border border-white/50 flex flex-col mb-10 overflow-hidden ${(printTargetSheet || reviewingRapportino) ? 'no-print' : ''}`}>
+          
+          {/* Titolo Sezione */}
+          <div className="p-6 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
+            <h3 className="font-extrabold text-xl text-gray-900">Situazione Presenze Dipendenti - {MESI[selectedMonth - 1]} {selectedYear}</h3>
+          </div>
+
+          <div className="w-full overflow-x-auto">
+            {loadingHR ? (
+              <div className="p-12 text-center text-gray-500 font-bold">Caricamento presenze in corso...</div>
+            ) : dipendenti.length === 0 ? (
+              <div className="p-12 text-center text-gray-400 font-medium">Nessun dipendente censito in anagrafica.</div>
+            ) : (
+              <table className="w-full text-left border-collapse min-w-[900px]">
+                <thead className="bg-gray-50 border-b border-gray-100">
+                  <tr>
+                    <th className="p-4 font-bold text-gray-700 text-sm">Dipendente</th>
+                    <th className="p-4 font-bold text-gray-700 text-sm text-center">Stato</th>
+                    <th className="p-4 font-bold text-gray-700 text-sm text-right">Ore Ordinarie</th>
+                    <th className="p-4 font-bold text-gray-700 text-sm text-right">Straordinari</th>
+                    <th className="p-4 font-bold text-gray-700 text-sm text-right">Ferie / Mal.</th>
+                    <th className="p-4 font-bold text-gray-700 text-sm text-right">Permessi</th>
+                    <th className="p-4 font-bold text-gray-700 text-sm text-center">Malattia (Giorni)</th>
+                    <th className="p-4 font-bold text-gray-700 text-sm text-center">Trasferte (Giorni)</th>
+                    <th className="p-4 font-bold text-gray-700 text-sm text-center no-print">Azione</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {dipendenti
+                    .filter(dip => !selectedDipFilter || dip.nome === selectedDipFilter)
+                    .map(dip => {
+                    const docId = `${dip.nome}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+                    const sheet = allRapportini[docId];
+                    const status = sheet ? sheet.stato : 'Non Iniziato';
+                    
+                    const totals = sheet 
+                      ? calculateTotals(sheet.giorni, daysInMonth)
+                      : { oreOrd: 0, oreStra: 0, oreFerie: 0, orePerm: 0, ggMalattia: 0, ggTrasferta: 0 };
+
+                    return (
+                      <tr key={dip.id} className="hover:bg-indigo-50/20 transition-colors">
+                        <td className="p-4">
+                          <div className="font-bold text-gray-800">{dip.nome}</div>
+                          <div className="text-xs text-gray-500">{dip.email || 'Nessuna email'}</div>
+                        </td>
+                        <td className="p-4 text-center align-middle">
+                          <div className="flex justify-center">{getStatusBadge(status)}</div>
+                        </td>
+                        <td className="p-4 text-right font-semibold text-gray-700">{totals.oreOrd}h</td>
+                        <td className="p-4 text-right font-bold text-amber-600">{totals.oreStra > 0 ? `+${totals.oreStra}h` : '0h'}</td>
+                        <td className="p-4 text-right font-semibold text-gray-700">{totals.oreFerie}h</td>
+                        <td className="p-4 text-right font-semibold text-gray-700">{totals.orePerm}h</td>
+                        <td className="p-4 text-center text-red-600 font-bold">{totals.ggMalattia > 0 ? totals.ggMalattia : '-'}</td>
+                        <td className="p-4 text-center text-blue-600 font-bold">{totals.ggTrasferta > 0 ? totals.ggTrasferta : '-'}</td>
+                        <td className="p-4 text-center no-print">
+                          {sheet ? (
+                            <button 
+                              onClick={() => {
+                                setReviewingRapportino(JSON.parse(JSON.stringify(sheet))); // clone object
+                              }}
+                              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md transition active:scale-95"
+                            >
+                              Esamina
+                            </button>
+                          ) : (
+                            <span className="text-xs text-gray-400 font-medium italic">Nessun dato</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================== */}
+      {/* 2. MODO DIPENDENTE: COMPILAZIONE FOGLIO ORE */}
+      {/* ========================================== */}
+      {viewMode === 'compila' && (
+        <div className="flex flex-col gap-6">
+          
+          {/* STATO E NOTIFICHE DEL RAPPORTINO */}
+          {loadingSheet ? (
+            <div className="bg-white p-10 rounded-[2rem] border text-center text-gray-500 font-bold">Caricamento foglio presenze in corso...</div>
+          ) : !myAssociatedName ? (
+            <div className="bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200 p-8 rounded-[2rem] text-center flex flex-col items-center gap-4">
+              <ShieldAlert className="w-12 h-12 text-amber-600" />
+              <div>
+                <h4 className="font-extrabold text-xl text-amber-950">Profilo non collegato</h4>
+                <p className="text-sm text-amber-900/80 mt-2 max-w-md mx-auto">
+                  Il tuo indirizzo email corrente non corrisponde a nessun dipendente in anagrafica. 
+                  Contatta un Amministratore nelle impostazioni per collegare la tua mail al tuo profilo dipendente.
+                </p>
+              </div>
+            </div>
+          ) : !rapportino ? (
+            <div className="bg-white p-10 rounded-[2rem] border text-center text-gray-500 font-bold">Inizializzazione modulo in corso...</div>
+          ) : (
+            <div className="flex flex-col gap-6">
+              
+              {/* Box Stato */}
+              <div className="bg-white/90 backdrop-blur-md p-6 rounded-[2rem] border flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shadow-sm no-print">
+                <div className="space-y-1">
+                  <div className="text-xs text-gray-500 font-bold uppercase tracking-wider">Mese in corso di visualizzazione</div>
+                  <h3 className="font-extrabold text-xl text-gray-800 capitalize">{MESI[selectedMonth - 1]} {selectedYear} - {myAssociatedName}</h3>
+                </div>
+                
+                <div className="flex items-center gap-3">
+                  <span className="text-sm font-bold text-gray-600">Stato:</span>
+                  {getStatusBadge(rapportino.stato)}
+                </div>
+              </div>
+
+              {/* Box Feedback HR se richiesto */}
+              {rapportino.stato === 'Richiede Modifica' && (
+                <div className="bg-gradient-to-r from-orange-50 to-amber-50 border border-orange-200 p-5 rounded-2xl flex items-start gap-3 shadow-inner no-print animate-pulse">
+                  <MessageSquare className="w-6 h-6 text-orange-600 shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="font-extrabold text-sm text-orange-950">Correzione richiesta da HR:</h4>
+                    <p className="text-sm text-orange-900/90 font-medium mt-1 italic">"{rapportino.noteHR}"</p>
+                  </div>
+                </div>
+              )}
+
+              {/* TABELLA REGISTRO PRESENZE (giorni 1-31) */}
+              <div className="bg-white rounded-[2rem] shadow-xl border overflow-hidden relative">
+                
+                {/* Legenda rapida */}
+                <div className="px-6 py-4 bg-gray-50 border-b border-gray-100 flex flex-wrap gap-4 items-center justify-between no-print">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-extrabold text-gray-400 uppercase tracking-wider mr-2">Legenda:</span>
+                    <span className="flex items-center gap-1.5 text-xs font-bold text-gray-700 bg-white px-2.5 py-1 rounded-lg border shadow-sm"><span className="w-2.5 h-2.5 rounded-full bg-red-500"></span> Malattia (M)</span>
+                    <span className="flex items-center gap-1.5 text-xs font-bold text-gray-700 bg-white px-2.5 py-1 rounded-lg border shadow-sm"><span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span> Trasferta (T)</span>
+                    <span className="flex items-center gap-1.5 text-xs font-bold text-gray-500 bg-gray-200 px-2 py-0.5 rounded border text-[10px] font-mono">W</span> Fine Settimana
+                  </div>
+                  
+                  <button onClick={() => window.print()} className="flex items-center gap-1.5 text-gray-700 hover:text-gray-900 font-extrabold text-xs bg-white border px-3 py-1.5 rounded-xl shadow-sm hover:shadow active:scale-95 transition-all">
+                    <Printer className="w-3.5 h-3.5" /> Stampa Mio Foglio
+                  </button>
+                </div>
+
+                {/* Griglia Fissa 1-31 */}
+                <div className="w-full overflow-x-auto scrollbar-thin">
+                  <table className="w-full text-center border-collapse min-w-[1200px] text-xs">
+                    <thead>
+                      <tr className="bg-gray-100 border-b border-gray-200 text-[10px] uppercase font-bold text-gray-600">
+                        <th className="p-3 text-left w-36 font-extrabold text-gray-700 bg-gray-100 sticky left-0 z-10 border-r border-gray-200">Giorno</th>
+                        {Array.from({ length: 31 }).map((_, i) => {
+                          const dayNum = i + 1;
+                          const outOfMonth = dayNum > daysInMonth;
+                          const isWk = !outOfMonth && isWeekend(dayNum);
+
+                          return (
+                            <th 
+                              key={i} 
+                              className={`p-2 border-r border-gray-200 w-[2.8%] min-w-[34px] ${outOfMonth ? 'bg-gray-300/50 text-gray-400' : isWk ? 'bg-gray-200/80 text-gray-600' : 'text-gray-700'}`}
+                            >
+                              <div>{dayNum}</div>
+                              {!outOfMonth && (
+                                <div className="text-[8px] mt-0.5 opacity-60">
+                                  {new Date(selectedYear, selectedMonth - 1, dayNum).toLocaleDateString('it-IT', { weekday: 'narrow' })}
+                                </div>
+                              )}
+                            </th>
+                          );
+                        })}
+                        <th className="p-3 font-extrabold text-gray-800 bg-gray-150 border-l-2 border-gray-300 w-16">TOT</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200 font-medium">
+                      
+                      {/* RIGA 1: ORE ORDINARIE */}
+                      <tr className="hover:bg-gray-50/50 transition-colors">
+                        <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10">Ore Ordinarie</td>
+                        {Array.from({ length: 31 }).map((_, i) => {
+                          const d = i + 1;
+                          const outOfMonth = d > daysInMonth;
+                          const giorno = rapportino.giorni[dayStr(d)];
+
+                          return (
+                            <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''}`}>
+                              {!outOfMonth && giorno && (
+                                <input 
+                                  type="number"
+                                  min={0}
+                                  max={24}
+                                  disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia}
+                                  value={giorno.ore === 0 ? '' : giorno.ore}
+                                  onChange={e => handleCellChange(dayStr(d), 'ore', e.target.value === '' ? 0 : Number(e.target.value))}
+                                  className="w-full text-center border-none p-1 rounded font-bold outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-transparent disabled:opacity-70 text-gray-900"
+                                />
+                              )}
+                              {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                            </td>
+                          );
+                        })}
+                        <td className="p-3 font-bold text-gray-800 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                          {calculateTotals(rapportino.giorni, daysInMonth).oreOrd}
+                        </td>
+                      </tr>
+
+                      {/* RIGA 2: STRAORDINARI */}
+                      <tr className="hover:bg-gray-50/50 transition-colors">
+                        <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10">Straordinari</td>
+                        {Array.from({ length: 31 }).map((_, i) => {
+                          const d = i + 1;
+                          const outOfMonth = d > daysInMonth;
+                          const giorno = rapportino.giorni[dayStr(d)];
+
+                          return (
+                            <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''}`}>
+                              {!outOfMonth && giorno && (
+                                <input 
+                                  type="number"
+                                  min={0}
+                                  max={24}
+                                  disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia}
+                                  value={giorno.straordinari === 0 ? '' : giorno.straordinari}
+                                  onChange={e => handleCellChange(dayStr(d), 'straordinari', e.target.value === '' ? 0 : Number(e.target.value))}
+                                  className="w-full text-center border-none p-1 rounded font-bold outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-transparent disabled:opacity-70 text-amber-600 font-extrabold"
+                                />
+                              )}
+                              {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                            </td>
+                          );
+                        })}
+                        <td className="p-3 font-bold text-amber-600 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                          {calculateTotals(rapportino.giorni, daysInMonth).oreStra}
+                        </td>
+                      </tr>
+
+                      {/* RIGA 3: FERIE */}
+                      <tr className="hover:bg-gray-50/50 transition-colors">
+                        <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10">Ferie</td>
+                        {Array.from({ length: 31 }).map((_, i) => {
+                          const d = i + 1;
+                          const outOfMonth = d > daysInMonth;
+                          const giorno = rapportino.giorni[dayStr(d)];
+
+                          return (
+                            <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''}`}>
+                              {!outOfMonth && giorno && (
+                                <input 
+                                  type="number"
+                                  min={0}
+                                  max={24}
+                                  disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia}
+                                  value={giorno.ferie === 0 ? '' : giorno.ferie}
+                                  onChange={e => handleCellChange(dayStr(d), 'ferie', e.target.value === '' ? 0 : Number(e.target.value))}
+                                  className="w-full text-center border-none p-1 rounded font-bold outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-transparent disabled:opacity-70 text-green-700"
+                                />
+                              )}
+                              {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                            </td>
+                          );
+                        })}
+                        <td className="p-3 font-bold text-green-700 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                          {calculateTotals(rapportino.giorni, daysInMonth).oreFerie}
+                        </td>
+                      </tr>
+
+                      {/* RIGA 4: PERMESSI */}
+                      <tr className="hover:bg-gray-50/50 transition-colors">
+                        <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10">Permessi</td>
+                        {Array.from({ length: 31 }).map((_, i) => {
+                          const d = i + 1;
+                          const outOfMonth = d > daysInMonth;
+                          const giorno = rapportino.giorni[dayStr(d)];
+
+                          return (
+                            <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''}`}>
+                              {!outOfMonth && giorno && (
+                                <input 
+                                  type="number"
+                                  min={0}
+                                  max={24}
+                                  disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia}
+                                  value={giorno.permessi === 0 ? '' : giorno.permessi}
+                                  onChange={e => handleCellChange(dayStr(d), 'permessi', e.target.value === '' ? 0 : Number(e.target.value))}
+                                  className="w-full text-center border-none p-1 rounded font-bold outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-transparent disabled:opacity-70 text-indigo-600"
+                                />
+                              )}
+                              {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                            </td>
+                          );
+                        })}
+                        <td className="p-3 font-bold text-indigo-600 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                          {calculateTotals(rapportino.giorni, daysInMonth).orePerm}
+                        </td>
+                      </tr>
+
+                      {/* RIGA 5: CONTRASSEGNO MALATTIA */}
+                      <tr className="hover:bg-gray-50/50 transition-colors">
+                        <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 flex items-center gap-1.5">
+                          Malattia <span className="text-[9px] font-bold bg-red-100 text-red-700 px-1 py-0.5 rounded font-mono">M</span>
+                        </td>
+                        {Array.from({ length: 31 }).map((_, i) => {
+                          const d = i + 1;
+                          const outOfMonth = d > daysInMonth;
+                          const giorno = rapportino.giorni[dayStr(d)];
+
+                          return (
+                            <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''} align-middle`}>
+                              {!outOfMonth && giorno && (
+                                <div className="flex justify-center items-center">
+                                  <input 
+                                    type="checkbox"
+                                    disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                    checked={giorno.malattia || false}
+                                    onChange={e => handleCellChange(dayStr(d), 'malattia', e.target.checked)}
+                                    className="w-4 h-4 rounded text-red-500 focus:ring-red-400 cursor-pointer"
+                                  />
+                                </div>
+                              )}
+                              {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                            </td>
+                          );
+                        })}
+                        <td className="p-3 font-bold text-red-600 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                          {calculateTotals(rapportino.giorni, daysInMonth).ggMalattia} gg
+                        </td>
+                      </tr>
+
+                      {/* RIGA 6: CONTRASSEGNO TRASFERTA */}
+                      <tr className="hover:bg-gray-50/50 transition-colors">
+                        <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 flex items-center gap-1.5">
+                          Trasferta <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1 py-0.5 rounded font-mono">T</span>
+                        </td>
+                        {Array.from({ length: 31 }).map((_, i) => {
+                          const d = i + 1;
+                          const outOfMonth = d > daysInMonth;
+                          const giorno = rapportino.giorni[dayStr(d)];
+
+                          return (
+                            <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''} align-middle`}>
+                              {!outOfMonth && giorno && (
+                                <div className="flex justify-center items-center">
+                                  <input 
+                                    type="checkbox"
+                                    disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                    checked={giorno.trasferta || false}
+                                    onChange={e => handleCellChange(dayStr(d), 'trasferta', e.target.checked)}
+                                    className="w-4 h-4 rounded text-blue-600 focus:ring-blue-400 cursor-pointer"
+                                  />
+                                </div>
+                              )}
+                              {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                            </td>
+                          );
+                        })}
+                        <td className="p-3 font-bold text-blue-600 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                          {calculateTotals(rapportino.giorni, daysInMonth).ggTrasferta} gg
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* DETTAGLIO LOCALITA TRASFERTE E NOTE IN BASSO */}
+                <div className="p-6 bg-gray-50/50 border-t grid grid-cols-1 md:grid-cols-2 gap-6">
+                  
+                  {/* Sezione Trasferte Dettagli */}
+                  <div className="space-y-4">
+                    <h4 className="font-extrabold text-sm text-gray-800 flex items-center gap-1.5">
+                      <MapPin className="w-4 h-4 text-blue-600" />
+                      Dettaglio Località Trasferte del Mese
+                    </h4>
+                    
+                    {getTrasferteList(rapportino.giorni, daysInMonth).length === 0 ? (
+                      <p className="text-xs text-gray-400 italic font-medium p-2">Nessun giorno contrassegnato come trasferta nel tabellone.</p>
+                    ) : (
+                      <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
+                        {getTrasferteList(rapportino.giorni, daysInMonth).map(({ giorno, luogo }) => (
+                          <div key={giorno} className="flex items-center gap-3 bg-white p-2 rounded-xl border shadow-sm">
+                            <span className="text-xs font-bold bg-blue-100 text-blue-800 px-2 py-0.5 rounded">Giorno {giorno}</span>
+                            <input 
+                              type="text"
+                              placeholder="Località o cantiere (es. Milano)"
+                              disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                              value={luogo}
+                              onChange={e => handleCellChange(dayStr(giorno), 'luogoTrasferta', e.target.value)}
+                              className="flex-1 p-1.5 text-xs border border-gray-200 rounded-lg outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Note Dipendente ed Avvisi */}
+                  <div className="space-y-4 border-l pl-0 md:pl-6 border-gray-200/60">
+                    <div className="space-y-1.5">
+                      <label className="block text-sm font-extrabold text-gray-800">
+                        Note Dipendente
+                      </label>
+                      <p className="text-[10px] text-gray-500 leading-relaxed font-bold">
+                        * NEL CASO DI MALATTIA O MATERNITÀ INDICARE NELLE NOTE IL N° DELL'ATTESTATO DI MALATTIA RILASCIATO DAL MEDICO.
+                      </p>
+                      <textarea
+                        rows={3}
+                        placeholder="Inserisci qui eventuali note di malattia, dettagli o segnalazioni..."
+                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                        value={rapportino.noteDipendente || ''}
+                        onChange={e => setRapportino({ ...rapportino, noteDipendente: e.target.value })}
+                        className="w-full mt-2 p-3 text-xs border rounded-xl bg-white outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 font-medium"
+                      />
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+
+              {/* PULSANTI DI AZIONE */}
+              {(rapportino.stato === 'Bozza' || rapportino.stato === 'Richiede Modifica') && (
+                <div className="flex justify-end gap-3 no-print">
+                  <button 
+                    onClick={handleSaveDraft}
+                    disabled={saving || submitting}
+                    className="flex items-center gap-2 bg-white hover:bg-gray-100 text-gray-700 border border-gray-200 font-extrabold px-6 py-3.5 rounded-xl transition shadow-md active:scale-95 disabled:opacity-50"
+                  >
+                    <Save className="w-4 h-4" />
+                    {saving ? 'Salvataggio...' : 'Salva Bozza'}
+                  </button>
+                  <button 
+                    onClick={handleSubmitToHR}
+                    disabled={saving || submitting}
+                    className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold px-7 py-3.5 rounded-xl transition shadow-lg active:scale-95 disabled:opacity-50"
+                  >
+                    <Send className="w-4 h-4" />
+                    {submitting ? 'Invio in corso...' : 'Invia a HR'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* 3. MODAL DETTAGLIO / APPROVAZIONE RAPPORTINO (PER HR/ADMIN) */}
+      {/* ======================================================== */}
+      {reviewingRapportino && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 no-print overflow-y-auto">
+          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-6xl overflow-hidden flex flex-col my-4 max-h-[92vh]">
+            
+            {/* Header Modal */}
+            <div className="bg-gradient-to-r from-indigo-700 to-violet-800 p-5 flex justify-between items-center text-white shrink-0">
+              <div>
+                <h3 className="font-extrabold text-lg flex items-center gap-2">
+                  <FileText className="w-5 h-5" /> 
+                  Esamina Rapportino: {reviewingRapportino.dipendenteNome}
+                </h3>
+                <p className="text-[11px] opacity-80 font-bold mt-0.5">Mese: {MESI[selectedMonth-1]} {selectedYear} | Email: {reviewingRapportino.dipendenteEmail}</p>
+              </div>
+              <button 
+                onClick={() => setReviewingRapportino(null)} 
+                className="hover:bg-white/20 p-2 rounded-full transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Corpo Modal */}
+            <div className="p-6 overflow-y-auto flex-1 space-y-6">
+              
+              {/* Stato Attuale e Note Dipendente */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-gray-50 p-4 rounded-xl border flex items-center justify-between">
+                  <div>
+                    <div className="text-[10px] text-gray-500 font-bold uppercase">Stato del Fglio Ore</div>
+                    <div className="mt-1 flex items-center gap-2">
+                      {getStatusBadge(reviewingRapportino.stato)}
+                      {reviewingRapportino.stato === 'Inviato' && reviewingRapportino.submittedAt && (
+                        <span className="text-[10px] text-gray-400 font-medium">Inviato il: {new Date(reviewingRapportino.submittedAt).toLocaleDateString('it-IT')}</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-gray-50 p-4 rounded-xl border">
+                  <div className="text-[10px] text-gray-500 font-bold uppercase">Note Dipendente</div>
+                  <div className="mt-1 text-xs font-semibold text-gray-700 whitespace-pre-line italic">
+                    {reviewingRapportino.noteDipendente ? `"${reviewingRapportino.noteDipendente}"` : "Nessuna nota inserita."}
+                  </div>
+                </div>
+              </div>
+
+              {/* Tabella 1-31 Modificabile dall'HR se necessario */}
+              <div className="border rounded-2xl overflow-hidden shadow-sm bg-white">
+                <div className="px-4 py-2.5 bg-gray-50 text-[10px] text-gray-500 font-bold border-b">
+                  TABELLONE ORE (PUOI ESEGUIRE CORREZIONI DIRETTAMENTE SE NECESSARIO)
+                </div>
+                <div className="w-full overflow-x-auto scrollbar-thin">
+                  <table className="w-full text-center border-collapse min-w-[1100px] text-[11px]">
+                    <thead>
+                      <tr className="bg-gray-100 border-b border-gray-200 text-[9px] uppercase font-bold text-gray-600">
+                        <th className="p-2.5 text-left w-32 font-bold bg-gray-100 sticky left-0 z-10 border-r">Giorno</th>
+                        {Array.from({ length: 31 }).map((_, i) => {
+                          const d = i + 1;
+                          const out = d > daysInMonth;
+                          return (
+                            <th 
+                              key={i} 
+                              className={`p-1.5 border-r w-[2.8%] ${out ? 'bg-gray-300/50 text-gray-400' : isWeekend(d) ? 'bg-gray-200/70 text-gray-600' : 'text-gray-700'}`}
+                            >
+                              {d}
+                            </th>
+                          );
+                        })}
+                        <th className="p-2.5 font-bold bg-gray-50 border-l w-12">TOT</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y font-medium text-gray-700">
+                      
+                      {/* ORE ORDINARIE */}
+                      <tr>
+                        <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Ore Ord.</td>
+                        {Array.from({ length: 31 }).map((_, i) => {
+                          const d = i + 1;
+                          const out = d > daysInMonth;
+                          const g = reviewingRapportino.giorni[dayStr(d)];
+
+                          return (
+                            <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''}`}>
+                              {!out && g && (
+                                <input 
+                                  type="number"
+                                  disabled={g.malattia}
+                                  value={g.ore === 0 ? '' : g.ore}
+                                  onChange={e => handleReviewCellChange(dayStr(d), 'ore', e.target.value === '' ? 0 : Number(e.target.value))}
+                                  className="w-full text-center bg-transparent border-none p-0.5 rounded font-bold outline-none focus:bg-gray-50 text-gray-900"
+                                />
+                              )}
+                              {out && '-'}
+                            </td>
+                          );
+                        })}
+                        <td className="p-2 font-bold bg-gray-50 border-l">
+                          {calculateTotals(reviewingRapportino.giorni, daysInMonth).oreOrd}
+                        </td>
+                      </tr>
+
+                      {/* STRAORDINARI */}
+                      <tr>
+                        <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Straord.</td>
+                        {Array.from({ length: 31 }).map((_, i) => {
+                          const d = i + 1;
+                          const out = d > daysInMonth;
+                          const g = reviewingRapportino.giorni[dayStr(d)];
+
+                          return (
+                            <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''}`}>
+                              {!out && g && (
+                                <input 
+                                  type="number"
+                                  disabled={g.malattia}
+                                  value={g.straordinari === 0 ? '' : g.straordinari}
+                                  onChange={e => handleReviewCellChange(dayStr(d), 'straordinari', e.target.value === '' ? 0 : Number(e.target.value))}
+                                  className="w-full text-center bg-transparent border-none p-0.5 rounded font-bold outline-none text-amber-600 focus:bg-gray-50 font-extrabold"
+                                />
+                              )}
+                              {out && '-'}
+                            </td>
+                          );
+                        })}
+                        <td className="p-2 font-bold text-amber-600 bg-gray-50 border-l">
+                          {calculateTotals(reviewingRapportino.giorni, daysInMonth).oreStra}
+                        </td>
+                      </tr>
+
+                      {/* FERIE */}
+                      <tr>
+                        <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Ferie</td>
+                        {Array.from({ length: 31 }).map((_, i) => {
+                          const d = i + 1;
+                          const out = d > daysInMonth;
+                          const g = reviewingRapportino.giorni[dayStr(d)];
+
+                          return (
+                            <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''}`}>
+                              {!out && g && (
+                                <input 
+                                  type="number"
+                                  disabled={g.malattia}
+                                  value={g.ferie === 0 ? '' : g.ferie}
+                                  onChange={e => handleReviewCellChange(dayStr(d), 'ferie', e.target.value === '' ? 0 : Number(e.target.value))}
+                                  className="w-full text-center bg-transparent border-none p-0.5 rounded font-bold text-green-700 outline-none focus:bg-gray-50"
+                                />
+                              )}
+                              {out && '-'}
+                            </td>
+                          );
+                        })}
+                        <td className="p-2 font-bold text-green-700 bg-gray-50 border-l">
+                          {calculateTotals(reviewingRapportino.giorni, daysInMonth).oreFerie}
+                        </td>
+                      </tr>
+
+                      {/* PERMESSI */}
+                      <tr>
+                        <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Permessi</td>
+                        {Array.from({ length: 31 }).map((_, i) => {
+                          const d = i + 1;
+                          const out = d > daysInMonth;
+                          const g = reviewingRapportino.giorni[dayStr(d)];
+
+                          return (
+                            <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''}`}>
+                              {!out && g && (
+                                <input 
+                                  type="number"
+                                  disabled={g.malattia}
+                                  value={g.permessi === 0 ? '' : g.permessi}
+                                  onChange={e => handleReviewCellChange(dayStr(d), 'permessi', e.target.value === '' ? 0 : Number(e.target.value))}
+                                  className="w-full text-center bg-transparent border-none p-0.5 rounded font-bold text-indigo-600 outline-none focus:bg-gray-50"
+                                />
+                              )}
+                              {out && '-'}
+                            </td>
+                          );
+                        })}
+                        <td className="p-2 font-bold text-indigo-600 bg-gray-50 border-l">
+                          {calculateTotals(reviewingRapportino.giorni, daysInMonth).orePerm}
+                        </td>
+                      </tr>
+
+                      {/* MALATTIA */}
+                      <tr>
+                        <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Malattia</td>
+                        {Array.from({ length: 31 }).map((_, i) => {
+                          const d = i + 1;
+                          const out = d > daysInMonth;
+                          const g = reviewingRapportino.giorni[dayStr(d)];
+
+                          return (
+                            <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''} align-middle`}>
+                              {!out && g && (
+                                <div className="flex justify-center items-center">
+                                  <input 
+                                    type="checkbox"
+                                    checked={g.malattia || false}
+                                    onChange={e => handleReviewCellChange(dayStr(d), 'malattia', e.target.checked)}
+                                    className="w-3.5 h-3.5 text-red-500 rounded"
+                                  />
+                                </div>
+                              )}
+                              {out && '-'}
+                            </td>
+                          );
+                        })}
+                        <td className="p-2 font-bold text-red-600 bg-gray-50 border-l">
+                          {calculateTotals(reviewingRapportino.giorni, daysInMonth).ggMalattia} gg
+                        </td>
+                      </tr>
+
+                      {/* TRASFERTA */}
+                      <tr>
+                        <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Trasferta</td>
+                        {Array.from({ length: 31 }).map((_, i) => {
+                          const d = i + 1;
+                          const out = d > daysInMonth;
+                          const g = reviewingRapportino.giorni[dayStr(d)];
+
+                          return (
+                            <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''} align-middle`}>
+                              {!out && g && (
+                                <div className="flex justify-center items-center">
+                                  <input 
+                                    type="checkbox"
+                                    checked={g.trasferta || false}
+                                    onChange={e => handleReviewCellChange(dayStr(d), 'trasferta', e.target.checked)}
+                                    className="w-3.5 h-3.5 text-blue-500 rounded"
+                                  />
+                                </div>
+                              )}
+                              {out && '-'}
+                            </td>
+                          );
+                        })}
+                        <td className="p-2 font-bold text-blue-600 bg-gray-50 border-l">
+                          {calculateTotals(reviewingRapportino.giorni, daysInMonth).ggTrasferta} gg
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Dettaglio Trasferte Località */}
+              <div className="bg-gray-50 p-4 rounded-xl border space-y-3">
+                <h4 className="font-extrabold text-xs text-gray-700 flex items-center gap-1">
+                  <MapPin className="w-4 h-4 text-blue-500" />
+                  Luoghi delle Trasferte inserite:
+                </h4>
+                {getTrasferteList(reviewingRapportino.giorni, daysInMonth).length === 0 ? (
+                  <p className="text-xs text-gray-400 italic">Nessuna trasferta indicata.</p>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {getTrasferteList(reviewingRapportino.giorni, daysInMonth).map(({ giorno, luogo }) => (
+                      <div key={giorno} className="flex items-center gap-2 bg-white p-2 rounded-lg border shadow-sm text-xs">
+                        <span className="font-bold bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded">Gg {giorno}</span>
+                        <input 
+                          type="text"
+                          value={luogo}
+                          onChange={e => handleReviewCellChange(dayStr(giorno), 'luogoTrasferta', e.target.value)}
+                          className="flex-1 p-1 border rounded focus:border-blue-400 outline-none"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Footer Modal con Azioni */}
+            <div className="p-5 border-t bg-gray-50 flex justify-between items-center shrink-0">
+              <div className="flex gap-2">
+                <button 
+                  onClick={handleHRSaveModifications}
+                  className="px-4 py-2.5 bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold rounded-xl text-xs transition active:scale-95"
+                >
+                  Salva Modifiche Ore
+                </button>
+              </div>
+
+              <div className="flex gap-3">
+                {/* Mostra "Richiedi Modifica" ed "Approva" solo se lo stato non è già Approvato */}
+                {reviewingRapportino.stato !== 'Approvato' && (
+                  <>
+                    <button 
+                      onClick={() => {
+                        setHrFeedbackNote(reviewingRapportino.noteHR || '');
+                        setIsFeedbackModalOpen(true);
+                      }}
+                      className="px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl text-xs transition shadow active:scale-95"
+                    >
+                      Richiedi Modifica
+                    </button>
+                    <button 
+                      onClick={handleHRApprove}
+                      className="px-5 py-2.5 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl text-xs transition shadow-md active:scale-95"
+                    >
+                      Approva Rapportino
+                    </button>
+                  </>
+                )}
+                {reviewingRapportino.stato === 'Approvato' && (
+                  <div className="text-xs font-bold text-green-700 flex items-center gap-1.5 p-2 bg-green-50 rounded-lg">
+                    <Check className="w-4 h-4"/> Già Approvato
+                  </div>
+                )}
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* 4. MODAL DI RICHIESTA CORREZIONE/FEEDBACK (DA HR A UTENTE)  */}
+      {/* ======================================================== */}
+      {isFeedbackModalOpen && reviewingRapportino && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60] p-4 no-print">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden transform scale-100 transition-all">
+            <div className="bg-orange-600 p-4 text-white font-extrabold flex justify-between items-center">
+              <span>Nota di correzione presenze</span>
+              <button onClick={() => setIsFeedbackModalOpen(false)} className="hover:bg-white/20 p-1 rounded-full"><X className="w-5 h-5"/></button>
+            </div>
+            <form onSubmit={handleHRRequestChanges} className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-2">
+                  Specifica quali correzioni o documenti mancano (sarà visibile al dipendente):
+                </label>
+                <textarea
+                  required
+                  rows={4}
+                  value={hrFeedbackNote}
+                  onChange={e => setHrFeedbackNote(e.target.value)}
+                  placeholder="Es. Mancano i giustificativi del giorno 12. Inserisci anche il numero di protocollo della malattia per i giorni 18-20 nelle note."
+                  className="w-full p-3 text-xs border border-gray-200 rounded-xl outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
+                />
+              </div>
+              <div className="flex justify-end gap-2 text-xs font-bold">
+                <button 
+                  type="button" 
+                  onClick={() => setIsFeedbackModalOpen(false)}
+                  className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-700"
+                >
+                  Annulla
+                </button>
+                <button 
+                  type="submit"
+                  className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg shadow"
+                >
+                  Invia Nota
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================== */}
+      {/* 5. SEZIONE SEGRETA DI STAMPA PDF           */}
+      {/* ========================================== */}
+      {/* Questa sezione viene formattata specificamente per la stampa in A4 orizzontale */}
+      <div className="hidden print:block print-container w-full h-full text-[9px] font-sans p-4">
+        
+        {/* Intestazione per la stampa di un singolo dipendente (modal recensito o dipendente stesso) */}
+        {(() => {
+          // Determina quale rapportino stampare: se HR sta recensendo qualcuno stampa quello, altrimenti il proprio
+          const sheetToPrint = printTargetSheet || reviewingRapportino || (viewMode === 'compila' ? rapportino : null);
+          if (!sheetToPrint) return <div className="text-center p-8 text-gray-400">Nessun foglio ore selezionato per la stampa.</div>;
+          
+          const totals = calculateTotals(sheetToPrint.giorni, daysInMonth);
+          const trasferte = getTrasferteList(sheetToPrint.giorni, daysInMonth);
+
+          return (
+            <div className="space-y-6">
+              
+              {/* Intestazione Documento */}
+              <div className="flex justify-between items-end border-b-2 border-gray-900 pb-2">
+                <div>
+                  <div className="text-sm font-extrabold text-gray-900">INGEGNO P & C SRL</div>
+                  <div className="text-[9px] text-gray-500">Pianificazione Presenze ed Ore Lavorate</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-sm font-extrabold text-gray-900">SCHEMA PRESENZE</div>
+                  <div className="text-[10px] font-bold text-gray-800">
+                    Mese: {MESI[selectedMonth - 1].toUpperCase()} {selectedYear}
+                  </div>
+                </div>
+              </div>
+
+              {/* Dettagli Anagrafici */}
+              <div className="grid grid-cols-2 gap-4 border border-gray-300 p-3 bg-gray-50 rounded">
+                <div>
+                  <span className="font-extrabold text-gray-600">DIPENDENTE:</span>{' '}
+                  <span className="font-extrabold text-gray-900 text-[10px] uppercase">{sheetToPrint.dipendenteNome}</span>
+                </div>
+                <div className="text-right">
+                  <span className="font-extrabold text-gray-600">EMAIL:</span>{' '}
+                  <span className="font-semibold text-gray-900">{sheetToPrint.dipendenteEmail}</span>
+                </div>
+              </div>
+
+              {/* Tabellone Griglia 1-31 */}
+              <table className="w-full text-center border border-gray-950 table-fixed">
+                <thead>
+                  <tr className="bg-gray-150 border-b border-gray-950 font-bold text-gray-900 text-[8px]">
+                    <th className="p-1.5 border-r border-gray-950 text-left w-[12%] font-extrabold">RIGA/GIORNO</th>
+                    {Array.from({ length: 31 }).map((_, i) => (
+                      <th key={i} className="p-1 border-r border-gray-950 w-[2.6%] font-extrabold">{i + 1}</th>
+                    ))}
+                    <th className="p-1.5 border-l border-gray-950 w-[6%] font-extrabold">TOT</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-950 font-semibold text-gray-900">
+                  
+                  {/* RIGA 1: ORE */}
+                  <tr>
+                    <td className="p-1.5 text-left bg-gray-50 border-r border-gray-950 font-extrabold">ORE</td>
+                    {Array.from({ length: 31 }).map((_, i) => {
+                      const d = i + 1;
+                      const val = sheetToPrint.giorni[dayStr(d)]?.ore;
+                      const out = d > daysInMonth;
+                      return (
+                        <td key={i} className={`p-1 border-r border-gray-950 ${out ? 'bg-gray-300' : ''}`}>
+                          {!out ? (val || 0) : ''}
+                        </td>
+                      );
+                    })}
+                    <td className="p-1.5 font-extrabold bg-gray-100">{totals.oreOrd}</td>
+                  </tr>
+
+                  {/* RIGA 2: STRAORDINARI */}
+                  <tr>
+                    <td className="p-1.5 text-left bg-gray-50 border-r border-gray-950 font-extrabold">STRAORDINARI</td>
+                    {Array.from({ length: 31 }).map((_, i) => {
+                      const d = i + 1;
+                      const val = sheetToPrint.giorni[dayStr(d)]?.straordinari;
+                      const out = d > daysInMonth;
+                      return (
+                        <td key={i} className={`p-1 border-r border-gray-950 ${out ? 'bg-gray-300' : ''}`}>
+                          {!out ? (val || 0) : ''}
+                        </td>
+                      );
+                    })}
+                    <td className="p-1.5 font-extrabold bg-gray-100">{totals.oreStra}</td>
+                  </tr>
+
+                  {/* RIGA 3: FERIE */}
+                  <tr>
+                    <td className="p-1.5 text-left bg-gray-50 border-r border-gray-950 font-extrabold">FERIE</td>
+                    {Array.from({ length: 31 }).map((_, i) => {
+                      const d = i + 1;
+                      const val = sheetToPrint.giorni[dayStr(d)]?.ferie;
+                      const out = d > daysInMonth;
+                      return (
+                        <td key={i} className={`p-1 border-r border-gray-950 ${out ? 'bg-gray-300' : ''}`}>
+                          {!out ? (val || 0) : ''}
+                        </td>
+                      );
+                    })}
+                    <td className="p-1.5 font-extrabold bg-gray-100">{totals.oreFerie}</td>
+                  </tr>
+
+                  {/* RIGA 4: PERMESSI */}
+                  <tr>
+                    <td className="p-1.5 text-left bg-gray-50 border-r border-gray-950 font-extrabold">PERMESSI</td>
+                    {Array.from({ length: 31 }).map((_, i) => {
+                      const d = i + 1;
+                      const val = sheetToPrint.giorni[dayStr(d)]?.permessi;
+                      const out = d > daysInMonth;
+                      return (
+                        <td key={i} className={`p-1 border-r border-gray-950 ${out ? 'bg-gray-300' : ''}`}>
+                          {!out ? (val || 0) : ''}
+                        </td>
+                      );
+                    })}
+                    <td className="p-1.5 font-extrabold bg-gray-100">{totals.orePerm}</td>
+                  </tr>
+
+                  {/* RIGA 5: MALATTIA */}
+                  <tr>
+                    <td className="p-1.5 text-left bg-gray-50 border-r border-gray-950 font-extrabold">MALATTIA (M)</td>
+                    {Array.from({ length: 31 }).map((_, i) => {
+                      const d = i + 1;
+                      const val = sheetToPrint.giorni[dayStr(d)]?.malattia;
+                      const out = d > daysInMonth;
+                      return (
+                        <td key={i} className={`p-1 border-r border-gray-950 ${out ? 'bg-gray-300' : ''}`}>
+                          {!out && val ? 'M' : ''}
+                        </td>
+                      );
+                    })}
+                    <td className="p-1.5 font-extrabold bg-gray-100">{totals.ggMalattia} gg</td>
+                  </tr>
+
+                  {/* RIGA 6: TRASFERTA */}
+                  <tr>
+                    <td className="p-1.5 text-left bg-gray-50 border-r border-gray-950 font-extrabold">TRASFERTA (T)</td>
+                    {Array.from({ length: 31 }).map((_, i) => {
+                      const d = i + 1;
+                      const val = sheetToPrint.giorni[dayStr(d)]?.trasferta;
+                      const out = d > daysInMonth;
+                      return (
+                        <td key={i} className={`p-1 border-r border-gray-950 ${out ? 'bg-gray-300' : ''}`}>
+                          {!out && val ? 'T' : ''}
+                        </td>
+                      );
+                    })}
+                    <td className="p-1.5 font-extrabold bg-gray-100">{totals.ggTrasferta} gg</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              {/* Dettagli in basso per Stampa */}
+              <div className="grid grid-cols-2 gap-6 pt-2">
+                {/* Note */}
+                <div className="border border-gray-400 p-2.5 rounded bg-gray-50">
+                  <div className="font-extrabold text-[8px] border-b pb-1 text-gray-800 uppercase">Avvertenze e Note:</div>
+                  <p className="text-[7.5px] mt-1 leading-normal text-gray-700">
+                    * NEL CASO DI MALATTIA O MATERNITÀ SEGNARE (M) E INDICARE NELLE NOTE IL N° DI PROTOCOLLO DEL CERTIFICATO.
+                  </p>
+                  <p className="text-[8px] font-bold mt-2 text-gray-900 whitespace-pre-line italic">
+                    Note inserite: {sheetToPrint.noteDipendente ? `"${sheetToPrint.noteDipendente}"` : 'nessuna nota.'}
+                  </p>
+                </div>
+
+                {/* Elenco Trasferte */}
+                <div className="border border-gray-400 p-2.5 rounded bg-gray-50">
+                  <div className="font-extrabold text-[8px] border-b pb-1 text-gray-800 uppercase">Dettaglio Località Trasferte (T):</div>
+                  {trasferte.length === 0 ? (
+                    <p className="text-[7.5px] mt-1 italic text-gray-500">Nessuna trasferta effettuata nel mese.</p>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-1 mt-1 text-[7.5px]">
+                      {trasferte.map(tr => (
+                        <div key={tr.giorno}>
+                          <span className="font-bold">Giorno {tr.giorno}:</span> {tr.luogo || 'Località non specificata'}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Firme per Accettazione */}
+              <div className="grid grid-cols-2 gap-12 pt-12 text-[10px]">
+                <div className="text-center border-t border-gray-900 pt-1.5 max-w-[200px] mx-auto">
+                  <div className="font-bold">Firma del Dipendente</div>
+                  <div className="text-[8px] text-gray-400 mt-0.5">({sheetToPrint.dipendenteNome})</div>
+                </div>
+                <div className="text-center border-t border-gray-900 pt-1.5 max-w-[200px] mx-auto">
+                  <div className="font-bold">Firma Direzione / HR</div>
+                  <div className="text-[8px] text-gray-400 mt-0.5">
+                    {sheetToPrint.stato === 'Approvato' ? `Approvato da: ${sheetToPrint.approvedBy}` : '(firma per approvazione)'}
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          );
+        })()}
+      </div>
+
+      <ConfirmModal
+        isOpen={confirmConfig.isOpen}
+        title={confirmConfig.title}
+        message={confirmConfig.message}
+        type={confirmConfig.type}
+        onConfirm={confirmConfig.onConfirm}
+        onCancel={() => setConfirmConfig(prev => ({ ...prev, isOpen: false }))}
+      />
+    </div>
+  );
+}

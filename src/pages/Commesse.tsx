@@ -15,6 +15,7 @@ interface Assegnazione {
   commessaName: string;
   percentuale: number;
   colore: string;
+  giorni?: string[];
 }
 
 export default function Commesse() {
@@ -23,6 +24,7 @@ export default function Commesse() {
   const [baseDate, setBaseDate] = useState<Date>(new Date());
   const [weeks, setWeeks] = useState<WeekInfo[]>([]);
   const [assignments, setAssignments] = useState<Record<string, Assegnazione[]>>({});
+  const [viewRange, setViewRange] = useState<'settimana' | 'mese'>('mese');
   
   // UI States
   const [activeTab, setActiveTab] = useState<'tabella' | 'grafici'>('tabella');
@@ -44,8 +46,13 @@ export default function Commesse() {
   const [chartWeeks, setChartWeeks] = useState<WeekInfo[]>([]);
 
   useEffect(() => {
-    setWeeks(generateWeeks(baseDate));
-  }, [baseDate]);
+    const allWeeks = generateWeeks(baseDate);
+    if (viewRange === 'settimana') {
+      setWeeks([allWeeks[0]]);
+    } else {
+      setWeeks(allWeeks);
+    }
+  }, [baseDate, viewRange]);
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'assegnazioni'), (snapshot) => {
@@ -57,6 +64,17 @@ export default function Commesse() {
     });
     return () => unsub();
   }, []);
+
+  const daysOfWeek = useMemo(() => {
+    const start = getStartOfWeek(baseDate);
+    return [
+      { label: 'Lunedì', key: 'Lun', date: start },
+      { label: 'Martedì', key: 'Mar', date: addDays(start, 1) },
+      { label: 'Mercoledì', key: 'Mer', date: addDays(start, 2) },
+      { label: 'Giovedì', key: 'Gio', date: addDays(start, 3) },
+      { label: 'Venerdì', key: 'Ven', date: addDays(start, 4) },
+    ];
+  }, [baseDate]);
 
   // Filtered Employees
   const dipendentiDaMostrare = useMemo(() => {
@@ -210,7 +228,7 @@ export default function Commesse() {
       <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-sm p-4 sm:p-6 border border-white/50 no-print flex flex-col md:flex-row justify-between items-center gap-4">
         <h2 className="text-3xl font-extrabold text-gray-900 flex items-center gap-3">
           <div className="p-3 bg-blue-100 rounded-2xl"><Briefcase className="text-blue-600 w-8 h-8" /></div>
-          <span id="commesse-title">{(isAdmin || isSenior) ? "Pianificazione Aziendale" : "La tua Pianificazione"}</span>
+          <span id="commesse-title">{(isAdmin || isSenior) ? "Pianificazione Commesse" : "La tua Pianificazione Commesse"}</span>
         </h2>
 
         {(isAdmin || isSenior) && (
@@ -280,6 +298,25 @@ export default function Commesse() {
                     </div>
                   </>
                 )}
+                
+                {/* Selettore Vista Settimanale / Mensile per Stampa & Schermo */}
+                <div className="flex bg-gray-200/50 p-1.5 rounded-xl shadow-inner ml-2 border border-gray-100">
+                  <button 
+                    onClick={() => setViewRange('mese')}
+                    className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-all ${viewRange === 'mese' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                  >
+                    Vista Mensile
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setViewRange('settimana');
+                      setBaseDate(new Date());
+                    }}
+                    className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-all ${viewRange === 'settimana' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                  >
+                    Vista Settimanale
+                  </button>
+                </div>
               </div>
 
               {/* Navigazione Settimane & Stampa */}
@@ -296,6 +333,13 @@ export default function Commesse() {
                 </button>
               </div>
             </div>
+
+            {viewRange === 'settimana' && weeks[0] && (
+              <div className="text-sm font-extrabold text-gray-700 bg-indigo-50/70 border border-indigo-100/60 px-4 py-2 rounded-xl flex items-center gap-2 self-start animate-in fade-in duration-200">
+                <span>Settimana in esame:</span>
+                <span className="text-indigo-700">{weeks[0].label} ({weeks[0].sub})</span>
+              </div>
+            )}
 
             {/* Legenda Colori per Vista Compatta */}
             {isCompact && (
@@ -316,78 +360,176 @@ export default function Commesse() {
               <thead className="sticky top-[80px] bg-white/95 backdrop-blur-md z-30 shadow-sm border-b-2 border-gray-200">
                 <tr>
                   <th className="p-4 font-extrabold text-gray-900 w-1/6 sticky left-0 z-40 bg-white/95 backdrop-blur-md shadow-[1px_0_0_0_#e5e7eb]">Dipendente</th>
-                  {weeks.map((wk, i) => {
-                    const isCurrentWeek = wk.id === `${new Date().getFullYear()}-W${getWeekNumber(new Date())}`;
-                    return (
-                      <th key={i} className={`p-3 text-center border-l border-b-2 border-gray-200 w-1/6 ${isCurrentWeek ? 'bg-blue-50/50' : ''}`}>
-                        <div className="font-extrabold text-gray-900">{wk.label}</div>
-                        <div className="text-xs font-bold text-gray-500 mt-0.5">{wk.sub}</div>
-                      </th>
-                    );
-                  })}
+                  {viewRange === 'mese' ? (
+                    weeks.map((wk, i) => {
+                      const isCurrentWeek = wk.id === `${new Date().getFullYear()}-W${getWeekNumber(new Date())}`;
+                      return (
+                        <th key={i} className={`p-3 text-center border-l border-b-2 border-gray-200 w-1/6 ${isCurrentWeek ? 'bg-blue-50/50' : ''}`}>
+                          <div className="font-extrabold text-gray-900">{wk.label}</div>
+                          <div className="text-xs font-bold text-gray-500 mt-0.5">{wk.sub}</div>
+                        </th>
+                      );
+                    })
+                  ) : (
+                    daysOfWeek.map((day, i) => {
+                      const isToday = day.date.toDateString() === new Date().toDateString();
+                      return (
+                        <th key={i} className={`p-3 text-center border-l border-b-2 border-gray-200 w-1/6 ${isToday ? 'bg-indigo-50/50 border-indigo-200' : ''}`}>
+                          <div className="font-extrabold text-gray-900">{day.label}</div>
+                          <div className="text-xs font-bold text-gray-500 mt-0.5">
+                            {day.date.toLocaleDateString('it-IT', { day: '2-digit', month: 'short' })}
+                          </div>
+                        </th>
+                      );
+                    })
+                  )}
                 </tr>
               </thead>
               <tbody>
                 {dipendentiDaMostrare.length === 0 ? (
-                  <tr><td colSpan={6} className="p-8 text-center text-gray-500 font-bold">Nessun dipendente trovato per i filtri selezionati.</td></tr>
+                  <tr><td colSpan={viewRange === 'mese' ? weeks.length + 1 : 6} className="p-8 text-center text-gray-500 font-bold">Nessun dipendente trovato per i filtri selezionati.</td></tr>
                 ) : (
                   dipendentiDaMostrare.map((dip, index) => (
                     <tr key={index} className="hover:bg-blue-50/30 transition-colors group">
                       <td className={`font-bold text-gray-800 bg-white sticky left-0 z-20 shadow-[1px_0_0_0_#f3f4f6] border-b border-gray-100 align-middle ${isCompact ? 'p-3' : 'p-4'}`}>{dip.nome}</td>
-                      {weeks.map((wk, wIndex) => {
-                        const key = `${dip.nome}-${wk.id}`;
-                        const assList = assignments[key] || [];
-                        const totalePercent = assList.reduce((t, c) => t + Number(c.percentuale), 0);
-                        
-                        let barColor = "bg-gray-200";
-                        if(totalePercent > 0 && totalePercent < 100) barColor = "bg-yellow-400";
-                        if(totalePercent === 100) barColor = "bg-green-500";
-                        if(totalePercent > 100) barColor = "bg-red-500";
+                      {viewRange === 'mese' ? (
+                        weeks.map((wk, wIndex) => {
+                          const key = `${dip.nome}-${wk.id}`;
+                          const assList = assignments[key] || [];
+                          const totalePercent = assList.reduce((t, c) => t + Number(c.percentuale), 0);
+                          
+                          let barColor = "bg-gray-200";
+                          if(totalePercent > 0 && totalePercent < 100) barColor = "bg-yellow-400";
+                          if(totalePercent === 100) barColor = "bg-green-500";
+                          if(totalePercent > 100) barColor = "bg-red-500";
 
-                        return (
-                          <td 
-                            key={wIndex} 
-                            onClick={() => handleCellClick(dip.nome, wk.id, wk.label, wk.sub)}
-                            className={`border-l border-b border-gray-100 transition-colors align-top bg-white ${(isAdmin || isSenior) ? 'cursor-pointer hover:bg-blue-50/80' : ''} ${isCompact ? 'p-1.5' : 'p-2'}`}
-                          >
-                            <div className={`flex flex-col items-center justify-start h-full relative group/cell ${isCompact ? 'min-h-[30px]' : 'min-h-[70px] pt-1'}`}>
-                              
-                              <div className="w-full flex justify-between items-center px-1.5 mb-1">
-                                <span className={`text-[10px] font-extrabold ${totalePercent > 100 ? 'text-red-600' : 'text-gray-500'}`}>{totalePercent}%</span>
-                                <div className="flex-1 h-1.5 bg-gray-100 ml-2 rounded-full overflow-hidden flex">
-                                  {isCompact ? (
-                                    assList.map((a, idx) => (
-                                      <div key={idx} style={{width: `${a.percentuale}%`, backgroundColor: a.colore}} className="h-full border-r border-white/50 last:border-none" title={`${a.commessaName} (${a.percentuale}%)`}></div>
-                                    ))
-                                  ) : (
-                                    <div className={`h-full ${barColor} rounded-full transition-all`} style={{width: `${Math.min(totalePercent, 100)}%`}}></div>
-                                  )}
+                          return (
+                            <td 
+                              key={wIndex} 
+                              onClick={() => handleCellClick(dip.nome, wk.id, wk.label, wk.sub)}
+                              className={`border-l border-b border-gray-100 transition-colors align-top bg-white ${(isAdmin || isSenior) ? 'cursor-pointer hover:bg-blue-50/80' : ''} ${isCompact ? 'p-1.5' : 'p-2'}`}
+                            >
+                              <div className={`flex flex-col items-center justify-start h-full relative group/cell ${isCompact ? 'min-h-[30px]' : 'min-h-[70px] pt-1'}`}>
+                                
+                                <div className="w-full flex justify-between items-center px-1.5 mb-1">
+                                  <span className={`text-[10px] font-extrabold ${totalePercent > 100 ? 'text-red-600' : 'text-gray-500'}`}>{totalePercent}%</span>
+                                  <div className="flex-1 h-1.5 bg-gray-100 ml-2 rounded-full overflow-hidden flex">
+                                    {isCompact ? (
+                                      assList.map((a, idx) => {
+                                        const daysStr = a.giorni ? ` (${a.giorni.length === 5 ? 'Tutta la sett.' : a.giorni.join(', ')})` : '';
+                                        return (
+                                          <div key={idx} style={{width: `${a.percentuale}%`, backgroundColor: a.colore}} className="h-full border-r border-white/50 last:border-none" title={`${a.commessaName} (${a.percentuale}%)${daysStr}`}></div>
+                                        );
+                                      })
+                                    ) : (
+                                      <div className={`h-full ${barColor} rounded-full transition-all`} style={{width: `${Math.min(totalePercent, 100)}%`}}></div>
+                                    )}
+                                  </div>
                                 </div>
-                              </div>
-                              
-                              {(isAdmin || isSenior) && assList.length === 0 && (
-                                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/cell:opacity-100 transition-opacity">
-                                  <span className="text-blue-400 font-bold text-xl">+</span>
-                                </div>
-                              )}
+                                
+                                {(isAdmin || isSenior) && assList.length === 0 && (
+                                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/cell:opacity-100 transition-opacity">
+                                    <span className="text-blue-400 font-bold text-xl">+</span>
+                                  </div>
+                                )}
 
-                              {!isCompact && (
-                                <div className="w-full flex flex-col gap-1 px-1 relative z-10 mt-1">
-                                  {assList.map((ass, aIndex) => (
-                                    <div key={aIndex} className="text-[10px] flex items-center justify-between p-1 rounded-md bg-white border border-gray-100 shadow-sm leading-tight w-full">
-                                      <div className="flex items-center min-w-0">
-                                        <span className="w-1.5 h-1.5 rounded-full mr-1.5 shrink-0" style={{backgroundColor: ass.colore}}></span>
-                                        <span className="truncate font-semibold text-gray-700" title={ass.commessaName}>{ass.commessaName}</span>
+                                {!isCompact && (
+                                  <div className="w-full flex flex-col gap-1 px-1 relative z-10 mt-1">
+                                    {assList.map((ass, aIndex) => (
+                                      <div key={aIndex} className="text-[10px] flex flex-col p-1.5 rounded-md bg-white border border-gray-100 shadow-sm leading-tight w-full gap-1">
+                                        <div className="flex items-center justify-between min-w-0 w-full">
+                                          <div className="flex items-center min-w-0">
+                                            <span className="w-1.5 h-1.5 rounded-full mr-1.5 shrink-0" style={{backgroundColor: ass.colore}}></span>
+                                            <span className="truncate font-bold text-gray-700" title={ass.commessaName}>{ass.commessaName}</span>
+                                          </div>
+                                          <span className="ml-1 font-bold text-blue-600/80 shrink-0">{ass.percentuale}%</span>
+                                        </div>
+                                        {ass.giorni && ass.giorni.length > 0 && (
+                                          <div className="text-[8px] text-gray-500 font-extrabold bg-gray-50 px-1 py-0.5 rounded text-left border border-gray-100/50">
+                                            {ass.giorni.length === 5 ? 'Sett. Completa' : ass.giorni.join(', ')}
+                                          </div>
+                                        )}
                                       </div>
-                                      <span className="ml-1 font-bold text-blue-600/80 shrink-0">{ass.percentuale}%</span>
-                                    </div>
-                                  ))}
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          );
+                        })
+                      ) : (
+                        daysOfWeek.map((day, dIndex) => {
+                          const currentWeek = weeks[0] || generateWeeks(baseDate)[0];
+                          const key = `${dip.nome}-${currentWeek.id}`;
+                          const weekAssList = assignments[key] || [];
+                          const dayAssList = weekAssList.filter(a => a.giorni?.includes(day.key));
+                          
+                          const dayTotalePercent = dayAssList.reduce((acc, a) => {
+                            const daysCount = a.giorni ? a.giorni.length : 0;
+                            const perDayVal = daysCount > 0 ? a.percentuale / daysCount : 20;
+                            return acc + perDayVal;
+                          }, 0);
+
+                          let barColor = "bg-gray-200";
+                          if(dayTotalePercent > 0 && dayTotalePercent < 100) barColor = "bg-yellow-400";
+                          if(dayTotalePercent === 100) barColor = "bg-green-500";
+                          if(dayTotalePercent > 100) barColor = "bg-red-500";
+
+                          return (
+                            <td 
+                              key={dIndex} 
+                              onClick={() => handleCellClick(dip.nome, currentWeek.id, currentWeek.label, currentWeek.sub)}
+                              className={`border-l border-b border-gray-100 transition-colors align-top bg-white ${(isAdmin || isSenior) ? 'cursor-pointer hover:bg-blue-50/80' : ''} ${isCompact ? 'p-1.5' : 'p-2'}`}
+                            >
+                              <div className={`flex flex-col items-center justify-start h-full relative group/cell ${isCompact ? 'min-h-[30px]' : 'min-h-[70px] pt-1'}`}>
+                                
+                                <div className="w-full flex justify-between items-center px-1.5 mb-1">
+                                  <span className={`text-[10px] font-extrabold ${dayTotalePercent > 100 ? 'text-red-600' : 'text-gray-500'}`}>{dayTotalePercent}%</span>
+                                  <div className="flex-1 h-1.5 bg-gray-100 ml-2 rounded-full overflow-hidden flex">
+                                    {isCompact ? (
+                                      dayAssList.map((a, idx) => {
+                                        const daysCount = a.giorni ? a.giorni.length : 0;
+                                        const perDayVal = daysCount > 0 ? a.percentuale / daysCount : 20;
+                                        return (
+                                          <div key={idx} style={{width: `${(perDayVal / Math.max(dayTotalePercent, 1)) * 100}%`, backgroundColor: a.colore}} className="h-full border-r border-white/50 last:border-none" title={`${a.commessaName} (${perDayVal}%)`}></div>
+                                        );
+                                      })
+                                    ) : (
+                                      <div className={`h-full ${barColor} rounded-full transition-all`} style={{width: `${Math.min(dayTotalePercent, 100)}%`}}></div>
+                                    )}
+                                  </div>
                                 </div>
-                              )}
-                            </div>
-                          </td>
-                        );
-                      })}
+                                
+                                {(isAdmin || isSenior) && dayAssList.length === 0 && (
+                                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/cell:opacity-100 transition-opacity">
+                                    <span className="text-blue-400 font-bold text-xl">+</span>
+                                  </div>
+                                )}
+
+                                {!isCompact && (
+                                  <div className="w-full flex flex-col gap-1 px-1 relative z-10 mt-1">
+                                    {dayAssList.map((ass, aIndex) => {
+                                      const daysCount = ass.giorni ? ass.giorni.length : 0;
+                                      const perDayVal = daysCount > 0 ? ass.percentuale / daysCount : 20;
+                                      return (
+                                        <div key={aIndex} className="text-[10px] flex flex-col p-1.5 rounded-md bg-white border border-gray-100 shadow-sm leading-tight w-full gap-1">
+                                          <div className="flex items-center justify-between min-w-0 w-full">
+                                            <div className="flex items-center min-w-0">
+                                              <span className="w-1.5 h-1.5 rounded-full mr-1.5 shrink-0" style={{backgroundColor: ass.colore}}></span>
+                                              <span className="truncate font-bold text-gray-700" title={ass.commessaName}>{ass.commessaName}</span>
+                                            </div>
+                                            <span className="ml-1 font-bold text-blue-600/80 shrink-0">{perDayVal}%</span>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          );
+                        })
+                      )}
                     </tr>
                   ))
                 )}
@@ -470,7 +612,8 @@ export default function Commesse() {
         weekLabel={modalData.weekLabel}
         weekSub={modalData.weekSub}
         commesseCatalog={commesse}
-        currentAssignments={modalData.currentAssignments}
+        currentAssignments={assignments[`${modalData.dipendente}-${modalData.weekId}`] || []}
+        dipendentiList={dipendenti}
       />
     </div>
   );

@@ -13,10 +13,41 @@
 
 /* Regole per la stampa (ereditate dall'originale) */
 @media print {
+  @page {
+    size: landscape;
+    margin: 0.8cm;
+  }
   .no-print { display: none !important; }
-  body { background-color: white !important; }
+  body { background-color: white !important; font-size: 9px !important; }
   * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
   .shadow, .shadow-sm, .shadow-lg, .shadow-xl { box-shadow: none !important; }
-  .border { border-color: #e5e7eb !important; }
-  .overflow-auto, .overflow-y-auto, .max-h-[75vh], .max-h-96 { overflow: visible !important; max-height: none !important; }
+  .border { border-color: #374151 !important; }
+  .overflow-auto, .overflow-y-auto, .max-h-\[75vh\], .max-h-96 { overflow: visible !important; max-height: none !important; }
+  table { border-collapse: collapse !important; width: 100% !important; }
+  th, td { border-color: #374151 !important; }
 }
+
+/* Nascondi freccette degli input di tipo number */
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type=number] {
+  -moz-appearance: textfield;
+}
+
+/* Rendi gli input nelle tabelle chiaramente visibili */
+table input {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: center;
+  padding: 2px 0;
+}
+

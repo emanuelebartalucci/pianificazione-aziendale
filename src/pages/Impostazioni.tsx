@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, addDoc, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
-import { Shield, UserCheck, Star, Briefcase, Users, Plus, Trash2, Settings } from 'lucide-react';
+import { Shield, UserCheck, Star, Briefcase, Users, Plus, Trash2, Settings, Printer } from 'lucide-react';
+import ConfirmModal from '../components/ConfirmModal';
 
 const PREDEFINED_COLORS = [
   '#ef4444', '#f97316', '#eab308', '#22c55e', 
@@ -10,6 +11,33 @@ const PREDEFINED_COLORS = [
 ];
 export default function Impostazioni() {
   const { isAdmin, dipendenti, commesse } = useAuth();
+  
+  // Stato per la modale di conferma personalizzata
+  const [confirmConfig, setConfirmConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    type?: 'danger' | 'warning' | 'info';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
+
+  const triggerConfirm = (title: string, message: string, onConfirm: () => void, type: 'danger' | 'warning' | 'info' = 'danger') => {
+    setConfirmConfig({
+      isOpen: true,
+      title,
+      message,
+      onConfirm: () => {
+        onConfirm();
+        setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+      },
+      type
+    });
+  };
   
   // States per i form
   const [newAdminEmail, setNewAdminEmail] = useState('');
@@ -86,10 +114,173 @@ export default function Impostazioni() {
     }
   };
 
-  const handleRemoveDipendente = async (id: string) => {
-    if(window.confirm("Sei sicuro di voler rimuovere questo dipendente?")) {
-      await deleteDoc(doc(db, 'dipendenti', id));
-    }
+  const handleRemoveDipendente = (id: string) => {
+    triggerConfirm(
+      "Rimuovi Dipendente",
+      "Sei sicuro di voler rimuovere questo dipendente? Questa azione non cancellerà i suoi rapportini esistenti, ma non potrà più accedere.",
+      async () => {
+        try {
+          await deleteDoc(doc(db, 'dipendenti', id));
+        } catch (err) {
+          console.error("Errore nella rimozione del dipendente:", err);
+        }
+      },
+      'danger'
+    );
+  };
+
+  const handlePrintCommesse = () => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    const htmlContent = `
+      <html>
+        <head>
+          <title>Anagrafica Clienti / Commesse</title>
+          <style>
+            body {
+              font-family: Arial, sans-serif;
+              margin: 30px;
+              color: #333;
+            }
+            h1 {
+              text-align: center;
+              margin-bottom: 30px;
+              font-size: 24px;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-top: 20px;
+            }
+            th, td {
+              border: 1px solid #ccc;
+              padding: 12px 15px;
+              text-align: left;
+            }
+            th {
+              background-color: #f3f4f6;
+              font-weight: bold;
+            }
+            .color-indicator {
+              display: inline-block;
+              width: 16px;
+              height: 16px;
+              border-radius: 50%;
+              vertical-align: middle;
+              margin-right: 10px;
+              border: 1px solid #ccc;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+          </style>
+        </head>
+        <body>
+          <h1>Anagrafica Clienti / Commesse</h1>
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 15%;">#</th>
+                <th style="width: 85%;">Nome Commessa / Cliente</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${commesse.map((c, index) => `
+                <tr>
+                  <td>${index + 1}</td>
+                  <td>
+                    <span class="color-indicator" style="background-color: ${c.colore}"></span>
+                    <strong>${c.nome}</strong>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          <script>
+            window.onload = function() {
+              window.print();
+              window.onafterprint = function() {
+                window.close();
+              };
+            };
+          </script>
+        </body>
+      </html>
+    `;
+
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
+  };
+
+  const handlePrintDipendenti = () => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    const htmlContent = `
+      <html>
+        <head>
+          <title>Anagrafica Dipendenti</title>
+          <style>
+            body {
+              font-family: Arial, sans-serif;
+              margin: 30px;
+              color: #333;
+            }
+            h1 {
+              text-align: center;
+              margin-bottom: 30px;
+              font-size: 24px;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-top: 20px;
+            }
+            th, td {
+              border: 1px solid #ccc;
+              padding: 12px 15px;
+              text-align: left;
+            }
+            th {
+              background-color: #f3f4f6;
+              font-weight: bold;
+            }
+          </style>
+        </head>
+        <body>
+          <h1>Anagrafica Dipendenti</h1>
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 15%;">#</th>
+                <th style="width: 45%;">Nome Completo</th>
+                <th style="width: 40%;">Email Aziendale</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${dipendenti.map((d, index) => `
+                <tr>
+                  <td>${index + 1}</td>
+                  <td><strong>${d.nome}</strong></td>
+                  <td>${d.email || 'Nessuna email'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          <script>
+            window.onload = function() {
+              window.print();
+              window.onafterprint = function() {
+                window.close();
+              };
+            };
+          </script>
+        </body>
+      </html>
+    `;
+
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
   };
 
   return (
@@ -169,7 +360,15 @@ export default function Impostazioni() {
         <div className="space-y-8">
           {/* Commesse */}
           <section className="bg-gradient-to-br from-emerald-50 to-teal-50 p-6 rounded-3xl border border-emerald-100 shadow-sm">
-            <h3 className="text-xl font-bold text-emerald-900 mb-4 flex items-center gap-2"><Briefcase className="w-6 h-6 text-emerald-600" /> Catalogo Commesse</h3>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold text-emerald-900 flex items-center gap-2"><Briefcase className="w-6 h-6 text-emerald-600" /> Catalogo Commesse</h3>
+              <button 
+                onClick={handlePrintCommesse}
+                className="flex items-center gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 px-3.5 py-1.5 rounded-xl text-xs font-bold transition shadow-sm active:scale-95"
+              >
+                <Printer className="w-3.5 h-3.5" /> Stampa Lista
+              </button>
+            </div>
             
             <div className="mb-4 space-y-3">
               <form onSubmit={handleAddCommessa} className="flex gap-2 items-center">
@@ -207,7 +406,15 @@ export default function Impostazioni() {
 
           {/* Anagrafica Dipendenti */}
           <section className="bg-gradient-to-br from-indigo-50 to-slate-50 p-6 rounded-3xl border border-indigo-100 shadow-sm">
-            <h3 className="text-xl font-bold text-indigo-900 mb-2 flex items-center gap-2"><Users className="w-6 h-6 text-indigo-600" /> Anagrafica Dipendenti</h3>
+            <div className="flex justify-between items-center mb-2">
+              <h3 className="text-xl font-bold text-indigo-900 flex items-center gap-2"><Users className="w-6 h-6 text-indigo-600" /> Anagrafica Dipendenti</h3>
+              <button 
+                onClick={handlePrintDipendenti}
+                className="flex items-center gap-1.5 bg-indigo-600 text-white hover:bg-indigo-700 px-3.5 py-1.5 rounded-xl text-xs font-bold transition shadow-sm active:scale-95"
+              >
+                <Printer className="w-3.5 h-3.5" /> Stampa Lista
+              </button>
+            </div>
             <p className="text-sm text-indigo-700/80 mb-4">Solo i dipendenti in questa lista possono registrarsi all'app.</p>
             <form onSubmit={handleAddDipendente} className="flex flex-col gap-3 mb-5">
               <input required type="text" placeholder="Nome Completo (es. Rossi Mario)" value={newDipNome} onChange={e => setNewDipNome(e.target.value)} className="w-full p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition shadow-inner" />
@@ -231,6 +438,14 @@ export default function Impostazioni() {
 
         </div>
       </div>
+      <ConfirmModal
+        isOpen={confirmConfig.isOpen}
+        title={confirmConfig.title}
+        message={confirmConfig.message}
+        type={confirmConfig.type}
+        onConfirm={confirmConfig.onConfirm}
+        onCancel={() => setConfirmConfig(prev => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 }

@@ -7,6 +7,8 @@ import Dashboard from './pages/Dashboard';
 import Commesse from './pages/Commesse';
 import Ferie from './pages/Ferie';
 import Impostazioni from './pages/Impostazioni';
+import Presenze from './pages/Presenze';
+import Suggerimenti from './pages/Suggerimenti';
 
 // Components
 import Navbar from './components/Navbar';
@@ -29,6 +31,8 @@ function App() {
               <Route path="/commesse" element={<Commesse />} />
               <Route path="/ferie" element={<Ferie />} />
               <Route path="/impostazioni" element={<Impostazioni />} />
+              <Route path="/presenze" element={<Presenze />} />
+              <Route path="/suggerimenti" element={<Suggerimenti />} />
               <Route path="*" element={<Navigate to="/" />} />
             </Routes>
           </main>
