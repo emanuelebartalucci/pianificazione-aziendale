@@ -8,6 +8,7 @@ export default function Login() {
   const [isLoginMode, setIsLoginMode] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
@@ -23,6 +24,11 @@ export default function Login() {
       if (isLoginMode) {
         await signInWithEmailAndPassword(auth, email, password);
       } else {
+        if (password !== confirmPassword) {
+          setError("Le password inserite non coincidono.");
+          setLoading(false);
+          return;
+        }
         // Verifica se l'email esiste nell'anagrafica
         const q = query(collection(db, "dipendenti"), where("email", "==", email.toLowerCase()));
         const querySnapshot = await getDocs(q);
@@ -138,6 +144,24 @@ export default function Login() {
               />
             </div>
           </div>
+          {!isLoginMode && (
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-1.5 ml-1">Conferma Password</label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                  <Lock className="h-5 w-5 text-gray-400" />
+                </div>
+                <input 
+                  type="password" 
+                  required 
+                  placeholder="••••••••"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="w-full pl-11 pr-4 py-3.5 border-none rounded-xl bg-gray-100/80 outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all shadow-inner"
+                />
+              </div>
+            </div>
+          )}
           <button 
             type="submit" 
             disabled={loading}
@@ -152,7 +176,7 @@ export default function Login() {
           <p className="text-sm text-gray-600">
             {isLoginMode ? "Non hai ancora un account?" : "Hai già un account?"}
             <button 
-              onClick={() => { setIsLoginMode(!isLoginMode); setError(''); setMessage(''); }} 
+              onClick={() => { setIsLoginMode(!isLoginMode); setError(''); setMessage(''); setConfirmPassword(''); }} 
               className="ml-2 font-bold text-blue-600 hover:text-blue-800 transition-colors"
             >
               {isLoginMode ? "Registrati ora" : "Accedi"}

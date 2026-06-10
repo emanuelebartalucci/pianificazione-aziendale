@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { type Commessa, type Dipendente } from '../contexts/AuthContext';
 import { X, Plus, Trash2 } from 'lucide-react';
-import { doc, setDoc, deleteDoc, collection, addDoc } from 'firebase/firestore';
+import { doc, setDoc, deleteDoc, collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../services/firebase';
-import { wrapMailTemplate } from '../utils/mailTemplate';
+import { queueMail } from '../utils/mailSender';
 
 interface Assegnazione {
   commessaId: string;
@@ -28,6 +28,82 @@ interface AssegnazioneModalProps {
 export default function AssegnazioneModal({ isOpen, onClose, dipendente, weekId, weekLabel, weekSub, commesseCatalog, currentAssignments, dipendentiList }: AssegnazioneModalProps) {
   const [selectedCommessa, setSelectedCommessa] = useState('');
   const [selectedDays, setSelectedDays] = useState<string[]>([]);
+  const [approvedAbsences, setApprovedAbsences] = useState<Record<string, { tipo: string; oraInizio?: string; oraFine?: string }>>({});
+
+  useEffect(() => {
+    if (!isOpen || !dipendente) return;
+
+    const q = query(
+      collection(db, 'richieste_ferie'),
+      where('dipendenteName', '==', dipendente),
+      where('stato', '==', 'Approvato')
+    );
+
+    const unsub = onSnapshot(q, (snapshot) => {
+      const absences: Record<string, { tipo: string; oraInizio?: string; oraFine?: string }> = {};
+      snapshot.forEach(docSnap => {
+        const d = docSnap.data();
+        const start = d.dataInizio || d.data;
+        const end = d.dataFine || d.data;
+        if (start && end) {
+          const [startYear, startMonth, startDay] = start.split('-').map(Number);
+          const [endYear, endMonth, endDay] = end.split('-').map(Number);
+
+          const currDate = new Date(startYear, startMonth - 1, startDay);
+          const lastDate = new Date(endYear, endMonth - 1, endDay);
+
+          while (currDate <= lastDate) {
+            const y = currDate.getFullYear();
+            const m = String(currDate.getMonth() + 1).padStart(2, '0');
+            const dStr = String(currDate.getDate()).padStart(2, '0');
+            const dateStr = `${y}-${m}-${dStr}`;
+            absences[dateStr] = {
+              tipo: d.tipo,
+              oraInizio: d.oraInizio,
+              oraFine: d.oraFine
+            };
+            currDate.setDate(currDate.getDate() + 1);
+          }
+        }
+      });
+      setApprovedAbsences(absences);
+    });
+
+    return () => unsub();
+  }, [isOpen, dipendente]);
+
+  // Helper to calculate date of a weekday
+  const getWeekdayDate = (dayKey: string): string => {
+    const parts = weekId.split('-W');
+    if (parts.length !== 2) return '';
+    const year = parseInt(parts[0]);
+    const week = parseInt(parts[1]);
+
+    const simple = new Date(year, 0, 4);
+    const dayOfWeek = simple.getDay();
+    const dayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const firstMonday = new Date(simple.setDate(simple.getDate() + dayOffset));
+    const monday = new Date(firstMonday.setDate(firstMonday.getDate() + (week - 1) * 7));
+
+    const dayMap: Record<string, number> = { 'Lun': 0, 'Mar': 1, 'Mer': 2, 'Gio': 3, 'Ven': 4 };
+    const offset = dayMap[dayKey] ?? 0;
+    const targetDate = new Date(monday);
+    targetDate.setDate(monday.getDate() + offset);
+
+    const y = targetDate.getFullYear();
+    const m = String(targetDate.getMonth() + 1).padStart(2, '0');
+    const dStr = String(targetDate.getDate()).padStart(2, '0');
+    return `${y}-${m}-${dStr}`;
+  };
+
+  const getActiveDays = () => {
+    return ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'].filter(day => {
+      const dayDate = getWeekdayDate(day);
+      const absence = approvedAbsences[dayDate];
+      const isBlocked = absence && (absence.tipo === 'ferie' || absence.tipo === 'malattia' || absence.tipo === 'mattina' || absence.tipo === 'pomeriggio');
+      return !isBlocked;
+    });
+  };
 
   if (!isOpen) return null;
 
@@ -38,10 +114,15 @@ export default function AssegnazioneModal({ isOpen, onClose, dipendente, weekId,
   };
 
   const handleSelectAllDays = () => {
-    if (selectedDays.length === 5) {
+    const activeDays = getActiveDays();
+    const blockedCount = 5 - activeDays.length;
+    if (blockedCount > 0 && selectedDays.length !== activeDays.length) {
+      alert(`Attenzione: ${dipendente} ha ${blockedCount} giorno/i di ferie o assenza approvati in questa settimana. Verranno selezionati solo i giorni di lavoro disponibili.`);
+    }
+    if (selectedDays.length === activeDays.length) {
       setSelectedDays([]);
     } else {
-      setSelectedDays(['Lun', 'Mar', 'Mer', 'Gio', 'Ven']);
+      setSelectedDays(activeDays);
     }
   };
 
@@ -89,19 +170,13 @@ export default function AssegnazioneModal({ isOpen, onClose, dipendente, weekId,
         <p>Accedi alla piattaforma per vedere la pianificazione completa.</p>
       `;
 
-      await addDoc(collection(db, 'mail'), {
-        to: targetDip.email.toLowerCase(),
-        message: {
-          subject,
-          text: `Ciao ${dipendente},\n\nCi sono stati degli aggiornamenti sulle tue commesse per la settimana ${weekLabel} (${weekSub}).\n\nEcco le tue assegnazioni correnti:\n${listText}\n\nAccedi alla piattaforma per maggiori dettagli.\n\n---\nQuesta è una notifica automatica, si prega di non rispondere a questo messaggio.`,
-          html: wrapMailTemplate(subject, htmlBody)
-        }
-      });
+      const plainText = `Ciao ${dipendente},\n\nCi sono stati degli aggiornamenti sulle tue commesse per la settimana ${weekLabel} (${weekSub}).\n\nEcco le tue assegnazioni correnti:\n${listText}\n\nAccedi alla piattaforma per maggiori dettagli.\n\n---\nQuesta è una notifica automatica, si prega di non rispondere a questo messaggio.`;
+      await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
       console.log(`Email di pianificazione accodata per ${targetDip.email}`);
     } catch (e) {
       console.error("Errore nell'invio dell'email di assegnazione:", e);
     }
-  };
+  };;
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -208,18 +283,55 @@ export default function AssegnazioneModal({ isOpen, onClose, dipendente, weekId,
                 <div className="flex justify-between gap-1.5 mb-3">
                   {['Lun', 'Mar', 'Mer', 'Gio', 'Ven'].map(day => {
                     const isSelected = selectedDays.includes(day);
+                    const dayDate = getWeekdayDate(day);
+                    const absence = approvedAbsences[dayDate];
+                    
+                    const isBlocked = absence && (
+                      absence.tipo === 'ferie' || 
+                      absence.tipo === 'malattia' || 
+                      absence.tipo === 'mattina' || 
+                      absence.tipo === 'pomeriggio'
+                    );
+
+                    let buttonLabel = day;
+                    let subLabel = '';
+                    if (absence) {
+                      if (absence.tipo === 'ferie') {
+                        buttonLabel = 'Ferie';
+                        subLabel = 'Ferie';
+                      } else if (absence.tipo === 'malattia') {
+                        buttonLabel = 'Malattia';
+                        subLabel = 'Malattia';
+                      } else if (absence.tipo === 'mattina') {
+                        buttonLabel = 'Ass. Matt.';
+                        subLabel = 'Ass. Matt.';
+                      } else if (absence.tipo === 'pomeriggio') {
+                        buttonLabel = 'Ass. Pom.';
+                        subLabel = 'Ass. Pom.';
+                      } else if (absence.tipo === 'permesso') {
+                        subLabel = `Perm. (${absence.oraInizio}-${absence.oraFine})`;
+                      } else if (absence.tipo === 'smart') {
+                        subLabel = 'Smart';
+                      }
+                    }
+
                     return (
                       <button
                         key={day}
                         type="button"
+                        disabled={isBlocked}
                         onClick={() => handleDayToggle(day)}
-                        className={`flex-1 py-2.5 rounded-xl font-extrabold text-xs transition-all active:scale-95 border ${
-                          isSelected 
-                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-100' 
-                            : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                        className={`flex-1 py-2 rounded-xl font-extrabold text-[10px] sm:text-xs transition-all active:scale-95 border flex flex-col items-center justify-center ${
+                          isBlocked 
+                            ? 'bg-red-50 text-red-500 border-red-200 cursor-not-allowed opacity-70' 
+                            : isSelected 
+                              ? 'bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-100' 
+                              : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
                         }`}
+                        title={absence ? `Assenza approvata: ${absence.tipo}` : ''}
                       >
-                        {day}
+                        <span className="font-extrabold">{buttonLabel}</span>
+                        {subLabel && <span className={`text-[8px] mt-0.5 ${isSelected ? 'text-indigo-200' : 'text-gray-400'}`}>{subLabel}</span>}
                       </button>
                     );
                   })}
@@ -230,7 +342,7 @@ export default function AssegnazioneModal({ isOpen, onClose, dipendente, weekId,
                   onClick={handleSelectAllDays}
                   className="w-full py-2 bg-white hover:bg-gray-50 text-indigo-600 border border-indigo-100 rounded-xl text-xs font-extrabold transition-colors active:scale-98 shadow-sm mb-4"
                 >
-                  {selectedDays.length === 5 ? 'Deseleziona Tutta la Settimana' : 'Seleziona Tutta la Settimana'}
+                  {selectedDays.length === getActiveDays().length && getActiveDays().length > 0 ? 'Deseleziona Tutta la Settimana' : 'Seleziona Tutta la Settimana'}
                 </button>
                 
                 {selectedDays.length > 0 && (

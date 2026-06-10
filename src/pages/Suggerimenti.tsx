@@ -2,8 +2,8 @@ import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, addDoc, onSnapshot, doc, deleteDoc, query, orderBy, getDoc } from 'firebase/firestore';
-import { Send, MessageSquare, Shield, Star, Filter, Trash2, LayoutList, Plus } from 'lucide-react';
-import { wrapMailTemplate } from '../utils/mailTemplate';
+import { Send, MessageSquare, Shield, Star, Filter, Trash2, LayoutList, Plus, ShieldCheck } from 'lucide-react';
+import { queueMail } from '../utils/mailSender';
 import ConfirmModal from '../components/ConfirmModal';
 
 interface Suggerimento {
@@ -14,11 +14,22 @@ interface Suggerimento {
   data: string;
 }
 
+interface RispostaClima {
+  id: string;
+  risposta: string;
+  voto: number;
+  data: string;
+  createdAt: string;
+}
+
 export default function Suggerimenti() {
   const { isAdmin, isHR } = useAuth();
   
   // Tab attiva per gli HR/Admin: 'invia' o 'dashboard'
   const [activeTab, setActiveTab] = useState<'invia' | 'dashboard'>('invia');
+
+  // Sotto-tab dei risultati HR: 'suggerimenti' o 'clima'
+  const [subTab, setSubTab] = useState<'suggerimenti' | 'clima'>('suggerimenti');
 
   // Stato del Form
   const [categories, setCategories] = useState<{ id: string; nome: string }[]>([]);
@@ -34,6 +45,7 @@ export default function Suggerimenti() {
 
   // Stato dei Dati (per HR/Admin)
   const [suggerimenti, setSuggerimenti] = useState<Suggerimento[]>([]);
+  const [climaResponses, setClimaResponses] = useState<RispostaClima[]>([]);
   const [filterCat, setFilterCat] = useState('');
 
   // Stato per la modale di conferma personalizzata
@@ -117,6 +129,25 @@ export default function Suggerimenti() {
     return () => unsub();
   }, [isAdmin, isHR]);
 
+  // Caricamento risposte clima in tempo reale (solo per HR/Admin)
+  useEffect(() => {
+    if (!isAdmin && !isHR) return;
+
+    const q = query(collection(db, 'risposte_clima'), orderBy('createdAt', 'desc'));
+    const unsub = onSnapshot(q, (snapshot) => {
+      const list: RispostaClima[] = [];
+      snapshot.forEach(docSnap => {
+        list.push({
+          id: docSnap.id,
+          ...docSnap.data()
+        } as RispostaClima);
+      });
+      setClimaResponses(list);
+    });
+
+    return () => unsub();
+  }, [isAdmin, isHR]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!categoria || votoClima === 0 || !testo.trim()) {
@@ -157,13 +188,7 @@ export default function Suggerimenti() {
             </table>
             <p>Puoi accedere all'applicazione per visualizzare il testo completo del suggerimento nella scheda della Dashboard HR.</p>
           `;
-          await addDoc(collection(db, 'mail'), {
-            to: hrEmail.toLowerCase(),
-            message: {
-              subject,
-              html: wrapMailTemplate(subject, htmlContent)
-            }
-          });
+          await queueMail(hrEmail.toLowerCase(), subject, htmlContent);
         }
       } catch (emailErr) {
         console.error("Errore notifica email HR per suggerimento:", emailErr);
@@ -191,6 +216,21 @@ export default function Suggerimenti() {
           await deleteDoc(doc(db, 'suggerimenti', id));
         } catch (err) {
           console.error("Errore nell'eliminazione del suggerimento:", err);
+        }
+      },
+      'danger'
+    );
+  };
+
+  const handleDeleteClima = (id: string) => {
+    triggerConfirm(
+      "Elimina Risposta Clima",
+      "Sei sicuro di voler eliminare questa risposta al questionario? L'azione è irreversibile.",
+      async () => {
+        try {
+          await deleteDoc(doc(db, 'risposte_clima', id));
+        } catch (err) {
+          console.error("Errore nell'eliminazione della risposta clima:", err);
         }
       },
       'danger'
@@ -244,6 +284,31 @@ export default function Suggerimenti() {
       conteggio: suggerimenti.length
     };
   }, [suggerimenti]);
+
+  // Calcolo delle statistiche clima
+  const climaStats = useMemo(() => {
+    const total = climaResponses.length;
+    if (total === 0) {
+      return { media: 0, count: 0, ottimo: 0, ottimoPct: 0, gestibile: 0, gestibilePct: 0, stressante: 0, stressantePct: 0 };
+    }
+    const sommaVoti = climaResponses.reduce((acc, curr) => acc + Number(curr.voto), 0);
+    const media = Number((sommaVoti / total).toFixed(1));
+
+    const ottimo = climaResponses.filter(r => r.risposta === 'Ottimo').length;
+    const gestibile = climaResponses.filter(r => r.risposta === 'Gestibile').length;
+    const stressante = climaResponses.filter(r => r.risposta === 'Stressante').length;
+
+    return {
+      media,
+      count: total,
+      ottimo,
+      ottimoPct: Math.round((ottimo / total) * 100),
+      gestibile,
+      gestibilePct: Math.round((gestibile / total) * 100),
+      stressante,
+      stressantePct: Math.round((stressante / total) * 100)
+    };
+  }, [climaResponses]);
 
   // Suggerimenti filtrati per categoria
   const filteredSuggerimenti = useMemo(() => {
@@ -386,122 +451,255 @@ export default function Suggerimenti() {
       {activeTab === 'dashboard' && (isAdmin || isHR) && (
         <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl p-6 sm:p-10 border border-white/50 flex flex-col mb-10">
           
-          {/* STATS OVERVIEW & CATEGORIES MANAGEMENT */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-            <div className="bg-gradient-to-br from-indigo-50 to-purple-50 p-6 rounded-3xl border border-indigo-100 flex items-center justify-between flex-wrap gap-4">
-              <div>
-                <h4 className="text-sm font-bold text-indigo-950/70 uppercase tracking-wider mb-1">Valutazione Clima Media</h4>
-                <div className="text-4xl font-black text-indigo-900 flex items-baseline gap-2">
-                  {stats.media}
-                  <span className="text-sm font-bold opacity-75">/ 10</span>
+          {/* SUB-TABS NAVIGATION */}
+          <div className="flex border-b border-gray-100 mb-6 gap-6">
+            <button 
+              onClick={() => setSubTab('suggerimenti')}
+              className={`pb-3 font-black text-sm transition-all relative ${
+                subTab === 'suggerimenti' ? 'text-indigo-600 border-b-2 border-indigo-600 font-black' : 'text-gray-450 hover:text-gray-650'
+              }`}
+            >
+              Suggerimenti Anonimi ({suggerimenti.length})
+            </button>
+            <button 
+              onClick={() => setSubTab('clima')}
+              className={`pb-3 font-black text-sm transition-all relative ${
+                subTab === 'clima' ? 'text-indigo-600 border-b-2 border-indigo-600 font-black' : 'text-gray-450 hover:text-gray-650'
+              }`}
+            >
+              Benessere & Stress (Clima) ({climaResponses.length})
+            </button>
+          </div>
+
+          {subTab === 'suggerimenti' ? (
+            <>
+              {/* STATS OVERVIEW & CATEGORIES MANAGEMENT */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <div className="bg-gradient-to-br from-indigo-50 to-purple-50 p-6 rounded-3xl border border-indigo-100 flex items-center justify-between flex-wrap gap-4">
+                  <div>
+                    <h4 className="text-sm font-bold text-indigo-950/70 uppercase tracking-wider mb-1">Valutazione Clima Media</h4>
+                    <div className="text-4xl font-black text-indigo-900 flex items-baseline gap-2">
+                      {stats.media}
+                      <span className="text-sm font-bold opacity-75">/ 10</span>
+                    </div>
+                  </div>
+                  <div className="flex gap-0.5 flex-wrap">
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(star => (
+                      <Star key={star} className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${Math.round(stats.media) >= star ? 'text-indigo-600 fill-indigo-600' : 'text-gray-300'}`} />
+                    ))}
+                  </div>
+                </div>
+
+                <div className="bg-gradient-to-br from-emerald-50 to-teal-50 p-6 rounded-3xl border border-emerald-100 flex items-center justify-between">
+                  <div>
+                    <h4 className="text-sm font-bold text-emerald-950/70 uppercase tracking-wider mb-1">Totale Suggerimenti</h4>
+                    <div className="text-4xl font-black text-emerald-900">{stats.conteggio}</div>
+                  </div>
+                  <div className="p-4 bg-emerald-600 text-white rounded-2xl"><MessageSquare className="w-6 h-6" /></div>
+                </div>
+
+                {/* GESTIONE CATEGORIE */}
+                <div className="bg-gradient-to-br from-purple-50 to-pink-50 p-6 rounded-3xl border border-purple-100 flex flex-col justify-between gap-4">
+                  <div>
+                    <h4 className="text-sm font-bold text-purple-950/70 uppercase tracking-wider mb-2">Gestione Categorie</h4>
+                    <div className="max-h-[120px] overflow-y-auto pr-1 space-y-2 mb-3">
+                      {categories.map(cat => (
+                        <div key={cat.id} className="flex justify-between items-center bg-white/60 p-2 rounded-xl border border-purple-100/50">
+                          <span className="text-xs font-bold text-purple-950">{cat.nome}</span>
+                          <button 
+                            onClick={() => handleDeleteCategory(cat.id, cat.nome)}
+                            className="text-gray-400 hover:text-red-600 p-1 rounded-lg hover:bg-red-50 transition"
+                            title="Elimina categoria"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <form onSubmit={handleAddCategory} className="flex gap-2">
+                    <input
+                      type="text"
+                      required
+                      placeholder="Nuova categoria..."
+                      value={newCategoryName}
+                      onChange={e => setNewCategoryName(e.target.value)}
+                      disabled={catLoading}
+                      className="flex-1 px-3 py-2 text-xs font-bold text-purple-950 border border-purple-200/50 bg-white rounded-xl focus:ring-2 focus:ring-purple-400 outline-none placeholder-gray-400"
+                    />
+                    <button
+                      type="submit"
+                      disabled={catLoading}
+                      className="bg-purple-600 text-white p-2 rounded-xl hover:bg-purple-700 active:scale-95 disabled:opacity-50 transition flex items-center justify-center shrink-0"
+                      title="Aggiungi categoria"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </form>
                 </div>
               </div>
-              <div className="flex gap-0.5 flex-wrap">
-                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(star => (
-                  <Star key={star} className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${Math.round(stats.media) >= star ? 'text-indigo-600 fill-indigo-600' : 'text-gray-300'}`} />
-                ))}
-              </div>
-            </div>
 
-            <div className="bg-gradient-to-br from-emerald-50 to-teal-50 p-6 rounded-3xl border border-emerald-100 flex items-center justify-between">
-              <div>
-                <h4 className="text-sm font-bold text-emerald-950/70 uppercase tracking-wider mb-1">Totale Suggerimenti</h4>
-                <div className="text-4xl font-black text-emerald-900">{stats.conteggio}</div>
+              {/* FILTERS TOOLBAR */}
+              <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-gray-50/50 rounded-2xl border border-gray-100 mb-6">
+                <div className="flex items-center gap-2">
+                  <Filter className="w-4 h-4 text-gray-400" />
+                  <select
+                    value={filterCat}
+                    onChange={e => setFilterCat(e.target.value)}
+                    className="pl-3 pr-8 py-2 border-none bg-white rounded-xl shadow-inner text-sm font-bold text-gray-700 focus:ring-2 focus:ring-indigo-400 outline-none w-52"
+                  >
+                    <option value="">Tutte le categorie</option>
+                    {categories.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
+                  </select>
+                </div>
+                <div className="text-xs font-bold text-gray-500">
+                  Visualizzati: <strong>{filteredSuggerimenti.length}</strong> suggerimenti
+                </div>
               </div>
-              <div className="p-4 bg-emerald-600 text-white rounded-2xl"><MessageSquare className="w-6 h-6" /></div>
-            </div>
 
-            {/* GESTIONE CATEGORIE */}
-            <div className="bg-gradient-to-br from-purple-50 to-pink-50 p-6 rounded-3xl border border-purple-100 flex flex-col justify-between gap-4">
-              <div>
-                <h4 className="text-sm font-bold text-purple-950/70 uppercase tracking-wider mb-2">Gestione Categorie</h4>
-                <div className="max-h-[120px] overflow-y-auto pr-1 space-y-2 mb-3">
-                  {categories.map(cat => (
-                    <div key={cat.id} className="flex justify-between items-center bg-white/60 p-2 rounded-xl border border-purple-100/50">
-                      <span className="text-xs font-bold text-purple-950">{cat.nome}</span>
-                      <button 
-                        onClick={() => handleDeleteCategory(cat.id, cat.nome)}
-                        className="text-gray-400 hover:text-red-600 p-1 rounded-lg hover:bg-red-50 transition"
-                        title="Elimina categoria"
+              {/* LISTA SUGGERIMENTI */}
+              <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
+                {filteredSuggerimenti.length === 0 ? (
+                  <p className="text-center text-gray-400 py-10 font-bold italic">Nessun suggerimento presente per questa categoria.</p>
+                ) : (
+                  filteredSuggerimenti.map(s => (
+                    <div key={s.id} className="p-5 border border-gray-100 rounded-3xl bg-white shadow-sm hover:shadow-md transition flex justify-between items-start gap-4">
+                      <div className="space-y-3 flex-1">
+                        <div className="flex flex-wrap items-center gap-3">
+                          <span className="text-xs font-extrabold bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full">{s.categoria}</span>
+                          <div className="flex items-center gap-0.5">
+                            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(star => (
+                              <Star key={star} className={`w-2.5 h-2.5 sm:w-3 sm:h-3 ${s.votoClima >= star ? 'text-amber-500 fill-amber-500' : 'text-gray-200'}`} />
+                            ))}
+                          </div>
+                          <span className="text-xs font-bold text-gray-400">{s.data}</span>
+                        </div>
+                        
+                        <p className="text-sm text-gray-800 leading-relaxed font-medium whitespace-pre-wrap">{s.testo}</p>
+                      </div>
+
+                      <button
+                        onClick={() => handleDelete(s.id)}
+                        className="text-gray-300 hover:text-red-600 hover:bg-red-50 p-2 rounded-xl transition"
+                        title="Elimina suggerimento"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <Trash2 className="w-5 h-5" />
                       </button>
                     </div>
-                  ))}
+                  ))
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              {/* STATS OVERVIEW CLIMA */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                {/* Voto Medio Clima */}
+                <div className="bg-gradient-to-br from-indigo-50 to-purple-50 p-6 rounded-3xl border border-indigo-100 flex items-center justify-between flex-wrap gap-4">
+                  <div>
+                    <h4 className="text-sm font-bold text-indigo-950/70 uppercase tracking-wider mb-1">Livello Benessere Medio</h4>
+                    <div className="text-4xl font-black text-indigo-900 flex items-baseline gap-2">
+                      {climaStats.media}
+                      <span className="text-sm font-bold opacity-75">/ 10</span>
+                    </div>
+                  </div>
+                  <div className="flex gap-0.5 flex-wrap">
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(star => (
+                      <Star key={star} className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${Math.round(climaStats.media) >= star ? 'text-indigo-600 fill-indigo-600' : 'text-gray-300'}`} />
+                    ))}
+                  </div>
+                </div>
+
+                {/* Totale Risposte */}
+                <div className="bg-gradient-to-br from-emerald-50 to-teal-50 p-6 rounded-3xl border border-emerald-100 flex items-center justify-between">
+                  <div>
+                    <h4 className="text-sm font-bold text-emerald-950/70 uppercase tracking-wider mb-1">Totale Test Giornalieri</h4>
+                    <div className="text-4xl font-black text-emerald-900">{climaStats.count}</div>
+                  </div>
+                  <div className="p-4 bg-emerald-600 text-white rounded-2xl"><ShieldCheck className="w-6 h-6" /></div>
+                </div>
+
+                {/* Ripartizione Carico Stress */}
+                <div className="bg-gradient-to-br from-slate-50 to-zinc-100 p-6 rounded-3xl border border-slate-200 flex flex-col justify-center gap-2">
+                  <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Stato d'Animo del Team</h4>
+                  <div className="space-y-1.5 text-[10px] font-bold">
+                    {/* Ottimo */}
+                    <div className="space-y-0.5">
+                      <div className="flex justify-between text-gray-700">
+                        <span>🟢 Sereno/Motivato</span>
+                        <span>{climaStats.ottimo} ({climaStats.ottimoPct}%)</span>
+                      </div>
+                      <div className="w-full bg-gray-200 h-1.5 rounded-full overflow-hidden">
+                        <div className="bg-green-500 h-full rounded-full" style={{width: `${climaStats.ottimoPct}%`}}></div>
+                      </div>
+                    </div>
+                    {/* Gestibile */}
+                    <div className="space-y-0.5">
+                      <div className="flex justify-between text-gray-700">
+                        <span>🟡 Stanchezza</span>
+                        <span>{climaStats.gestibile} ({climaStats.gestibilePct}%)</span>
+                      </div>
+                      <div className="w-full bg-gray-200 h-1.5 rounded-full overflow-hidden">
+                        <div className="bg-amber-500 h-full rounded-full" style={{width: `${climaStats.gestibilePct}%`}}></div>
+                      </div>
+                    </div>
+                    {/* Stressante */}
+                    <div className="space-y-0.5">
+                      <div className="flex justify-between text-gray-700">
+                        <span>🔴 Stress/Sovraccarico</span>
+                        <span>{climaStats.stressante} ({climaStats.stressantePct}%)</span>
+                      </div>
+                      <div className="w-full bg-gray-200 h-1.5 rounded-full overflow-hidden">
+                        <div className="bg-red-500 h-full rounded-full" style={{width: `${climaStats.stressantePct}%`}}></div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
-              <form onSubmit={handleAddCategory} className="flex gap-2">
-                <input
-                  type="text"
-                  required
-                  placeholder="Nuova categoria..."
-                  value={newCategoryName}
-                  onChange={e => setNewCategoryName(e.target.value)}
-                  disabled={catLoading}
-                  className="flex-1 px-3 py-2 text-xs font-bold text-purple-950 border border-purple-200/50 bg-white rounded-xl focus:ring-2 focus:ring-purple-400 outline-none placeholder-gray-400"
-                />
-                <button
-                  type="submit"
-                  disabled={catLoading}
-                  className="bg-purple-600 text-white p-2 rounded-xl hover:bg-purple-700 active:scale-95 disabled:opacity-50 transition flex items-center justify-center shrink-0"
-                  title="Aggiungi categoria"
-                >
-                  <Plus className="w-4 h-4" />
-                </button>
-              </form>
-            </div>
-          </div>
 
-          {/* FILTERS TOOLBAR */}
-          <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-gray-50/50 rounded-2xl border border-gray-100 mb-6">
-            <div className="flex items-center gap-2">
-              <Filter className="w-4 h-4 text-gray-400" />
-              <select
-                value={filterCat}
-                onChange={e => setFilterCat(e.target.value)}
-                className="pl-3 pr-8 py-2 border-none bg-white rounded-xl shadow-inner text-sm font-bold text-gray-700 focus:ring-2 focus:ring-indigo-400 outline-none w-52"
-              >
-                <option value="">Tutte le categorie</option>
-                {categories.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
-              </select>
-            </div>
-            <div className="text-xs font-bold text-gray-500">
-              Visualizzati: <strong>{filteredSuggerimenti.length}</strong> suggerimenti
-            </div>
-          </div>
+              {/* LISTA RISPOSTE CLIMA */}
+              <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
+                {climaResponses.length === 0 ? (
+                  <p className="text-center text-gray-400 py-10 font-bold italic">Nessun test clima compilato finora.</p>
+                ) : (
+                  climaResponses.map(r => (
+                    <div key={r.id} className="p-4 border border-gray-100 rounded-3xl bg-white shadow-sm hover:shadow-md transition flex justify-between items-center gap-4">
+                      <div className="flex items-center gap-4 flex-wrap flex-1 min-w-0">
+                        {/* Stato d'Animo */}
+                        <span className={`text-xs font-extrabold px-3 py-1 rounded-full shrink-0 ${
+                          r.risposta === 'Ottimo' 
+                            ? 'bg-green-50 text-green-700 border border-green-200' 
+                            : r.risposta === 'Gestibile' 
+                              ? 'bg-amber-50 text-amber-700 border border-amber-200' 
+                              : 'bg-red-50 text-red-700 border border-red-200'
+                        }`}>
+                          {r.risposta === 'Ottimo' ? '🟢 Sereno/Motivato' : r.risposta === 'Gestibile' ? '🟡 Stanchezza' : '🔴 Sovraccarico/Stress'}
+                        </span>
+                        
+                        {/* Stelline */}
+                        <div className="flex items-center gap-0.5 shrink-0">
+                          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(star => (
+                            <Star key={star} className={`w-2.5 h-2.5 sm:w-3 sm:h-3 ${r.voto >= star ? 'text-amber-500 fill-amber-500' : 'text-gray-200'}`} />
+                          ))}
+                        </div>
 
-          {/* LISTA SUGGERIMENTI */}
-          <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
-            {filteredSuggerimenti.length === 0 ? (
-              <p className="text-center text-gray-400 py-10 font-bold italic">Nessun suggerimento presente per questa categoria.</p>
-            ) : (
-              filteredSuggerimenti.map(s => (
-                <div key={s.id} className="p-5 border border-gray-100 rounded-3xl bg-white shadow-sm hover:shadow-md transition flex justify-between items-start gap-4">
-                  <div className="space-y-3 flex-1">
-                    <div className="flex flex-wrap items-center gap-3">
-                      <span className="text-xs font-extrabold bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full">{s.categoria}</span>
-                      <div className="flex items-center gap-0.5">
-                        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(star => (
-                          <Star key={star} className={`w-2.5 h-2.5 sm:w-3 sm:h-3 ${s.votoClima >= star ? 'text-amber-500 fill-amber-500' : 'text-gray-200'}`} />
-                        ))}
+                        {/* Data */}
+                        <span className="text-xs font-bold text-gray-405 shrink-0 ml-auto">{r.data}</span>
                       </div>
-                      <span className="text-xs font-bold text-gray-400">{s.data}</span>
-                    </div>
-                    
-                    <p className="text-sm text-gray-800 leading-relaxed font-medium whitespace-pre-wrap">{s.testo}</p>
-                  </div>
 
-                  <button
-                    onClick={() => handleDelete(s.id)}
-                    className="text-gray-300 hover:text-red-600 hover:bg-red-50 p-2 rounded-xl transition"
-                    title="Elimina suggerimento"
-                  >
-                    <Trash2 className="w-5 h-5" />
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
+                      <button
+                        onClick={() => handleDeleteClima(r.id)}
+                        className="text-gray-300 hover:text-red-600 hover:bg-red-50 p-2 rounded-xl transition shrink-0"
+                        title="Elimina risposta clima"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
 

@@ -9,6 +9,7 @@ import Ferie from './pages/Ferie';
 import Impostazioni from './pages/Impostazioni';
 import Presenze from './pages/Presenze';
 import Suggerimenti from './pages/Suggerimenti';
+import PianificazionePersonale from './pages/PianificazionePersonale';
 
 // Components
 import Navbar from './components/Navbar';
@@ -33,6 +34,7 @@ function App() {
               <Route path="/impostazioni" element={<Impostazioni />} />
               <Route path="/presenze" element={<Presenze />} />
               <Route path="/suggerimenti" element={<Suggerimenti />} />
+              <Route path="/pianificazione-personale" element={<PianificazionePersonale />} />
               <Route path="*" element={<Navigate to="/" />} />
             </Routes>
           </main>

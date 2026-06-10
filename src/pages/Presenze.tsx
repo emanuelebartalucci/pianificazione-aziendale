@@ -1,10 +1,54 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, addDoc } from 'firebase/firestore';
+import { collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, addDoc, updateDoc } from 'firebase/firestore';
 import { FileText, Printer, Save, Send, CheckCircle, AlertCircle, Edit, MessageSquare, Clock, MapPin, Check, X, ShieldAlert, Download } from 'lucide-react';
-import { wrapMailTemplate } from '../utils/mailTemplate';
+import { queueMail } from '../utils/mailSender';
 import ConfirmModal from '../components/ConfirmModal';
+
+const COLLABORATORI = [
+  'Atanasio Daniele',
+  'Biagioni Matteo',
+  'Cappelli Marco',
+  'Mancini Marco',
+  'Marchetti Davide',
+  'Menichetti Giulia',
+  'Menichetti Lorenzo',
+  'Panchetti Paolo',
+  'Puliti Alessio',
+  'Rossi Niccolò',
+  'Russo Marco',
+  'Signorini Leonardo',
+  'Stefanelli Luca',
+  'Votino Federica'
+];
+
+export function isCollaboratore(nome?: string | null, dipendentiList?: any[]): boolean {
+  if (!nome) return false;
+  const clean = nome.trim().toLowerCase();
+  if (dipendentiList && Array.isArray(dipendentiList)) {
+    const found = dipendentiList.find(d => d.nome.trim().toLowerCase() === clean);
+    if (found?.tipo === 'collaboratore') return true;
+    if (found?.tipo === 'dipendente') return false;
+  }
+  return COLLABORATORI.some(c => c.toLowerCase() === clean);
+}
+
+const CHIUSURE_AZIENDALI = [
+  { dataInizio: '2026-08-10', dataFine: '2026-08-14', label: 'Chiusura Estiva' }
+];
+
+export function isInChiusuraAziendale(dateStr: string): boolean {
+  return CHIUSURE_AZIENDALI.some(c => dateStr >= c.dataInizio && dateStr <= c.dataFine);
+}
+
+const formatDate = (dateStr: string) => {
+  if (!dateStr) return '';
+  const parts = dateStr.split('-');
+  if (parts.length !== 3) return dateStr;
+  const [year, month, day] = parts;
+  return `${day}/${month}/${year}`;
+};
 
 interface GiornoPresenza {
   ore: number;
@@ -40,21 +84,7 @@ const MESI = [
 export default function Presenze() {
   const { user, isAdmin, isHR, myAssociatedName, dipendenti } = useAuth();
 
-  // Helper to send email notification by writing to Firestore 'mail' collection
-  const queueEmailNotification = async (toEmail: string, subject: string, htmlContent: string) => {
-    try {
-      await addDoc(collection(db, 'mail'), {
-        to: toEmail.toLowerCase(),
-        message: {
-          subject,
-          html: wrapMailTemplate(subject, htmlContent)
-        }
-      });
-      console.log(`Email accodata con successo per ${toEmail}`);
-    } catch (err) {
-      console.error("Errore nell'accodamento dell'email:", err);
-    }
-  };
+  // queueEmailNotification rimossa a favore di queueMail centralizzata
   
   // Date Selection
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().getMonth() + 1); // 1-12
@@ -74,6 +104,7 @@ export default function Presenze() {
   // State for HR Mode
   const [allRapportini, setAllRapportini] = useState<Record<string, RapportinoPresenze>>({});
   const [loadingHR, setLoadingHR] = useState(false);
+  const [hrTab, setHrTab] = useState<'dipendenti' | 'collaboratori'>('dipendenti');
   
   // HR review modal
   const [reviewingRapportino, setReviewingRapportino] = useState<RapportinoPresenze | null>(null);
@@ -82,6 +113,14 @@ export default function Presenze() {
   const [exportingAnnual, setExportingAnnual] = useState(false);
   const [selectedDipFilter, setSelectedDipFilter] = useState('');
   const [printTargetSheet, setPrintTargetSheet] = useState<RapportinoPresenze | null>(null);
+
+  // Stati per autorizzazione weekend/chiusure
+  const [approvedWeekends, setApprovedWeekends] = useState<Record<string, boolean>>({});
+  const [reqWeekendData, setReqWeekendData] = useState('');
+  const [reqWeekendMotivo, setReqWeekendMotivo] = useState('');
+  const [reqWeekendLoading, setReqWeekendLoading] = useState(false);
+  const [myWeekendRequests, setMyWeekendRequests] = useState<any[]>([]);
+  const [allWeekendRequests, setAllWeekendRequests] = useState<any[]>([]);
 
   // Stato per la modale di conferma personalizzata
   const [confirmConfig, setConfirmConfig] = useState<{
@@ -119,6 +158,13 @@ export default function Presenze() {
   const isWeekend = (dayNum: number) => {
     const dayOfWeek = new Date(selectedYear, selectedMonth - 1, dayNum).getDay();
     return dayOfWeek === 0 || dayOfWeek === 6; // 0 = Sunday, 6 = Saturday
+  };
+
+  const isDayLockedForUser = (dNum: number) => {
+    const dateStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`;
+    const isWk = isWeekend(dNum);
+    const isChiusura = isInChiusuraAziendale(dateStr);
+    return (isWk || isChiusura) && !approvedWeekends[dateStr];
   };
 
   // Convert 1-31 number to padded string
@@ -182,6 +228,64 @@ export default function Presenze() {
     return () => unsub();
   }, [viewMode, myAssociatedName, selectedMonth, selectedYear]);
 
+  // Ascolta le richieste di weekend approvate per l'utente loggato (per sbloccare la compilazione)
+  useEffect(() => {
+    if (viewMode !== 'compila' || !myAssociatedName) return;
+
+    const q = query(
+      collection(db, 'richieste_weekend'),
+      where('dipendenteName', '==', myAssociatedName),
+      where('stato', '==', 'Approvato')
+    );
+
+    const unsub = onSnapshot(q, (snapshot) => {
+      const dates: Record<string, boolean> = {};
+      snapshot.forEach(docSnap => {
+        dates[docSnap.data().data] = true;
+      });
+      setApprovedWeekends(dates);
+    });
+
+    return () => unsub();
+  }, [viewMode, myAssociatedName]);
+
+  // Ascolta tutte le richieste di weekend personali (per la lista dello storico)
+  useEffect(() => {
+    if (viewMode !== 'compila' || !myAssociatedName) return;
+
+    const q = query(
+      collection(db, 'richieste_weekend'),
+      where('dipendenteName', '==', myAssociatedName)
+    );
+
+    const unsub = onSnapshot(q, (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach(docSnap => {
+        list.push({ id: docSnap.id, ...docSnap.data() });
+      });
+      setMyWeekendRequests(list.sort((a, b) => b.data.localeCompare(a.data)));
+    });
+
+    return () => unsub();
+  }, [viewMode, myAssociatedName]);
+
+  // Ascolta tutte le richieste di weekend per HR
+  useEffect(() => {
+    if (viewMode !== 'hr') return;
+
+    const q = query(collection(db, 'richieste_weekend'));
+
+    const unsub = onSnapshot(q, (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach(docSnap => {
+        list.push({ id: docSnap.id, ...docSnap.data() });
+      });
+      setAllWeekendRequests(list.sort((a, b) => b.timestamp?.localeCompare(a.timestamp || '') || b.data.localeCompare(a.data)));
+    });
+
+    return () => unsub();
+  }, [viewMode]);
+
   // --- PREFILL LOGIC ---
   const createPrefilledRapportino = async () => {
     if (!myAssociatedName || !user?.email) return;
@@ -195,7 +299,7 @@ export default function Presenze() {
       );
 
       const querySnap = await getDocs(qRichieste);
-      const approvedAbsences: Record<string, string> = {}; // YYYY-MM-DD -> tipo
+      const approvedAbsences: Record<string, { tipo: string; oraInizio?: string; oraFine?: string }> = {}; // YYYY-MM-DD -> data
       
       querySnap.forEach(docSnap => {
         const d = docSnap.data();
@@ -212,11 +316,15 @@ export default function Presenze() {
           while (currDate <= lastDate) {
             const y = currDate.getFullYear();
             const m = String(currDate.getMonth() + 1).padStart(2, '0');
-            const dayStr = String(currDate.getDate()).padStart(2, '0');
-            const dateStr = `${y}-${m}-${dayStr}`;
+            const dStr = String(currDate.getDate()).padStart(2, '0');
+            const dateStr = `${y}-${m}-${dStr}`;
             
             if (dateStr.startsWith(`${selectedYear}-${String(selectedMonth).padStart(2, '0')}`)) {
-              approvedAbsences[dateStr] = d.tipo;
+              approvedAbsences[dateStr] = {
+                tipo: d.tipo,
+                oraInizio: d.oraInizio,
+                oraFine: d.oraFine
+              };
             }
             currDate.setDate(currDate.getDate() + 1);
           }
@@ -255,15 +363,28 @@ export default function Presenze() {
 
         // Apply approved absences (only on working days)
         if (approvedAbsences[dateStr] && !isWknd) {
-          const tipo = approvedAbsences[dateStr];
-          if (tipo === 'ferie') {
+          const abs = approvedAbsences[dateStr];
+          if (abs.tipo === 'ferie') {
             ore = 0;
             ferie = 8;
-          } else if (tipo === 'mattina' || tipo === 'pomeriggio') {
+          } else if (abs.tipo === 'malattia') {
+            ore = 0;
+            malattia = true;
+          } else if (abs.tipo === 'mattina' || abs.tipo === 'pomeriggio') {
             ore = 4;
             permessi = 4;
-          } else if (tipo === 'smart') {
+          } else if (abs.tipo === 'smart') {
             ore = 8; // smart working is 8 hours worked
+          } else if (abs.tipo === 'permesso') {
+            let hrs = 4; // default fallback
+            if (abs.oraInizio && abs.oraFine) {
+              const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
+              const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
+              const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
+              hrs = Math.round(diffMs / 3600000);
+            }
+            ore = Math.max(0, 8 - hrs);
+            permessi = hrs;
           }
         }
 
@@ -309,9 +430,11 @@ export default function Presenze() {
       currentDay.malattia = value;
       if (value) {
         currentDay.ore = 0;
-        currentDay.ferie = 8; // prefill 8 hours sickness
+        currentDay.ferie = 0;
         currentDay.permessi = 0;
         currentDay.straordinari = 0;
+      } else {
+        currentDay.ore = 8;
       }
     } else if (field === 'trasferta') {
       currentDay.trasferta = value;
@@ -368,7 +491,7 @@ export default function Presenze() {
             const hrEmail = hrDoc.exists() ? hrDoc.data().email : null;
             if (hrEmail) {
               const meseNome = MESI[selectedMonth - 1];
-              await queueEmailNotification(
+              await queueMail(
                 hrEmail,
                 `[Pianificazione] Nuovo Rapportino Presenze da approvare - ${myAssociatedName}`,
                 `
@@ -391,6 +514,63 @@ export default function Presenze() {
       },
       'info'
     );
+  };
+
+  const handleRequestWeekendSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!myAssociatedName || !user?.email) return;
+    if (!reqWeekendData) {
+      alert("Seleziona una data!");
+      return;
+    }
+
+    setReqWeekendLoading(true);
+    try {
+      await addDoc(collection(db, 'richieste_weekend'), {
+        dipendenteName: myAssociatedName,
+        dipendenteEmail: user.email,
+        data: reqWeekendData,
+        motivo: reqWeekendMotivo,
+        stato: 'In attesa',
+        timestamp: new Date().toISOString()
+      });
+      setReqWeekendData('');
+      setReqWeekendMotivo('');
+      alert("Richiesta inviata con successo!");
+    } catch (err) {
+      console.error("Errore invio richiesta:", err);
+      alert("Errore nell'invio della richiesta.");
+    } finally {
+      setReqWeekendLoading(false);
+    }
+  };
+
+  const handleWeekendDecision = async (id: string, approva: boolean) => {
+    try {
+      const req = allWeekendRequests.find(r => r.id === id);
+      if (!req) return;
+      
+      const newStatus = approva ? 'Approvato' : 'Rifiutato';
+      await updateDoc(doc(db, 'richieste_weekend', id), {
+        stato: newStatus
+      });
+
+      // Invia email al dipendente
+      const targetDip = dipendenti.find(d => d.nome === req.dipendenteName);
+      if (targetDip && targetDip.email) {
+        const subject = `[Notifica] Autorizzazione lavoro straordinario ${newStatus}`;
+        const htmlBody = `
+          <p>Ciao <strong>${req.dipendenteName}</strong>,</p>
+          <p>La tua richiesta di autorizzazione per lavorare il giorno <strong>${formatDate(req.data)}</strong> (${req.motivo}) è stata <strong>${newStatus.toLowerCase()}</strong>.</p>
+          <p>Puoi procedere all'inserimento delle ore sul tuo foglio presenze se la richiesta è stata approvata.</p>
+        `;
+        const plainText = `Ciao ${req.dipendenteName},\n\nLa tua richiesta di autorizzazione per lavorare il giorno ${formatDate(req.data)} (${req.motivo}) è stata ${newStatus.toLowerCase()}.\n\nQuesta è una notifica automatica.`;
+        await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+      }
+      alert(`Richiesta ${newStatus.toLowerCase()} con successo!`);
+    } catch (e) {
+      console.error("Errore decisione weekend:", e);
+    }
   };
 
   // --- ACTIONS FOR HR / ADMIN ---
@@ -442,7 +622,7 @@ export default function Presenze() {
           // Invia notifica al dipendente
           if (updated.dipendenteEmail) {
             const meseNome = MESI[selectedMonth - 1];
-            await queueEmailNotification(
+            await queueMail(
               updated.dipendenteEmail,
               `[Pianificazione] Rapportino Presenze Approvato - ${meseNome} ${selectedYear}`,
               `
@@ -481,7 +661,7 @@ export default function Presenze() {
       // Invia notifica al dipendente
       if (updated.dipendenteEmail) {
         const meseNome = MESI[selectedMonth - 1];
-        await queueEmailNotification(
+        await queueMail(
           updated.dipendenteEmail,
           `[Pianificazione] Correzione richiesta per il tuo Rapportino Presenze - ${meseNome} ${selectedYear}`,
           `
@@ -521,6 +701,8 @@ export default function Presenze() {
     let orePerm = 0;
     let ggMalattia = 0;
     let ggTrasferta = 0;
+    let ggIntere = 0;
+    let ggMezze = 0;
 
     for (let d = 1; d <= numDays; d++) {
       const g = giorni[String(d)];
@@ -531,16 +713,31 @@ export default function Presenze() {
         orePerm += Number(g.permessi || 0);
         if (g.malattia) ggMalattia++;
         if (g.trasferta) ggTrasferta++;
+
+        if (g.ore === 8) ggIntere++;
+        if (g.ore === 4) ggMezze++;
       }
     }
 
-    return { oreOrd, oreStra, oreFerie, orePerm, ggMalattia, ggTrasferta };
+    return { oreOrd, oreStra, oreFerie, orePerm, ggMalattia, ggTrasferta, ggIntere, ggMezze };
   };
 
   // --- EXPORT TO EXCEL (CSV COMPATIBLE) ---
   const handleExportMonthlyExcel = () => {
     try {
-      const headers = [
+      const isCollabExport = hrTab === 'collaboratori';
+      
+      const headers = isCollabExport ? [
+        "Collaboratore",
+        "Email",
+        "Mese",
+        "Anno",
+        "Stato Rapportino",
+        "Giornate Intere",
+        "Mezze Giornate",
+        "Ore Totali Lavorate",
+        "Giorni Trasferta (T)"
+      ] : [
         "Dipendente",
         "Email",
         "Mese",
@@ -554,15 +751,30 @@ export default function Presenze() {
         "Giorni Trasferta (T)"
       ];
 
-      const rows = dipendenti.map(dip => {
+      const activeList = dipendenti.filter(dip => {
+        const isCollab = isCollaboratore(dip.nome, dipendenti);
+        return isCollabExport ? isCollab : !isCollab;
+      });
+
+      const rows = activeList.map(dip => {
         const docId = `${dip.nome}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
         const sheet = allRapportini[docId];
         const status = sheet ? sheet.stato : 'Non Iniziato';
         const totals = sheet 
           ? calculateTotals(sheet.giorni, daysInMonth)
-          : { oreOrd: 0, oreStra: 0, oreFerie: 0, orePerm: 0, ggMalattia: 0, ggTrasferta: 0 };
+          : { oreOrd: 0, oreStra: 0, oreFerie: 0, orePerm: 0, ggMalattia: 0, ggTrasferta: 0, ggIntere: 0, ggMezze: 0 };
 
-        return [
+        return isCollabExport ? [
+          dip.nome,
+          dip.email || "",
+          MESI[selectedMonth - 1],
+          selectedYear.toString(),
+          status,
+          totals.ggIntere.toString(),
+          totals.ggMezze.toString(),
+          totals.oreOrd.toString(),
+          totals.ggTrasferta.toString()
+        ] : [
           dip.nome,
           dip.email || "",
           MESI[selectedMonth - 1],
@@ -582,7 +794,10 @@ export default function Presenze() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.setAttribute("href", url);
-      link.setAttribute("download", `Presenze_Mensile_${selectedMonth}_${selectedYear}.csv`);
+      const filename = isCollabExport 
+        ? `Collaboratori_Mensile_${selectedMonth}_${selectedYear}.csv`
+        : `Presenze_Mensile_${selectedMonth}_${selectedYear}.csv`;
+      link.setAttribute("download", filename);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -605,7 +820,19 @@ export default function Presenze() {
         annualRapportini[docSnap.id] = { id: docSnap.id, ...docSnap.data() } as RapportinoPresenze;
       });
 
-      const headers = [
+      const isCollabExport = hrTab === 'collaboratori';
+
+      const headers = isCollabExport ? [
+        "Collaboratore",
+        "Email",
+        "Mese",
+        "Anno",
+        "Stato Rapportino",
+        "Giornate Intere",
+        "Mezze Giornate",
+        "Ore Totali Lavorate",
+        "Giorni Trasferta (T)"
+      ] : [
         "Dipendente",
         "Email",
         "Mese",
@@ -619,9 +846,14 @@ export default function Presenze() {
         "Giorni Trasferta (T)"
       ];
 
+      const activeList = dipendenti.filter(dip => {
+        const isCollab = isCollaboratore(dip.nome, dipendenti);
+        return isCollabExport ? isCollab : !isCollab;
+      });
+
       const rows: string[][] = [];
 
-      dipendenti.forEach(dip => {
+      activeList.forEach(dip => {
         for (let m = 1; m <= 12; m++) {
           const docId = `${dip.nome}-${selectedYear}-${String(m).padStart(2, '0')}`;
           const sheet = annualRapportini[docId];
@@ -629,9 +861,19 @@ export default function Presenze() {
           const currentDaysInMonth = new Date(selectedYear, m, 0).getDate();
           const totals = sheet 
             ? calculateTotals(sheet.giorni, currentDaysInMonth)
-            : { oreOrd: 0, oreStra: 0, oreFerie: 0, orePerm: 0, ggMalattia: 0, ggTrasferta: 0 };
+            : { oreOrd: 0, oreStra: 0, oreFerie: 0, orePerm: 0, ggMalattia: 0, ggTrasferta: 0, ggIntere: 0, ggMezze: 0 };
 
-          rows.push([
+          rows.push(isCollabExport ? [
+            dip.nome,
+            dip.email || "",
+            MESI[m - 1],
+            selectedYear.toString(),
+            status,
+            totals.ggIntere.toString(),
+            totals.ggMezze.toString(),
+            totals.oreOrd.toString(),
+            totals.ggTrasferta.toString()
+          ] : [
             dip.nome,
             dip.email || "",
             MESI[m - 1],
@@ -652,7 +894,10 @@ export default function Presenze() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.setAttribute("href", url);
-      link.setAttribute("download", `Presenze_Annuale_${selectedYear}.csv`);
+      const filename = isCollabExport
+        ? `Collaboratori_Annuale_${selectedYear}.csv`
+        : `Presenze_Annuale_${selectedYear}.csv`;
+      link.setAttribute("download", filename);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -672,7 +917,19 @@ export default function Presenze() {
       return;
     }
 
-    const headers = [
+    const isCollab = isCollaboratore(dipName, dipendenti);
+
+    const headers = isCollab ? [
+      "Giorno",
+      "Data",
+      "Stato Giorno",
+      "Giornata Lavorata",
+      "Mezza Giornata",
+      "Ore Totali Lavorate",
+      "Trasferta",
+      "Luogo Trasferta",
+      "Note"
+    ] : [
       "Giorno",
       "Data",
       "Stato Giorno",
@@ -697,7 +954,17 @@ export default function Presenze() {
         dayStatus = "Weekend";
       }
 
-      rows.push([
+      rows.push(isCollab ? [
+        d.toString(),
+        formattedDate,
+        dayStatus,
+        g && g.ore === 8 ? "X" : "",
+        g && g.ore === 4 ? "X" : "",
+        g ? (g.ore || 0).toString() : "0",
+        g && g.trasferta ? "T" : "",
+        g ? (g.luogoTrasferta || "") : "",
+        g ? (g.noteGiorno || "") : ""
+      ] : [
         d.toString(),
         formattedDate,
         dayStatus,
@@ -736,7 +1003,18 @@ export default function Presenze() {
         annualRapportini[docSnap.id] = { id: docSnap.id, ...docSnap.data() } as RapportinoPresenze;
       });
 
-      const headers = [
+      const isCollab = isCollaboratore(dipName, dipendenti);
+
+      const headers = isCollab ? [
+        "Collaboratore",
+        "Mese",
+        "Anno",
+        "Stato Rapportino",
+        "Giornate Intere",
+        "Mezze Giornate",
+        "Ore Totali Lavorate",
+        "Giorni Trasferta (T)"
+      ] : [
         "Dipendente",
         "Mese",
         "Anno",
@@ -757,9 +1035,18 @@ export default function Presenze() {
         const currentDaysInMonth = new Date(selectedYear, m, 0).getDate();
         const totals = sheet 
           ? calculateTotals(sheet.giorni, currentDaysInMonth)
-          : { oreOrd: 0, oreStra: 0, oreFerie: 0, orePerm: 0, ggMalattia: 0, ggTrasferta: 0 };
+          : { oreOrd: 0, oreStra: 0, oreFerie: 0, orePerm: 0, ggMalattia: 0, ggTrasferta: 0, ggIntere: 0, ggMezze: 0 };
 
-        rows.push([
+        rows.push(isCollab ? [
+          dipName,
+          MESI[m - 1],
+          selectedYear.toString(),
+          status,
+          totals.ggIntere.toString(),
+          totals.ggMezze.toString(),
+          totals.oreOrd.toString(),
+          totals.ggTrasferta.toString()
+        ] : [
           dipName,
           MESI[m - 1],
           selectedYear.toString(),
@@ -778,7 +1065,8 @@ export default function Presenze() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.setAttribute("href", url);
-      link.setAttribute("download", `Presenze_Annuale_${dipName.replace(/\s+/g, '_')}_${selectedYear}.csv`);
+      const linkName = dipName.replace(/\s+/g, '_');
+      link.setAttribute("download", `Presenze_Annuale_${linkName}_${selectedYear}.csv`);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -964,82 +1252,187 @@ export default function Presenze() {
       {/* 1. MODO HR / ADMIN: DASHBOARD GENERALE      */}
       {/* ========================================== */}
       {viewMode === 'hr' && (
-        <div className={`bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl border border-white/50 flex flex-col mb-10 overflow-hidden ${(printTargetSheet || reviewingRapportino) ? 'no-print' : ''}`}>
+        <>
+          <div className={`bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl border border-white/50 flex flex-col mb-10 overflow-hidden ${(printTargetSheet || reviewingRapportino) ? 'no-print' : ''}`}>
           
-          {/* Titolo Sezione */}
-          <div className="p-6 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
-            <h3 className="font-extrabold text-xl text-gray-900">Situazione Presenze Dipendenti - {MESI[selectedMonth - 1]} {selectedYear}</h3>
+          {/* Tabs Dipendenti / Collaboratori */}
+          <div className="flex border-b border-gray-100 bg-gray-50/50 px-6 py-4 justify-between items-center gap-4">
+            <div className="flex bg-gray-200/60 p-1.5 rounded-2xl">
+              <button
+                onClick={() => setHrTab('dipendenti')}
+                className={`px-5 py-2 rounded-xl text-xs font-bold transition-all ${hrTab === 'dipendenti' ? 'bg-white text-indigo-700 shadow-sm font-extrabold' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Dipendenti
+              </button>
+              <button
+                onClick={() => setHrTab('collaboratori')}
+                className={`px-5 py-2 rounded-xl text-xs font-bold transition-all ${hrTab === 'collaboratori' ? 'bg-white text-indigo-700 shadow-sm font-extrabold' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Collaboratori (P. IVA)
+              </button>
+            </div>
+            <h3 className="font-extrabold text-lg text-gray-900">
+              Situazione Presenze - {MESI[selectedMonth - 1]} {selectedYear}
+            </h3>
           </div>
 
           <div className="w-full overflow-x-auto">
             {loadingHR ? (
               <div className="p-12 text-center text-gray-500 font-bold">Caricamento presenze in corso...</div>
             ) : dipendenti.length === 0 ? (
-              <div className="p-12 text-center text-gray-400 font-medium">Nessun dipendente censito in anagrafica.</div>
+              <div className="p-12 text-center text-gray-400 font-medium">Nessun utente censito in anagrafica.</div>
             ) : (
               <table className="w-full text-left border-collapse min-w-[900px]">
                 <thead className="bg-gray-50 border-b border-gray-100">
-                  <tr>
-                    <th className="p-4 font-bold text-gray-700 text-sm">Dipendente</th>
-                    <th className="p-4 font-bold text-gray-700 text-sm text-center">Stato</th>
-                    <th className="p-4 font-bold text-gray-700 text-sm text-right">Ore Ordinarie</th>
-                    <th className="p-4 font-bold text-gray-700 text-sm text-right">Straordinari</th>
-                    <th className="p-4 font-bold text-gray-700 text-sm text-right">Ferie / Mal.</th>
-                    <th className="p-4 font-bold text-gray-700 text-sm text-right">Permessi</th>
-                    <th className="p-4 font-bold text-gray-700 text-sm text-center">Malattia (Giorni)</th>
-                    <th className="p-4 font-bold text-gray-700 text-sm text-center">Trasferte (Giorni)</th>
-                    <th className="p-4 font-bold text-gray-700 text-sm text-center no-print">Azione</th>
-                  </tr>
+                  {hrTab === 'dipendenti' ? (
+                    <tr>
+                      <th className="p-4 font-bold text-gray-700 text-sm">Dipendente</th>
+                      <th className="p-4 font-bold text-gray-700 text-sm text-center">Stato</th>
+                      <th className="p-4 font-bold text-gray-700 text-sm text-right">Ore Ordinarie</th>
+                      <th className="p-4 font-bold text-gray-700 text-sm text-right">Straordinari</th>
+                      <th className="p-4 font-bold text-gray-700 text-sm text-right">Ferie / Mal.</th>
+                      <th className="p-4 font-bold text-gray-700 text-sm text-right">Permessi</th>
+                      <th className="p-4 font-bold text-gray-700 text-sm text-center">Malattia (Giorni)</th>
+                      <th className="p-4 font-bold text-gray-700 text-sm text-center">Trasferte (Giorni)</th>
+                      <th className="p-4 font-bold text-gray-700 text-sm text-center no-print">Azione</th>
+                    </tr>
+                  ) : (
+                    <tr>
+                      <th className="p-4 font-bold text-gray-700 text-sm">Collaboratore</th>
+                      <th className="p-4 font-bold text-gray-700 text-sm text-center">Stato</th>
+                      <th className="p-4 font-bold text-gray-700 text-sm text-right">Giornate Intere</th>
+                      <th className="p-4 font-bold text-gray-700 text-sm text-right">Mezze Giornate</th>
+                      <th className="p-4 font-bold text-gray-700 text-sm text-right">Ore Totali</th>
+                      <th className="p-4 font-bold text-gray-700 text-sm text-center">Trasferte (Giorni)</th>
+                      <th className="p-4 font-bold text-gray-700 text-sm text-center no-print">Azione</th>
+                    </tr>
+                  )}
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {dipendenti
-                    .filter(dip => !selectedDipFilter || dip.nome === selectedDipFilter)
+                    .filter(dip => {
+                      const isCollab = isCollaboratore(dip.nome, dipendenti);
+                      const matchesTab = hrTab === 'collaboratori' ? isCollab : !isCollab;
+                      const matchesSearch = !selectedDipFilter || dip.nome === selectedDipFilter;
+                      return matchesTab && matchesSearch;
+                    })
                     .map(dip => {
-                    const docId = `${dip.nome}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
-                    const sheet = allRapportini[docId];
-                    const status = sheet ? sheet.stato : 'Non Iniziato';
-                    
-                    const totals = sheet 
-                      ? calculateTotals(sheet.giorni, daysInMonth)
-                      : { oreOrd: 0, oreStra: 0, oreFerie: 0, orePerm: 0, ggMalattia: 0, ggTrasferta: 0 };
+                      const docId = `${dip.nome}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+                      const sheet = allRapportini[docId];
+                      const status = sheet ? sheet.stato : 'Non Iniziato';
+                      
+                      const totals = sheet 
+                        ? calculateTotals(sheet.giorni, daysInMonth)
+                        : { oreOrd: 0, oreStra: 0, oreFerie: 0, orePerm: 0, ggMalattia: 0, ggTrasferta: 0, ggIntere: 0, ggMezze: 0 };
 
-                    return (
-                      <tr key={dip.id} className="hover:bg-indigo-50/20 transition-colors">
-                        <td className="p-4">
-                          <div className="font-bold text-gray-800">{dip.nome}</div>
-                          <div className="text-xs text-gray-500">{dip.email || 'Nessuna email'}</div>
-                        </td>
-                        <td className="p-4 text-center align-middle">
-                          <div className="flex justify-center">{getStatusBadge(status)}</div>
-                        </td>
-                        <td className="p-4 text-right font-semibold text-gray-700">{totals.oreOrd}h</td>
-                        <td className="p-4 text-right font-bold text-amber-600">{totals.oreStra > 0 ? `+${totals.oreStra}h` : '0h'}</td>
-                        <td className="p-4 text-right font-semibold text-gray-700">{totals.oreFerie}h</td>
-                        <td className="p-4 text-right font-semibold text-gray-700">{totals.orePerm}h</td>
-                        <td className="p-4 text-center text-red-600 font-bold">{totals.ggMalattia > 0 ? totals.ggMalattia : '-'}</td>
-                        <td className="p-4 text-center text-blue-600 font-bold">{totals.ggTrasferta > 0 ? totals.ggTrasferta : '-'}</td>
-                        <td className="p-4 text-center no-print">
-                          {sheet ? (
-                            <button 
-                              onClick={() => {
-                                setReviewingRapportino(JSON.parse(JSON.stringify(sheet))); // clone object
-                              }}
-                              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md transition active:scale-95"
-                            >
-                              Esamina
-                            </button>
+                      return (
+                        <tr key={dip.id} className="hover:bg-indigo-50/20 transition-colors">
+                          <td className="p-4">
+                            <div className="font-bold text-gray-800">{dip.nome}</div>
+                            <div className="text-xs text-gray-500">{dip.email || 'Nessuna email'}</div>
+                          </td>
+                          <td className="p-4 text-center align-middle">
+                            <div className="flex justify-center">{getStatusBadge(status)}</div>
+                          </td>
+                          {hrTab === 'dipendenti' ? (
+                            <>
+                              <td className="p-4 text-right font-semibold text-gray-700">{totals.oreOrd}h</td>
+                              <td className="p-4 text-right font-bold text-amber-600">{totals.oreStra > 0 ? `+${totals.oreStra}h` : '0h'}</td>
+                              <td className="p-4 text-right font-semibold text-gray-700">{totals.oreFerie}h</td>
+                              <td className="p-4 text-right font-semibold text-gray-700">{totals.orePerm}h</td>
+                              <td className="p-4 text-center text-red-600 font-bold">{totals.ggMalattia > 0 ? totals.ggMalattia : '-'}</td>
+                              <td className="p-4 text-center text-blue-600 font-bold">{totals.ggTrasferta > 0 ? totals.ggTrasferta : '-'}</td>
+                            </>
                           ) : (
-                            <span className="text-xs text-gray-400 font-medium italic">Nessun dato</span>
+                            <>
+                              <td className="p-4 text-right font-semibold text-gray-700">{totals.ggIntere} gg</td>
+                              <td className="p-4 text-right font-semibold text-gray-700">{totals.ggMezze} gg</td>
+                              <td className="p-4 text-right font-bold text-indigo-600">{totals.oreOrd}h</td>
+                              <td className="p-4 text-center text-blue-600 font-bold">{totals.ggTrasferta > 0 ? totals.ggTrasferta : '-'}</td>
+                            </>
                           )}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                          <td className="p-4 text-center no-print">
+                            {sheet ? (
+                              <button 
+                                onClick={() => {
+                                  setReviewingRapportino(JSON.parse(JSON.stringify(sheet))); // clone object
+                                }}
+                                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md transition active:scale-95"
+                              >
+                                Esamina
+                              </button>
+                            ) : (
+                              <span className="text-xs text-gray-400 font-medium italic">Nessun dato</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                 </tbody>
               </table>
             )}
           </div>
         </div>
+
+        {/* TABELLA RICHIESTE WEEKEND / CHIUSURE PENDENTI LATO HR */}
+        <div className={`bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl p-6 sm:p-8 border border-white/50 flex flex-col mb-10 overflow-hidden ${(printTargetSheet || reviewingRapportino) ? 'no-print' : ''}`}>
+          <h3 className="font-extrabold text-xl text-gray-900 mb-2 flex items-center gap-2">
+            <ShieldAlert className="w-6 h-6 text-indigo-600" />
+            Richieste Autorizzazione Weekend / Chiusure
+          </h3>
+          <p className="text-xs text-gray-500 font-semibold mb-6">
+            Elenco delle richieste di dipendenti e collaboratori per lavorare nei giorni di weekend o chiusura aziendale.
+          </p>
+
+          <div className="w-full overflow-x-auto">
+            {allWeekendRequests.length === 0 ? (
+              <p className="text-center text-gray-400 py-6 font-medium italic">Nessuna richiesta di autorizzazione presente.</p>
+            ) : (
+              <table className="w-full text-left border-collapse min-w-[700px] text-xs">
+                <thead className="bg-gray-50 border-b border-gray-100">
+                  <tr className="font-bold text-gray-700">
+                    <th className="p-3">Dipendente</th>
+                    <th className="p-3">Data</th>
+                    <th className="p-3">Motivazione</th>
+                    <th className="p-3 text-center">Stato</th>
+                    <th className="p-3 text-center no-print">Azioni</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {allWeekendRequests.map(req => (
+                    <tr key={req.id} className="hover:bg-indigo-50/10 transition-colors">
+                      <td className="p-3 font-bold text-gray-800">{req.dipendenteName}</td>
+                      <td className="p-3 font-bold text-indigo-600">{formatDate(req.data)}</td>
+                      <td className="p-3 text-gray-600 max-w-[300px] truncate" title={req.motivo}>{req.motivo}</td>
+                      <td className="p-3 text-center align-middle">{getStatusBadge(req.stato)}</td>
+                      <td className="p-3 text-center align-middle no-print">
+                        {req.stato === 'In attesa' ? (
+                          <div className="flex justify-center gap-2">
+                            <button 
+                              onClick={() => handleWeekendDecision(req.id, true)} 
+                              className="px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white font-bold rounded-lg text-[10px] shadow active:scale-95"
+                            >
+                              Approva
+                            </button>
+                            <button 
+                              onClick={() => handleWeekendDecision(req.id, false)} 
+                              className="px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white font-bold rounded-lg text-[10px] shadow active:scale-95"
+                            >
+                              Rifiuta
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-[10px] text-gray-400 italic">Nessuna azione</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+        </>
       )}
 
       {/* ========================================== */}
@@ -1137,190 +1530,293 @@ export default function Presenze() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200 font-medium">
-                      
-                      {/* RIGA 1: ORE ORDINARIE */}
-                      <tr className="hover:bg-gray-50/50 transition-colors">
-                        <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10">Ore Ordinarie</td>
-                        {Array.from({ length: 31 }).map((_, i) => {
-                          const d = i + 1;
-                          const outOfMonth = d > daysInMonth;
-                          const giorno = rapportino.giorni[dayStr(d)];
+                      {isCollaboratore(myAssociatedName, dipendenti) ? (
+                        <>
+                          {/* COLLABORATORI RIGA 1: GIORNATA INTERA */}
+                          <tr className="hover:bg-gray-50/50 transition-colors">
+                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10">Giornata Intera</td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const outOfMonth = d > daysInMonth;
+                              const giorno = rapportino.giorni[dayStr(d)];
 
-                          return (
-                            <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''}`}>
-                              {!outOfMonth && giorno && (
-                                <input 
-                                  type="number"
-                                  min={0}
-                                  max={24}
-                                  disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia}
-                                  value={giorno.ore === 0 ? '' : giorno.ore}
-                                  onChange={e => handleCellChange(dayStr(d), 'ore', e.target.value === '' ? 0 : Number(e.target.value))}
-                                  className="w-full text-center border-none p-1 rounded font-bold outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-transparent disabled:opacity-70 text-gray-900"
-                                />
-                              )}
-                              {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                              return (
+                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''} align-middle`}>
+                                  {!outOfMonth && giorno && (
+                                    <div className="flex justify-center items-center">
+                                      <input 
+                                        type="checkbox"
+                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || isDayLockedForUser(d)}
+                                        checked={giorno.ore === 8}
+                                        onChange={e => {
+                                          const val = e.target.checked ? 8 : 0;
+                                          handleCellChange(dayStr(d), 'ore', val);
+                                        }}
+                                        className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                      />
+                                    </div>
+                                  )}
+                                  {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                                </td>
+                              );
+                            })}
+                            <td className="p-3 font-bold text-gray-800 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                              {calculateTotals(rapportino.giorni, daysInMonth).ggIntere} gg
                             </td>
-                          );
-                        })}
-                        <td className="p-3 font-bold text-gray-800 bg-gray-50 border-l-2 border-gray-300 text-sm">
-                          {calculateTotals(rapportino.giorni, daysInMonth).oreOrd}
-                        </td>
-                      </tr>
+                          </tr>
 
-                      {/* RIGA 2: STRAORDINARI */}
-                      <tr className="hover:bg-gray-50/50 transition-colors">
-                        <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10">Straordinari</td>
-                        {Array.from({ length: 31 }).map((_, i) => {
-                          const d = i + 1;
-                          const outOfMonth = d > daysInMonth;
-                          const giorno = rapportino.giorni[dayStr(d)];
+                          {/* COLLABORATORI RIGA 2: MEZZA GIORNATA */}
+                          <tr className="hover:bg-gray-50/50 transition-colors">
+                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10">Mezza Giornata</td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const outOfMonth = d > daysInMonth;
+                              const giorno = rapportino.giorni[dayStr(d)];
 
-                          return (
-                            <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''}`}>
-                              {!outOfMonth && giorno && (
-                                <input 
-                                  type="number"
-                                  min={0}
-                                  max={24}
-                                  disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia}
-                                  value={giorno.straordinari === 0 ? '' : giorno.straordinari}
-                                  onChange={e => handleCellChange(dayStr(d), 'straordinari', e.target.value === '' ? 0 : Number(e.target.value))}
-                                  className="w-full text-center border-none p-1 rounded font-bold outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-transparent disabled:opacity-70 text-amber-600 font-extrabold"
-                                />
-                              )}
-                              {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                              return (
+                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''} align-middle`}>
+                                  {!outOfMonth && giorno && (
+                                    <div className="flex justify-center items-center">
+                                      <input 
+                                        type="checkbox"
+                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || isDayLockedForUser(d)}
+                                        checked={giorno.ore === 4}
+                                        onChange={e => {
+                                          const val = e.target.checked ? 4 : 0;
+                                          handleCellChange(dayStr(d), 'ore', val);
+                                        }}
+                                        className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                      />
+                                    </div>
+                                  )}
+                                  {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                                </td>
+                              );
+                            })}
+                            <td className="p-3 font-bold text-gray-800 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                              {calculateTotals(rapportino.giorni, daysInMonth).ggMezze} gg
                             </td>
-                          );
-                        })}
-                        <td className="p-3 font-bold text-amber-600 bg-gray-50 border-l-2 border-gray-300 text-sm">
-                          {calculateTotals(rapportino.giorni, daysInMonth).oreStra}
-                        </td>
-                      </tr>
+                          </tr>
 
-                      {/* RIGA 3: FERIE */}
-                      <tr className="hover:bg-gray-50/50 transition-colors">
-                        <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10">Ferie</td>
-                        {Array.from({ length: 31 }).map((_, i) => {
-                          const d = i + 1;
-                          const outOfMonth = d > daysInMonth;
-                          const giorno = rapportino.giorni[dayStr(d)];
-
-                          return (
-                            <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''}`}>
-                              {!outOfMonth && giorno && (
-                                <input 
-                                  type="number"
-                                  min={0}
-                                  max={24}
-                                  disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia}
-                                  value={giorno.ferie === 0 ? '' : giorno.ferie}
-                                  onChange={e => handleCellChange(dayStr(d), 'ferie', e.target.value === '' ? 0 : Number(e.target.value))}
-                                  className="w-full text-center border-none p-1 rounded font-bold outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-transparent disabled:opacity-70 text-green-700"
-                                />
-                              )}
-                              {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                          {/* COLLABORATORI RIGA 3: TRASFERTA */}
+                          <tr className="hover:bg-gray-50/50 transition-colors">
+                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 flex items-center gap-1.5">
+                              Trasferta <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1 py-0.5 rounded font-mono">T</span>
                             </td>
-                          );
-                        })}
-                        <td className="p-3 font-bold text-green-700 bg-gray-50 border-l-2 border-gray-300 text-sm">
-                          {calculateTotals(rapportino.giorni, daysInMonth).oreFerie}
-                        </td>
-                      </tr>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const outOfMonth = d > daysInMonth;
+                              const giorno = rapportino.giorni[dayStr(d)];
 
-                      {/* RIGA 4: PERMESSI */}
-                      <tr className="hover:bg-gray-50/50 transition-colors">
-                        <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10">Permessi</td>
-                        {Array.from({ length: 31 }).map((_, i) => {
-                          const d = i + 1;
-                          const outOfMonth = d > daysInMonth;
-                          const giorno = rapportino.giorni[dayStr(d)];
-
-                          return (
-                            <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''}`}>
-                              {!outOfMonth && giorno && (
-                                <input 
-                                  type="number"
-                                  min={0}
-                                  max={24}
-                                  disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia}
-                                  value={giorno.permessi === 0 ? '' : giorno.permessi}
-                                  onChange={e => handleCellChange(dayStr(d), 'permessi', e.target.value === '' ? 0 : Number(e.target.value))}
-                                  className="w-full text-center border-none p-1 rounded font-bold outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-transparent disabled:opacity-70 text-indigo-600"
-                                />
-                              )}
-                              {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                              return (
+                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''} align-middle`}>
+                                  {!outOfMonth && giorno && (
+                                    <div className="flex justify-center items-center">
+                                      <input 
+                                        type="checkbox"
+                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || isDayLockedForUser(d)}
+                                        checked={giorno.trasferta || false}
+                                        onChange={e => handleCellChange(dayStr(d), 'trasferta', e.target.checked)}
+                                        className="w-4 h-4 rounded text-blue-600 focus:ring-blue-400 cursor-pointer"
+                                      />
+                                    </div>
+                                  )}
+                                  {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                                </td>
+                              );
+                            })}
+                            <td className="p-3 font-bold text-blue-600 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                              {calculateTotals(rapportino.giorni, daysInMonth).ggTrasferta} gg
                             </td>
-                          );
-                        })}
-                        <td className="p-3 font-bold text-indigo-600 bg-gray-50 border-l-2 border-gray-300 text-sm">
-                          {calculateTotals(rapportino.giorni, daysInMonth).orePerm}
-                        </td>
-                      </tr>
+                          </tr>
+                        </>
+                      ) : (
+                        <>
+                          {/* DIPENDENTI STANDARD RIGA 1: ORE ORDINARIE */}
+                          <tr className="hover:bg-gray-50/50 transition-colors">
+                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10">Ore Ordinarie</td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const outOfMonth = d > daysInMonth;
+                              const giorno = rapportino.giorni[dayStr(d)];
 
-                      {/* RIGA 5: CONTRASSEGNO MALATTIA */}
-                      <tr className="hover:bg-gray-50/50 transition-colors">
-                        <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 flex items-center gap-1.5">
-                          Malattia <span className="text-[9px] font-bold bg-red-100 text-red-700 px-1 py-0.5 rounded font-mono">M</span>
-                        </td>
-                        {Array.from({ length: 31 }).map((_, i) => {
-                          const d = i + 1;
-                          const outOfMonth = d > daysInMonth;
-                          const giorno = rapportino.giorni[dayStr(d)];
-
-                          return (
-                            <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''} align-middle`}>
-                              {!outOfMonth && giorno && (
-                                <div className="flex justify-center items-center">
-                                  <input 
-                                    type="checkbox"
-                                    disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                                    checked={giorno.malattia || false}
-                                    onChange={e => handleCellChange(dayStr(d), 'malattia', e.target.checked)}
-                                    className="w-4 h-4 rounded text-red-500 focus:ring-red-400 cursor-pointer"
-                                  />
-                                </div>
-                              )}
-                              {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                              return (
+                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''}`}>
+                                  {!outOfMonth && giorno && (
+                                    <input 
+                                      type="number"
+                                      min={0}
+                                      max={24}
+                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isDayLockedForUser(d)}
+                                      value={giorno.ore === 0 ? '' : giorno.ore}
+                                      onChange={e => handleCellChange(dayStr(d), 'ore', e.target.value === '' ? 0 : Number(e.target.value))}
+                                      className="w-full text-center border-none p-1 rounded font-bold outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-transparent disabled:opacity-70 text-gray-900"
+                                    />
+                                  )}
+                                  {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                                </td>
+                              );
+                            })}
+                            <td className="p-3 font-bold text-gray-800 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                              {calculateTotals(rapportino.giorni, daysInMonth).oreOrd}
                             </td>
-                          );
-                        })}
-                        <td className="p-3 font-bold text-red-600 bg-gray-50 border-l-2 border-gray-300 text-sm">
-                          {calculateTotals(rapportino.giorni, daysInMonth).ggMalattia} gg
-                        </td>
-                      </tr>
+                          </tr>
 
-                      {/* RIGA 6: CONTRASSEGNO TRASFERTA */}
-                      <tr className="hover:bg-gray-50/50 transition-colors">
-                        <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 flex items-center gap-1.5">
-                          Trasferta <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1 py-0.5 rounded font-mono">T</span>
-                        </td>
-                        {Array.from({ length: 31 }).map((_, i) => {
-                          const d = i + 1;
-                          const outOfMonth = d > daysInMonth;
-                          const giorno = rapportino.giorni[dayStr(d)];
+                          {/* DIPENDENTI STANDARD RIGA 2: STRAORDINARI */}
+                          <tr className="hover:bg-gray-50/50 transition-colors">
+                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10">Straordinari</td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const outOfMonth = d > daysInMonth;
+                              const giorno = rapportino.giorni[dayStr(d)];
 
-                          return (
-                            <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''} align-middle`}>
-                              {!outOfMonth && giorno && (
-                                <div className="flex justify-center items-center">
-                                  <input 
-                                    type="checkbox"
-                                    disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                                    checked={giorno.trasferta || false}
-                                    onChange={e => handleCellChange(dayStr(d), 'trasferta', e.target.checked)}
-                                    className="w-4 h-4 rounded text-blue-600 focus:ring-blue-400 cursor-pointer"
-                                  />
-                                </div>
-                              )}
-                              {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                              return (
+                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''}`}>
+                                  {!outOfMonth && giorno && (
+                                    <input 
+                                      type="number"
+                                      min={0}
+                                      max={24}
+                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isDayLockedForUser(d)}
+                                      value={giorno.straordinari === 0 ? '' : giorno.straordinari}
+                                      onChange={e => handleCellChange(dayStr(d), 'straordinari', e.target.value === '' ? 0 : Number(e.target.value))}
+                                      className="w-full text-center border-none p-1 rounded font-bold outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-transparent disabled:opacity-70 text-amber-600 font-extrabold"
+                                    />
+                                  )}
+                                  {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                                </td>
+                              );
+                            })}
+                            <td className="p-3 font-bold text-amber-600 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                              {calculateTotals(rapportino.giorni, daysInMonth).oreStra}
                             </td>
-                          );
-                        })}
-                        <td className="p-3 font-bold text-blue-600 bg-gray-50 border-l-2 border-gray-300 text-sm">
-                          {calculateTotals(rapportino.giorni, daysInMonth).ggTrasferta} gg
-                        </td>
-                      </tr>
+                          </tr>
+
+                          {/* DIPENDENTI STANDARD RIGA 3: FERIE */}
+                          <tr className="hover:bg-gray-50/50 transition-colors">
+                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10">Ferie</td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const outOfMonth = d > daysInMonth;
+                              const giorno = rapportino.giorni[dayStr(d)];
+
+                              return (
+                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''}`}>
+                                  {!outOfMonth && giorno && (
+                                    <input 
+                                      type="number"
+                                      min={0}
+                                      max={24}
+                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isDayLockedForUser(d)}
+                                      value={giorno.ferie === 0 ? '' : giorno.ferie}
+                                      onChange={e => handleCellChange(dayStr(d), 'ferie', e.target.value === '' ? 0 : Number(e.target.value))}
+                                      className="w-full text-center border-none p-1 rounded font-bold outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-transparent disabled:opacity-70 text-green-700"
+                                    />
+                                  )}
+                                  {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                                </td>
+                              );
+                            })}
+                            <td className="p-3 font-bold text-green-700 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                              {calculateTotals(rapportino.giorni, daysInMonth).oreFerie}
+                            </td>
+                          </tr>
+
+                          {/* DIPENDENTI STANDARD RIGA 4: PERMESSI */}
+                          <tr className="hover:bg-gray-50/50 transition-colors">
+                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10">Permessi</td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const outOfMonth = d > daysInMonth;
+                              const giorno = rapportino.giorni[dayStr(d)];
+
+                              return (
+                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''}`}>
+                                  {!outOfMonth && giorno && (
+                                    <input 
+                                      type="number"
+                                      min={0}
+                                      max={24}
+                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isDayLockedForUser(d)}
+                                      value={giorno.permessi === 0 ? '' : giorno.permessi}
+                                      onChange={e => handleCellChange(dayStr(d), 'permessi', e.target.value === '' ? 0 : Number(e.target.value))}
+                                      className="w-full text-center border-none p-1 rounded font-bold outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-transparent disabled:opacity-70 text-indigo-600"
+                                    />
+                                  )}
+                                  {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                                </td>
+                              );
+                            })}
+                            <td className="p-3 font-bold text-indigo-600 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                              {calculateTotals(rapportino.giorni, daysInMonth).orePerm}
+                            </td>
+                          </tr>
+
+                          {/* DIPENDENTI STANDARD RIGA 5: CONTRASSEGNO MALATTIA */}
+                          <tr className="hover:bg-gray-50/50 transition-colors">
+                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 flex items-center gap-1.5">
+                              Malattia <span className="text-[9px] font-bold bg-red-100 text-red-700 px-1 py-0.5 rounded font-mono">M</span>
+                            </td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const outOfMonth = d > daysInMonth;
+                              const giorno = rapportino.giorni[dayStr(d)];
+
+                              return (
+                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''} align-middle`}>
+                                  {!outOfMonth && giorno && (
+                                    <div className="flex justify-center items-center">
+                                      <input 
+                                        type="checkbox"
+                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                        checked={giorno.malattia || false}
+                                        onChange={e => handleCellChange(dayStr(d), 'malattia', e.target.checked)}
+                                        className="w-4 h-4 rounded text-red-500 focus:ring-red-400 cursor-pointer"
+                                      />
+                                    </div>
+                                  )}
+                                  {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                                </td>
+                              );
+                            })}
+                            <td className="p-3 font-bold text-red-600 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                              {calculateTotals(rapportino.giorni, daysInMonth).ggMalattia} gg
+                            </td>
+                          </tr>
+
+                          {/* DIPENDENTI STANDARD RIGA 6: CONTRASSEGNO TRASFERTA */}
+                          <tr className="hover:bg-gray-50/50 transition-colors">
+                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 flex items-center gap-1.5">
+                              Trasferta <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1 py-0.5 rounded font-mono">T</span>
+                            </td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const outOfMonth = d > daysInMonth;
+                              const giorno = rapportino.giorni[dayStr(d)];
+
+                              return (
+                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''} align-middle`}>
+                                  {!outOfMonth && giorno && (
+                                    <div className="flex justify-center items-center">
+                                      <input 
+                                        type="checkbox"
+                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || isDayLockedForUser(d)}
+                                        checked={giorno.trasferta || false}
+                                        onChange={e => handleCellChange(dayStr(d), 'trasferta', e.target.checked)}
+                                        className="w-4 h-4 rounded text-blue-600 focus:ring-blue-400 cursor-pointer"
+                                      />
+                                    </div>
+                                  )}
+                                  {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                                </td>
+                              );
+                            })}
+                            <td className="p-3 font-bold text-blue-600 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                              {calculateTotals(rapportino.giorni, daysInMonth).ggTrasferta} gg
+                            </td>
+                          </tr>
+                        </>
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -1400,6 +1896,72 @@ export default function Presenze() {
                   </button>
                 </div>
               )}
+
+              {/* SEZIONE COMPILATORE: RICHIESTA AUTORIZZAZIONE WEEKEND / CHIUSURE */}
+              <div className="bg-gradient-to-br from-indigo-50 to-blue-50 p-6 rounded-3xl border border-indigo-100 shadow-sm mt-8 no-print animate-in fade-in slide-in-from-bottom-4 duration-350">
+                <h3 className="font-extrabold text-xl mb-4 text-indigo-950 flex items-center gap-2">
+                  <ShieldAlert className="w-5 h-5 text-indigo-600" />
+                  Autorizzazione Lavoro Weekend e Chiusure Aziendali
+                </h3>
+                <p className="text-xs text-indigo-900/80 mb-5 leading-relaxed">
+                  Per poter registrare ore di lavoro il sabato, la domenica o nei periodi di chiusura aziendale, devi inviare una richiesta preventiva all'HR. Una volta approvata, i giorni corrispondenti saranno sbloccati nel tuo tabellone presenze.
+                </p>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                  {/* Form */}
+                  <form onSubmit={handleRequestWeekendSubmit} className="space-y-4 bg-white/60 p-5 rounded-2xl border border-indigo-100">
+                    <h4 className="text-sm font-bold text-indigo-900">Invia Nuova Richiesta</h4>
+                    <div>
+                      <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Giorno</label>
+                      <input 
+                        type="date"
+                        required
+                        value={reqWeekendData}
+                        onChange={e => setReqWeekendData(e.target.value)}
+                        className="w-full p-2.5 border-none bg-white rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Motivazione</label>
+                      <textarea
+                        required
+                        rows={2}
+                        value={reqWeekendMotivo}
+                        onChange={e => setReqWeekendMotivo(e.target.value)}
+                        placeholder="Es. Straordinari urgenti commessa GSK, trasferta cliente..."
+                        className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm"
+                      />
+                    </div>
+                    <button 
+                      type="submit"
+                      disabled={reqWeekendLoading}
+                      className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow transition active:scale-95 disabled:opacity-50"
+                    >
+                      {reqWeekendLoading ? 'Invio in corso...' : 'Invia Richiesta'}
+                    </button>
+                  </form>
+
+                  {/* Storico Richieste Utente */}
+                  <div className="space-y-3">
+                    <h4 className="text-sm font-bold text-indigo-900">Storico delle tue Richieste</h4>
+                    <div className="max-h-[220px] overflow-y-auto pr-1 space-y-2.5 custom-scrollbar">
+                      {myWeekendRequests.length === 0 ? (
+                        <p className="text-xs text-gray-400 italic p-2 bg-white/30 rounded-xl">Nessuna richiesta inviata.</p>
+                      ) : (
+                        myWeekendRequests.map(req => (
+                          <div key={req.id} className="bg-white p-3 rounded-xl border border-gray-100 shadow-sm flex justify-between items-center gap-3">
+                            <div className="min-w-0">
+                              <div className="text-xs font-bold text-gray-900">{formatDate(req.data)}</div>
+                              <div className="text-[10px] text-gray-500 truncate" title={req.motivo}>{req.motivo}</div>
+                            </div>
+                            <div className="shrink-0">{getStatusBadge(req.stato)}</div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -1480,176 +2042,274 @@ export default function Presenze() {
                       </tr>
                     </thead>
                     <tbody className="divide-y font-medium text-gray-700">
-                      
-                      {/* ORE ORDINARIE */}
-                      <tr>
-                        <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Ore Ord.</td>
-                        {Array.from({ length: 31 }).map((_, i) => {
-                          const d = i + 1;
-                          const out = d > daysInMonth;
-                          const g = reviewingRapportino.giorni[dayStr(d)];
+                      {isCollaboratore(reviewingRapportino.dipendenteNome, dipendenti) ? (
+                        <>
+                          {/* COLLABORATORI RIGA 1: GIORNATA INTERA */}
+                          <tr>
+                            <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Giornata Intera</td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const out = d > daysInMonth;
+                              const g = reviewingRapportino.giorni[dayStr(d)];
 
-                          return (
-                            <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''}`}>
-                              {!out && g && (
-                                <input 
-                                  type="number"
-                                  disabled={g.malattia}
-                                  value={g.ore === 0 ? '' : g.ore}
-                                  onChange={e => handleReviewCellChange(dayStr(d), 'ore', e.target.value === '' ? 0 : Number(e.target.value))}
-                                  className="w-full text-center bg-transparent border-none p-0.5 rounded font-bold outline-none focus:bg-gray-50 text-gray-900"
-                                />
-                              )}
-                              {out && '-'}
+                              return (
+                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''} align-middle`}>
+                                  {!out && g && (
+                                    <div className="flex justify-center items-center">
+                                      <input 
+                                        type="checkbox"
+                                        checked={g.ore === 8}
+                                        onChange={e => {
+                                          const val = e.target.checked ? 8 : 0;
+                                          handleReviewCellChange(dayStr(d), 'ore', val);
+                                        }}
+                                        className="w-3.5 h-3.5 rounded text-indigo-600"
+                                      />
+                                    </div>
+                                  )}
+                                  {out && '-'}
+                                </td>
+                              );
+                            })}
+                            <td className="p-2 font-bold bg-gray-50 border-l">
+                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).ggIntere} gg
                             </td>
-                          );
-                        })}
-                        <td className="p-2 font-bold bg-gray-50 border-l">
-                          {calculateTotals(reviewingRapportino.giorni, daysInMonth).oreOrd}
-                        </td>
-                      </tr>
+                          </tr>
 
-                      {/* STRAORDINARI */}
-                      <tr>
-                        <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Straord.</td>
-                        {Array.from({ length: 31 }).map((_, i) => {
-                          const d = i + 1;
-                          const out = d > daysInMonth;
-                          const g = reviewingRapportino.giorni[dayStr(d)];
+                          {/* COLLABORATORI RIGA 2: MEZZA GIORNATA */}
+                          <tr>
+                            <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Mezza Giornata</td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const out = d > daysInMonth;
+                              const g = reviewingRapportino.giorni[dayStr(d)];
 
-                          return (
-                            <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''}`}>
-                              {!out && g && (
-                                <input 
-                                  type="number"
-                                  disabled={g.malattia}
-                                  value={g.straordinari === 0 ? '' : g.straordinari}
-                                  onChange={e => handleReviewCellChange(dayStr(d), 'straordinari', e.target.value === '' ? 0 : Number(e.target.value))}
-                                  className="w-full text-center bg-transparent border-none p-0.5 rounded font-bold outline-none text-amber-600 focus:bg-gray-50 font-extrabold"
-                                />
-                              )}
-                              {out && '-'}
+                              return (
+                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''} align-middle`}>
+                                  {!out && g && (
+                                    <div className="flex justify-center items-center">
+                                      <input 
+                                        type="checkbox"
+                                        checked={g.ore === 4}
+                                        onChange={e => {
+                                          const val = e.target.checked ? 4 : 0;
+                                          handleReviewCellChange(dayStr(d), 'ore', val);
+                                        }}
+                                        className="w-3.5 h-3.5 rounded text-indigo-600"
+                                      />
+                                    </div>
+                                  )}
+                                  {out && '-'}
+                                </td>
+                              );
+                            })}
+                            <td className="p-2 font-bold bg-gray-50 border-l">
+                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).ggMezze} gg
                             </td>
-                          );
-                        })}
-                        <td className="p-2 font-bold text-amber-600 bg-gray-50 border-l">
-                          {calculateTotals(reviewingRapportino.giorni, daysInMonth).oreStra}
-                        </td>
-                      </tr>
+                          </tr>
 
-                      {/* FERIE */}
-                      <tr>
-                        <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Ferie</td>
-                        {Array.from({ length: 31 }).map((_, i) => {
-                          const d = i + 1;
-                          const out = d > daysInMonth;
-                          const g = reviewingRapportino.giorni[dayStr(d)];
+                          {/* COLLABORATORI RIGA 3: TRASFERTA */}
+                          <tr>
+                            <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Trasferta</td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const out = d > daysInMonth;
+                              const g = reviewingRapportino.giorni[dayStr(d)];
 
-                          return (
-                            <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''}`}>
-                              {!out && g && (
-                                <input 
-                                  type="number"
-                                  disabled={g.malattia}
-                                  value={g.ferie === 0 ? '' : g.ferie}
-                                  onChange={e => handleReviewCellChange(dayStr(d), 'ferie', e.target.value === '' ? 0 : Number(e.target.value))}
-                                  className="w-full text-center bg-transparent border-none p-0.5 rounded font-bold text-green-700 outline-none focus:bg-gray-50"
-                                />
-                              )}
-                              {out && '-'}
+                              return (
+                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''} align-middle`}>
+                                  {!out && g && (
+                                    <div className="flex justify-center items-center">
+                                      <input 
+                                        type="checkbox"
+                                        checked={g.trasferta || false}
+                                        onChange={e => handleReviewCellChange(dayStr(d), 'trasferta', e.target.checked)}
+                                        className="w-3.5 h-3.5 rounded text-blue-500"
+                                      />
+                                    </div>
+                                  )}
+                                  {out && '-'}
+                                </td>
+                              );
+                            })}
+                            <td className="p-2 font-bold text-blue-600 bg-gray-50 border-l">
+                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).ggTrasferta} gg
                             </td>
-                          );
-                        })}
-                        <td className="p-2 font-bold text-green-700 bg-gray-50 border-l">
-                          {calculateTotals(reviewingRapportino.giorni, daysInMonth).oreFerie}
-                        </td>
-                      </tr>
+                          </tr>
+                        </>
+                      ) : (
+                        <>
+                          {/* DIPENDENTI STANDARD RIGA 1: ORE ORDINARIE */}
+                          <tr>
+                            <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Ore Ord.</td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const out = d > daysInMonth;
+                              const g = reviewingRapportino.giorni[dayStr(d)];
 
-                      {/* PERMESSI */}
-                      <tr>
-                        <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Permessi</td>
-                        {Array.from({ length: 31 }).map((_, i) => {
-                          const d = i + 1;
-                          const out = d > daysInMonth;
-                          const g = reviewingRapportino.giorni[dayStr(d)];
-
-                          return (
-                            <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''}`}>
-                              {!out && g && (
-                                <input 
-                                  type="number"
-                                  disabled={g.malattia}
-                                  value={g.permessi === 0 ? '' : g.permessi}
-                                  onChange={e => handleReviewCellChange(dayStr(d), 'permessi', e.target.value === '' ? 0 : Number(e.target.value))}
-                                  className="w-full text-center bg-transparent border-none p-0.5 rounded font-bold text-indigo-600 outline-none focus:bg-gray-50"
-                                />
-                              )}
-                              {out && '-'}
+                              return (
+                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''}`}>
+                                  {!out && g && (
+                                    <input 
+                                      type="number"
+                                      disabled={g.malattia}
+                                      value={g.ore === 0 ? '' : g.ore}
+                                      onChange={e => handleReviewCellChange(dayStr(d), 'ore', e.target.value === '' ? 0 : Number(e.target.value))}
+                                      className="w-full text-center bg-transparent border-none p-0.5 rounded font-bold outline-none focus:bg-gray-50 text-gray-900"
+                                    />
+                                  )}
+                                  {out && '-'}
+                                </td>
+                              );
+                            })}
+                            <td className="p-2 font-bold bg-gray-50 border-l">
+                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).oreOrd}
                             </td>
-                          );
-                        })}
-                        <td className="p-2 font-bold text-indigo-600 bg-gray-50 border-l">
-                          {calculateTotals(reviewingRapportino.giorni, daysInMonth).orePerm}
-                        </td>
-                      </tr>
+                          </tr>
 
-                      {/* MALATTIA */}
-                      <tr>
-                        <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Malattia</td>
-                        {Array.from({ length: 31 }).map((_, i) => {
-                          const d = i + 1;
-                          const out = d > daysInMonth;
-                          const g = reviewingRapportino.giorni[dayStr(d)];
+                          {/* DIPENDENTI STANDARD RIGA 2: STRAORDINARI */}
+                          <tr>
+                            <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Straord.</td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const out = d > daysInMonth;
+                              const g = reviewingRapportino.giorni[dayStr(d)];
 
-                          return (
-                            <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''} align-middle`}>
-                              {!out && g && (
-                                <div className="flex justify-center items-center">
-                                  <input 
-                                    type="checkbox"
-                                    checked={g.malattia || false}
-                                    onChange={e => handleReviewCellChange(dayStr(d), 'malattia', e.target.checked)}
-                                    className="w-3.5 h-3.5 text-red-500 rounded"
-                                  />
-                                </div>
-                              )}
-                              {out && '-'}
+                              return (
+                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''}`}>
+                                  {!out && g && (
+                                    <input 
+                                      type="number"
+                                      disabled={g.malattia}
+                                      value={g.straordinari === 0 ? '' : g.straordinari}
+                                      onChange={e => handleReviewCellChange(dayStr(d), 'straordinari', e.target.value === '' ? 0 : Number(e.target.value))}
+                                      className="w-full text-center bg-transparent border-none p-0.5 rounded font-bold outline-none text-amber-600 focus:bg-gray-50 font-extrabold"
+                                    />
+                                  )}
+                                  {out && '-'}
+                                </td>
+                              );
+                            })}
+                            <td className="p-2 font-bold text-amber-600 bg-gray-50 border-l">
+                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).oreStra}
                             </td>
-                          );
-                        })}
-                        <td className="p-2 font-bold text-red-600 bg-gray-50 border-l">
-                          {calculateTotals(reviewingRapportino.giorni, daysInMonth).ggMalattia} gg
-                        </td>
-                      </tr>
+                          </tr>
 
-                      {/* TRASFERTA */}
-                      <tr>
-                        <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Trasferta</td>
-                        {Array.from({ length: 31 }).map((_, i) => {
-                          const d = i + 1;
-                          const out = d > daysInMonth;
-                          const g = reviewingRapportino.giorni[dayStr(d)];
+                          {/* DIPENDENTI STANDARD RIGA 3: FERIE */}
+                          <tr>
+                            <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Ferie</td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const out = d > daysInMonth;
+                              const g = reviewingRapportino.giorni[dayStr(d)];
 
-                          return (
-                            <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''} align-middle`}>
-                              {!out && g && (
-                                <div className="flex justify-center items-center">
-                                  <input 
-                                    type="checkbox"
-                                    checked={g.trasferta || false}
-                                    onChange={e => handleReviewCellChange(dayStr(d), 'trasferta', e.target.checked)}
-                                    className="w-3.5 h-3.5 text-blue-500 rounded"
-                                  />
-                                </div>
-                              )}
-                              {out && '-'}
+                              return (
+                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''}`}>
+                                  {!out && g && (
+                                    <input 
+                                      type="number"
+                                      disabled={g.malattia}
+                                      value={g.ferie === 0 ? '' : g.ferie}
+                                      onChange={e => handleReviewCellChange(dayStr(d), 'ferie', e.target.value === '' ? 0 : Number(e.target.value))}
+                                      className="w-full text-center bg-transparent border-none p-0.5 rounded font-bold text-green-700 outline-none focus:bg-gray-50"
+                                    />
+                                  )}
+                                  {out && '-'}
+                                </td>
+                              );
+                            })}
+                            <td className="p-2 font-bold text-green-700 bg-gray-50 border-l">
+                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).oreFerie}
                             </td>
-                          );
-                        })}
-                        <td className="p-2 font-bold text-blue-600 bg-gray-50 border-l">
-                          {calculateTotals(reviewingRapportino.giorni, daysInMonth).ggTrasferta} gg
-                        </td>
-                      </tr>
+                          </tr>
+
+                          {/* DIPENDENTI STANDARD RIGA 4: PERMESSI */}
+                          <tr>
+                            <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Permessi</td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const out = d > daysInMonth;
+                              const g = reviewingRapportino.giorni[dayStr(d)];
+
+                              return (
+                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''}`}>
+                                  {!out && g && (
+                                    <input 
+                                      type="number"
+                                      disabled={g.malattia}
+                                      value={g.permessi === 0 ? '' : g.permessi}
+                                      onChange={e => handleReviewCellChange(dayStr(d), 'permessi', e.target.value === '' ? 0 : Number(e.target.value))}
+                                      className="w-full text-center bg-transparent border-none p-0.5 rounded font-bold text-indigo-600 outline-none focus:bg-gray-50"
+                                    />
+                                  )}
+                                  {out && '-'}
+                                </td>
+                              );
+                            })}
+                            <td className="p-2 font-bold text-indigo-600 bg-gray-50 border-l">
+                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).orePerm}
+                            </td>
+                          </tr>
+
+                          {/* DIPENDENTI STANDARD RIGA 5: CONTRASSEGNO MALATTIA */}
+                          <tr>
+                            <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Malattia</td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const out = d > daysInMonth;
+                              const g = reviewingRapportino.giorni[dayStr(d)];
+
+                              return (
+                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''} align-middle`}>
+                                  {!out && g && (
+                                    <div className="flex justify-center items-center">
+                                      <input 
+                                        type="checkbox"
+                                        checked={g.malattia || false}
+                                        onChange={e => handleReviewCellChange(dayStr(d), 'malattia', e.target.checked)}
+                                        className="w-3.5 h-3.5 text-red-500 rounded"
+                                      />
+                                    </div>
+                                  )}
+                                  {out && '-'}
+                                </td>
+                              );
+                            })}
+                            <td className="p-2 font-bold text-red-600 bg-gray-50 border-l">
+                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).ggMalattia} gg
+                            </td>
+                          </tr>
+
+                          {/* DIPENDENTI STANDARD RIGA 6: CONTRASSEGNO TRASFERTA */}
+                          <tr>
+                            <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Trasferta</td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const out = d > daysInMonth;
+                              const g = reviewingRapportino.giorni[dayStr(d)];
+
+                              return (
+                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''} align-middle`}>
+                                  {!out && g && (
+                                    <div className="flex justify-center items-center">
+                                      <input 
+                                        type="checkbox"
+                                        checked={g.trasferta || false}
+                                        onChange={e => handleReviewCellChange(dayStr(d), 'trasferta', e.target.checked)}
+                                        className="w-3.5 h-3.5 text-blue-500 rounded"
+                                      />
+                                    </div>
+                                  )}
+                                  {out && '-'}
+                                </td>
+                              );
+                            })}
+                            <td className="p-2 font-bold text-blue-600 bg-gray-50 border-l">
+                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).ggTrasferta} gg
+                            </td>
+                          </tr>
+                        </>
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -1783,6 +2443,7 @@ export default function Presenze() {
           
           const totals = calculateTotals(sheetToPrint.giorni, daysInMonth);
           const trasferte = getTrasferteList(sheetToPrint.giorni, daysInMonth);
+          const isCollab = isCollaboratore(sheetToPrint.dipendenteNome, dipendenti);
 
           return (
             <div className="space-y-6">
@@ -1818,109 +2479,162 @@ export default function Presenze() {
                 <thead>
                   <tr className="bg-gray-150 border-b border-gray-950 font-bold text-gray-900 text-[8px]">
                     <th className="p-1.5 border-r border-gray-950 text-left w-[12%] font-extrabold">RIGA/GIORNO</th>
-                    {Array.from({ length: 31 }).map((_, i) => (
+                            {Array.from({ length: 31 }).map((_, i) => (
                       <th key={i} className="p-1 border-r border-gray-950 w-[2.6%] font-extrabold">{i + 1}</th>
                     ))}
                     <th className="p-1.5 border-l border-gray-950 w-[6%] font-extrabold">TOT</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-950 font-semibold text-gray-900">
-                  
-                  {/* RIGA 1: ORE */}
-                  <tr>
-                    <td className="p-1.5 text-left bg-gray-50 border-r border-gray-950 font-extrabold">ORE</td>
-                    {Array.from({ length: 31 }).map((_, i) => {
-                      const d = i + 1;
-                      const val = sheetToPrint.giorni[dayStr(d)]?.ore;
-                      const out = d > daysInMonth;
-                      return (
-                        <td key={i} className={`p-1 border-r border-gray-950 ${out ? 'bg-gray-300' : ''}`}>
-                          {!out ? (val || 0) : ''}
-                        </td>
-                      );
-                    })}
-                    <td className="p-1.5 font-extrabold bg-gray-100">{totals.oreOrd}</td>
-                  </tr>
+                <tbody className="divide-y divide-gray-955 font-semibold text-gray-900">
+                  {isCollab ? (
+                    <>
+                      {/* COLLABORATORI RIGA 1: GIORNATA INTERA */}
+                      <tr>
+                        <td className="p-1.5 text-left bg-gray-50 border-r border-gray-955 font-extrabold text-[8px]">GIORNATA INTERA</td>
+                        {Array.from({ length: 31 }).map((_, i) => {
+                          const d = i + 1;
+                          const val = sheetToPrint.giorni[dayStr(d)]?.ore;
+                          const out = d > daysInMonth;
+                          return (
+                            <td key={i} className={`p-1 border-r border-gray-950 ${out ? 'bg-gray-300' : ''}`}>
+                              {!out ? (val === 8 ? 'X' : '') : ''}
+                            </td>
+                          );
+                        })}
+                        <td className="p-1.5 font-extrabold bg-gray-100">{totals.ggIntere} gg</td>
+                      </tr>
 
-                  {/* RIGA 2: STRAORDINARI */}
-                  <tr>
-                    <td className="p-1.5 text-left bg-gray-50 border-r border-gray-950 font-extrabold">STRAORDINARI</td>
-                    {Array.from({ length: 31 }).map((_, i) => {
-                      const d = i + 1;
-                      const val = sheetToPrint.giorni[dayStr(d)]?.straordinari;
-                      const out = d > daysInMonth;
-                      return (
-                        <td key={i} className={`p-1 border-r border-gray-950 ${out ? 'bg-gray-300' : ''}`}>
-                          {!out ? (val || 0) : ''}
-                        </td>
-                      );
-                    })}
-                    <td className="p-1.5 font-extrabold bg-gray-100">{totals.oreStra}</td>
-                  </tr>
+                      {/* COLLABORATORI RIGA 2: MEZZA GIORNATA */}
+                      <tr>
+                        <td className="p-1.5 text-left bg-gray-50 border-r border-gray-955 font-extrabold text-[8px]">MEZZA GIORNATA</td>
+                        {Array.from({ length: 31 }).map((_, i) => {
+                          const d = i + 1;
+                          const val = sheetToPrint.giorni[dayStr(d)]?.ore;
+                          const out = d > daysInMonth;
+                          return (
+                            <td key={i} className={`p-1 border-r border-gray-950 ${out ? 'bg-gray-300' : ''}`}>
+                              {!out ? (val === 4 ? 'X' : '') : ''}
+                            </td>
+                          );
+                        })}
+                        <td className="p-1.5 font-extrabold bg-gray-100">{totals.ggMezze} gg</td>
+                      </tr>
 
-                  {/* RIGA 3: FERIE */}
-                  <tr>
-                    <td className="p-1.5 text-left bg-gray-50 border-r border-gray-950 font-extrabold">FERIE</td>
-                    {Array.from({ length: 31 }).map((_, i) => {
-                      const d = i + 1;
-                      const val = sheetToPrint.giorni[dayStr(d)]?.ferie;
-                      const out = d > daysInMonth;
-                      return (
-                        <td key={i} className={`p-1 border-r border-gray-950 ${out ? 'bg-gray-300' : ''}`}>
-                          {!out ? (val || 0) : ''}
-                        </td>
-                      );
-                    })}
-                    <td className="p-1.5 font-extrabold bg-gray-100">{totals.oreFerie}</td>
-                  </tr>
+                      {/* COLLABORATORI RIGA 3: TRASFERTA */}
+                      <tr>
+                        <td className="p-1.5 text-left bg-gray-50 border-r border-gray-955 font-extrabold text-[8px]">TRASFERTA (T)</td>
+                        {Array.from({ length: 31 }).map((_, i) => {
+                          const d = i + 1;
+                          const val = sheetToPrint.giorni[dayStr(d)]?.trasferta;
+                          const out = d > daysInMonth;
+                          return (
+                            <td key={i} className={`p-1 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
+                              {!out && val ? 'T' : ''}
+                            </td>
+                          );
+                        })}
+                        <td className="p-1.5 font-extrabold bg-gray-100">{totals.ggTrasferta} gg</td>
+                      </tr>
+                    </>
+                  ) : (
+                    <>
+                      {/* DIPENDENTI STANDARD RIGA 1: ORE */}
+                      <tr>
+                        <td className="p-1.5 text-left bg-gray-50 border-r border-gray-950 font-extrabold">ORE</td>
+                        {Array.from({ length: 31 }).map((_, i) => {
+                          const d = i + 1;
+                          const val = sheetToPrint.giorni[dayStr(d)]?.ore;
+                          const out = d > daysInMonth;
+                          return (
+                            <td key={i} className={`p-1 border-r border-gray-950 ${out ? 'bg-gray-300' : ''}`}>
+                              {!out ? (val || 0) : ''}
+                            </td>
+                          );
+                        })}
+                        <td className="p-1.5 font-extrabold bg-gray-100">{totals.oreOrd}</td>
+                      </tr>
 
-                  {/* RIGA 4: PERMESSI */}
-                  <tr>
-                    <td className="p-1.5 text-left bg-gray-50 border-r border-gray-950 font-extrabold">PERMESSI</td>
-                    {Array.from({ length: 31 }).map((_, i) => {
-                      const d = i + 1;
-                      const val = sheetToPrint.giorni[dayStr(d)]?.permessi;
-                      const out = d > daysInMonth;
-                      return (
-                        <td key={i} className={`p-1 border-r border-gray-950 ${out ? 'bg-gray-300' : ''}`}>
-                          {!out ? (val || 0) : ''}
-                        </td>
-                      );
-                    })}
-                    <td className="p-1.5 font-extrabold bg-gray-100">{totals.orePerm}</td>
-                  </tr>
+                      {/* DIPENDENTI STANDARD RIGA 2: STRAORDINARI */}
+                      <tr>
+                        <td className="p-1.5 text-left bg-gray-50 border-r border-gray-950 font-extrabold">STRAORDINARI</td>
+                        {Array.from({ length: 31 }).map((_, i) => {
+                          const d = i + 1;
+                          const val = sheetToPrint.giorni[dayStr(d)]?.straordinari;
+                          const out = d > daysInMonth;
+                          return (
+                            <td key={i} className={`p-1 border-r border-gray-950 ${out ? 'bg-gray-300' : ''}`}>
+                              {!out ? (val || 0) : ''}
+                            </td>
+                          );
+                        })}
+                        <td className="p-1.5 font-extrabold bg-gray-100">{totals.oreStra}</td>
+                      </tr>
 
-                  {/* RIGA 5: MALATTIA */}
-                  <tr>
-                    <td className="p-1.5 text-left bg-gray-50 border-r border-gray-950 font-extrabold">MALATTIA (M)</td>
-                    {Array.from({ length: 31 }).map((_, i) => {
-                      const d = i + 1;
-                      const val = sheetToPrint.giorni[dayStr(d)]?.malattia;
-                      const out = d > daysInMonth;
-                      return (
-                        <td key={i} className={`p-1 border-r border-gray-950 ${out ? 'bg-gray-300' : ''}`}>
-                          {!out && val ? 'M' : ''}
-                        </td>
-                      );
-                    })}
-                    <td className="p-1.5 font-extrabold bg-gray-100">{totals.ggMalattia} gg</td>
-                  </tr>
+                      {/* DIPENDENTI STANDARD RIGA 3: FERIE */}
+                      <tr>
+                        <td className="p-1.5 text-left bg-gray-50 border-r border-gray-950 font-extrabold">FERIE</td>
+                        {Array.from({ length: 31 }).map((_, i) => {
+                          const d = i + 1;
+                          const val = sheetToPrint.giorni[dayStr(d)]?.ferie;
+                          const out = d > daysInMonth;
+                          return (
+                            <td key={i} className={`p-1 border-r border-gray-950 ${out ? 'bg-gray-300' : ''}`}>
+                              {!out ? (val || 0) : ''}
+                            </td>
+                          );
+                        })}
+                        <td className="p-1.5 font-extrabold bg-gray-100">{totals.oreFerie}</td>
+                      </tr>
 
-                  {/* RIGA 6: TRASFERTA */}
-                  <tr>
-                    <td className="p-1.5 text-left bg-gray-50 border-r border-gray-950 font-extrabold">TRASFERTA (T)</td>
-                    {Array.from({ length: 31 }).map((_, i) => {
-                      const d = i + 1;
-                      const val = sheetToPrint.giorni[dayStr(d)]?.trasferta;
-                      const out = d > daysInMonth;
-                      return (
-                        <td key={i} className={`p-1 border-r border-gray-950 ${out ? 'bg-gray-300' : ''}`}>
-                          {!out && val ? 'T' : ''}
-                        </td>
-                      );
-                    })}
-                    <td className="p-1.5 font-extrabold bg-gray-100">{totals.ggTrasferta} gg</td>
-                  </tr>
+                      {/* DIPENDENTI STANDARD RIGA 4: PERMESSI */}
+                      <tr>
+                        <td className="p-1.5 text-left bg-gray-50 border-r border-gray-950 font-extrabold">PERMESSI</td>
+                        {Array.from({ length: 31 }).map((_, i) => {
+                          const d = i + 1;
+                          const val = sheetToPrint.giorni[dayStr(d)]?.permessi;
+                          const out = d > daysInMonth;
+                          return (
+                            <td key={i} className={`p-1 border-r border-gray-950 ${out ? 'bg-gray-300' : ''}`}>
+                              {!out ? (val || 0) : ''}
+                            </td>
+                          );
+                        })}
+                        <td className="p-1.5 font-extrabold bg-gray-100">{totals.orePerm}</td>
+                      </tr>
+
+                      {/* DIPENDENTI STANDARD RIGA 5: MALATTIA */}
+                      <tr>
+                        <td className="p-1.5 text-left bg-gray-50 border-r border-gray-950 font-extrabold">MALATTIA (M)</td>
+                        {Array.from({ length: 31 }).map((_, i) => {
+                          const d = i + 1;
+                          const val = sheetToPrint.giorni[dayStr(d)]?.malattia;
+                          const out = d > daysInMonth;
+                          return (
+                            <td key={i} className={`p-1 border-r border-gray-950 ${out ? 'bg-gray-300' : ''}`}>
+                              {!out && val ? 'M' : ''}
+                            </td>
+                          );
+                        })}
+                        <td className="p-1.5 font-extrabold bg-gray-100">{totals.ggMalattia} gg</td>
+                      </tr>
+
+                      {/* DIPENDENTI STANDARD RIGA 6: TRASFERTA */}
+                      <tr>
+                        <td className="p-1.5 text-left bg-gray-50 border-r border-gray-950 font-extrabold">TRASFERTA (T)</td>
+                        {Array.from({ length: 31 }).map((_, i) => {
+                          const d = i + 1;
+                          const val = sheetToPrint.giorni[dayStr(d)]?.trasferta;
+                          const out = d > daysInMonth;
+                          return (
+                            <td key={i} className={`p-1 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
+                              {!out && val ? 'T' : ''}
+                            </td>
+                          );
+                        })}
+                        <td className="p-1.5 font-extrabold bg-gray-100">{totals.ggTrasferta} gg</td>
+                      </tr>
+                    </>
+                  )}
                 </tbody>
               </table>
 

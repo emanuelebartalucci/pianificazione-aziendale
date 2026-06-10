@@ -1,14 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, Fragment } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, onSnapshot } from 'firebase/firestore';
-import { Briefcase, Printer, ChevronLeft, ChevronRight, PieChart, Search, Filter, LayoutGrid, LayoutList } from 'lucide-react';
-import { generateWeeks, type WeekInfo, addDays, getWeekNumber, getStartOfWeek } from '../utils/date';
-import AssegnazioneModal from '../components/AssegnazioneModal';
-import { Chart as ChartJS, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement } from 'chart.js';
-import { Pie, Bar } from 'react-chartjs-2';
-
-ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { Briefcase, Printer, ChevronLeft, ChevronRight, Calendar, Download } from 'lucide-react';
+import { getWeekNumber, getStartOfWeek, addDays } from '../utils/date';
 
 interface Assegnazione {
   commessaId: string;
@@ -18,603 +13,521 @@ interface Assegnazione {
   giorni?: string[];
 }
 
+interface WeekInfo {
+  id: string;
+  label: string;
+  sub: string;
+  dateObj?: Date;
+}
+
+// Client dictionary for code translation
+const CLIENTI_DICTIONARY: Record<string, string> = {
+  '61': 'GSK',
+  '12': 'Novartis',
+  '33': 'Eli Lilly',
+  '45': 'Pfizer',
+  '01': 'Ingegnoso',
+  '99': 'Cliente di Test'
+};
+
+const getClientName = (code: string): string => {
+  return CLIENTI_DICTIONARY[code] || `Cliente ${code}`;
+};
+
+const parseClientCode = (commessaName: string): string => {
+  const match = commessaName.match(/^P-\d+-(\d+)/i);
+  if (match) {
+    return match[1];
+  }
+  return '';
+};
+
+const formatDate = (dateStr: string): string => {
+  if (!dateStr) return '';
+  const parts = dateStr.split('-');
+  if (parts.length === 3) {
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  return dateStr;
+};
+
+// Custom extended week generator
+const generateWeeksExtended = (baseDate: Date, numWeeks: number): WeekInfo[] => {
+  const weeks: WeekInfo[] = [];
+  let currentStart = getStartOfWeek(baseDate);
+  for(let i = 0; i < numWeeks; i++) {
+    const end = addDays(currentStart, 4); // Mon to Fri
+    const wkNum = getWeekNumber(currentStart);
+    weeks.push({
+      id: `${currentStart.getFullYear()}-W${wkNum}`,
+      label: `Sett. ${wkNum}`,
+      sub: `${currentStart.getDate()}/${currentStart.getMonth() + 1} - ${end.getDate()}/${end.getMonth() + 1}`,
+      dateObj: new Date(currentStart)
+    });
+    currentStart = addDays(currentStart, 7);
+  }
+  return weeks;
+};
+
 export default function Commesse() {
-  const { isAdmin, isSenior, dipendenti, commesse, myAssociatedName } = useAuth();
+  const { dipendenti, commesse } = useAuth();
   
   const [baseDate, setBaseDate] = useState<Date>(new Date());
-  const [weeks, setWeeks] = useState<WeekInfo[]>([]);
+  const [zoomWeeks, setZoomWeeks] = useState<number>(13); // Default to 3 Months (13 Weeks)
+  const [selectedCommessaFilter, setSelectedCommessaFilter] = useState<string>(''); // Single commessa detail view
   const [assignments, setAssignments] = useState<Record<string, Assegnazione[]>>({});
-  const [viewRange, setViewRange] = useState<'settimana' | 'mese'>('mese');
   
-  // UI States
-  const [activeTab, setActiveTab] = useState<'tabella' | 'grafici'>('tabella');
-  const [isCompact, setIsCompact] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filterCommessa, setFilterCommessa] = useState('');
+  // Collapse state for clients
+  const [collapsedClients, setCollapsedClients] = useState<Record<string, boolean>>({});
 
-  // Modal state
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [modalData, setModalData] = useState({ dipendente: '', weekId: '', weekLabel: '', weekSub: '', currentAssignments: [] as Assegnazione[] });
-
-  // Chart state
-  const [chartType, setChartType] = useState<'dipendente' | 'commessa'>('dipendente');
-  const [chartTarget, setChartTarget] = useState<string>('');
+  const toggleClientCollapse = (clientName: string) => {
+    setCollapsedClients(prev => ({ ...prev, [clientName]: !prev[clientName] }));
+  };
   
-  // Chart Date Range
-  const [chartStartDate, setChartStartDate] = useState<string>('');
-  const [chartEndDate, setChartEndDate] = useState<string>('');
-  const [chartWeeks, setChartWeeks] = useState<WeekInfo[]>([]);
-
-  useEffect(() => {
-    const allWeeks = generateWeeks(baseDate);
-    if (viewRange === 'settimana') {
-      setWeeks([allWeeks[0]]);
-    } else {
-      setWeeks(allWeeks);
-    }
-  }, [baseDate, viewRange]);
-
+  // Real-time listener for allocations
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'assegnazioni'), (snapshot) => {
       const ass: Record<string, Assegnazione[]> = {};
-      snapshot.forEach(doc => {
-        ass[doc.id] = doc.data().lista || [];
+      snapshot.forEach(docSnap => {
+        ass[docSnap.id] = docSnap.data().lista || [];
       });
       setAssignments(ass);
     });
     return () => unsub();
   }, []);
 
-  const daysOfWeek = useMemo(() => {
-    const start = getStartOfWeek(baseDate);
-    return [
-      { label: 'Lunedì', key: 'Lun', date: start },
-      { label: 'Martedì', key: 'Mar', date: addDays(start, 1) },
-      { label: 'Mercoledì', key: 'Mer', date: addDays(start, 2) },
-      { label: 'Giovedì', key: 'Gio', date: addDays(start, 3) },
-      { label: 'Venerdì', key: 'Ven', date: addDays(start, 4) },
-    ];
-  }, [baseDate]);
+  const [approvedLeaves, setApprovedLeaves] = useState<any[]>([]);
 
-  // Filtered Employees
-  const dipendentiDaMostrare = useMemo(() => {
-    let list = dipendenti;
-    if (!isAdmin && !isSenior) {
-      if (myAssociatedName) {
-        list = dipendenti.filter(d => d.nome === myAssociatedName);
-      } else {
-        list = [{ id: 'wait', nome: "Profilo in attesa di configurazione", email: '' }];
-      }
-    }
-
-    if (searchQuery) {
-      list = list.filter(d => d.nome.toLowerCase().includes(searchQuery.toLowerCase()));
-    }
-
-    if (filterCommessa) {
-      list = list.filter(d => {
-        // Controlla se il dipendente ha questa commessa in almeno una delle settimane visualizzate
-        return weeks.some(wk => {
-          const key = `${d.nome}-${wk.id}`;
-          const assList = assignments[key] || [];
-          return assList.some(a => a.commessaId === filterCommessa);
-        });
+  // Load approved leaves in real-time
+  useEffect(() => {
+    const q = query(
+      collection(db, 'richieste_ferie'),
+      where('stato', '==', 'Approvato')
+    );
+    const unsub = onSnapshot(q, (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach(docSnap => {
+        list.push({ id: docSnap.id, ...docSnap.data() });
       });
-    }
-
-    return list;
-  }, [dipendenti, isAdmin, isSenior, myAssociatedName, searchQuery, filterCommessa, weeks, assignments]);
-
-  // Default Chart targets
-  useEffect(() => {
-    if (chartType === 'dipendente' && dipendenti.length > 0 && !chartTarget) {
-      setChartTarget(myAssociatedName || dipendenti[0].nome);
-    } else if (chartType === 'commessa' && commesse.length > 0 && (!chartTarget || !commesse.find(c => c.id === chartTarget))) {
-      setChartTarget(commesse[0].id);
-    }
-  }, [chartType, dipendenti, commesse, myAssociatedName, chartTarget]);
-
-  // Calcolo delle settimane per il grafico
-  useEffect(() => {
-    if (!chartStartDate || !chartEndDate) {
-      setChartWeeks(weeks); // Fallback
-      return;
-    }
-    
-    let current = new Date(chartStartDate);
-    const end = new Date(chartEndDate);
-    const generatedWeeks: WeekInfo[] = [];
-    
-    while (current <= end && generatedWeeks.length < 52) { // Max 1 anno di dati
-      const wNum = getWeekNumber(current);
-      const start = getStartOfWeek(current);
-      const endWk = addDays(start, 4);
-      generatedWeeks.push({
-        id: `${current.getFullYear()}-W${wNum}`,
-        label: `Settimana ${wNum}`,
-        sub: `${start.getDate()}/${start.getMonth()+1} - ${endWk.getDate()}/${endWk.getMonth()+1}`,
-        dateObj: current
-      });
-      current = addDays(current, 7);
-    }
-    setChartWeeks(generatedWeeks.length ? generatedWeeks : weeks);
-  }, [chartStartDate, chartEndDate, weeks]);
-
-  // Setta le date di default per i grafici
-  useEffect(() => {
-    if (!chartStartDate && weeks.length > 0) {
-      setChartStartDate(weeks[0].dateObj?.toISOString().split('T')[0] || '');
-      setChartEndDate(weeks[weeks.length - 1].dateObj?.toISOString().split('T')[0] || '');
-    }
-  }, [weeks, chartStartDate]);
-
-  const shiftWeek = (days: number) => setBaseDate(prev => addDays(prev, days));
-  const resetToToday = () => setBaseDate(new Date());
-
-  const handleCellClick = (dipNome: string, weekId: string, weekLabel: string, weekSub: string) => {
-    if (!isAdmin && !isSenior) return;
-    if (dipNome === "Profilo in attesa di configurazione") return;
-    
-    const key = `${dipNome}-${weekId}`;
-    setModalData({
-      dipendente: dipNome,
-      weekId,
-      weekLabel,
-      weekSub,
-      currentAssignments: assignments[key] || []
+      setApprovedLeaves(list);
     });
-    setIsModalOpen(true);
+    return () => unsub();
+  }, []);
+
+  const getLeavesForResourceInWeek = (resName: string, wkId: string) => {
+    const parts = wkId.split('-W');
+    if (parts.length !== 2) return [];
+    const year = parseInt(parts[0]);
+    const week = parseInt(parts[1]);
+
+    const simple = new Date(year, 0, 4);
+    const dayOfWeek = simple.getDay();
+    const dayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const firstMonday = new Date(simple.setDate(simple.getDate() + dayOffset));
+    const monday = new Date(firstMonday.setDate(firstMonday.getDate() + (week - 1) * 7));
+
+    const weekDates: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const dObj = new Date(monday);
+      dObj.setDate(monday.getDate() + i);
+      const y = dObj.getFullYear();
+      const m = String(dObj.getMonth() + 1).padStart(2, '0');
+      const ds = String(dObj.getDate()).padStart(2, '0');
+      weekDates.push(`${y}-${m}-${ds}`);
+    }
+
+    const leaveDaysFound: { giorno: string; tipo: string; dettagli: string }[] = [];
+    const dayNames = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
+
+    approvedLeaves.forEach(leave => {
+      if (leave.dipendenteName !== resName) return;
+      const start = leave.dataInizio || leave.data;
+      const end = leave.dataFine || leave.data;
+      if (start && end) {
+        const [sY, sM, sD] = start.split('-').map(Number);
+        const [eY, eM, eD] = end.split('-').map(Number);
+        const curr = new Date(sY, sM - 1, sD);
+        const last = new Date(eY, eM - 1, eD);
+
+        weekDates.forEach((wDateStr, idx) => {
+          const [wY, wM, wD] = wDateStr.split('-').map(Number);
+          const wDate = new Date(wY, wM - 1, wD);
+          if (wDate >= curr && wDate <= last) {
+            let label = leave.tipo === 'ferie' ? 'Ferie' : leave.tipo === 'malattia' ? 'Malattia' : leave.tipo === 'smart' ? 'Smart' : leave.tipo;
+            if (leave.tipo === 'mattina') label = 'Ass. Matt.';
+            if (leave.tipo === 'pomeriggio') label = 'Ass. Pom.';
+            if (leave.tipo === 'permesso') label = `Perm. (${leave.oraInizio || ''}-${leave.oraFine || ''})`;
+
+            leaveDaysFound.push({
+              giorno: dayNames[idx],
+              tipo: leave.tipo,
+              dettagli: label
+            });
+          }
+        });
+      }
+    });
+
+    return leaveDaysFound;
   };
 
-  const getChartData = () => {
-    if (chartType === 'dipendente') {
-      const dipNome = chartTarget;
-      const dataMap: Record<string, { value: number, color: string }> = {};
-      
-      chartWeeks.forEach(wk => {
-        const key = `${dipNome}-${wk.id}`;
-        const assList = assignments[key] || [];
-        assList.forEach(a => {
-          if (!dataMap[a.commessaName]) dataMap[a.commessaName] = { value: 0, color: a.colore };
-          dataMap[a.commessaName].value += Number(a.percentuale);
-        });
-      });
-
-      const labels = Object.keys(dataMap);
-      const data = labels.map(l => dataMap[l].value);
-      const bgColors = labels.map(l => dataMap[l].color);
-
-      return {
-        labels: labels.length ? labels : ['Nessuna assegnazione'],
-        datasets: [{
-          data: data.length ? data : [1],
-          backgroundColor: bgColors.length ? bgColors : ['#e5e7eb'],
-          borderWidth: 1,
-        }]
-      };
-    } else {
-      const commId = chartTarget;
-      const comm = commesse.find(c => c.id === commId);
-      const commName = comm ? comm.nome : commId;
-      const dataMap: Record<string, number> = {};
-
-      dipendenti.forEach(d => {
-        let total = 0;
-        chartWeeks.forEach(wk => {
-          const key = `${d.nome}-${wk.id}`;
-          const assList = assignments[key] || [];
-          assList.forEach(a => {
-            if (a.commessaId === commId) total += Number(a.percentuale);
-          });
-        });
-        if (total > 0) dataMap[d.nome] = total;
-      });
-
-      return {
-        labels: Object.keys(dataMap),
-        datasets: [{
-          label: `Impegno totale su ${commName} (%)`,
-          data: Object.values(dataMap),
-          backgroundColor: comm?.colore || '#3b82f6',
-        }]
-      };
+  // Dynamically determine baseDate and number of weeks if a single commessa is selected
+  const activeWeeks = useMemo(() => {
+    if (selectedCommessaFilter) {
+      const comm = commesse.find(c => c.id === selectedCommessaFilter);
+      if (comm && comm.dataInizio && comm.dataFine) {
+        const start = new Date(comm.dataInizio);
+        const end = new Date(comm.dataFine);
+        const diffTime = Math.abs(end.getTime() - start.getTime());
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        const numWks = Math.max(1, Math.min(52, Math.ceil(diffDays / 7)));
+        return generateWeeksExtended(start, numWks);
+      }
     }
+    // Standard zoom mode
+    return generateWeeksExtended(baseDate, zoomWeeks);
+  }, [baseDate, zoomWeeks, selectedCommessaFilter, commesse]);
+
+  const getMonthYearLabel = (dateObj?: Date) => {
+    if (!dateObj) return '';
+    const months = [
+      'Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno',
+      'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre'
+    ];
+    return `${months[dateObj.getMonth()]} ${dateObj.getFullYear()}`;
+  };
+
+  const monthSpans = useMemo(() => {
+    const spans: { label: string; colSpan: number }[] = [];
+    activeWeeks.forEach(wk => {
+      const label = getMonthYearLabel(wk.dateObj);
+      if (spans.length > 0 && spans[spans.length - 1].label === label) {
+        spans[spans.length - 1].colSpan += 1;
+      } else {
+        spans.push({ label, colSpan: 1 });
+      }
+    });
+    return spans;
+  }, [activeWeeks]);
+
+  const handleExportToExcel = () => {
+    let csvContent = "\uFEFF"; // UTF-8 BOM
+    
+    // Headers
+    const headers = ["Cliente", "Codice/Nome Commessa", "Responsabile", "PM", "Data Inizio", "Data Fine"];
+    activeWeeks.forEach(wk => {
+      headers.push(`${wk.label} (${wk.sub})`);
+    });
+    csvContent += headers.join(";") + "\n";
+
+    // Righe
+    groupedCommesse.forEach(group => {
+      group.commesseList.forEach(comm => {
+        const row = [
+          group.clientName,
+          comm.nome,
+          comm.responsabile || "",
+          comm.pm || "",
+          comm.dataInizio ? formatDate(comm.dataInizio) : "",
+          comm.dataFine ? formatDate(comm.dataFine) : ""
+        ];
+        
+        activeWeeks.forEach(wk => {
+          const assignedPeople = getAssignmentsForCommessaInWeek(comm.id, wk.id);
+          const peopleStr = assignedPeople.map(p => {
+            const daysStr = p.giorni ? ` (${p.giorni.join(',')})` : '';
+            return `${p.name} [${p.pct}%${daysStr}]`;
+          }).join(" | ");
+          row.push(peopleStr || "Nessuno");
+        });
+        
+        csvContent += row.map(val => `"${val.replace(/"/g, '""')}"`).join(";") + "\n";
+      });
+    });
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `Pianificazione_Commesse_${activeWeeks[0].id}_a_${activeWeeks[activeWeeks.length - 1].id}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Group commesse by client
+  const groupedCommesse = useMemo(() => {
+    // Filter commesse if a single one is selected in detail
+    const list = selectedCommessaFilter 
+      ? commesse.filter(c => c.id === selectedCommessaFilter)
+      : commesse;
+
+    const groups: Record<string, { clientName: string; commesseList: typeof commesse }> = {};
+    
+    list.forEach(c => {
+      const code = parseClientCode(c.nome);
+      const clientKey = code || 'vari';
+      const clientName = code ? getClientName(code) : 'Altri Clienti';
+      
+      if (!groups[clientKey]) {
+        groups[clientKey] = { clientName, commesseList: [] };
+      }
+      groups[clientKey].commesseList.push(c);
+    });
+    
+    return Object.values(groups).sort((a, b) => a.clientName.localeCompare(b.clientName));
+  }, [commesse, selectedCommessaFilter]);
+
+  // Get people allocated to a commessa in a specific week
+  const getAssignmentsForCommessaInWeek = (commId: string, wkId: string) => {
+    const list: { name: string; pct: number; giorni?: string[] }[] = [];
+    dipendenti.forEach(d => {
+      const key = `${d.nome}-${wkId}`;
+      const assList = assignments[key] || [];
+      const match = assList.find(a => a.commessaId === commId);
+      if (match) {
+        list.push({ name: d.nome, pct: match.percentuale, giorni: match.giorni });
+      }
+    });
+    return list;
+  };
+
+  const shiftPeriod = (weeksOffset: number) => {
+    setBaseDate(prev => addDays(prev, weeksOffset * 7));
+  };
+  
+  const resetToToday = () => {
+    setBaseDate(new Date());
   };
 
   return (
     <div className="flex flex-col gap-6">
       
-      {/* HEADER E TABS */}
+      {/* HEADER */}
       <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-sm p-4 sm:p-6 border border-white/50 no-print flex flex-col md:flex-row justify-between items-center gap-4">
         <h2 className="text-3xl font-extrabold text-gray-900 flex items-center gap-3">
           <div className="p-3 bg-blue-100 rounded-2xl"><Briefcase className="text-blue-600 w-8 h-8" /></div>
-          <span id="commesse-title">{(isAdmin || isSenior) ? "Pianificazione Commesse" : "La tua Pianificazione Commesse"}</span>
+          <span>Pianificazione Avanzamento Commesse</span>
         </h2>
-
-        {(isAdmin || isSenior) && (
-          <div className="flex bg-gray-100/80 p-1.5 rounded-2xl shadow-inner">
-            <button 
-              onClick={() => setActiveTab('tabella')}
-              className={`px-6 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2 ${activeTab === 'tabella' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-              <LayoutList className="w-4 h-4" /> Tabella
-            </button>
-            <button 
-              onClick={() => setActiveTab('grafici')}
-              className={`px-6 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2 ${activeTab === 'grafici' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-              <PieChart className="w-4 h-4" /> Grafici
-            </button>
-          </div>
-        )}
+        
+        <div className="flex items-center gap-2 text-xs font-bold bg-blue-50 text-blue-700 px-4 py-2 rounded-xl border border-blue-100">
+          Vista di Sola Consultazione
+        </div>
       </div>
 
-      {/* CONTENUTO TABELLA */}
-      {activeTab === 'tabella' && (
-        <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl border border-white/50 flex flex-col mb-10">
-          
-          {/* TOOLBAR TABELLA */}
-          <div className="p-6 border-b border-gray-100 flex flex-col gap-4 bg-gray-50/50 rounded-t-[2rem]">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              {/* Filtri */}
-              <div className="flex flex-wrap items-center gap-3 flex-1 no-print">
-                {(isAdmin || isSenior) && (
-                  <>
-                    <div className="relative">
-                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                      <input 
-                        type="text" 
-                        placeholder="Cerca dipendente..." 
-                        value={searchQuery}
-                        onChange={e => setSearchQuery(e.target.value)}
-                        className="pl-9 pr-4 py-2 border-none bg-white rounded-xl shadow-inner text-sm font-bold text-gray-700 focus:ring-2 focus:ring-blue-400 outline-none w-48"
-                      />
-                    </div>
-                    <div className="relative">
-                      <Filter className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                      <select 
-                        value={filterCommessa}
-                        onChange={e => setFilterCommessa(e.target.value)}
-                        className="pl-9 pr-4 py-2 border-none bg-white rounded-xl shadow-inner text-sm font-bold text-gray-700 focus:ring-2 focus:ring-blue-400 outline-none w-48"
-                      >
-                        <option value="">Tutte le commesse</option>
-                        {commesse.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
-                      </select>
-                    </div>
-                    
-                    <div className="flex bg-gray-200/50 p-1.5 rounded-xl shadow-inner ml-2 border border-gray-100">
-                      <button 
-                        onClick={() => setIsCompact(false)}
-                        className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${!isCompact ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                      >
-                        <LayoutList className="w-4 h-4" /> Estesa
-                      </button>
-                      <button 
-                        onClick={() => setIsCompact(true)}
-                        className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${isCompact ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                      >
-                        <LayoutGrid className="w-4 h-4" /> Compatta
-                      </button>
-                    </div>
-                  </>
-                )}
-                
-                {/* Selettore Vista Settimanale / Mensile per Stampa & Schermo */}
-                <div className="flex bg-gray-200/50 p-1.5 rounded-xl shadow-inner ml-2 border border-gray-100">
-                  <button 
-                    onClick={() => setViewRange('mese')}
-                    className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-all ${viewRange === 'mese' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+      {/* TIMELINE TABLE CARD */}
+      <div className="bg-white rounded-[2rem] shadow-xl border relative mb-10 flex flex-col max-h-[750px]">
+        
+        {/* TOOLBAR */}
+        <div className="p-4 border-b border-gray-200 flex flex-col md:flex-row md:items-center justify-between gap-4 no-print bg-gray-50/50 rounded-t-[2rem] shrink-0 md:h-20">
+          <div className="flex flex-wrap items-center justify-between gap-4 w-full">
+            
+            {/* Filters and Zoom */}
+            <div className="flex flex-wrap items-center gap-4 flex-1">
+              
+              {/* Zoom / Duration Selector */}
+              {!selectedCommessaFilter && (
+                <div className="flex flex-col">
+                  <label className="text-[10px] font-extrabold text-gray-400 uppercase tracking-wider ml-1 mb-1">Periodo Zoom</label>
+                  <select 
+                    value={zoomWeeks}
+                    onChange={e => setZoomWeeks(Number(e.target.value))}
+                    className="p-2.5 border-none bg-white rounded-xl border shadow-sm font-bold text-gray-700 text-xs outline-none focus:ring-2 focus:ring-blue-400"
                   >
-                    Vista Mensile
-                  </button>
-                  <button 
-                    onClick={() => {
-                      setViewRange('settimana');
-                      setBaseDate(new Date());
-                    }}
-                    className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-all ${viewRange === 'settimana' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                  >
-                    Vista Settimanale
-                  </button>
+                    <option value={5}>1 Mese (5 Settimane)</option>
+                    <option value={13}>3 Mesi (13 Settimane)</option>
+                    <option value={26}>6 Mesi (26 Settimane)</option>
+                  </select>
                 </div>
-              </div>
+              )}
 
-              {/* Navigazione Settimane & Stampa */}
-              <div className="flex items-center gap-3 no-print">
-                <div className="flex items-center gap-1 bg-white p-1.5 rounded-xl border border-gray-200 shadow-sm">
-                  <button onClick={() => shiftWeek(-7)} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-600 transition"><ChevronLeft className="w-4 h-4" /></button>
-                  <button onClick={resetToToday} className="px-3 py-1.5 text-xs font-extrabold text-gray-700 hover:bg-gray-100 rounded-lg transition">Oggi</button>
-                  <button onClick={() => shiftWeek(7)} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-600 transition"><ChevronRight className="w-4 h-4" /></button>
-                  <div className="h-5 w-px bg-gray-200 mx-1"></div>
-                  <input type="date" value={baseDate.toISOString().split('T')[0]} onChange={e => setBaseDate(new Date(e.target.value))} className="text-xs font-bold border-none bg-transparent outline-none text-gray-700 cursor-pointer pl-1 pr-1" />
+              {/* Commessa Filter (Gantt detail) */}
+              <div className="flex flex-col">
+                <label className="text-[10px] font-extrabold text-gray-400 uppercase tracking-wider ml-1 mb-1">Dettaglio Commessa</label>
+                <select 
+                  value={selectedCommessaFilter}
+                  onChange={e => {
+                    setSelectedCommessaFilter(e.target.value);
+                    resetToToday();
+                  }}
+                  className="p-2.5 border bg-white rounded-xl font-bold text-gray-700 text-xs outline-none focus:ring-2 focus:ring-blue-400 w-60"
+                >
+                  <option value="">-- Tutte le Commesse --</option>
+                  {commesse.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.nome} {c.dataInizio && c.dataFine ? `(${c.dataInizio.substring(5)} - ${c.dataFine.substring(5)})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              
+              {/* Show timeline info */}
+              {selectedCommessaFilter && (
+                <div className="flex flex-col justify-end h-full mt-5">
+                  <div className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-3 py-2 rounded-xl flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5" />
+                    Mostrato intero arco temporale della commessa.
+                  </div>
                 </div>
-                <button onClick={() => window.print()} className="flex items-center gap-2 bg-gray-900 text-white hover:bg-gray-800 px-4 py-2 rounded-xl text-sm font-bold transition shadow-md active:scale-95">
+              )}
+            </div>
+
+            {/* Navigation Controls */}
+            {!selectedCommessaFilter && (
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1 bg-white p-1.5 rounded-xl border border-gray-200 shadow-sm">
+                  <button onClick={() => shiftPeriod(-zoomWeeks)} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-600 transition" title="Indietro"><ChevronLeft className="w-4 h-4" /></button>
+                  <button onClick={resetToToday} className="px-3 py-1.5 text-xs font-extrabold text-gray-700 hover:bg-gray-100 rounded-lg transition">Oggi</button>
+                  <button onClick={() => shiftPeriod(zoomWeeks)} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-600 transition" title="Avanti"><ChevronRight className="w-4 h-4" /></button>
+                  <div className="h-5 w-px bg-gray-200 mx-1"></div>
+                  <input 
+                    type="date" 
+                    value={baseDate.toISOString().split('T')[0]} 
+                    onChange={e => setBaseDate(new Date(e.target.value))} 
+                    className="text-xs font-bold border-none bg-transparent outline-none text-gray-700 cursor-pointer pl-1 pr-1" 
+                  />
+                </div>
+                
+                <button onClick={handleExportToExcel} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition shadow-md active:scale-95">
+                  <Download className="w-4 h-4" /> Esporta Excel
+                </button>
+
+                <button onClick={() => window.print()} className="flex items-center gap-2 bg-gray-900 text-white hover:bg-gray-800 px-4 py-2.5 rounded-xl text-sm font-bold transition shadow-md active:scale-95">
                   <Printer className="w-4 h-4" /> Stampa
                 </button>
               </div>
-            </div>
-
-            {viewRange === 'settimana' && weeks[0] && (
-              <div className="text-sm font-extrabold text-gray-700 bg-indigo-50/70 border border-indigo-100/60 px-4 py-2 rounded-xl flex items-center gap-2 self-start animate-in fade-in duration-200">
-                <span>Settimana in esame:</span>
-                <span className="text-indigo-700">{weeks[0].label} ({weeks[0].sub})</span>
-              </div>
-            )}
-
-            {/* Legenda Colori per Vista Compatta */}
-            {isCompact && (
-              <div className="flex flex-wrap gap-3 pt-3 border-t border-gray-200/50 mt-1 no-print animate-in fade-in">
-                <span className="text-[10px] font-extrabold text-gray-400 uppercase tracking-wider flex items-center mr-2">Legenda:</span>
-                {commesse.map(c => (
-                  <div key={c.id} className="flex items-center gap-1.5 bg-white px-2 py-1 rounded-md shadow-sm border border-gray-100">
-                    <span className="w-2.5 h-2.5 rounded-full shadow-inner" style={{backgroundColor: c.colore}}></span>
-                    <span className="text-[11px] font-bold text-gray-700">{c.nome}</span>
-                  </div>
-                ))}
-              </div>
             )}
           </div>
-          
-          <div className="w-full">
-            <table className="w-full text-left border-collapse min-w-[900px]">
-              <thead className="sticky top-[80px] bg-white/95 backdrop-blur-md z-30 shadow-sm border-b-2 border-gray-200">
-                <tr>
-                  <th className="p-4 font-extrabold text-gray-900 w-1/6 sticky left-0 z-40 bg-white/95 backdrop-blur-md shadow-[1px_0_0_0_#e5e7eb]">Dipendente</th>
-                  {viewRange === 'mese' ? (
-                    weeks.map((wk, i) => {
-                      const isCurrentWeek = wk.id === `${new Date().getFullYear()}-W${getWeekNumber(new Date())}`;
-                      return (
-                        <th key={i} className={`p-3 text-center border-l border-b-2 border-gray-200 w-1/6 ${isCurrentWeek ? 'bg-blue-50/50' : ''}`}>
-                          <div className="font-extrabold text-gray-900">{wk.label}</div>
-                          <div className="text-xs font-bold text-gray-500 mt-0.5">{wk.sub}</div>
-                        </th>
-                      );
-                    })
-                  ) : (
-                    daysOfWeek.map((day, i) => {
-                      const isToday = day.date.toDateString() === new Date().toDateString();
-                      return (
-                        <th key={i} className={`p-3 text-center border-l border-b-2 border-gray-200 w-1/6 ${isToday ? 'bg-indigo-50/50 border-indigo-200' : ''}`}>
-                          <div className="font-extrabold text-gray-900">{day.label}</div>
-                          <div className="text-xs font-bold text-gray-500 mt-0.5">
-                            {day.date.toLocaleDateString('it-IT', { day: '2-digit', month: 'short' })}
-                          </div>
-                        </th>
-                      );
-                    })
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {dipendentiDaMostrare.length === 0 ? (
-                  <tr><td colSpan={viewRange === 'mese' ? weeks.length + 1 : 6} className="p-8 text-center text-gray-500 font-bold">Nessun dipendente trovato per i filtri selezionati.</td></tr>
-                ) : (
-                  dipendentiDaMostrare.map((dip, index) => (
-                    <tr key={index} className="hover:bg-blue-50/30 transition-colors group">
-                      <td className={`font-bold text-gray-800 bg-white sticky left-0 z-20 shadow-[1px_0_0_0_#f3f4f6] border-b border-gray-100 align-middle ${isCompact ? 'p-3' : 'p-4'}`}>{dip.nome}</td>
-                      {viewRange === 'mese' ? (
-                        weeks.map((wk, wIndex) => {
-                          const key = `${dip.nome}-${wk.id}`;
-                          const assList = assignments[key] || [];
-                          const totalePercent = assList.reduce((t, c) => t + Number(c.percentuale), 0);
-                          
-                          let barColor = "bg-gray-200";
-                          if(totalePercent > 0 && totalePercent < 100) barColor = "bg-yellow-400";
-                          if(totalePercent === 100) barColor = "bg-green-500";
-                          if(totalePercent > 100) barColor = "bg-red-500";
+        </div>
 
-                          return (
-                            <td 
-                              key={wIndex} 
-                              onClick={() => handleCellClick(dip.nome, wk.id, wk.label, wk.sub)}
-                              className={`border-l border-b border-gray-100 transition-colors align-top bg-white ${(isAdmin || isSenior) ? 'cursor-pointer hover:bg-blue-50/80' : ''} ${isCompact ? 'p-1.5' : 'p-2'}`}
-                            >
-                              <div className={`flex flex-col items-center justify-start h-full relative group/cell ${isCompact ? 'min-h-[30px]' : 'min-h-[70px] pt-1'}`}>
-                                
-                                <div className="w-full flex justify-between items-center px-1.5 mb-1">
-                                  <span className={`text-[10px] font-extrabold ${totalePercent > 100 ? 'text-red-600' : 'text-gray-500'}`}>{totalePercent}%</span>
-                                  <div className="flex-1 h-1.5 bg-gray-100 ml-2 rounded-full overflow-hidden flex">
-                                    {isCompact ? (
-                                      assList.map((a, idx) => {
-                                        const daysStr = a.giorni ? ` (${a.giorni.length === 5 ? 'Tutta la sett.' : a.giorni.join(', ')})` : '';
-                                        return (
-                                          <div key={idx} style={{width: `${a.percentuale}%`, backgroundColor: a.colore}} className="h-full border-r border-white/50 last:border-none" title={`${a.commessaName} (${a.percentuale}%)${daysStr}`}></div>
-                                        );
-                                      })
-                                    ) : (
-                                      <div className={`h-full ${barColor} rounded-full transition-all`} style={{width: `${Math.min(totalePercent, 100)}%`}}></div>
-                                    )}
-                                  </div>
-                                </div>
-                                
-                                {(isAdmin || isSenior) && assList.length === 0 && (
-                                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/cell:opacity-100 transition-opacity">
-                                    <span className="text-blue-400 font-bold text-xl">+</span>
+        {/* Load Grid Wrapper */}
+        <div className="w-full overflow-auto scrollbar-thin flex-1">
+          <table className="w-full text-left border-collapse min-w-[1200px] text-xs">
+            <thead className="sticky top-0 z-30 bg-white shadow-sm border-b-2 border-gray-200">
+              {/* Month Group Header Row */}
+              <tr className="bg-gray-50 border-b text-[11px] font-black text-gray-500 text-center uppercase tracking-wider">
+                <th className="p-2.5 text-left w-72 sticky left-0 top-0 z-35 bg-gray-50 shadow-[1px_0_0_0_#e5e7eb] font-black">Mesi</th>
+                {monthSpans.map((span, idx) => (
+                  <th key={idx} colSpan={span.colSpan} className="p-2 border-l border-gray-200 text-center bg-gray-50/80 font-black sticky top-0 z-30">
+                    {span.label}
+                  </th>
+                ))}
+              </tr>
+              {/* Week Header Row */}
+              <tr>
+                <th className="p-4 font-extrabold text-gray-900 w-72 sticky left-0 top-[36px] z-35 bg-white shadow-[1px_0_0_0_#e5e7eb]">
+                  Commesse e Clienti
+                </th>
+                {activeWeeks.map((wk, i) => {
+                  const isCurrentWeek = wk.id === `${new Date().getFullYear()}-W${getWeekNumber(new Date())}`;
+                  return (
+                    <th key={i} className={`p-3 text-center border-l border-b border-gray-200 min-w-[120px] sticky top-[36px] z-30 bg-white ${isCurrentWeek ? 'bg-blue-50/50 ring-2 ring-inset ring-blue-200' : ''}`}>
+                      <div className="font-extrabold text-gray-900">{wk.label}</div>
+                      <div className="text-[11px] font-bold text-gray-400 mt-0.5">{wk.sub}</div>
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            
+            <tbody className="divide-y divide-gray-100 font-medium">
+              {groupedCommesse.length === 0 ? (
+                <tr>
+                  <td colSpan={activeWeeks.length + 1} className="p-12 text-center text-gray-400 font-bold italic">
+                    Nessuna commessa registrata a catalogo.
+                  </td>
+                </tr>
+              ) : (
+                groupedCommesse.map(group => {
+                  const isCollapsed = collapsedClients[group.clientName] || false;
+                  return (
+                    <Fragment key={group.clientName}>
+                      {/* CLIENT HEADER ROW */}
+                      <tr 
+                        onClick={() => toggleClientCollapse(group.clientName)}
+                        className="bg-gray-50 font-black text-gray-800 text-xs cursor-pointer hover:bg-gray-100 transition-colors select-none"
+                      >
+                        <td colSpan={activeWeeks.length + 1} className="p-3.5 pl-6 text-left border-b border-gray-200 uppercase bg-gray-100 sticky left-0 top-[84px] z-20">
+                          <div className="flex items-center gap-2">
+                            <span className="text-gray-400 text-[10px] w-3 text-center">{isCollapsed ? '▶' : '▼'}</span>
+                            <span className="text-[13px] font-black">Cliente: {group.clientName}</span>
+                            <span className="text-[11px] text-gray-450 font-bold ml-1">({group.commesseList.length} {group.commesseList.length === 1 ? 'commessa' : 'commesse'})</span>
+                          </div>
+                        </td>
+                      </tr>
+                      
+                      {/* COMMESSE ROWS */}
+                      {!isCollapsed && group.commesseList.map(comm => (
+                        <tr key={comm.id} className="hover:bg-blue-50/20 transition-colors bg-white">
+                          {/* Commessa title col */}
+                          <td className="p-4 font-bold text-gray-800 bg-white sticky left-0 z-10 shadow-[1px_0_0_0_#f3f4f6] border-b align-middle w-72">
+                            <div className="flex items-center gap-3">
+                              <span className="w-3.5 h-3.5 rounded-full shadow-inner shrink-0" style={{backgroundColor: comm.colore}}></span>
+                              <div className="min-w-0">
+                                <div className="truncate font-extrabold text-sm text-gray-800" title={comm.nome}>{comm.nome}</div>
+                                {comm.dataInizio && comm.dataFine && (
+                                  <div className="text-[10px] text-gray-400 font-bold mt-0.5">
+                                    Periodo: {formatDate(comm.dataInizio)} - {formatDate(comm.dataFine)}
                                   </div>
                                 )}
+                                {(comm.responsabile || comm.pm) && (
+                                  <div className="text-[9.5px] text-gray-500 font-semibold mt-1">
+                                    {comm.responsabile && `Resp: ${comm.responsabile}`} {comm.pm && ` | PM: ${comm.pm}`}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </td>
 
-                                {!isCompact && (
-                                  <div className="w-full flex flex-col gap-1 px-1 relative z-10 mt-1">
-                                    {assList.map((ass, aIndex) => (
-                                      <div key={aIndex} className="text-[10px] flex flex-col p-1.5 rounded-md bg-white border border-gray-100 shadow-sm leading-tight w-full gap-1">
-                                        <div className="flex items-center justify-between min-w-0 w-full">
-                                          <div className="flex items-center min-w-0">
-                                            <span className="w-1.5 h-1.5 rounded-full mr-1.5 shrink-0" style={{backgroundColor: ass.colore}}></span>
-                                            <span className="truncate font-bold text-gray-700" title={ass.commessaName}>{ass.commessaName}</span>
-                                          </div>
-                                          <span className="ml-1 font-bold text-blue-600/80 shrink-0">{ass.percentuale}%</span>
+                          {/* Weeks cols */}
+                          {activeWeeks.map((wk, wIndex) => {
+                            const assignedPeople = getAssignmentsForCommessaInWeek(comm.id, wk.id);
+                            const isCurrentWeek = wk.id === `${new Date().getFullYear()}-W${getWeekNumber(new Date())}`;
+                            return (
+                              <td key={wIndex} className={`p-3 border-l border-b border-gray-100 align-top ${isCurrentWeek ? 'bg-blue-50/20' : 'bg-white/40'}`}>
+                                <div className="min-h-[66px] flex flex-col gap-1.5">
+                                  {assignedPeople.map((person, pIdx) => {
+                                    const daysDesc = person.giorni ? ` (${person.giorni.length === 5 ? 'Sett' : person.giorni.join(',')})` : '';
+                                    const leaves = getLeavesForResourceInWeek(person.name, wk.id);
+                                    return (
+                                      <div 
+                                        key={pIdx} 
+                                        className="text-[11px] bg-indigo-50/80 text-indigo-950 p-2 rounded-lg border border-indigo-100/60 flex flex-col shadow-sm gap-0.5"
+                                        title={`${person.name} - Impegno: ${person.pct}%${daysDesc}${leaves.length > 0 ? `\nAssenze: ${leaves.map(l => `${l.giorno} (${l.dettagli})`).join(', ')}` : ''}`}
+                                      >
+                                        <div className="flex justify-between items-center font-bold">
+                                          <span className="truncate pr-1">{person.name}</span>
+                                          <span className="text-indigo-600 font-black">{person.pct}%</span>
                                         </div>
-                                        {ass.giorni && ass.giorni.length > 0 && (
-                                          <div className="text-[8px] text-gray-500 font-extrabold bg-gray-50 px-1 py-0.5 rounded text-left border border-gray-100/50">
-                                            {ass.giorni.length === 5 ? 'Sett. Completa' : ass.giorni.join(', ')}
+                                        {person.giorni && person.giorni.length > 0 && person.giorni.length < 5 && (
+                                          <span className="text-[9.5px] text-indigo-500 font-black tracking-tight">{person.giorni.join(',')}</span>
+                                        )}
+                                        {leaves.length > 0 && (
+                                          <div className="mt-1 pt-1 border-t border-red-100 text-[9.5px] text-red-600 font-bold flex flex-col gap-0.5">
+                                            {leaves.map((l, lIdx) => (
+                                              <span key={lIdx} className="flex items-center gap-0.5 truncate" title={`${l.giorno}: ${l.dettagli}`}>
+                                                ⚠️ {l.giorno}: {l.tipo === 'ferie' ? 'F' : l.tipo === 'malattia' ? 'M' : l.tipo === 'permesso' ? 'P' : 'A'}
+                                              </span>
+                                            ))}
                                           </div>
                                         )}
                                       </div>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                            </td>
-                          );
-                        })
-                      ) : (
-                        daysOfWeek.map((day, dIndex) => {
-                          const currentWeek = weeks[0] || generateWeeks(baseDate)[0];
-                          const key = `${dip.nome}-${currentWeek.id}`;
-                          const weekAssList = assignments[key] || [];
-                          const dayAssList = weekAssList.filter(a => a.giorni?.includes(day.key));
-                          
-                          const dayTotalePercent = dayAssList.reduce((acc, a) => {
-                            const daysCount = a.giorni ? a.giorni.length : 0;
-                            const perDayVal = daysCount > 0 ? a.percentuale / daysCount : 20;
-                            return acc + perDayVal;
-                          }, 0);
-
-                          let barColor = "bg-gray-200";
-                          if(dayTotalePercent > 0 && dayTotalePercent < 100) barColor = "bg-yellow-400";
-                          if(dayTotalePercent === 100) barColor = "bg-green-500";
-                          if(dayTotalePercent > 100) barColor = "bg-red-500";
-
-                          return (
-                            <td 
-                              key={dIndex} 
-                              onClick={() => handleCellClick(dip.nome, currentWeek.id, currentWeek.label, currentWeek.sub)}
-                              className={`border-l border-b border-gray-100 transition-colors align-top bg-white ${(isAdmin || isSenior) ? 'cursor-pointer hover:bg-blue-50/80' : ''} ${isCompact ? 'p-1.5' : 'p-2'}`}
-                            >
-                              <div className={`flex flex-col items-center justify-start h-full relative group/cell ${isCompact ? 'min-h-[30px]' : 'min-h-[70px] pt-1'}`}>
-                                
-                                <div className="w-full flex justify-between items-center px-1.5 mb-1">
-                                  <span className={`text-[10px] font-extrabold ${dayTotalePercent > 100 ? 'text-red-600' : 'text-gray-500'}`}>{dayTotalePercent}%</span>
-                                  <div className="flex-1 h-1.5 bg-gray-100 ml-2 rounded-full overflow-hidden flex">
-                                    {isCompact ? (
-                                      dayAssList.map((a, idx) => {
-                                        const daysCount = a.giorni ? a.giorni.length : 0;
-                                        const perDayVal = daysCount > 0 ? a.percentuale / daysCount : 20;
-                                        return (
-                                          <div key={idx} style={{width: `${(perDayVal / Math.max(dayTotalePercent, 1)) * 100}%`, backgroundColor: a.colore}} className="h-full border-r border-white/50 last:border-none" title={`${a.commessaName} (${perDayVal}%)`}></div>
-                                        );
-                                      })
-                                    ) : (
-                                      <div className={`h-full ${barColor} rounded-full transition-all`} style={{width: `${Math.min(dayTotalePercent, 100)}%`}}></div>
-                                    )}
-                                  </div>
+                                    );
+                                  })}
                                 </div>
-                                
-                                {(isAdmin || isSenior) && dayAssList.length === 0 && (
-                                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/cell:opacity-100 transition-opacity">
-                                    <span className="text-blue-400 font-bold text-xl">+</span>
-                                  </div>
-                                )}
-
-                                {!isCompact && (
-                                  <div className="w-full flex flex-col gap-1 px-1 relative z-10 mt-1">
-                                    {dayAssList.map((ass, aIndex) => {
-                                      const daysCount = ass.giorni ? ass.giorni.length : 0;
-                                      const perDayVal = daysCount > 0 ? ass.percentuale / daysCount : 20;
-                                      return (
-                                        <div key={aIndex} className="text-[10px] flex flex-col p-1.5 rounded-md bg-white border border-gray-100 shadow-sm leading-tight w-full gap-1">
-                                          <div className="flex items-center justify-between min-w-0 w-full">
-                                            <div className="flex items-center min-w-0">
-                                              <span className="w-1.5 h-1.5 rounded-full mr-1.5 shrink-0" style={{backgroundColor: ass.colore}}></span>
-                                              <span className="truncate font-bold text-gray-700" title={ass.commessaName}>{ass.commessaName}</span>
-                                            </div>
-                                            <span className="ml-1 font-bold text-blue-600/80 shrink-0">{perDayVal}%</span>
-                                          </div>
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-                              </div>
-                            </td>
-                          );
-                        })
-                      )}
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* CONTENUTO GRAFICI */}
-      {activeTab === 'grafici' && (
-        <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl p-6 sm:p-8 border border-white/50 no-print flex flex-col animate-in fade-in zoom-in-95 duration-200 mb-10">
-          
-          <div className="flex flex-wrap justify-between items-center mb-8 gap-4 border-b pb-6 border-gray-100">
-            <h3 className="text-2xl font-extrabold text-gray-900 flex items-center gap-3">
-              <div className="p-3 bg-indigo-100 rounded-2xl"><PieChart className="w-8 h-8 text-indigo-600" /></div>
-              Analisi Dati
-            </h3>
-            
-            <div className="flex items-center gap-3 bg-gray-50 p-2 rounded-xl border border-gray-100 shadow-inner">
-              <div className="flex flex-col">
-                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider ml-1 mb-0.5">Da Data</label>
-                <input 
-                  type="date" 
-                  value={chartStartDate} 
-                  onChange={e => setChartStartDate(e.target.value)} 
-                  className="text-sm font-bold border-none bg-white rounded-lg shadow-sm outline-none text-gray-700 cursor-pointer p-2" 
-                />
-              </div>
-              <div className="h-8 w-px bg-gray-200"></div>
-              <div className="flex flex-col">
-                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider ml-1 mb-0.5">A Data</label>
-                <input 
-                  type="date" 
-                  value={chartEndDate} 
-                  onChange={e => setChartEndDate(e.target.value)} 
-                  className="text-sm font-bold border-none bg-white rounded-lg shadow-sm outline-none text-gray-700 cursor-pointer p-2" 
-                />
-              </div>
-            </div>
-          </div>
-          
-          <div className="flex flex-col sm:flex-row gap-4 mb-8">
-            <select 
-              value={chartType} 
-              onChange={e => setChartType(e.target.value as any)}
-              className="p-3.5 border-none rounded-xl bg-gray-100/80 outline-none focus:ring-2 focus:ring-indigo-400 font-bold text-gray-700 shadow-inner"
-            >
-              <option value="dipendente">Analisi per Dipendente (Torta)</option>
-              <option value="commessa">Analisi per Commessa (Barre)</option>
-            </select>
-            <select 
-              value={chartTarget} 
-              onChange={e => setChartTarget(e.target.value)}
-              className="p-3.5 border-none rounded-xl bg-gray-100/80 outline-none focus:ring-2 focus:ring-indigo-400 font-bold text-gray-700 shadow-inner flex-1"
-            >
-              {chartType === 'dipendente' ? (
-                dipendenti.map(d => <option key={d.id || d.nome} value={d.nome}>{d.nome}</option>)
-              ) : (
-                commesse.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </Fragment>
+                  );
+                })
               )}
-            </select>
-          </div>
-          
-          <div className="bg-gray-50/50 border border-gray-100 rounded-3xl p-6 h-[500px] flex items-center justify-center w-full relative shadow-inner">
-            {chartType === 'dipendente' ? (
-              <Pie data={getChartData() as any} options={{ maintainAspectRatio: false }} />
-            ) : (
-              <Bar data={getChartData() as any} options={{ maintainAspectRatio: false, indexAxis: 'y' }} />
-            )}
-          </div>
+            </tbody>
+          </table>
         </div>
-      )}
-
-      <AssegnazioneModal 
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        dipendente={modalData.dipendente}
-        weekId={modalData.weekId}
-        weekLabel={modalData.weekLabel}
-        weekSub={modalData.weekSub}
-        commesseCatalog={commesse}
-        currentAssignments={assignments[`${modalData.dipendente}-${modalData.weekId}`] || []}
-        dipendentiList={dipendenti}
-      />
+      </div>
     </div>
   );
 }

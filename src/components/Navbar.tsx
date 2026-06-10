@@ -64,12 +64,15 @@ export default function Navbar() {
 
   return (
     <>
-      <header className="bg-white shadow-sm sticky top-0 z-20 h-16 flex items-center justify-between px-6 no-print border-b">
-        <div className="flex items-center gap-3">
-          <img src="/Logo.png" alt="Ingegno06" className="h-12 object-contain drop-shadow-sm" onError={(e) => {
+      <header className="bg-white shadow-sm sticky top-0 z-50 h-16 flex items-center justify-between px-6 no-print border-b">
+        <div 
+          onClick={() => navigate('/')} 
+          className="flex items-center gap-3 cursor-pointer select-none group"
+        >
+          <img src="/Logo.png" alt="Ingegno06" className="h-12 object-contain drop-shadow-sm group-hover:opacity-85 transition-opacity" onError={(e) => {
             (e.target as HTMLImageElement).style.display = 'none';
           }} />
-          <h1 className="text-2xl font-black text-gray-800 hidden sm:block tracking-tight">Pianificazione Aziendale</h1>
+          <h1 className="text-2xl font-black text-gray-800 hidden sm:block tracking-tight group-hover:text-blue-600 transition-colors">Pianificazione Aziendale</h1>
         </div>
         <div className="flex items-center gap-4">
           <button 

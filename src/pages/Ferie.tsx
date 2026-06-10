@@ -3,6 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, addDoc, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import { Calendar, CheckCircle, XCircle, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
+import { queueMail } from '../utils/mailSender';
 
 const formatDate = (dateStr: string) => {
   if (!dateStr) return '';
@@ -20,6 +21,8 @@ interface RichiestaFerie {
   stato: 'In attesa' | 'Approvato' | 'Rifiutato';
   dataInizio?: string;
   dataFine?: string;
+  oraInizio?: string;
+  oraFine?: string;
 }
 
 export default function Ferie() {
@@ -31,6 +34,8 @@ export default function Ferie() {
   const [dataRichiesta, setDataRichiesta] = useState('');
   const [dataInizio, setDataInizio] = useState('');
   const [dataFine, setDataFine] = useState('');
+  const [oraInizio, setOraInizio] = useState('09:00');
+  const [oraFine, setOraFine] = useState('18:00');
   const [tipoRichiesta, setTipoRichiesta] = useState('ferie');
 
   useEffect(() => {
@@ -64,7 +69,9 @@ export default function Ferie() {
           tipo: data.tipo,
           stato: data.stato || 'In attesa',
           dataInizio: data.dataInizio,
-          dataFine: data.dataFine
+          dataFine: data.dataFine,
+          oraInizio: data.oraInizio,
+          oraFine: data.oraFine
         });
       });
       setRichieste(list.sort((a, b) => {
@@ -105,6 +112,17 @@ export default function Ferie() {
       alert("La data di inizio non può essere successiva alla data di fine.");
       return;
     }
+
+    if (tipoRichiesta === 'permesso') {
+      if (!oraInizio || !oraFine) {
+        alert("Inserisci l'ora di inizio e di fine del permesso.");
+        return;
+      }
+      if (oraInizio >= oraFine) {
+        alert("L'ora di inizio deve essere precedente all'ora di fine.");
+        return;
+      }
+    }
     
     setLoading(true);
     try {
@@ -119,6 +137,10 @@ export default function Ferie() {
         payload.data = dataRichiesta;
         payload.dataInizio = dataRichiesta;
         payload.dataFine = dataRichiesta;
+        if (tipoRichiesta === 'permesso') {
+          payload.oraInizio = oraInizio;
+          payload.oraFine = oraFine;
+        }
       } else {
         payload.data = dataInizio; // legacy fallback
         payload.dataInizio = dataInizio;
@@ -130,6 +152,8 @@ export default function Ferie() {
       setDataRichiesta('');
       setDataInizio('');
       setDataFine('');
+      setOraInizio('09:00');
+      setOraFine('18:00');
     } catch (err) {
       alert("Errore nell'invio della richiesta.");
     } finally {
@@ -139,9 +163,43 @@ export default function Ferie() {
 
   const handleDecision = async (id: string, approva: boolean) => {
     try {
+      const req = richieste.find(r => r.id === id);
+      if (!req) return;
+
+      const newStatus = approva ? 'Approvato' : 'Rifiutato';
       await updateDoc(doc(db, 'richieste_ferie', id), {
-        stato: approva ? 'Approvato' : 'Rifiutato'
+        stato: newStatus
       });
+
+      // Invia notifica e-mail al dipendente
+      const targetDip = dipendenti.find(d => d.nome === req.dipendenteName);
+      if (targetDip && targetDip.email) {
+        const dateDesc = req.tipo === 'permesso' && req.oraInizio && req.oraFine
+          ? `il ${formatDate(req.dataInizio || req.data)} dalle ${req.oraInizio} alle ${req.oraFine}`
+          : req.dataInizio && req.dataFine && req.dataInizio !== req.dataFine 
+            ? `dal ${formatDate(req.dataInizio)} al ${formatDate(req.dataFine)}` 
+            : `il ${formatDate(req.dataInizio || req.data)}`;
+        
+        const typeLabels: Record<string, string> = {
+          ferie: 'Ferie',
+          malattia: 'Malattia',
+          permesso: 'Permesso',
+          smart: 'Lavoro da Casa',
+          mattina: 'Assenza Mattina',
+          pomeriggio: 'Assenza Pomeriggio'
+        };
+        const typeDesc = typeLabels[req.tipo] || req.tipo;
+
+        const subject = `[Notifica] Richiesta ${typeDesc} ${newStatus}`;
+        const htmlBody = `
+          <p>Ciao <strong>${req.dipendenteName}</strong>,</p>
+          <p>La tua richiesta di <strong>${typeDesc}</strong> prevista <strong>${dateDesc}</strong> è stata <strong>${newStatus.toLowerCase()}</strong>.</p>
+          <p>Puoi consultare lo stato delle tue richieste direttamente nella tua area personale della webapp.</p>
+        `;
+        const plainText = `Ciao ${req.dipendenteName},\n\nLa tua richiesta di ${typeDesc} prevista ${dateDesc} è stata ${newStatus.toLowerCase()}.\n\nPuoi consultare lo stato delle tue richieste direttamente nella tua area personale.\n\nQuesta è una notifica automatica.`;
+
+        await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+      }
     } catch (e) {
       console.error("Errore aggiornamento:", e);
     }
@@ -157,7 +215,9 @@ export default function Ferie() {
 
   const getTipoData = (tipo: string) => {
     const tipi: Record<string, {label: string, color: string}> = {
-      ferie: {label: 'Ferie / Malattia', color: 'bg-red-500'},
+      ferie: {label: 'Ferie', color: 'bg-red-500'},
+      malattia: {label: 'Malattia', color: 'bg-purple-600'},
+      permesso: {label: 'Permesso', color: 'bg-amber-500'},
       smart: {label: 'Lavora da Casa', color: 'bg-blue-500'},
       mattina: {label: 'Assenza Mattina', color: 'bg-yellow-400'},
       pomeriggio: {label: 'Assenza Pomeriggio', color: 'bg-orange-400'}
@@ -213,11 +273,13 @@ export default function Ferie() {
             if(req.stato === 'Rifiutato') bg = 'bg-red-50 border-red-200 text-red-800 opacity-50 line-through';
             if(req.stato === 'In attesa') bg = 'bg-yellow-50 border-yellow-200 text-yellow-800';
 
+            const hourSuffix = req.tipo === 'permesso' && req.oraInizio && req.oraFine ? ` (${req.oraInizio}-${req.oraFine})` : '';
+
             return (
               <div key={req.id} className={`text-[10px] p-1.5 rounded border ${bg} flex items-center gap-1.5 font-medium leading-tight shadow-sm`}>
                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${t.color}`}></span>
-                <span className="truncate" title={`${isAdmin || isHR ? req.dipendenteName + ' - ' : ''}${t.label}`}>
-                  {(isAdmin || isHR) ? req.dipendenteName : t.label}
+                <span className="truncate" title={`${isAdmin || isHR ? req.dipendenteName + ' - ' : ''}${t.label}${hourSuffix}`}>
+                  {(isAdmin || isHR) ? `${req.dipendenteName}${hourSuffix}` : `${t.label}${hourSuffix}`}
                 </span>
               </div>
             );
@@ -275,34 +337,31 @@ export default function Ferie() {
                     </select>
                   </div>
                 )}
-                <div className="flex bg-white/50 p-1 rounded-xl shadow-inner border border-green-100/50">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRequestMode('singolo');
-                      if (tipoRichiesta === 'mattina' || tipoRichiesta === 'pomeriggio') {
-                        setTipoRichiesta('ferie');
-                      }
-                    }}
-                    className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${requestMode === 'singolo' ? 'bg-green-600 text-white shadow-sm' : 'text-green-800/70 hover:text-green-900'}`}
-                  >
-                    Giorno Singolo
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRequestMode('range');
-                      if (tipoRichiesta === 'mattina' || tipoRichiesta === 'pomeriggio') {
-                        setTipoRichiesta('ferie');
-                      }
-                    }}
-                    className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${requestMode === 'range' ? 'bg-green-600 text-white shadow-sm' : 'text-green-800/70 hover:text-green-900'}`}
-                  >
-                    Intervallo di Date
-                  </button>
-                </div>
+                
+                {tipoRichiesta !== 'permesso' && tipoRichiesta !== 'mattina' && tipoRichiesta !== 'pomeriggio' ? (
+                  <div className="flex bg-white/50 p-1 rounded-xl shadow-inner border border-green-100/50">
+                    <button
+                      type="button"
+                      onClick={() => setRequestMode('singolo')}
+                      className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${requestMode === 'singolo' ? 'bg-green-600 text-white shadow-sm' : 'text-green-800/70 hover:text-green-900'}`}
+                    >
+                      Giorno Singolo
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRequestMode('range')}
+                      className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${requestMode === 'range' ? 'bg-green-600 text-white shadow-sm' : 'text-green-800/70 hover:text-green-900'}`}
+                    >
+                      Intervallo di Date
+                    </button>
+                  </div>
+                ) : (
+                  <div className="bg-white/40 p-3 rounded-xl border border-green-100 text-xs font-bold text-green-800/80">
+                    Modalità: Giorno Singolo (obbligatorio per permessi orari o frazioni di giornata)
+                  </div>
+                )}
 
-                {requestMode === 'singolo' ? (
+                {requestMode === 'singolo' || tipoRichiesta === 'permesso' || tipoRichiesta === 'mattina' || tipoRichiesta === 'pomeriggio' ? (
                   <div>
                     <label className="block text-sm font-bold text-green-900 mb-1.5 ml-1">Giorno di assenza</label>
                     <input 
@@ -337,18 +396,51 @@ export default function Ferie() {
                     </div>
                   </div>
                 )}
+
+                {tipoRichiesta === 'permesso' && (
+                  <div className="grid grid-cols-2 gap-4 animate-in fade-in">
+                    <div>
+                      <label className="block text-xs font-bold text-green-900 mb-1.5 ml-1">Ora Inizio</label>
+                      <input 
+                        type="time" 
+                        required 
+                        value={oraInizio}
+                        onChange={e => setOraInizio(e.target.value)}
+                        className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900 text-xs sm:text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-green-900 mb-1.5 ml-1">Ora Fine</label>
+                      <input 
+                        type="time" 
+                        required 
+                        value={oraFine}
+                        onChange={e => setOraFine(e.target.value)}
+                        className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900 text-xs sm:text-sm"
+                      />
+                    </div>
+                  </div>
+                )}
                 
                 <div>
                   <label className="block text-sm font-bold text-green-900 mb-1.5 ml-1">Tipo di assenza</label>
                   <select 
                     value={tipoRichiesta} 
-                    onChange={e => setTipoRichiesta(e.target.value)}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setTipoRichiesta(val);
+                      if (val === 'permesso' || val === 'mattina' || val === 'pomeriggio') {
+                        setRequestMode('singolo');
+                      }
+                    }}
                     className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900"
                   >
-                    <option value="ferie">Ferie / Malattia</option>
+                    <option value="ferie">Ferie</option>
+                    <option value="malattia">Malattia</option>
                     <option value="smart">Lavora da Casa</option>
                     {requestMode === 'singolo' && (
                       <>
+                        <option value="permesso">Permesso (Frazione di giornata)</option>
                         <option value="mattina">Assenza Mattina</option>
                         <option value="pomeriggio">Assenza Pomeriggio</option>
                       </>
@@ -379,13 +471,15 @@ export default function Ferie() {
               ) : (
                 richieste.map(req => (
                   <div key={req.id} className="p-4 sm:p-5 border border-gray-100 rounded-2xl bg-white shadow-sm hover:shadow-md transition-shadow flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 group">
-                    <div className="space-y-1.5">
-                      <div className="font-bold text-base sm:text-lg text-gray-900">{req.dipendenteName}</div>
+                    <div className="space-y-1.5 flex-1 min-w-0">
+                      <div className="font-bold text-base sm:text-lg text-gray-900 truncate">{req.dipendenteName}</div>
                       <div className="flex flex-wrap items-center gap-2 sm:gap-4">
                         <span className="text-xs sm:text-sm font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded-lg">
-                          {req.dataInizio && req.dataFine && req.dataInizio !== req.dataFine 
-                            ? `Dal ${formatDate(req.dataInizio)} al ${formatDate(req.dataFine)}` 
-                            : `Il ${formatDate(req.dataInizio || req.data)}`}
+                          {req.tipo === 'permesso' && req.oraInizio && req.oraFine
+                            ? `Il ${formatDate(req.dataInizio || req.data)} dalle ${req.oraInizio} alle ${req.oraFine}`
+                            : req.dataInizio && req.dataFine && req.dataInizio !== req.dataFine 
+                              ? `Dal ${formatDate(req.dataInizio)} al ${formatDate(req.dataFine)}` 
+                              : `Il ${formatDate(req.dataInizio || req.data)}`}
                         </span>
                         {getTipoLabel(req.tipo)}
                       </div>

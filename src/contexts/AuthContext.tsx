@@ -9,12 +9,17 @@ export interface Dipendente {
   id: string;
   nome: string;
   email: string;
+  tipo?: 'dipendente' | 'collaboratore';
 }
 
 export interface Commessa {
   id: string;
   nome: string;
   colore: string;
+  dataInizio?: string;
+  dataFine?: string;
+  responsabile?: string;
+  pm?: string;
 }
 
 interface AuthContextType {
@@ -61,7 +66,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const deps = snapshot.docs.map(doc => ({
         id: doc.id,
         nome: doc.data().nome,
-        email: doc.data().email || ""
+        email: doc.data().email || "",
+        tipo: doc.data().tipo
       }));
       setDipendenti(deps.sort((a, b) => a.nome.localeCompare(b.nome)));
     });
@@ -70,7 +76,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const comms = snapshot.docs.map(doc => ({
         id: doc.id,
         nome: doc.data().nome,
-        colore: doc.data().colore || '#3b82f6'
+        colore: doc.data().colore || '#3b82f6',
+        dataInizio: doc.data().dataInizio || '',
+        dataFine: doc.data().dataFine || '',
+        responsabile: doc.data().responsabile || '',
+        pm: doc.data().pm || ''
       }));
       setCommesse(comms.sort((a, b) => a.nome.localeCompare(b.nome)));
     });

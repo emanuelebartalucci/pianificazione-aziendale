@@ -1,10 +1,12 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Briefcase, Calendar, Settings, FileText, MessageSquare, Plus, Trash2, Megaphone, X } from 'lucide-react';
+import { Briefcase, Calendar, Settings, FileText, MessageSquare, Plus, Trash2, Megaphone, X, Users } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, addDoc, doc, deleteDoc, onSnapshot, query, orderBy } from 'firebase/firestore';
 import ConfirmModal from '../components/ConfirmModal';
+import ClimaModal from '../components/ClimaModal';
+import { isSoci } from './Impostazioni';
 
 interface Announcement {
   id: string;
@@ -25,6 +27,7 @@ export default function Dashboard() {
   const [newContent, setNewContent] = useState('');
   const [newAuthor, setNewAuthor] = useState<'HR' | 'Direzione'>('Direzione');
   const [loading, setLoading] = useState(false);
+  const [isClimaModalOpen, setIsClimaModalOpen] = useState(false);
 
   // Stato per la modale di conferma
   const [confirmConfig, setConfirmConfig] = useState<{
@@ -50,6 +53,24 @@ export default function Dashboard() {
       }
     });
   };
+
+  // Controllo per la comparsa randomica del questionario sul clima (esclusi i soci)
+  useEffect(() => {
+    if (isSoci(myAssociatedName)) {
+      return; // Non mostrare mai ai soci proprietari
+    }
+
+    const lastAnswered = localStorage.getItem('clima_answered_date');
+    const todayStr = new Date().toDateString();
+    
+    if (lastAnswered !== todayStr) {
+      // 30% di probabilità di mostrare il pop-up all'accesso
+      const show = Math.random() < 0.3;
+      if (show) {
+        setIsClimaModalOpen(true);
+      }
+    }
+  }, [myAssociatedName]);
 
   // Caricamento comunicazioni in tempo reale
   useEffect(() => {
@@ -183,6 +204,20 @@ export default function Dashboard() {
               <div>
                 <h2 className="text-xl font-extrabold text-gray-800 mt-4">Pianificazione Commesse</h2>
                 <p className="text-xs font-semibold text-gray-400 mt-1">Gestisci e visualizza i tuoi impegni settimanali e i progetti.</p>
+              </div>
+            </div>
+            
+            {/* Pianificazione Personale */}
+            <div 
+              onClick={() => navigate('/pianificazione-personale')} 
+              className="bg-white/80 backdrop-blur-xl p-8 rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between min-h-[180px]"
+            >
+              <div className="w-14 h-14 bg-orange-100 text-orange-600 rounded-2xl flex items-center justify-center group-hover:bg-orange-600 group-hover:text-white transition-colors">
+                <Users className="w-7 h-7" />
+              </div>
+              <div>
+                <h2 className="text-xl font-extrabold text-gray-800 mt-4">Pianificazione Personale</h2>
+                <p className="text-xs font-semibold text-gray-400 mt-1">Pianifica il personale sulle commesse e controlla i carichi di lavoro.</p>
               </div>
             </div>
             
@@ -404,6 +439,11 @@ export default function Dashboard() {
         message={confirmConfig.message}
         onConfirm={confirmConfig.onConfirm}
         onCancel={() => setConfirmConfig(prev => ({ ...prev, isOpen: false }))}
+      />
+
+      <ClimaModal 
+        isOpen={isClimaModalOpen}
+        onClose={() => setIsClimaModalOpen(false)}
       />
     </div>
   );
