@@ -2,11 +2,13 @@ import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, onSnapshot, doc, getDoc, setDoc, query, where, getDocs } from 'firebase/firestore';
-import { Users, Printer, ChevronLeft, ChevronRight, Save, Download } from 'lucide-react';
+import { Users, Printer, ChevronLeft, ChevronRight, Save, Download, ZoomIn, ZoomOut, Trash2, Plus } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays } from '../utils/date';
 import AssegnazioneModal from '../components/AssegnazioneModal';
 import { queueMail } from '../utils/mailSender';
 import { isCollaboratore } from './Impostazioni';
+import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
+
 
 interface Assegnazione {
   commessaId: string;
@@ -40,25 +42,240 @@ const generateWeeksExtended = (baseDate: Date, numWeeks: number): WeekInfo[] => 
   return weeks;
 };
 
+const getWeeksSpannedByDates = (startDateStr: string, endDateStr: string): string[] => {
+  const list: string[] = [];
+  const start = new Date(startDateStr);
+  const end = new Date(endDateStr);
+  
+  let curr = getStartOfWeek(start);
+  const endMonday = getStartOfWeek(end);
+  
+  while (curr <= endMonday) {
+    const wkNum = getWeekNumber(curr);
+    list.push(`${curr.getFullYear()}-W${wkNum}`);
+    curr = addDays(curr, 7);
+  }
+  return list;
+};
+
+const getCoveredDaysInWeek = (wkId: string, startDateStr: string, endDateStr: string): number => {
+  const parts = wkId.split('-W');
+  if (parts.length !== 2) return 0;
+  const year = parseInt(parts[0]);
+  const week = parseInt(parts[1]);
+
+  const simple = new Date(year, 0, 4);
+  const dayOfWeek = simple.getDay();
+  const dayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  const firstMonday = new Date(simple.setDate(simple.getDate() + dayOffset));
+  const monday = new Date(firstMonday.setDate(firstMonday.getDate() + (week - 1) * 7));
+
+  let covered = 0;
+  const startLimit = new Date(startDateStr);
+  const endLimit = new Date(endDateStr);
+  startLimit.setHours(0, 0, 0, 0);
+  endLimit.setHours(0, 0, 0, 0);
+
+  for (let i = 0; i < 5; i++) {
+    const dObj = new Date(monday);
+    dObj.setDate(monday.getDate() + i);
+    dObj.setHours(0, 0, 0, 0);
+
+    if (dObj >= startLimit && dObj <= endLimit) {
+      covered++;
+    }
+  }
+  return covered;
+};
+
+const formatCommDate = (dateStr?: string): string => {
+  if (!dateStr) return 'N/D';
+  const parts = dateStr.split('-');
+  if (parts.length === 3) {
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  return dateStr;
+};
+
 export default function PianificazionePersonale() {
   const { isAdmin, isSenior, dipendenti, commesse, myAssociatedName } = useAuth();
   
-  const [weeks] = useState<WeekInfo[]>(() => generateWeeksExtended(new Date(), 6)); // default show 6 weeks in allocation form
+  const [commessaSearchText, setCommessaSearchText] = useState('');
+  const [isCommessaDropdownOpen, setIsCommessaDropdownOpen] = useState(false);
   const [timelineWeeks, setTimelineWeeks] = useState<WeekInfo[]>([]); // weeks for the load grid
   const [gridBaseDate, setGridBaseDate] = useState<Date>(new Date());
   const [zoomWeeks, setZoomWeeks] = useState<number>(13);
   
+  const weekColumnMinWidth = useMemo(() => {
+    // Estimating remaining width of a container on standard screen (approx 900px)
+    const containerWidth = 900;
+    const calculated = Math.floor(containerWidth / zoomWeeks);
+    return `${Math.max(35, Math.min(150, calculated))}px`;
+  }, [zoomWeeks]);
+
+  const isNarrow = useMemo(() => parseInt(weekColumnMinWidth) < 80, [weekColumnMinWidth]);
+  const isUltraNarrow = useMemo(() => parseInt(weekColumnMinWidth) < 50, [weekColumnMinWidth]);
+  
   const [assignments, setAssignments] = useState<Record<string, Assegnazione[]>>({});
   
   // Selection states for bulk allocator
+  const [activeTab, setActiveTab] = useState<'commessa' | 'risorsa' | 'sostituisci'>('commessa');
   const [selectedCommessaId, setSelectedCommessaId] = useState('');
-  const [selectedWeekIds, setSelectedWeekIds] = useState<string[]>([]);
   const [selectedResourceNames, setSelectedResourceNames] = useState<string[]>([]);
-  const [allocationPercent, setAllocationPercent] = useState('100');
+  const [resourcePercentages] = useState<Record<string, string>>({});
   const [savingAllocations, setSavingAllocations] = useState(false);
+  const [allocAction, setAllocAction] = useState<'assegna' | 'rimuovi' | 'sostituisci'>('assegna');
+  const [sourceResource, setSourceResource] = useState('');
+  const [targetResource, setTargetResource] = useState('');
 
-  // Search filter for allocator
+  const [allocDataInizio, setAllocDataInizio] = useState('');
+  const [allocDataFine, setAllocDataFine] = useState('');
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
+
+  const [commesseToRemove, setCommesseToRemove] = useState<string[]>([]);
+
+  // Tab 2 selection states
+  const [selectedResourceForTab, setSelectedResourceForTab] = useState<string>('');
+  const [addCommessaId, setAddCommessaId] = useState<string>('');
+  const [addPercentage, setAddPercentage] = useState<string>('100');
+  const [assignPercentageMap, setAssignPercentageMap] = useState<Record<string, string>>({});
+
+  // Search filter for allocator (spostato in alto)
   const [searchQuery, setSearchQuery] = useState('');
+
+  const filteredDipendenti = useMemo(() => {
+    const list = dipendenti.filter(d => {
+      const clean = d.nome.toLowerCase().trim();
+      const isSocio = clean === 'corbellini matteo' || clean === 'profeti andrea' || clean === 'matteo corbellini' || clean === 'andrea profeti';
+      return !isSocio;
+    });
+    if (!searchQuery) return list;
+    return list.filter(d => d.nome.toLowerCase().includes(searchQuery.toLowerCase()));
+  }, [dipendenti, searchQuery]);
+
+  const isPMOrResponsabile = useMemo(() => {
+    return commesse.some(c => c.pm === myAssociatedName || c.responsabile === myAssociatedName);
+  }, [commesse, myAssociatedName]);
+
+  const selectableCommesse = useMemo(() => {
+    if (isAdmin || isSenior) return commesse;
+    return commesse.filter(c => c.pm === myAssociatedName || c.responsabile === myAssociatedName);
+  }, [commesse, isAdmin, isSenior, myAssociatedName]);
+
+  const assignedCommesseForSelected = useMemo(() => {
+    if (allocAction !== 'rimuovi' || selectedResourceNames.length === 0 || !allocDataInizio || !allocDataFine) {
+      return [];
+    }
+    
+    try {
+      const targetWeekIds = getWeeksSpannedByDates(allocDataInizio, allocDataFine);
+      const commesseSet = new Set<string>();
+      const list: { id: string; nome: string }[] = [];
+      
+      selectedResourceNames.forEach(resName => {
+        targetWeekIds.forEach(wkId => {
+          const key = `${resName}-${wkId}`;
+          const wkAssignments = assignments[key] || [];
+          wkAssignments.forEach(a => {
+            if (a.commessaId) {
+              commesseSet.add(a.commessaId);
+            }
+          });
+        });
+      });
+      
+      commesseSet.forEach(cId => {
+        const commObj = commesse.find(c => c.id === cId);
+        if (commObj) {
+          list.push({ id: cId, nome: commObj.nome });
+        } else {
+          list.push({ id: cId, nome: cId });
+        }
+      });
+      
+      return list;
+    } catch (e) {
+      console.error(e);
+      return [];
+    }
+  }, [assignments, selectedResourceNames, allocDataInizio, allocDataFine, allocAction, commesse]);
+
+  const risorseAssegnateAllaCommessa = useMemo(() => {
+    if (!selectedCommessaId || !allocDataInizio || !allocDataFine) return [];
+    try {
+      const targetWeekIds = getWeeksSpannedByDates(allocDataInizio, allocDataFine);
+      const map: Record<string, { nome: string; percentuali: Record<string, number> }> = {};
+      
+      filteredDipendenti.forEach(dip => {
+        targetWeekIds.forEach(wkId => {
+          const key = `${dip.nome}-${wkId}`;
+          const list = assignments[key] || [];
+          const found = list.find(a => a.commessaId === selectedCommessaId);
+          if (found) {
+            if (!map[dip.nome]) {
+              map[dip.nome] = { nome: dip.nome, percentuali: {} };
+            }
+            map[dip.nome].percentuali[wkId] = found.percentuale;
+          }
+        });
+      });
+      
+      return Object.values(map);
+    } catch (e) {
+      console.error(e);
+      return [];
+    }
+  }, [assignments, selectedCommessaId, allocDataInizio, allocDataFine, filteredDipendenti]);
+
+  const risorseNonAssegnateAllaCommessa = useMemo(() => {
+    const assegnateNames = new Set(risorseAssegnateAllaCommessa.map(r => r.nome));
+    return filteredDipendenti.filter(d => !assegnateNames.has(d.nome));
+  }, [filteredDipendenti, risorseAssegnateAllaCommessa]);
+
+  const commesseAssegnateAllaRisorsa = useMemo(() => {
+    if (!selectedResourceForTab || !allocDataInizio || !allocDataFine) return [];
+    try {
+      const targetWeekIds = getWeeksSpannedByDates(allocDataInizio, allocDataFine);
+      const map: Record<string, { id: string; nome: string; percentuali: Record<string, number>; colore: string }> = {};
+      
+      targetWeekIds.forEach(wkId => {
+        const key = `${selectedResourceForTab}-${wkId}`;
+        const list = assignments[key] || [];
+        list.forEach(a => {
+          if (a.commessaId) {
+            if (!map[a.commessaId]) {
+              const commObj = commesse.find(c => c.id === a.commessaId);
+              map[a.commessaId] = { 
+                id: a.commessaId, 
+                nome: a.commessaName, 
+                percentuali: {}, 
+                colore: commObj ? (TIPOLOGIA_COLORS[commObj.tipologia || ''] || commObj.colore || '#64748b') : (a.colore || '#64748b') 
+              };
+            }
+            map[a.commessaId].percentuali[wkId] = a.percentuale;
+          }
+        });
+      });
+      
+      return Object.values(map);
+    } catch (e) {
+      console.error(e);
+      return [];
+    }
+  }, [assignments, selectedResourceForTab, allocDataInizio, allocDataFine, commesse]);
+
+  useEffect(() => {
+    setCommesseToRemove([]);
+  }, [assignedCommesseForSelected]);
+
+  const showToast = (message: string, type: 'success' | 'warning' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => {
+      setToast(null);
+    }, 4500);
+  };
+
+
 
   // Search filter for main grid
   const [gridSearchQuery, setGridSearchQuery] = useState('');
@@ -186,6 +403,200 @@ export default function PianificazionePersonale() {
     return `${y}-${m}-${dStr}`;
   };
 
+  const executeRemoveResourceFromCommessa = async (resName: string, commessaId: string) => {
+    if (!allocDataInizio || !allocDataFine) {
+      showToast("Seleziona prima le date di inizio e fine periodo!", "warning");
+      return;
+    }
+    const commObj = commesse.find(c => c.id === commessaId);
+    if (commObj) {
+      const isUserAllowed = isAdmin || isSenior || commObj.responsabile === myAssociatedName || commObj.pm === myAssociatedName;
+      if (!isUserAllowed) {
+        showToast("Non hai i permessi per questa commessa.", "error");
+        return;
+      }
+    } else {
+      if (!isAdmin && !isSenior) {
+        showToast("Non hai i permessi per questa operazione globale.", "error");
+        return;
+      }
+    }
+
+    setSavingAllocations(true);
+    try {
+      const targetWeekIds = getWeeksSpannedByDates(allocDataInizio, allocDataFine);
+
+      for (const wkId of targetWeekIds) {
+        const docId = `${resName}-${wkId}`;
+        const docRef = doc(db, 'assegnazioni', docId);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          const currentList = docSnap.data().lista || [];
+          const updatedList = currentList.filter((a: any) => a.commessaId !== commessaId);
+          if (currentList.length !== updatedList.length) {
+            await setDoc(docRef, { lista: updatedList });
+
+            // Invia e-mail
+            const targetDip = dipendenti.find(d => d.nome === resName);
+            if (targetDip && targetDip.email) {
+              const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
+              const subject = `[Pianificazione] Rimozione Assegnazione Commessa - ${wkLabel}`;
+              const htmlBody = `
+                <p>Ciao <strong>${resName}</strong>,</p>
+                <p>Sei stato rimosso dalla commessa <strong>${commObj?.nome || commessaId}</strong> per la <strong>${wkLabel}</strong>.</p>
+                <p>Accedi alla piattaforma per visualizzare la tua pianificazione completa.</p>
+              `;
+              const plainText = `Ciao ${resName},\n\nSei stato rimosso dalla commessa ${commObj?.nome || commessaId} per la settimana ${wkLabel}.\n\nAccedi alla piattaforma per maggiori dettagli.`;
+              await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+            }
+          }
+        }
+      }
+      showToast("Rimozione completata con successo!", "success");
+    } catch (err) {
+      console.error(err);
+      showToast("Si è verificato un errore durante la rimozione.", "error");
+    } finally {
+      setSavingAllocations(false);
+    }
+  };
+
+  const executeAssignResourceToCommessa = async (resName: string, commessaId: string, percentage: number) => {
+    if (!allocDataInizio || !allocDataFine) {
+      showToast("Seleziona prima le date di inizio e fine periodo!", "warning");
+      return;
+    }
+    if (allocDataInizio > allocDataFine) {
+      showToast("La data di inizio non può essere successiva alla data di fine.", "error");
+      return;
+    }
+    const commObj = commesse.find(c => c.id === commessaId);
+    if (!commObj) {
+      showToast("Seleziona una commessa!", "warning");
+      return;
+    }
+
+    const isUserAllowed = isAdmin || isSenior || commObj.responsabile === myAssociatedName || commObj.pm === myAssociatedName;
+    if (!isUserAllowed) {
+      showToast("Non hai i permessi per questa commessa (PM/Responsabile o Admin richiesto).", "error");
+      return;
+    }
+
+    setSavingAllocations(true);
+    const warnings: string[] = [];
+
+    try {
+      const targetWeekIds = getWeeksSpannedByDates(allocDataInizio, allocDataFine);
+
+      // Carica assenze approvate per evitare conflitti
+      const qAbs = query(
+        collection(db, 'richieste_ferie'),
+        where('dipendenteName', '==', resName),
+        where('stato', '==', 'Approvato')
+      );
+      const absSnap = await getDocs(qAbs);
+      const blockedDates: Record<string, boolean> = {};
+      absSnap.forEach(dSnap => {
+        const d = dSnap.data();
+        const start = d.dataInizio || d.data;
+        const end = d.dataFine || d.data;
+        if (start && end) {
+          const [sY, sM, sD] = start.split('-').map(Number);
+          const [eY, eM, eD] = end.split('-').map(Number);
+          const curr = new Date(sY, sM - 1, sD);
+          const last = new Date(eY, eM - 1, eD);
+          while (curr <= last) {
+            const y = curr.getFullYear();
+            const m = String(curr.getMonth() + 1).padStart(2, '0');
+            const ds = String(curr.getDate()).padStart(2, '0');
+            blockedDates[`${y}-${m}-${ds}`] = true;
+            curr.setDate(curr.getDate() + 1);
+          }
+        }
+      });
+
+      for (const wkId of targetWeekIds) {
+        const docId = `${resName}-${wkId}`;
+        const baseDays = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
+        const allowedDays: string[] = [];
+
+        let basePct = percentage;
+        const coveredDays = getCoveredDaysInWeek(wkId, allocDataInizio, allocDataFine);
+        if (coveredDays === 0) continue;
+        basePct = Math.round((basePct * coveredDays) / 5);
+
+        const targetDayCount = Math.round(basePct / 20);
+        let allocatedCount = 0;
+        for (const day of baseDays) {
+          if (allocatedCount >= targetDayCount) break;
+          const dayDate = getWeekdayDate(wkId, day);
+          const isWithinRange = (dayDate >= allocDataInizio && dayDate <= allocDataFine);
+          if (isWithinRange && !blockedDates[dayDate]) {
+            allowedDays.push(day);
+            allocatedCount++;
+          }
+        }
+
+        const actualPct = targetDayCount > 0
+          ? Math.round((basePct * allowedDays.length) / targetDayCount)
+          : 0;
+
+        if (actualPct === 0) {
+          const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
+          warnings.push(`- ${resName} (${wkLabel}): non assegnato (assenza totale).`);
+          continue;
+        }
+
+        if (actualPct < basePct) {
+          const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
+          warnings.push(`- ${resName} (${wkLabel}): assegnato al ${actualPct}% per assenze.`);
+        }
+
+        const docRef = doc(db, 'assegnazioni', docId);
+        const docSnap = await getDoc(docRef);
+        let currentList: any[] = [];
+        if (docSnap.exists()) {
+          currentList = docSnap.data().lista || [];
+        }
+
+        const filteredList = currentList.filter(a => a.commessaId !== commessaId);
+        const newAllocation = {
+          commessaId: commessaId,
+          commessaName: commObj.nome,
+          percentuale: actualPct,
+          colore: TIPOLOGIA_COLORS[commObj.tipologia || ''] || commObj.colore || '#64748b',
+          giorni: allowedDays
+        };
+
+        await setDoc(docRef, { lista: [...filteredList, newAllocation] });
+
+        // Invia email di notifica
+        const targetDip = dipendenti.find(d => d.nome === resName);
+        if (targetDip && targetDip.email) {
+          const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
+          const subject = `[Pianificazione] Nuova Assegnazione Commessa - ${wkLabel}`;
+          const htmlBody = `
+            <p>Ciao <strong>${resName}</strong>,</p>
+            <p>Sei stato assegnato alla commessa <strong>${commObj.nome}</strong> per la <strong>${wkLabel}</strong> con un carico del <strong>${actualPct}%</strong>.</p>
+            <p>Accedi alla piattaforma per visualizzare la tua pianificazione completa.</p>
+          `;
+          const plainText = `Ciao ${resName},\n\nSei stato assegnato alla commessa ${commObj.nome} per la settimana ${wkLabel} con un impegno del ${actualPct}%.\n\nAccedi alla piattaforma per maggiori dettagli.`;
+          await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+        }
+      }
+
+      showToast("Assegnazione completata con successo!", "success");
+      if (warnings.length > 0) {
+        showToast("Operazione completata con variazioni per assenza/ferie.", "warning");
+      }
+    } catch (err) {
+      console.error(err);
+      showToast("Si è verificato un errore durante il salvataggio.", "error");
+    } finally {
+      setSavingAllocations(false);
+    }
+  };
+
   const handleCellClick = (dipNome: string, weekId: string, weekLabel: string, weekSub: string) => {
     const key = `${dipNome}-${weekId}`;
     setModalData({
@@ -200,49 +611,336 @@ export default function PianificazionePersonale() {
 
   const handleConfirmAssignments = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedCommessaId) {
-      alert("Seleziona una commessa!");
+    if (allocAction !== 'rimuovi' && !selectedCommessaId) {
+      showToast("Seleziona una commessa!", "warning");
       return;
     }
-    if (selectedWeekIds.length === 0) {
-      alert("Seleziona almeno una settimana!");
+    
+    if (!allocDataInizio || !allocDataFine) {
+      showToast("Imposta la data di inizio e la data di fine del periodo!", "warning");
       return;
     }
-    if (selectedResourceNames.length === 0) {
-      alert("Seleziona almeno un dipendente!");
-      return;
-    }
-    if (!allocationPercent) {
-      alert("Seleziona una percentuale!");
+    
+    if (allocDataInizio > allocDataFine) {
+      showToast("La data di inizio non può essere successiva alla data di fine.", "error");
       return;
     }
 
-    const commObj = commesse.find(c => c.id === selectedCommessaId);
-    if (!commObj) return;
+    const commObj = selectedCommessaId ? commesse.find(c => c.id === selectedCommessaId) : null;
 
     // Permissions check
-    const isUserAllowed = isAdmin || isSenior || commObj.responsabile === myAssociatedName;
-    if (!isUserAllowed) {
-      alert("Non hai i permessi per pianificare risorse su questa commessa (solo Amministratori, Responsabili Senior o il Responsabile specifico della commessa sono autorizzati).");
-      return;
+    if (commObj) {
+      const isUserAllowed = isAdmin || isSenior || commObj.responsabile === myAssociatedName || commObj.pm === myAssociatedName;
+      if (!isUserAllowed) {
+        showToast("Non hai i permessi per pianificare risorse su questa commessa (solo Amministratori, Responsabili Senior o il PM/Responsabile specifico della commessa sono autorizzati).", "error");
+        return;
+      }
+    } else {
+      // Global removal: only Admin or Senior
+      if (!isAdmin && !isSenior) {
+        showToast("Non hai i permessi per eseguire questa operazione globale (solo Amministratori o Responsabili Senior possono liberare risorse o rimuovere commesse globalmente).", "error");
+        return;
+      }
+    }
+
+    if (allocAction === 'assegna') {
+      if (selectedResourceNames.length === 0) {
+        showToast("Seleziona almeno un dipendente!", "warning");
+        return;
+      }
+      for (const resName of selectedResourceNames) {
+        if (!resourcePercentages[resName]) {
+          showToast(`Seleziona una percentuale per ${resName}!`, "warning");
+          return;
+        }
+      }
+    } else if (allocAction === 'rimuovi') {
+      if (!selectedCommessaId && selectedResourceNames.length === 0) {
+        showToast("Seleziona almeno una commessa o almeno una risorsa da cui rimuovere il carico di lavoro!", "warning");
+        return;
+      }
+    } else if (allocAction === 'sostituisci') {
+      if (!selectedCommessaId) {
+        showToast("Seleziona la commessa per la sostituzione!", "warning");
+        return;
+      }
+      if (!sourceResource || !targetResource) {
+        showToast("Seleziona sia la risorsa da sostituire che la nuova risorsa!", "warning");
+        return;
+      }
+      if (sourceResource === targetResource) {
+        showToast("La risorsa di origine e di destinazione non possono essere identiche!", "warning");
+        return;
+      }
     }
 
     setSavingAllocations(true);
     const warnings: string[] = [];
 
     try {
-      const pct = Number(allocationPercent);
+      const targetWeekIds = getWeeksSpannedByDates(allocDataInizio, allocDataFine);
 
-      for (const resName of selectedResourceNames) {
-        // Fetch approved leaves for this resource to avoid booking on leave days
-        const qAbs = query(
+      if (allocAction === 'assegna') {
+        if (!commObj) return;
+        const useDateRange = true;
+        for (const resName of selectedResourceNames) {
+          // Fetch approved leaves for this resource to avoid booking on leave days
+          const qAbs = query(
+            collection(db, 'richieste_ferie'),
+            where('dipendenteName', '==', resName),
+            where('stato', '==', 'Approvato')
+          );
+          const absSnap = await getDocs(qAbs);
+          const blockedDates: Record<string, boolean> = {};
+          absSnap.forEach(dSnap => {
+            const d = dSnap.data();
+            const start = d.dataInizio || d.data;
+            const end = d.dataFine || d.data;
+            if (start && end) {
+              const [sY, sM, sD] = start.split('-').map(Number);
+              const [eY, eM, eD] = end.split('-').map(Number);
+              const curr = new Date(sY, sM - 1, sD);
+              const last = new Date(eY, eM - 1, eD);
+              while (curr <= last) {
+                const y = curr.getFullYear();
+                const m = String(curr.getMonth() + 1).padStart(2, '0');
+                const ds = String(curr.getDate()).padStart(2, '0');
+                blockedDates[`${y}-${m}-${ds}`] = true;
+                curr.setDate(curr.getDate() + 1);
+              }
+            }
+          });
+
+          for (const wkId of targetWeekIds) {
+            const docId = `${resName}-${wkId}`;
+
+            const baseDays = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
+            const allowedDays: string[] = [];
+
+            let basePct = Number(resourcePercentages[resName] || '100');
+            
+            if (useDateRange) {
+              const coveredDays = getCoveredDaysInWeek(wkId, allocDataInizio, allocDataFine);
+              if (coveredDays === 0) continue;
+              basePct = Math.round((basePct * coveredDays) / 5);
+            }
+
+            // How many days to allocate based on basePct
+            const targetDayCount = Math.round(basePct / 20);
+
+            let allocatedCount = 0;
+            for (const day of baseDays) {
+              if (allocatedCount >= targetDayCount) break;
+              const dayDate = getWeekdayDate(wkId, day);
+              
+              // Must be within date range if using date range
+              const isWithinRange = !useDateRange || (dayDate >= allocDataInizio && dayDate <= allocDataFine);
+              
+              if (isWithinRange && !blockedDates[dayDate]) {
+                allowedDays.push(day);
+                allocatedCount++;
+              }
+            }
+
+            // Calculate actual percentage (omitting leave days)
+            const actualPct = targetDayCount > 0
+              ? Math.round((basePct * allowedDays.length) / targetDayCount)
+              : 0;
+
+            if (actualPct === 0) {
+              // Resource has full-week leave, skip assignment for this week
+              const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
+              warnings.push(`- ${resName} (${wkLabel}): non assegnato (assenza totale).`);
+              continue;
+            }
+
+            if (actualPct < basePct) {
+              const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
+              warnings.push(`- ${resName} (${wkLabel}): assegnato solo al ${actualPct}% (invece del ${basePct}%) per giornate di assenza/ferie.`);
+            }
+
+            // Read current assignments
+            const docRef = doc(db, 'assegnazioni', docId);
+            const docSnap = await getDoc(docRef);
+            
+            let currentList: any[] = [];
+            if (docSnap.exists()) {
+              currentList = docSnap.data().lista || [];
+            }
+
+            // Filter out previous assignment for this commessa
+            const filteredList = currentList.filter(a => a.commessaId !== selectedCommessaId);
+
+            // Build new allocation
+            const newAllocation = {
+              commessaId: selectedCommessaId,
+              commessaName: commObj.nome,
+              percentuale: actualPct,
+              colore: TIPOLOGIA_COLORS[commObj.tipologia || ''] || commObj.colore || '#64748b',
+              giorni: allowedDays
+            };
+
+            const updatedList = [...filteredList, newAllocation];
+            await setDoc(docRef, { lista: updatedList });
+
+            // Queue notification mail to the employee
+            const targetDip = dipendenti.find(d => d.nome === resName);
+            if (targetDip && targetDip.email) {
+              const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
+              const subject = `[Pianificazione] Nuova Assegnazione Commessa - ${wkLabel}`;
+              const htmlBody = `
+                <p>Ciao <strong>${resName}</strong>,</p>
+                <p>Sei stato assegnato alla commessa <strong>${commObj.nome}</strong> per la <strong>${wkLabel}</strong> con un carico del <strong>${actualPct}%</strong>.</p>
+                ${actualPct < basePct ? `<p style="color: #ea580c; font-weight: bold;">Nota: La percentuale è stata ricalcolata in quanto risultano giornate di ferie/assenza approvate in questa settimana.</p>` : ''}
+                <p>Accedi alla piattaforma per visualizzare la tua pianificazione completa.</p>
+              `;
+              const plainText = `Ciao ${resName},\n\nSei stato assegnato alla commessa ${commObj.nome} per la settimana ${wkLabel} con un impegno del ${actualPct}%.\n\nAccedi alla piattaforma per maggiori dettagli.`;
+              await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+            }
+          }
+        }
+        showToast("Assegnazioni salvate con successo!", "success");
+
+      } else if (allocAction === 'rimuovi') {
+        const hasCommessa = !!selectedCommessaId;
+        const hasResources = selectedResourceNames.length > 0;
+        const hasSpecificRemove = commesseToRemove.length > 0;
+
+        if (hasResources && hasSpecificRemove) {
+          // Rimuovi SOLO le commesse selezionate nella checklist per le risorse selezionate
+          for (const resName of selectedResourceNames) {
+            for (const wkId of targetWeekIds) {
+              const docId = `${resName}-${wkId}`;
+              const docRef = doc(db, 'assegnazioni', docId);
+              const docSnap = await getDoc(docRef);
+              if (docSnap.exists()) {
+                const currentList = docSnap.data().lista || [];
+                const updatedList = currentList.filter((a: any) => !commesseToRemove.includes(a.commessaId));
+                
+                if (currentList.length !== updatedList.length) {
+                  await setDoc(docRef, { lista: updatedList });
+
+                  // Nomi delle commesse rimosse
+                  const removedNames = commesseToRemove
+                    .map(cId => commesse.find(c => c.id === cId)?.nome || cId)
+                    .join(', ');
+
+                  // Invia email di notifica
+                  const targetDip = dipendenti.find(d => d.nome === resName);
+                  if (targetDip && targetDip.email) {
+                    const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
+                    const subject = `[Pianificazione] Rimozione Assegnazioni Commesse - ${wkLabel}`;
+                    const htmlBody = `
+                      <p>Ciao <strong>${resName}</strong>,</p>
+                      <p>Le tue assegnazioni per le seguenti commesse sono state rimosse per la <strong>${wkLabel}</strong>: <strong>${removedNames}</strong>.</p>
+                      <p>Accedi alla piattaforma per visualizzare la tua pianificazione completa.</p>
+                    `;
+                    const plainText = `Ciao ${resName},\n\nLe tue assegnazioni per le seguenti commesse sono state rimosse per la settimana ${wkLabel}: ${removedNames}.\n\nAccedi alla piattaforma per maggiori dettagli.`;
+                    await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+                  }
+                }
+              }
+            }
+          }
+        } else if (hasCommessa && hasResources) {
+          if (!commObj) return;
+          // Flow 1: Specific Commessa and Selected Resources
+          for (const resName of selectedResourceNames) {
+            for (const wkId of targetWeekIds) {
+              const docId = `${resName}-${wkId}`;
+              const docRef = doc(db, 'assegnazioni', docId);
+              const docSnap = await getDoc(docRef);
+              if (docSnap.exists()) {
+                const currentList = docSnap.data().lista || [];
+                const updatedList = currentList.filter((a: any) => a.commessaId !== selectedCommessaId);
+                if (currentList.length !== updatedList.length) {
+                  await setDoc(docRef, { lista: updatedList });
+
+                  // Queue notification mail to the employee about removal
+                  const targetDip = dipendenti.find(d => d.nome === resName);
+                  if (targetDip && targetDip.email) {
+                    const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
+                    const subject = `[Pianificazione] Rimozione Assegnazione Commessa - ${wkLabel}`;
+                    const htmlBody = `
+                      <p>Ciao <strong>${resName}</strong>,</p>
+                      <p>Sei stato rimosso dalla commessa <strong>${commObj?.nome || ''}</strong> per la <strong>${wkLabel}</strong>.</p>
+                      <p>Accedi alla piattaforma per visualizzare la tua pianificazione completa.</p>
+                    `;
+                    const plainText = `Ciao ${resName},\n\nSei stato rimosso dalla commessa ${commObj?.nome || ''} per la settimana ${wkLabel}.\n\nAccedi alla piattaforma per maggiori dettagli.`;
+                    await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+                  }
+                }
+              }
+            }
+          }
+        } else if (hasCommessa && !hasResources) {
+          if (!commObj) return;
+          // Flow 2: Only Commessa (Remove from ALL resources)
+          for (const dip of dipendenti) {
+            const resName = dip.nome;
+            for (const wkId of targetWeekIds) {
+              const docId = `${resName}-${wkId}`;
+              const docRef = doc(db, 'assegnazioni', docId);
+              const docSnap = await getDoc(docRef);
+              if (docSnap.exists()) {
+                const currentList = docSnap.data().lista || [];
+                const updatedList = currentList.filter((a: any) => a.commessaId !== selectedCommessaId);
+                if (currentList.length !== updatedList.length) {
+                  await setDoc(docRef, { lista: updatedList });
+
+                  // Only notify if actually removed
+                  if (dip.email) {
+                    const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
+                    const subject = `[Pianificazione] Rimozione Assegnazione Commessa - ${wkLabel}`;
+                    const htmlBody = `
+                      <p>Ciao <strong>${resName}</strong>,</p>
+                      <p>Sei stato rimosso dalla commessa <strong>${commObj?.nome || ''}</strong> per la <strong>${wkLabel}</strong>.</p>
+                      <p>Accedi alla piattaforma per visualizzare la tua pianificazione completa.</p>
+                    `;
+                    const plainText = `Ciao ${resName},\n\nSei stato rimosso dalla commessa ${commObj?.nome || ''} per la settimana ${wkLabel}.\n\nAccedi alla piattaforma per maggiori dettagli.`;
+                    await queueMail(dip.email.toLowerCase(), subject, htmlBody, plainText);
+                  }
+                }
+              }
+            }
+          }
+        } else if (!hasCommessa && hasResources) {
+          // Flow 3: Only Resources (Clear all assignments)
+          for (const resName of selectedResourceNames) {
+            for (const wkId of targetWeekIds) {
+              const docId = `${resName}-${wkId}`;
+              const docRef = doc(db, 'assegnazioni', docId);
+              await setDoc(docRef, { lista: [] });
+
+              // Queue notification mail to the employee about full clearance
+              const targetDip = dipendenti.find(d => d.nome === resName);
+              if (targetDip && targetDip.email) {
+                const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
+                const subject = `[Pianificazione] Svuotamento Carico di Lavoro - ${wkLabel}`;
+                const htmlBody = `
+                  <p>Ciao <strong>${resName}</strong>,</p>
+                  <p>Tutte le tue assegnazioni per la <strong>${wkLabel}</strong> sono state rimosse (carico di lavoro azzerato).</p>
+                  <p>Accedi alla piattaforma per visualizzare la tua pianificazione completa.</p>
+                `;
+                const plainText = `Ciao ${resName},\n\nTutte le tue assegnazioni per la settimana ${wkLabel} sono state rimosse.\n\nAccedi alla piattaforma per maggiori dettagli.`;
+                await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+              }
+            }
+          }
+        }
+        showToast("Rimozione completata con successo!", "success");
+
+      } else if (allocAction === 'sostituisci') {
+        if (!commObj) return;
+        // Fetch approved leaves for targetResource (B)
+        const qAbsB = query(
           collection(db, 'richieste_ferie'),
-          where('dipendenteName', '==', resName),
+          where('dipendenteName', '==', targetResource),
           where('stato', '==', 'Approvato')
         );
-        const absSnap = await getDocs(qAbs);
-        const blockedDates: Record<string, boolean> = {};
-        absSnap.forEach(dSnap => {
+        const absSnapB = await getDocs(qAbsB);
+        const blockedDatesB: Record<string, boolean> = {};
+        absSnapB.forEach(dSnap => {
           const d = dSnap.data();
           const start = d.dataInizio || d.data;
           const end = d.dataFine || d.data;
@@ -255,124 +953,133 @@ export default function PianificazionePersonale() {
               const y = curr.getFullYear();
               const m = String(curr.getMonth() + 1).padStart(2, '0');
               const ds = String(curr.getDate()).padStart(2, '0');
-              blockedDates[`${y}-${m}-${ds}`] = true;
+              blockedDatesB[`${y}-${m}-${ds}`] = true;
               curr.setDate(curr.getDate() + 1);
             }
           }
         });
 
-        for (const wkId of selectedWeekIds) {
-          const docId = `${resName}-${wkId}`;
+        for (const wkId of targetWeekIds) {
+          const docIdA = `${sourceResource}-${wkId}`;
+          const docRefA = doc(db, 'assegnazioni', docIdA);
+          const docSnapA = await getDoc(docRefA);
+          let currentListA: any[] = [];
+          if (docSnapA.exists()) {
+            currentListA = docSnapA.data().lista || [];
+          }
 
-          // Map percentage to days, checking for leaves
+          const oldAlloc = currentListA.find((a: any) => a.commessaId === selectedCommessaId);
+          if (!oldAlloc) {
+            // Resource A didn't have this commessa assigned for this week, skip
+            continue;
+          }
+
+          // Remove allocation from A
+          const updatedListA = currentListA.filter((a: any) => a.commessaId !== selectedCommessaId);
+          await setDoc(docRefA, { lista: updatedListA });
+
+          // Copy and adjust percentage/days for B (targetResource)
+          const basePct = oldAlloc.percentuale;
           const baseDays = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
-          const allowedDays: string[] = [];
+          const allowedDaysB: string[] = [];
 
-          // How many days to allocate based on selected percentage
-          const targetDayCount = Math.round(pct / 20);
-
+          const targetDayCount = Math.round(basePct / 20);
           let allocatedCount = 0;
           for (const day of baseDays) {
             if (allocatedCount >= targetDayCount) break;
             const dayDate = getWeekdayDate(wkId, day);
-            if (!blockedDates[dayDate]) {
-              allowedDays.push(day);
+            const isWithinRange = (dayDate >= allocDataInizio && dayDate <= allocDataFine);
+            if (isWithinRange && !blockedDatesB[dayDate]) {
+              allowedDaysB.push(day);
               allocatedCount++;
             }
           }
 
-          // Calculate actual percentage (omitting leave days)
-          const actualPct = allowedDays.length * 20;
+          const actualPctB = targetDayCount > 0
+            ? Math.round((basePct * allowedDaysB.length) / targetDayCount)
+            : 0;
+          const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
 
-          if (actualPct === 0) {
-            // Resource has full-week leave, skip assignment for this week
-            const wkObj = weeks.find(w => w.id === wkId) || { label: wkId, sub: '' };
-            warnings.push(`- ${resName} (${wkObj.label}): non assegnato (assenza totale).`);
-            continue;
+          if (actualPctB > 0) {
+            const docIdB = `${targetResource}-${wkId}`;
+            const docRefB = doc(db, 'assegnazioni', docIdB);
+            const docSnapB = await getDoc(docRefB);
+            let currentListB: any[] = [];
+            if (docSnapB.exists()) {
+              currentListB = docSnapB.data().lista || [];
+            }
+            
+            const filteredListB = currentListB.filter((a: any) => a.commessaId !== selectedCommessaId);
+            const newAllocationB = {
+              commessaId: selectedCommessaId,
+              commessaName: commObj.nome,
+              percentuale: actualPctB,
+              colore: TIPOLOGIA_COLORS[commObj.tipologia || ''] || commObj.colore || '#64748b',
+              giorni: allowedDaysB
+            };
+            const updatedListB = [...filteredListB, newAllocationB];
+            await setDoc(docRefB, { lista: updatedListB });
+
+            if (actualPctB < basePct) {
+              warnings.push(`- ${targetResource} (${wkLabel}): assegnato solo al ${actualPctB}% (invece del ${basePct}%) per giornate di assenza/ferie.`);
+            }
+          } else {
+            warnings.push(`- ${targetResource} (${wkLabel}): non assegnato (assenza totale).`);
           }
 
-          if (actualPct < pct) {
-            const wkObj = weeks.find(w => w.id === wkId) || { label: wkId, sub: '' };
-            warnings.push(`- ${resName} (${wkObj.label}): assegnato solo al ${actualPct}% (invece del ${pct}%) per giornate di assenza/ferie.`);
-          }
-
-          // Read current assignments
-          const docRef = doc(db, 'assegnazioni', docId);
-          const docSnap = await getDoc(docRef);
-          
-          let currentList: any[] = [];
-          if (docSnap.exists()) {
-            currentList = docSnap.data().lista || [];
-          }
-
-          // Filter out previous assignment for this commessa
-          const filteredList = currentList.filter(a => a.commessaId !== selectedCommessaId);
-
-          // Build new allocation
-          const newAllocation = {
-            commessaId: selectedCommessaId,
-            commessaName: commObj.nome,
-            percentuale: actualPct,
-            colore: commObj.colore,
-            giorni: allowedDays
-          };
-
-          const updatedList = [...filteredList, newAllocation];
-          await setDoc(docRef, { lista: updatedList });
-
-          // Queue notification mail to the employee
-          const targetDip = dipendenti.find(d => d.nome === resName);
-          if (targetDip && targetDip.email) {
-            const wkObj = weeks.find(w => w.id === wkId) || { label: wkId, sub: '' };
-            const subject = `[Pianificazione] Nuova Assegnazione Commessa - ${wkObj.label}`;
-            const htmlBody = `
-              <p>Ciao <strong>${resName}</strong>,</p>
-              <p>Sei stato assegnato alla commessa <strong>${commObj.nome}</strong> per la <strong>${wkObj.label}</strong> (${wkObj.sub}) con un carico del <strong>${actualPct}%</strong>.</p>
-              ${actualPct < pct ? `<p style="color: #ea580c; font-weight: bold;">Nota: La percentuale è stata ricalcolata in quanto risultano giornate di ferie/assenza approvate in questa settimana.</p>` : ''}
+          // Notify A (sourceResource) of replacement/removal
+          const targetDipA = dipendenti.find(d => d.nome === sourceResource);
+          if (targetDipA && targetDipA.email) {
+            const subjectA = `[Pianificazione] Sostituzione Commessa - ${wkLabel}`;
+            const htmlBodyA = `
+              <p>Ciao <strong>${sourceResource}</strong>,</p>
+              <p>Sei stato sostituito da <strong>${targetResource}</strong> per la commessa <strong>${commObj.nome}</strong> nella <strong>${wkLabel}</strong>.</p>
               <p>Accedi alla piattaforma per visualizzare la tua pianificazione completa.</p>
             `;
-            const plainText = `Ciao ${resName},\n\nSei stato assegnato alla commessa ${commObj.nome} per la settimana ${wkObj.label} con un impegno del ${actualPct}%.\n\nAccedi alla piattaforma per maggiori dettagli.`;
-            await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+            const plainTextA = `Ciao ${sourceResource},\n\nSei stato sostituito da ${targetResource} per la commessa ${commObj.nome} nella settimana ${wkLabel}.\n\nAccedi alla piattaforma per maggiori dettagli.`;
+            await queueMail(targetDipA.email.toLowerCase(), subjectA, htmlBodyA, plainTextA);
+          }
+
+          // Notify B (targetResource) of assignment/sostituzione
+          const targetDipB = dipendenti.find(d => d.nome === targetResource);
+          if (targetDipB && targetDipB.email) {
+            const subjectB = `[Pianificazione] Nuova Assegnazione per Sostituzione - ${wkLabel}`;
+            const htmlBodyB = `
+              <p>Ciao <strong>${targetResource}</strong>,</p>
+              <p>Sei stato assegnato alla commessa <strong>${commObj.nome}</strong> in sostituzione di <strong>${sourceResource}</strong> per la <strong>${wkLabel}</strong> con un carico del <strong>${actualPctB}%</strong>.</p>
+              ${actualPctB < basePct ? `<p style="color: #ea580c; font-weight: bold;">Nota: La percentuale è stata ricalcolata in quanto risultano giornate di ferie/assenza approvate in questa settimana.</p>` : ''}
+              <p>Accedi alla piattaforma per visualizzare la tua pianificazione completa.</p>
+            `;
+            const plainTextB = `Ciao ${targetResource},\n\nSei stato assegnato alla commessa ${commObj.nome} in sostituzione di ${sourceResource} nella settimana ${wkLabel} con un impegno del ${actualPctB}%.\n\nAccedi alla piattaforma per maggiori dettagli.`;
+            await queueMail(targetDipB.email.toLowerCase(), subjectB, htmlBodyB, plainTextB);
           }
         }
+        showToast("Sostituzione completata con successo!", "success");
       }
 
       // Reset selection states
       setSelectedResourceNames([]);
-      setSelectedWeekIds([]);
+      setAllocDataInizio('');
+      setAllocDataFine('');
+      setSourceResource('');
+      setTargetResource('');
+      setSelectedCommessaId('');
+      setCommessaSearchText('');
+
       if (warnings.length > 0) {
-        alert("Assegnazioni salvate. Attenzione ad alcune variazioni dovute ad assenze/ferie:\n\n" + warnings.join("\n"));
-      } else {
-        alert("Assegnazioni salvate con successo!");
+        showToast("Operazione completata con alcune variazioni (assenza/ferie).", "warning");
       }
     } catch (err) {
       console.error("Errore salvataggio:", err);
-      alert("Si è verificato un errore durante il salvataggio.");
+      showToast("Si è verificato un errore durante il salvataggio.", "error");
     } finally {
       setSavingAllocations(false);
     }
   };
 
-  const handleSelectAllWeeks = () => {
-    if (selectedWeekIds.length === weeks.length) {
-      setSelectedWeekIds([]);
-    } else {
-      setSelectedWeekIds(weeks.map(w => w.id));
-    }
-  };
 
-  const handleSelectAllResources = () => {
-    if (selectedResourceNames.length === filteredDipendenti.length) {
-      setSelectedResourceNames([]);
-    } else {
-      setSelectedResourceNames(filteredDipendenti.map(d => d.nome));
-    }
-  };
 
-  const filteredDipendenti = useMemo(() => {
-    if (!searchQuery) return dipendenti;
-    return dipendenti.filter(d => d.nome.toLowerCase().includes(searchQuery.toLowerCase()));
-  }, [dipendenti, searchQuery]);
+
 
   const filteredGridDipendenti = useMemo(() => {
     if (!gridSearchQuery) return dipendenti;
@@ -438,6 +1145,26 @@ export default function PianificazionePersonale() {
 
   return (
     <div className="flex flex-col gap-6">
+      {toast && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[99999] animate-in fade-in slide-in-from-top-4 duration-300">
+          <div className={`flex items-center gap-3 px-6 py-3.5 rounded-2xl shadow-2xl border font-bold text-sm ${
+            toast.type === 'success' 
+              ? 'bg-emerald-50 text-emerald-800 border-emerald-200' 
+              : toast.type === 'warning'
+                ? 'bg-amber-50 text-amber-800 border-amber-200'
+                : 'bg-rose-50 text-rose-800 border-rose-200'
+          }`}>
+            <span>{toast.type === 'success' ? '✅' : toast.type === 'warning' ? '⚠️' : '❌'}</span>
+            <span>{toast.message}</span>
+            <button 
+              onClick={() => setToast(null)} 
+              className="ml-2 hover:opacity-70 text-xs font-black"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
       
       {/* HEADER */}
       <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-sm p-4 sm:p-6 border border-white/50 no-print flex flex-col md:flex-row justify-between items-center gap-4">
@@ -448,140 +1175,635 @@ export default function PianificazionePersonale() {
       </div>
 
       {/* 1. BULK ALLOCATION PANEL */}
-      <div className="bg-gradient-to-br from-indigo-50 to-blue-50 p-6 sm:p-8 rounded-[2rem] border border-indigo-100 shadow-xl no-print">
-        <h3 className="text-xl font-extrabold text-indigo-950 mb-4 flex items-center gap-2">
-          Pianificatore Multi-Risorsa / Multi-Settimana
-        </h3>
-        
-        <form onSubmit={handleConfirmAssignments} className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            
-            {/* Commessa & Percentage */}
-            <div className="space-y-4 bg-white/60 p-5 rounded-2xl border border-indigo-100/50">
-              <h4 className="font-bold text-sm text-indigo-900 border-b pb-2">1. Dettagli Assegnazione</h4>
-              <div>
-                <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Commessa da assegnare</label>
-                <select 
-                  required
-                  value={selectedCommessaId}
-                  onChange={e => setSelectedCommessaId(e.target.value)}
-                  className="w-full p-2.5 border-none bg-white rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-700"
-                >
-                  <option value="">-- Seleziona --</option>
-                  {commesse.map(c => (
-                    <option key={c.id} value={c.id}>{c.nome}</option>
-                  ))}
-                </select>
-              </div>
+      {(isAdmin || isSenior || isPMOrResponsabile) && (
+        <div className="bg-gradient-to-br from-indigo-50 to-blue-50 p-6 sm:p-8 rounded-[2rem] border border-indigo-100 shadow-xl no-print">
+          <h3 className="text-xl font-extrabold text-indigo-950 mb-4 flex items-center gap-2">
+            Pianificatore Risorse
+          </h3>
 
-              <div>
-                <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Percentuale Impegno</label>
-                <select 
-                  required
-                  value={allocationPercent}
-                  onChange={e => setAllocationPercent(e.target.value)}
-                  className="w-full p-2.5 border-none bg-white rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-700"
-                >
-                  <option value="20">20% (1 Giorno/sett)</option>
-                  <option value="40">40% (2 Giorni/sett)</option>
-                  <option value="60">60% (3 Giorni/sett)</option>
-                  <option value="80">80% (4 Giorni/sett)</option>
-                  <option value="100">100% (Settimana Completa)</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Weeks Checkboxes */}
-            <div className="space-y-4 bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col">
-              <div className="flex justify-between items-center border-b pb-2">
-                <h4 className="font-bold text-sm text-indigo-900">2. Seleziona Settimane</h4>
-                <button 
-                  type="button" 
-                  onClick={handleSelectAllWeeks}
-                  className="text-[10px] bg-indigo-100 hover:bg-indigo-200 text-indigo-700 px-2 py-1 rounded font-bold transition"
-                >
-                  {selectedWeekIds.length === weeks.length ? 'Deseleziona tutto' : 'Seleziona tutto'}
-                </button>
-              </div>
-              
-              <div className="grid grid-cols-1 gap-2 overflow-y-auto max-h-[160px] pr-1 scrollbar-thin">
-                {weeks.map(w => (
-                  <label key={w.id} className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-white/40 cursor-pointer text-xs font-bold text-gray-700">
-                    <input 
-                      type="checkbox"
-                      checked={selectedWeekIds.includes(w.id)}
-                      onChange={e => {
-                        setSelectedWeekIds(prev => 
-                          e.target.checked ? [...prev, w.id] : prev.filter(x => x !== w.id)
-                        );
-                      }}
-                      className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-400"
-                    />
-                    <div>
-                      <div>{w.label}</div>
-                      <div className="text-[9px] text-gray-400">{w.sub}</div>
-                    </div>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            {/* Resources Checkboxes */}
-            <div className="space-y-4 bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col">
-              <div className="flex justify-between items-center border-b pb-2 gap-2">
-                <h4 className="font-bold text-sm text-indigo-900 truncate">3. Seleziona Personale</h4>
-                <button 
-                  type="button" 
-                  onClick={handleSelectAllResources}
-                  className="text-[10px] bg-indigo-100 hover:bg-indigo-200 text-indigo-700 px-2 py-1 rounded font-bold transition shrink-0"
-                >
-                  {selectedResourceNames.length === filteredDipendenti.length ? 'Deseleziona tutto' : 'Seleziona tutto'}
-                </button>
-              </div>
-
-              <div className="mb-2 shrink-0">
-                <input 
-                  type="text" 
-                  placeholder="Filtra dipendenti..." 
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  className="w-full p-2 border-none bg-white rounded-xl text-xs outline-none focus:ring-1 focus:ring-indigo-400 shadow-inner font-semibold"
-                />
-              </div>
-              
-              <div className="grid grid-cols-1 gap-2 overflow-y-auto max-h-[120px] pr-1 scrollbar-thin">
-                {filteredDipendenti.map(d => (
-                  <label key={d.id} className="flex items-center gap-2 p-1 rounded hover:bg-white/40 cursor-pointer text-xs font-bold text-gray-700">
-                    <input 
-                      type="checkbox"
-                      checked={selectedResourceNames.includes(d.nome)}
-                      onChange={e => {
-                        setSelectedResourceNames(prev => 
-                          e.target.checked ? [...prev, d.nome] : prev.filter(x => x !== d.nome)
-                        );
-                      }}
-                      className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-400"
-                    />
-                    <span className="truncate">{d.nome}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-          </div>
-
-          <div className="flex justify-end">
-            <button 
-              type="submit"
-              disabled={savingAllocations}
-              className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black px-8 py-3.5 rounded-xl transition shadow-lg active:scale-95 disabled:opacity-50"
+          {/* TAB BAR */}
+          <div className="flex flex-wrap border-b border-indigo-100 mb-6 gap-2">
+            <button
+              type="button"
+              onClick={() => setActiveTab('commessa')}
+              className={`px-4 py-2.5 font-bold text-xs sm:text-sm rounded-t-xl transition-all ${
+                activeTab === 'commessa'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'text-indigo-755 hover:bg-indigo-100/50'
+              }`}
             >
-              <Save className="w-5 h-5" />
-              {savingAllocations ? 'Salvataggio...' : 'Conferma ed Esegui Assegnazione'}
+              📁 Gestione per Commessa
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('risorsa')}
+              className={`px-4 py-2.5 font-bold text-xs sm:text-sm rounded-t-xl transition-all ${
+                activeTab === 'risorsa'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'text-indigo-755 hover:bg-indigo-100/50'
+              }`}
+            >
+              👤 Gestione per Risorsa
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('sostituisci')}
+              className={`px-4 py-2.5 font-bold text-xs sm:text-sm rounded-t-xl transition-all ${
+                activeTab === 'sostituisci'
+                  ? 'bg-indigo-600 text-white shadow-md'
+                  : 'text-indigo-755 hover:bg-indigo-100/50'
+              }`}
+            >
+              🔄 Sostituzione Risorsa
             </button>
           </div>
-        </form>
-      </div>
+
+          {/* TAB CONTENT: GESTIONE PER COMMESSA */}
+          {activeTab === 'commessa' && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Colonna 1: Selezione Commessa e Periodo */}
+              <div className="lg:col-span-1 space-y-4 bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col justify-start">
+                <h4 className="font-bold text-sm text-indigo-900 border-b pb-2">1. Commessa & Periodo</h4>
+                
+                <div className="relative">
+                  <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Commessa</label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="Cerca commessa..."
+                      value={selectedCommessaId ? (commesse.find(c => c.id === selectedCommessaId)?.nome || '') : commessaSearchText}
+                      onChange={e => {
+                        setCommessaSearchText(e.target.value);
+                        if (selectedCommessaId) setSelectedCommessaId('');
+                        setIsCommessaDropdownOpen(true);
+                      }}
+                      onFocus={() => setIsCommessaDropdownOpen(true)}
+                      className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-750"
+                    />
+                    {selectedCommessaId && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedCommessaId('');
+                          setCommessaSearchText('');
+                        }}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-red-500 hover:text-red-700 font-extrabold text-[10px] bg-red-50 px-2 py-1 rounded-lg transition"
+                      >
+                        Rimuovi
+                      </button>
+                    )}
+                  </div>
+                  {isCommessaDropdownOpen && (
+                    <>
+                      <div className="fixed inset-0 z-10" onClick={() => setIsCommessaDropdownOpen(false)}></div>
+                      <div className="absolute left-0 right-0 z-20 mt-1 max-h-56 overflow-y-auto bg-white border border-gray-150 rounded-xl shadow-xl divide-y divide-gray-50">
+                        {(() => {
+                          const search = commessaSearchText.toLowerCase();
+                          const filtered = selectableCommesse.filter(c =>
+                            c.nome.toLowerCase().includes(search)
+                          );
+                          if (filtered.length === 0) {
+                            return <div className="p-3 text-xs text-gray-450 italic font-bold">Nessuna commessa abilitata trovata</div>;
+                          }
+                          return filtered.map(c => (
+                            <button
+                              key={c.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedCommessaId(c.id);
+                                setCommessaSearchText(c.nome);
+                                setIsCommessaDropdownOpen(false);
+                              }}
+                              className="w-full text-left p-3 hover:bg-indigo-50 text-xs font-semibold text-gray-700 transition-colors flex justify-between items-center cursor-pointer"
+                            >
+                              <span className="truncate pr-2">{c.nome}</span>
+                              <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-black shrink-0">
+                                {c.codiceCommessa || c.nome.split(' - ')[0]}
+                              </span>
+                            </button>
+                          ));
+                        })()}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {selectedCommessaId && (() => {
+                  const comm = commesse.find(c => c.id === selectedCommessaId);
+                  if (!comm || (!comm.dataInizio && !comm.dataFine)) return null;
+                  return (
+                    <div className="text-xs text-indigo-950/85 font-semibold bg-white/70 p-2.5 rounded-xl border border-indigo-100/50 flex items-center gap-1.5 shadow-sm">
+                      <span>🗓️</span>
+                      <span>
+                        Durata commessa: <strong className="text-indigo-900">{comm.dataInizio ? formatCommDate(comm.dataInizio) : 'N/D'}</strong> - <strong className="text-indigo-900">{comm.dataFine ? formatCommDate(comm.dataFine) : 'N/D'}</strong>
+                      </span>
+                    </div>
+                  );
+                })()}
+
+                <div className="flex flex-col gap-3 bg-indigo-50/40 p-4 rounded-xl border border-indigo-100/30">
+                  <div>
+                    <label className="block text-[10px] font-black text-indigo-950 uppercase tracking-wider mb-1 ml-0.5">Data Inizio</label>
+                    <input 
+                      type="date"
+                      required
+                      value={allocDataInizio}
+                      onChange={e => setAllocDataInizio(e.target.value)}
+                      className="w-full p-2.5 border-none bg-white rounded-xl text-xs font-bold text-gray-750 outline-none shadow-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-indigo-950 uppercase tracking-wider mb-1 ml-0.5">Data Fine</label>
+                    <input 
+                      type="date"
+                      required
+                      value={allocDataFine}
+                      onChange={e => setAllocDataFine(e.target.value)}
+                      className="w-full p-2.5 border-none bg-white rounded-xl text-xs font-bold text-gray-750 outline-none shadow-sm"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Colonna 2 & 3: Risorse Assegnate & Non Assegnate */}
+              <div className="lg:col-span-2 space-y-6">
+                {!selectedCommessaId || !allocDataInizio || !allocDataFine ? (
+                  <div className="bg-white/50 border border-dashed border-indigo-200 rounded-2xl p-8 text-center text-xs font-bold text-indigo-900/60 flex items-center justify-center h-full min-h-[200px]">
+                    ⚠️ Seleziona una commessa e un periodo di date per visualizzare e gestire le risorse assegnate.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Lista Risorse Assegnate */}
+                    <div className="bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col max-h-[420px]">
+                      <h4 className="font-bold text-sm text-indigo-900 border-b pb-2 mb-3">
+                        👥 Risorse Assegnate ({risorseAssegnateAllaCommessa.length})
+                      </h4>
+                      <div className="overflow-y-auto flex-1 space-y-2 pr-1 scrollbar-thin">
+                        {risorseAssegnateAllaCommessa.length === 0 ? (
+                          <p className="text-xs text-gray-405 italic p-3 text-center">Nessuna risorsa assegnata in questo periodo.</p>
+                        ) : (
+                          risorseAssegnateAllaCommessa.map(r => {
+                            const pcts = Object.values(r.percentuali);
+                            const minPct = Math.min(...pcts);
+                            const maxPct = Math.max(...pcts);
+                            const displayPct = minPct === maxPct ? `${minPct}%` : `Variabile (${minPct}%-${maxPct}%)`;
+                            
+                            return (
+                              <div key={r.nome} className="flex justify-between items-center p-2.5 bg-white rounded-xl border border-indigo-50 shadow-sm hover:border-indigo-100 transition-colors">
+                                <div className="flex flex-col gap-0.5 truncate pr-2">
+                                  <span className="font-bold text-xs text-gray-850 truncate">{r.nome}</span>
+                                  <span className="text-[10px] font-black text-indigo-650">{displayPct}</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <select
+                                    value={pcts[0] || 100}
+                                    disabled={savingAllocations}
+                                    onChange={async (e) => {
+                                      await executeAssignResourceToCommessa(r.nome, selectedCommessaId, parseInt(e.target.value));
+                                    }}
+                                    className="p-1 border border-gray-200 rounded-lg bg-white font-bold text-[10px] text-gray-700 outline-none focus:border-indigo-400"
+                                  >
+                                    <option value="10">10%</option>
+                                    <option value="20">20%</option>
+                                    <option value="30">30%</option>
+                                    <option value="40">40%</option>
+                                    <option value="50">50%</option>
+                                    <option value="60">60%</option>
+                                    <option value="70">70%</option>
+                                    <option value="80">80%</option>
+                                    <option value="90">90%</option>
+                                    <option value="100">100%</option>
+                                  </select>
+                                  <button
+                                    type="button"
+                                    disabled={savingAllocations}
+                                    onClick={async () => {
+                                      if (confirm(`Sei sicuro di voler rimuovere ${r.nome} da questa commessa per il periodo selezionato?`)) {
+                                        await executeRemoveResourceFromCommessa(r.nome, selectedCommessaId);
+                                      }
+                                    }}
+                                    className="text-red-500 hover:text-red-750 hover:bg-red-50 p-1.5 rounded-lg transition-colors disabled:opacity-50"
+                                    title="Rimuovi risorsa da questa commessa"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Altre Risorse (Non Assegnate) */}
+                    <div className="bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col max-h-[420px]">
+                      <h4 className="font-bold text-sm text-indigo-900 border-b pb-2 mb-3">
+                        ➕ Aggiungi Risorsa ({risorseNonAssegnateAllaCommessa.length})
+                      </h4>
+                      <div className="mb-2 shrink-0">
+                        <input 
+                          type="text" 
+                          placeholder="Filtra dipendenti..." 
+                          value={searchQuery}
+                          onChange={e => setSearchQuery(e.target.value)}
+                          className="w-full p-2 border border-indigo-100 bg-white rounded-xl text-xs outline-none focus:ring-1 focus:ring-indigo-400 shadow-inner font-bold text-gray-700"
+                        />
+                      </div>
+                      <div className="overflow-y-auto flex-1 space-y-2 pr-1 scrollbar-thin">
+                        {risorseNonAssegnateAllaCommessa.length === 0 ? (
+                          <p className="text-xs text-gray-405 italic p-3 text-center">Tutte le risorse sono assegnate.</p>
+                        ) : (
+                          risorseNonAssegnateAllaCommessa.map(r => {
+                            const currentPct = assignPercentageMap[r.nome] || '100';
+                            return (
+                              <div key={r.nome} className="flex justify-between items-center p-2.5 bg-white rounded-xl border border-indigo-50 shadow-sm hover:border-indigo-100 transition-colors">
+                                <span className="font-bold text-xs text-gray-750 truncate pr-2">{r.nome}</span>
+                                <div className="flex items-center gap-2">
+                                  <select
+                                    value={currentPct}
+                                    onChange={e => {
+                                      const val = e.target.value;
+                                      setAssignPercentageMap(prev => ({ ...prev, [r.nome]: val }));
+                                    }}
+                                    className="p-1 border border-gray-200 rounded-lg bg-white font-bold text-[10px] text-gray-700 outline-none focus:border-indigo-400"
+                                  >
+                                    <option value="10">10%</option>
+                                    <option value="20">20%</option>
+                                    <option value="30">30%</option>
+                                    <option value="40">40%</option>
+                                    <option value="50">50%</option>
+                                    <option value="60">60%</option>
+                                    <option value="70">70%</option>
+                                    <option value="80">80%</option>
+                                    <option value="90">90%</option>
+                                    <option value="100">100%</option>
+                                  </select>
+                                  <button
+                                    type="button"
+                                    disabled={savingAllocations}
+                                    onClick={async () => {
+                                      await executeAssignResourceToCommessa(r.nome, selectedCommessaId, parseInt(currentPct));
+                                    }}
+                                    className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-[10px] px-2.5 py-1.5 rounded-lg transition shadow-sm active:scale-95 disabled:opacity-50"
+                                  >
+                                    <Plus className="w-3.5 h-3.5" />
+                                    <span>Assegna</span>
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB CONTENT: GESTIONE PER RISORSA */}
+          {activeTab === 'risorsa' && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Colonna 1: Selezione Risorsa e Periodo */}
+              <div className="lg:col-span-1 space-y-4 bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col justify-start">
+                <h4 className="font-bold text-sm text-indigo-900 border-b pb-2">1. Risorsa & Periodo</h4>
+                
+                <div>
+                  <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Risorsa da modificare</label>
+                  <select
+                    value={selectedResourceForTab}
+                    onChange={e => setSelectedResourceForTab(e.target.value)}
+                    className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-750"
+                  >
+                    <option value="">-- Seleziona Risorsa --</option>
+                    {filteredDipendenti.map(d => (
+                      <option key={d.id} value={d.nome}>{d.nome}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-3 bg-indigo-50/40 p-4 rounded-xl border border-indigo-100/30">
+                  <div>
+                    <label className="block text-[10px] font-black text-indigo-950 uppercase tracking-wider mb-1 ml-0.5">Data Inizio</label>
+                    <input 
+                      type="date"
+                      required
+                      value={allocDataInizio}
+                      onChange={e => setAllocDataInizio(e.target.value)}
+                      className="w-full p-2.5 border-none bg-white rounded-xl text-xs font-bold text-gray-755 outline-none shadow-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-indigo-950 uppercase tracking-wider mb-1 ml-0.5">Data Fine</label>
+                    <input 
+                      type="date"
+                      required
+                      value={allocDataFine}
+                      onChange={e => setAllocDataFine(e.target.value)}
+                      className="w-full p-2.5 border-none bg-white rounded-xl text-xs font-bold text-gray-755 outline-none shadow-sm"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Colonna 2 & 3: Lista Assegnazioni & Form per Aggiunta */}
+              <div className="lg:col-span-2 space-y-6">
+                {!selectedResourceForTab || !allocDataInizio || !allocDataFine ? (
+                  <div className="bg-white/50 border border-dashed border-indigo-200 rounded-2xl p-8 text-center text-xs font-bold text-indigo-900/60 flex items-center justify-center h-full min-h-[200px]">
+                    ⚠️ Seleziona una risorsa e un periodo di date per visualizzare e gestire le commesse associate.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Lista Commesse Assegnate */}
+                    <div className="bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col max-h-[420px]">
+                      <h4 className="font-bold text-sm text-indigo-900 border-b pb-2 mb-3">
+                        📁 Commesse Assegnate ({commesseAssegnateAllaRisorsa.length})
+                      </h4>
+                      <div className="overflow-y-auto flex-1 space-y-2 pr-1 scrollbar-thin">
+                        {commesseAssegnateAllaRisorsa.length === 0 ? (
+                          <p className="text-xs text-gray-405 italic p-3 text-center">Nessuna commessa assegnata nel periodo.</p>
+                        ) : (
+                          commesseAssegnateAllaRisorsa.map(c => {
+                            const pcts = Object.values(c.percentuali);
+                            const minPct = Math.min(...pcts);
+                            const maxPct = Math.max(...pcts);
+                            const displayPct = minPct === maxPct ? `${minPct}%` : `Variabile (${minPct}%-${maxPct}%)`;
+
+                            // Permessi di modifica per questa commessa
+                            const commObj = commesse.find(x => x.id === c.id);
+                            const hasPermission = isAdmin || isSenior || (commObj && (commObj.pm === myAssociatedName || commObj.responsabile === myAssociatedName));
+
+                            return (
+                              <div key={c.id} className="flex justify-between items-center p-2.5 bg-white rounded-xl border border-indigo-50 shadow-sm hover:border-indigo-100 transition-colors">
+                                <div className="flex flex-col gap-0.5 truncate pr-2">
+                                  <div className="flex items-center gap-2 truncate">
+                                    <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm" style={{ backgroundColor: c.colore }}></span>
+                                    <span className="font-bold text-xs text-gray-850 truncate">{c.nome}</span>
+                                  </div>
+                                  <span className="text-[10px] font-black text-indigo-650 ml-4.5">{displayPct}</span>
+                                </div>
+
+                                <div className="flex items-center gap-2 shrink-0">
+                                  {hasPermission ? (
+                                    <>
+                                      <select
+                                        value={pcts[0] || 100}
+                                        disabled={savingAllocations}
+                                        onChange={async (e) => {
+                                          await executeAssignResourceToCommessa(selectedResourceForTab, c.id, parseInt(e.target.value));
+                                        }}
+                                        className="p-1 border border-gray-200 rounded-lg bg-white font-bold text-[10px] text-gray-700 outline-none focus:border-indigo-400"
+                                      >
+                                        <option value="10">10%</option>
+                                        <option value="20">20%</option>
+                                        <option value="30">30%</option>
+                                        <option value="40">40%</option>
+                                        <option value="50">50%</option>
+                                        <option value="60">60%</option>
+                                        <option value="70">70%</option>
+                                        <option value="80">80%</option>
+                                        <option value="90">90%</option>
+                                        <option value="100">100%</option>
+                                      </select>
+                                      <button
+                                        type="button"
+                                        disabled={savingAllocations}
+                                        onClick={async () => {
+                                          if (confirm(`Sei sicuro di voler rimuovere la commessa "${c.nome}" per ${selectedResourceForTab} nel periodo selezionato?`)) {
+                                            await executeRemoveResourceFromCommessa(selectedResourceForTab, c.id);
+                                          }
+                                        }}
+                                        className="text-red-500 hover:text-red-750 hover:bg-red-50 p-1.5 rounded-lg transition-colors disabled:opacity-50"
+                                        title="Rimuovi questa commessa"
+                                      >
+                                        <Trash2 className="w-4 h-4" />
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <span className="text-gray-400 text-[10px] italic font-bold bg-gray-50 px-2 py-1 rounded-lg border border-gray-100">
+                                      🔒 Sola Lettura
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Assegna Nuova Commessa */}
+                    <div className="bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col justify-start">
+                      <h4 className="font-bold text-sm text-indigo-900 border-b pb-2 mb-4">
+                        ➕ Assegna Commessa
+                      </h4>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Seleziona Commessa</label>
+                          <select
+                            value={addCommessaId}
+                            onChange={e => setAddCommessaId(e.target.value)}
+                            className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-700"
+                          >
+                            <option value="">-- Seleziona Commessa --</option>
+                            {selectableCommesse.map(c => (
+                              <option key={c.id} value={c.id}>{c.nome}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Percentuale Carico</label>
+                          <select
+                            value={addPercentage}
+                            onChange={e => setAddPercentage(e.target.value)}
+                            className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-700"
+                          >
+                            <option value="10">10%</option>
+                            <option value="20">20%</option>
+                            <option value="30">30%</option>
+                            <option value="40">40%</option>
+                            <option value="50">50%</option>
+                            <option value="60">60%</option>
+                            <option value="70">70%</option>
+                            <option value="80">80%</option>
+                            <option value="90">90%</option>
+                            <option value="100">100%</option>
+                          </select>
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={savingAllocations || !addCommessaId}
+                          onClick={async () => {
+                            await executeAssignResourceToCommessa(selectedResourceForTab, addCommessaId, parseInt(addPercentage));
+                            setAddCommessaId('');
+                          }}
+                          className="w-full flex items-center justify-center gap-2 bg-indigo-650 hover:bg-indigo-700 text-white font-black py-3 rounded-xl transition shadow-md active:scale-95 disabled:opacity-50 mt-2"
+                        >
+                          <Plus className="w-4 h-4" />
+                          <span>Conferma ed Esegui Assegnazione</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB CONTENT: SOSTITUZIONE RISORSA */}
+          {activeTab === 'sostituisci' && (
+            <form onSubmit={handleConfirmAssignments} className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                
+                {/* Selezione Commessa */}
+                <div className="space-y-4 bg-white/60 p-5 rounded-2xl border border-indigo-100/50">
+                  <h4 className="font-bold text-sm text-indigo-900 border-b pb-2">1. Commessa per Sostituzione</h4>
+                  
+                  <div className="relative">
+                    <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Commessa</label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="Cerca commessa..."
+                        value={selectedCommessaId ? (commesse.find(c => c.id === selectedCommessaId)?.nome || '') : commessaSearchText}
+                        onChange={e => {
+                          setCommessaSearchText(e.target.value);
+                          if (selectedCommessaId) setSelectedCommessaId('');
+                          setIsCommessaDropdownOpen(true);
+                        }}
+                        onFocus={() => setIsCommessaDropdownOpen(true)}
+                        className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-750"
+                      />
+                      {selectedCommessaId && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedCommessaId('');
+                            setCommessaSearchText('');
+                          }}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-red-500 hover:text-red-700 font-extrabold text-[10px] bg-red-50 px-2 py-1 rounded-lg transition"
+                        >
+                          Rimuovi
+                        </button>
+                      )}
+                    </div>
+                    {isCommessaDropdownOpen && (
+                      <>
+                        <div className="fixed inset-0 z-10" onClick={() => setIsCommessaDropdownOpen(false)}></div>
+                        <div className="absolute left-0 right-0 z-20 mt-1 max-h-56 overflow-y-auto bg-white border border-gray-150 rounded-xl shadow-xl divide-y divide-gray-50">
+                          {(() => {
+                            const search = commessaSearchText.toLowerCase();
+                            const filtered = selectableCommesse.filter(c =>
+                              c.nome.toLowerCase().includes(search)
+                            );
+                            if (filtered.length === 0) {
+                              return <div className="p-3 text-xs text-gray-450 italic font-bold">Nessuna commessa trovata</div>;
+                            }
+                            return filtered.map(c => (
+                              <button
+                                key={c.id}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedCommessaId(c.id);
+                                  setCommessaSearchText(c.nome);
+                                  setIsCommessaDropdownOpen(false);
+                                }}
+                                className="w-full text-left p-3 hover:bg-indigo-50 text-xs font-semibold text-gray-700 transition-colors flex justify-between items-center cursor-pointer"
+                              >
+                                <span className="truncate pr-2">{c.nome}</span>
+                                <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-black shrink-0">
+                                  {c.codiceCommessa || c.nome.split(' - ')[0]}
+                                </span>
+                              </button>
+                            ));
+                          })()}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* Periodo */}
+                <div className="space-y-4 bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col justify-start">
+                  <h4 className="font-bold text-sm text-indigo-900 border-b pb-2">2. Periodo</h4>
+                  <div className="flex flex-col gap-3 bg-indigo-50/40 p-4 rounded-xl border border-indigo-100/30">
+                    <div>
+                      <label className="block text-[10px] font-black text-indigo-950 uppercase tracking-wider mb-1 ml-0.5">Data Inizio</label>
+                      <input 
+                        type="date"
+                        required
+                        value={allocDataInizio}
+                        onChange={e => setAllocDataInizio(e.target.value)}
+                        className="w-full p-2.5 border-none bg-white rounded-xl text-xs font-bold text-gray-700 outline-none shadow-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black text-indigo-950 uppercase tracking-wider mb-1 ml-0.5">Data Fine</label>
+                      <input 
+                        type="date"
+                        required
+                        value={allocDataFine}
+                        onChange={e => setAllocDataFine(e.target.value)}
+                        className="w-full p-2.5 border-none bg-white rounded-xl text-xs font-bold text-gray-700 outline-none shadow-sm"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Sostituzione Risorse */}
+                <div className="space-y-4 bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col justify-start">
+                  <h4 className="font-bold text-sm text-indigo-900 border-b pb-2">3. Sostituzione Risorsa</h4>
+                  
+                  <div>
+                    <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Risorsa da sostituire (A)</label>
+                    <select
+                      value={sourceResource}
+                      onChange={e => setSourceResource(e.target.value)}
+                      className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-700"
+                    >
+                      <option value="">Seleziona risorsa...</option>
+                      {filteredDipendenti.map(d => (
+                        <option key={d.id} value={d.nome}>{d.nome}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Nuova risorsa (B)</label>
+                    <select
+                      value={targetResource}
+                      onChange={e => setTargetResource(e.target.value)}
+                      className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-700"
+                    >
+                      <option value="">Seleziona risorsa...</option>
+                      {filteredDipendenti.map(d => (
+                        <option key={d.id} value={d.nome}>{d.nome}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+              </div>
+
+              <div className="flex justify-end">
+                <button 
+                  type="submit"
+                  disabled={savingAllocations}
+                  onClick={() => setAllocAction('sostituisci')}
+                  className="flex items-center gap-2 bg-indigo-650 hover:bg-indigo-700 text-white font-black px-8 py-3.5 rounded-xl transition shadow-lg active:scale-95 disabled:opacity-50"
+                >
+                  <Save className="w-5 h-5" />
+                  {savingAllocations ? 'Sostituzione...' : 'Conferma ed Esegui Sostituzione'}
+                </button>
+              </div>
+            </form>
+          )}
+
+        </div>
+      )}
 
       {/* 2. TIMELINE CARICHI DI LAVORO */}
       <div className="bg-white rounded-[2rem] shadow-xl border relative mb-10 flex flex-col max-h-[750px]">
@@ -590,7 +1812,12 @@ export default function PianificazionePersonale() {
         <div className="p-4 border-b border-gray-200 flex flex-col md:flex-row md:items-center justify-between gap-4 no-print bg-gray-50/50 rounded-t-[2rem] shrink-0">
           <div>
             <h3 className="font-extrabold text-xl text-gray-900">Carichi di Lavoro Settimanali</h3>
-            <p className="text-xs text-gray-400 font-bold mt-0.5">* Clicca su una cella per aggiungere, rimuovere o modificare i dettagli delle commesse per quella settimana.</p>
+            <p className="text-xs text-gray-400 font-bold mt-0.5">
+              {(isAdmin || isSenior) 
+                ? "* Clicca su una cella per aggiungere, rimuovere o modificare i dettagli delle commesse per quella settimana."
+                : "* Vista di sola lettura. (Solo Amministratori o Responsabili Senior possono modificare la pianificazione)"
+              }
+            </p>
           </div>
 
           <div className="flex items-center gap-3 no-print">
@@ -604,16 +1831,26 @@ export default function PianificazionePersonale() {
               className="p-2.5 border rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-400 font-semibold shadow-sm w-44"
             />
 
-            {/* Grid Zoom selector */}
-            <select 
-              value={zoomWeeks}
-              onChange={e => setZoomWeeks(Number(e.target.value))}
-              className="p-2.5 border-none bg-white rounded-xl border shadow-sm font-bold text-gray-700 text-xs outline-none focus:ring-2 focus:ring-indigo-400"
-            >
-              <option value={5}>Vista 1 Mese</option>
-              <option value={13}>Vista 3 Mesi</option>
-              <option value={26}>Vista 6 Mesi</option>
-            </select>
+            {/* Zoom Temporale magnifier buttons */}
+            <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-gray-200 shadow-sm h-[38px]">
+              <button 
+                type="button"
+                onClick={() => setZoomWeeks(prev => Math.max(2, prev - 2))} 
+                className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-650 transition flex items-center justify-center cursor-pointer"
+                title="Zoom In (Vedi meno settimane, più dettaglio)"
+              >
+                <ZoomIn className="w-4 h-4 text-indigo-600" />
+              </button>
+              <span className="text-xs font-bold text-gray-750 min-w-[50px] text-center select-none">{zoomWeeks} Sett.</span>
+              <button 
+                type="button"
+                onClick={() => setZoomWeeks(prev => Math.min(52, prev + 2))} 
+                className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-650 transition flex items-center justify-center cursor-pointer"
+                title="Zoom Out (Vedi più settimane, panoramica)"
+              >
+                <ZoomOut className="w-4 h-4 text-indigo-600" />
+              </button>
+            </div>
 
             <div className="flex items-center gap-1 bg-white p-1.5 rounded-xl border border-gray-200 shadow-sm">
               <button onClick={() => shiftGridPeriod(-zoomWeeks)} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-600 transition" title="Indietro"><ChevronLeft className="w-4 h-4" /></button>
@@ -633,36 +1870,52 @@ export default function PianificazionePersonale() {
 
         {/* Load Grid */}
         <div className="w-full overflow-auto scrollbar-thin flex-1">
-          <table className="w-full text-center border-collapse min-w-[1100px] text-xs">
+          <table className="w-full text-center border-collapse text-xs">
             <thead className="sticky top-0 z-30 bg-gray-100 border-b border-gray-200 font-bold text-gray-600 shadow-sm">
-              <tr>
-                <th className="p-4 text-left w-64 sticky left-0 top-0 z-35 bg-white shadow-[1px_0_0_0_#e5e7eb] font-extrabold">Dipendente</th>
+              <tr className="h-14">
+                <th 
+                  className="p-4 text-left sticky left-0 top-0 z-35 bg-white shadow-[1px_0_0_0_#e5e7eb] font-extrabold h-14 truncate"
+                  style={{ width: '180px', minWidth: '180px', maxWidth: '180px' }}
+                >
+                  Dipendente
+                </th>
                 {timelineWeeks.map((wk, i) => {
                   const isCurrentWeek = wk.id === `${new Date().getFullYear()}-W${getWeekNumber(new Date())}`;
                   return (
-                    <th key={i} className={`p-3 border-l border-b border-gray-200 min-w-[90px] sticky top-0 z-30 bg-gray-100 ${isCurrentWeek ? 'bg-indigo-50/50' : ''}`}>
-                      <div className="font-extrabold text-gray-900">{wk.label}</div>
-                      <div className="text-[11px] text-gray-400 mt-0.5">{wk.sub}</div>
+                    <th 
+                      key={i} 
+                      className={`${isUltraNarrow ? 'p-1' : isNarrow ? 'p-1.5' : 'p-3'} border-l border-b border-gray-200 sticky top-0 z-30 bg-gray-100 h-14 ${isCurrentWeek ? 'bg-indigo-50/50' : ''}`}
+                      style={{ minWidth: weekColumnMinWidth, width: weekColumnMinWidth }}
+                    >
+                      <div className="font-extrabold text-gray-900 text-xs truncate" title={wk.label}>
+                        {isNarrow ? wk.label.replace('Sett. ', 'S') : wk.label}
+                      </div>
+                      {!isNarrow && (
+                        <div className="text-[11px] text-gray-400 mt-0.5 truncate">{wk.sub}</div>
+                      )}
                     </th>
                   );
                 })}
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100 font-medium">
-              {employees.length === 0 && collaborators.length === 0 ? (
+            {employees.length === 0 && collaborators.length === 0 ? (
+              <tbody className="divide-y divide-gray-100 font-medium bg-white">
                 <tr>
                   <td colSpan={timelineWeeks.length + 1} className="p-12 text-center text-gray-400 font-bold italic bg-white">
                     Nessuna risorsa corrisponde ai criteri di ricerca.
                   </td>
                 </tr>
-              ) : (
-                <>
+              </tbody>
+            ) : (
+              <>
+                {/* DIPENDENTI SECTION */}
+                <tbody className="divide-y divide-gray-100 font-medium bg-white">
                   {/* DIPENDENTI ACCORDION HEADER */}
                   <tr 
                     onClick={() => setIsDipendentiExpanded(!isDipendentiExpanded)} 
                     className="bg-indigo-50/40 text-indigo-900 font-extrabold text-xs cursor-pointer hover:bg-indigo-50 transition-colors select-none"
                   >
-                    <td colSpan={timelineWeeks.length + 1} className="p-3 text-left pl-6 sticky left-0 top-[53px] z-20 border-b border-indigo-100/60 bg-indigo-50/95">
+                    <td colSpan={timelineWeeks.length + 1} className="p-3 text-left pl-6 sticky left-0 z-20 border-b border-indigo-100/60 bg-indigo-50/95" style={{ top: '55px' }}>
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] text-indigo-500 w-3 text-center">{isDipendentiExpanded ? '▼' : '▶'}</span>
                         <span className="uppercase tracking-wider font-black">Dipendenti Interni ({employees.length})</span>
@@ -681,7 +1934,11 @@ export default function PianificazionePersonale() {
                     ) : (
                       employees.map(dip => (
                         <tr key={dip.id} className="hover:bg-indigo-50/20 transition-colors bg-white">
-                          <td className="p-4 text-left font-bold text-gray-800 bg-white sticky left-0 z-10 shadow-[1px_0_0_0_#f3f4f6] border-b align-middle w-64">
+                          <td 
+                            className="p-4 text-left font-bold text-gray-800 bg-white sticky left-0 z-10 shadow-[1px_0_0_0_#f3f4f6] border-b align-middle truncate"
+                            style={{ width: '180px', minWidth: '180px', maxWidth: '180px' }}
+                            title={dip.nome}
+                          >
                             {dip.nome}
                           </td>
                           
@@ -691,18 +1948,27 @@ export default function PianificazionePersonale() {
                             const totalLoad = list.reduce((acc, c) => acc + Number(c.percentuale), 0);
                             const leaves = getLeavesForResourceInWeek(dip.nome, wk.id);
 
-                            let bgClass = "bg-slate-50/50 text-slate-400 hover:bg-slate-100/60";
+                            const isEditable = isAdmin || isSenior;
+                            
+                            let bgClass = "bg-slate-50/50 text-slate-400";
+                            if (isEditable) bgClass += " hover:bg-slate-100/60";
                             let indicatorColor = "bg-gray-300";
 
                             if (totalLoad > 0) {
                               if (totalLoad < 100) {
-                                bgClass = "bg-sky-50 text-sky-800 hover:bg-sky-100/80";
+                                bgClass = isEditable 
+                                  ? "bg-sky-50 text-sky-800 hover:bg-sky-100/80" 
+                                  : "bg-sky-50 text-sky-800";
                                 indicatorColor = "bg-sky-400";
                               } else if (totalLoad === 100) {
-                                bgClass = "bg-emerald-50 text-emerald-800 hover:bg-emerald-100/80";
+                                bgClass = isEditable 
+                                  ? "bg-emerald-50 text-emerald-800 hover:bg-emerald-100/80" 
+                                  : "bg-emerald-50 text-emerald-800";
                                 indicatorColor = "bg-emerald-500";
                               } else {
-                                bgClass = "bg-rose-50 text-rose-800 hover:bg-rose-100/90 font-black";
+                                bgClass = isEditable 
+                                  ? "bg-rose-50 text-rose-800 hover:bg-rose-100/90 font-black" 
+                                  : "bg-rose-50 text-rose-800 font-black";
                                 indicatorColor = "bg-rose-600";
                               }
                             }
@@ -715,44 +1981,63 @@ export default function PianificazionePersonale() {
                             return (
                               <td 
                                 key={wIndex} 
-                                onClick={() => handleCellClick(dip.nome, wk.id, wk.label, wk.sub)}
-                                className={`p-3 border-l border-b border-gray-100 align-middle transition-colors cursor-pointer ${bgClass}`}
+                                onClick={() => isEditable && handleCellClick(dip.nome, wk.id, wk.label, wk.sub)}
+                                className={`border-l border-b border-gray-100 align-middle transition-colors ${isEditable ? 'cursor-pointer' : 'cursor-default'} ${bgClass} ${
+                                  isUltraNarrow ? 'p-1' : isNarrow ? 'p-1.5' : 'p-3'
+                                }`}
+                                style={{ minWidth: weekColumnMinWidth, width: weekColumnMinWidth }}
                               >
-                                <div className="flex flex-col items-center justify-center min-h-[56px] gap-1 relative group/cell">
-                                  <span className="font-black text-sm">{totalLoad}%</span>
+                                <div 
+                                  className="flex flex-col items-center justify-center relative group/cell"
+                                  style={{ 
+                                    minHeight: isNarrow ? '40px' : '56px',
+                                    gap: isUltraNarrow ? '1px' : '2px'
+                                  }}
+                                >
+                                  <span className={`${isUltraNarrow ? 'text-[10px]' : 'text-xs'} font-black`}>{totalLoad}%</span>
                                   
-                                  {/* Color-coded load indicator dot */}
-                                  <span className={`w-2 h-2 rounded-full shadow-sm ${indicatorColor}`}></span>
+                                  {!isUltraNarrow && (
+                                    <span className={`w-1.5 h-1.5 rounded-full shadow-sm ${indicatorColor}`}></span>
+                                  )}
 
-                                  {/* Leaves indicator */}
                                   {leaves.length > 0 && (
-                                    <div className="flex gap-1 justify-center mt-1 w-full max-w-[105px] flex-wrap">
-                                      {ferieCount > 0 && (
-                                        <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-orange-100 text-orange-700 border border-orange-200" title="Ferie">
-                                          🌴 {ferieCount}g
+                                    <div className="flex gap-0.5 justify-center mt-0.5 w-full flex-wrap">
+                                      {isUltraNarrow ? (
+                                        <span className="text-[9px]" title="Assenze presenti">⚠️</span>
+                                      ) : isNarrow ? (
+                                        <span className="text-[9px] font-extrabold px-1 rounded bg-orange-100 text-orange-750" title={`${leaves.length} assenze`}>
+                                          ⚠️ {leaves.length}g
                                         </span>
-                                      )}
-                                      {malattiaCount > 0 && (
-                                        <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-red-100 text-red-700 border border-red-200" title="Malattia">
-                                          🤒 {malattiaCount}g
-                                        </span>
-                                      )}
-                                      {permessoCount > 0 && (
-                                        <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-purple-100 text-purple-700 border border-purple-200" title="Permessi / Ass. parziale">
-                                          ⏱️ {permessoCount}g
-                                        </span>
-                                      )}
-                                      {smartCount > 0 && (
-                                        <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-indigo-100 text-indigo-700 border border-indigo-200" title="Smart Working">
-                                          🏠 {smartCount}g
-                                        </span>
+                                      ) : (
+                                        <>
+                                          {ferieCount > 0 && (
+                                            <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-orange-100 text-orange-700 border border-orange-200" title="Ferie">
+                                              🌴 {ferieCount}g
+                                            </span>
+                                          )}
+                                          {malattiaCount > 0 && (
+                                            <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-red-100 text-red-700 border border-red-200" title="Malattia">
+                                              🤒 {malattiaCount}g
+                                            </span>
+                                          )}
+                                          {permessoCount > 0 && (
+                                            <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-purple-100 text-purple-700 border border-purple-200" title="Permessi / Ass. parziale">
+                                              ⏱️ {permessoCount}g
+                                            </span>
+                                          )}
+                                          {smartCount > 0 && (
+                                            <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-indigo-100 text-indigo-700 border border-indigo-200" title="Smart Working">
+                                              🏠 {smartCount}g
+                                            </span>
+                                          )}
+                                        </>
                                       )}
                                     </div>
                                   )}
                                   
-                                  {/* Micro hover details tooltip */}
                                   {(list.length > 0 || leaves.length > 0) && (
-                                    <div className="hidden group-hover/cell:flex absolute bottom-full mb-1 bg-gray-900 text-white text-[11.5px] rounded-lg p-2.5 flex-col gap-1.5 z-50 shadow-md min-w-[170px] pointer-events-none text-left">
+                                    <div className="hidden group-hover/cell:flex absolute bottom-full mb-1 bg-gray-900 text-white text-[11px] rounded-lg p-2.5 flex-col gap-1 z-50 shadow-md min-w-[170px] pointer-events-none text-left">
+                                      <div className="font-bold text-[10px] text-indigo-300 border-b border-gray-800 pb-0.5 mb-1">{dip.nome} ({wk.label})</div>
                                       {list.map((a, idx) => (
                                         <div key={idx} className="flex justify-between items-center gap-2 border-b border-gray-800 pb-1 last:border-none last:pb-0">
                                           <span className="truncate">{a.commessaName}</span>
@@ -761,9 +2046,9 @@ export default function PianificazionePersonale() {
                                       ))}
                                       {leaves.length > 0 && (
                                         <div className="border-t border-gray-700 pt-1.5 mt-1 flex flex-col gap-1">
-                                          <span className="text-[10px] font-bold text-orange-400">Assenze/Ferie:</span>
+                                          <span className="text-[9.5px] font-bold text-orange-400">Assenze/Ferie:</span>
                                           {leaves.map((l, idx) => (
-                                            <div key={idx} className="flex justify-between items-center text-[10px] gap-2">
+                                            <div key={idx} className="flex justify-between items-center text-[9.5px] gap-2">
                                               <span>{l.giorno}</span>
                                               <span className="font-bold text-gray-300">{l.dettagli}</span>
                                             </div>
@@ -780,13 +2065,16 @@ export default function PianificazionePersonale() {
                       ))
                     )
                   )}
+                </tbody>
 
+                {/* COLLABORATORI SECTION */}
+                <tbody className="divide-y divide-gray-100 font-medium bg-white">
                   {/* COLLABORATORI ACCORDION HEADER */}
                   <tr 
                     onClick={() => setIsCollaboratoriExpanded(!isCollaboratoriExpanded)} 
                     className="bg-amber-50/40 text-amber-950 font-extrabold text-xs cursor-pointer hover:bg-amber-50/80 transition-colors select-none border-t border-amber-100"
                   >
-                    <td colSpan={timelineWeeks.length + 1} className="p-3 text-left pl-6 sticky left-0 top-[53px] z-20 border-b border-amber-100 bg-amber-50/95">
+                    <td colSpan={timelineWeeks.length + 1} className="p-3 text-left pl-6 sticky left-0 z-20 border-b border-amber-100 bg-amber-50/95" style={{ top: '55px' }}>
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] text-amber-500 w-3 text-center">{isCollaboratoriExpanded ? '▼' : '▶'}</span>
                         <span className="uppercase tracking-wider font-black">Collaboratori Esterni P. IVA ({collaborators.length})</span>
@@ -805,7 +2093,11 @@ export default function PianificazionePersonale() {
                     ) : (
                       collaborators.map(dip => (
                         <tr key={dip.id} className="hover:bg-indigo-50/20 transition-colors bg-white">
-                          <td className="p-4 text-left font-bold text-gray-800 bg-white sticky left-0 z-10 shadow-[1px_0_0_0_#f3f4f6] border-b align-middle w-64">
+                          <td 
+                            className="p-4 text-left font-bold text-gray-800 bg-white sticky left-0 z-10 shadow-[1px_0_0_0_#f3f4f6] border-b align-middle truncate"
+                            style={{ width: '180px', minWidth: '180px', maxWidth: '180px' }}
+                            title={dip.nome}
+                          >
                             {dip.nome}
                           </td>
                           
@@ -815,18 +2107,27 @@ export default function PianificazionePersonale() {
                             const totalLoad = list.reduce((acc, c) => acc + Number(c.percentuale), 0);
                             const leaves = getLeavesForResourceInWeek(dip.nome, wk.id);
 
-                            let bgClass = "bg-slate-50/50 text-slate-400 hover:bg-slate-100/60";
+                            const isEditable = isAdmin || isSenior;
+                            
+                            let bgClass = "bg-slate-50/50 text-slate-400";
+                            if (isEditable) bgClass += " hover:bg-slate-100/60";
                             let indicatorColor = "bg-gray-300";
 
                             if (totalLoad > 0) {
                               if (totalLoad < 100) {
-                                bgClass = "bg-sky-50 text-sky-800 hover:bg-sky-100/80";
+                                bgClass = isEditable 
+                                  ? "bg-sky-50 text-sky-800 hover:bg-sky-100/80" 
+                                  : "bg-sky-50 text-sky-800";
                                 indicatorColor = "bg-sky-400";
                               } else if (totalLoad === 100) {
-                                bgClass = "bg-emerald-50 text-emerald-800 hover:bg-emerald-100/80";
+                                bgClass = isEditable 
+                                  ? "bg-emerald-50 text-emerald-800 hover:bg-emerald-100/80" 
+                                  : "bg-emerald-50 text-emerald-800";
                                 indicatorColor = "bg-emerald-500";
                               } else {
-                                bgClass = "bg-rose-50 text-rose-800 hover:bg-rose-100/90 font-black";
+                                bgClass = isEditable 
+                                  ? "bg-rose-50 text-rose-800 hover:bg-rose-100/90 font-black" 
+                                  : "bg-rose-50 text-rose-800 font-black";
                                 indicatorColor = "bg-rose-600";
                               }
                             }
@@ -839,44 +2140,63 @@ export default function PianificazionePersonale() {
                             return (
                               <td 
                                 key={wIndex} 
-                                onClick={() => handleCellClick(dip.nome, wk.id, wk.label, wk.sub)}
-                                className={`p-3 border-l border-b border-gray-100 align-middle transition-colors cursor-pointer ${bgClass}`}
+                                onClick={() => isEditable && handleCellClick(dip.nome, wk.id, wk.label, wk.sub)}
+                                className={`border-l border-b border-gray-100 align-middle transition-colors ${isEditable ? 'cursor-pointer' : 'cursor-default'} ${bgClass} ${
+                                  isUltraNarrow ? 'p-1' : isNarrow ? 'p-1.5' : 'p-3'
+                                }`}
+                                style={{ minWidth: weekColumnMinWidth, width: weekColumnMinWidth }}
                               >
-                                <div className="flex flex-col items-center justify-center min-h-[56px] gap-1 relative group/cell">
-                                  <span className="font-black text-sm">{totalLoad}%</span>
+                                <div 
+                                  className="flex flex-col items-center justify-center relative group/cell"
+                                  style={{ 
+                                    minHeight: isNarrow ? '40px' : '56px',
+                                    gap: isUltraNarrow ? '1px' : '2px'
+                                  }}
+                                >
+                                  <span className={`${isUltraNarrow ? 'text-[10px]' : 'text-xs'} font-black`}>{totalLoad}%</span>
                                   
-                                  {/* Color-coded load indicator dot */}
-                                  <span className={`w-2 h-2 rounded-full shadow-sm ${indicatorColor}`}></span>
+                                  {!isUltraNarrow && (
+                                    <span className={`w-1.5 h-1.5 rounded-full shadow-sm ${indicatorColor}`}></span>
+                                  )}
 
-                                  {/* Leaves indicator */}
                                   {leaves.length > 0 && (
-                                    <div className="flex gap-1 justify-center mt-1 w-full max-w-[105px] flex-wrap">
-                                      {ferieCount > 0 && (
-                                        <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-orange-100 text-orange-700 border border-orange-200" title="Ferie">
-                                          🌴 {ferieCount}g
+                                    <div className="flex gap-0.5 justify-center mt-0.5 w-full flex-wrap">
+                                      {isUltraNarrow ? (
+                                        <span className="text-[9px]" title="Assenze presenti">⚠️</span>
+                                      ) : isNarrow ? (
+                                        <span className="text-[9px] font-extrabold px-1 rounded bg-orange-100 text-orange-750" title={`${leaves.length} assenze`}>
+                                          ⚠️ {leaves.length}g
                                         </span>
-                                      )}
-                                      {malattiaCount > 0 && (
-                                        <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-red-100 text-red-700 border border-red-200" title="Malattia">
-                                          🤒 {malattiaCount}g
-                                        </span>
-                                      )}
-                                      {permessoCount > 0 && (
-                                        <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-purple-100 text-purple-700 border border-purple-200" title="Permessi / Ass. parziale">
-                                          ⏱️ {permessoCount}g
-                                        </span>
-                                      )}
-                                      {smartCount > 0 && (
-                                        <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-indigo-100 text-indigo-700 border border-indigo-200" title="Smart Working">
-                                          🏠 {smartCount}g
-                                        </span>
+                                      ) : (
+                                        <>
+                                          {ferieCount > 0 && (
+                                            <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-orange-100 text-orange-700 border border-orange-200" title="Ferie">
+                                              🌴 {ferieCount}g
+                                            </span>
+                                          )}
+                                          {malattiaCount > 0 && (
+                                            <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-red-100 text-red-700 border border-red-200" title="Malattia">
+                                              🤒 {malattiaCount}g
+                                            </span>
+                                          )}
+                                          {permessoCount > 0 && (
+                                            <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-purple-100 text-purple-700 border border-purple-200" title="Permessi / Ass. parziale">
+                                              ⏱️ {permessoCount}g
+                                            </span>
+                                          )}
+                                          {smartCount > 0 && (
+                                            <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-indigo-100 text-indigo-700 border border-indigo-200" title="Smart Working">
+                                              🏠 {smartCount}g
+                                            </span>
+                                          )}
+                                        </>
                                       )}
                                     </div>
                                   )}
                                   
-                                  {/* Micro hover details tooltip */}
                                   {(list.length > 0 || leaves.length > 0) && (
-                                    <div className="hidden group-hover/cell:flex absolute bottom-full mb-1 bg-gray-900 text-white text-[11.5px] rounded-lg p-2.5 flex-col gap-1.5 z-50 shadow-md min-w-[170px] pointer-events-none text-left">
+                                    <div className="hidden group-hover/cell:flex absolute bottom-full mb-1 bg-gray-900 text-white text-[11px] rounded-lg p-2.5 flex-col gap-1 z-50 shadow-md min-w-[170px] pointer-events-none text-left">
+                                      <div className="font-bold text-[10px] text-indigo-300 border-b border-gray-800 pb-0.5 mb-1">{dip.nome} ({wk.label})</div>
                                       {list.map((a, idx) => (
                                         <div key={idx} className="flex justify-between items-center gap-2 border-b border-gray-800 pb-1 last:border-none last:pb-0">
                                           <span className="truncate">{a.commessaName}</span>
@@ -885,9 +2205,9 @@ export default function PianificazionePersonale() {
                                       ))}
                                       {leaves.length > 0 && (
                                         <div className="border-t border-gray-700 pt-1.5 mt-1 flex flex-col gap-1">
-                                          <span className="text-[10px] font-bold text-orange-400">Assenze/Ferie:</span>
+                                          <span className="text-[9.5px] font-bold text-orange-400">Assenze/Ferie:</span>
                                           {leaves.map((l, idx) => (
-                                            <div key={idx} className="flex justify-between items-center text-[10px] gap-2">
+                                            <div key={idx} className="flex justify-between items-center text-[9.5px] gap-2">
                                               <span>{l.giorno}</span>
                                               <span className="font-bold text-gray-300">{l.dettagli}</span>
                                             </div>
@@ -904,9 +2224,9 @@ export default function PianificazionePersonale() {
                       ))
                     )
                   )}
-                </>
-              )}
-            </tbody>
+                </tbody>
+              </>
+            )}
           </table>
         </div>
 

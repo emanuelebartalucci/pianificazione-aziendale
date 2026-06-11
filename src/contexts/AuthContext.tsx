@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { type User, onAuthStateChanged } from 'firebase/auth';
-import { collection, doc, onSnapshot } from 'firebase/firestore';
+import { collection, doc, onSnapshot, addDoc, deleteDoc } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
 
 const DEFAULT_ADMINS = ['aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it'];
@@ -10,6 +10,10 @@ export interface Dipendente {
   nome: string;
   email: string;
   tipo?: 'dipendente' | 'collaboratore';
+  dailyRate?: number;
+  inpsRate?: number;
+  ivaRate?: number;
+  raRate?: number;
 }
 
 export interface Commessa {
@@ -20,6 +24,11 @@ export interface Commessa {
   dataFine?: string;
   responsabile?: string;
   pm?: string;
+  codiceCommessa?: string;
+  anno?: string;
+  tipologia?: string;
+  cliente?: string;
+  stato?: string;
 }
 
 interface AuthContextType {
@@ -43,7 +52,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   
   // Dati da Firestore
   const [dynamicAdmins, setDynamicAdmins] = useState<string[]>([]);
-  const [hrEmail, setHrEmail] = useState<string | null>(null);
+  const [dynamicHrs, setDynamicHrs] = useState<string[]>([]);
   const [dynamicSeniors, setDynamicSeniors] = useState<string[]>([]);
   const [dipendenti, setDipendenti] = useState<Dipendente[]>([]);
   const [commesse, setCommesse] = useState<Commessa[]>([]);
@@ -58,8 +67,23 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setDynamicSeniors(snapshot.docs.map(doc => doc.data().email?.toLowerCase()));
     });
 
-    const unsubHr = onSnapshot(doc(db, 'configurazione_sistema', 'hr'), (docSnap) => {
-      setHrEmail(docSnap.exists() ? docSnap.data().email?.toLowerCase() : null);
+    const unsubHr = onSnapshot(collection(db, 'hr'), (snapshot) => {
+      setDynamicHrs(snapshot.docs.map(doc => doc.data().email?.toLowerCase()).filter(Boolean));
+    });
+
+    // Automatic migration from legacy hr document to new 'hr' collection
+    const unsubLegacyHr = onSnapshot(doc(db, 'configurazione_sistema', 'hr'), async (docSnap) => {
+      if (docSnap.exists()) {
+        const legacyEmail = docSnap.data().email?.toLowerCase();
+        if (legacyEmail) {
+          try {
+            await addDoc(collection(db, 'hr'), { email: legacyEmail });
+            await deleteDoc(doc(db, 'configurazione_sistema', 'hr'));
+          } catch (err) {
+            console.error("Migration error:", err);
+          }
+        }
+      }
     });
 
     const unsubDipendenti = onSnapshot(collection(db, 'dipendenti'), (snapshot) => {
@@ -80,7 +104,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         dataInizio: doc.data().dataInizio || '',
         dataFine: doc.data().dataFine || '',
         responsabile: doc.data().responsabile || '',
-        pm: doc.data().pm || ''
+        pm: doc.data().pm || '',
+        codiceCommessa: doc.data().codiceCommessa || '',
+        anno: doc.data().anno || '',
+        tipologia: doc.data().tipologia || '',
+        cliente: doc.data().cliente || '',
+        stato: doc.data().stato || 'Aperta'
       }));
       setCommesse(comms.sort((a, b) => a.nome.localeCompare(b.nome)));
     });
@@ -89,6 +118,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       unsubAdmins();
       unsubSeniors();
       unsubHr();
+      unsubLegacyHr();
       unsubDipendenti();
       unsubCommesse();
     };
@@ -106,7 +136,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   // Calcolo ruoli derivati
   const userEmail = user?.email?.toLowerCase() || '';
   const isAdmin = DEFAULT_ADMINS.includes(userEmail) || dynamicAdmins.includes(userEmail);
-  const isHR = hrEmail === userEmail;
+  const isHR = dynamicHrs.includes(userEmail);
   const isSenior = dynamicSeniors.includes(userEmail);
   
   const myDip = dipendenti.find(d => d.email?.toLowerCase() === userEmail);

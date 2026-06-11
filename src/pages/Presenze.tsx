@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, addDoc, updateDoc } from 'firebase/firestore';
+import { collection, doc, setDoc, getDocs, onSnapshot, query, where, addDoc, updateDoc } from 'firebase/firestore';
 import { FileText, Printer, Save, Send, CheckCircle, AlertCircle, Edit, MessageSquare, Clock, MapPin, Check, X, ShieldAlert, Download } from 'lucide-react';
 import { queueMail } from '../utils/mailSender';
 import ConfirmModal from '../components/ConfirmModal';
@@ -74,6 +74,23 @@ interface RapportinoPresenze {
   approvedAt?: string;
   approvedBy?: string;
   giorni: { [giorno: string]: GiornoPresenza };
+  collaboratoreData?: {
+    giornate: number;
+    dailyRate: number;
+    spese: number;
+    km: number;
+    kmRate: number;
+    inpsRate: number;
+    ivaRate: number;
+    raRate: number;
+    compensoMensile: number;
+    rimborsoKm: number;
+    totaleCompenso: number;
+    inps: number;
+    iva: number;
+    ra: number;
+    totaleDovuto: number;
+  };
 }
 
 const MESI = [
@@ -135,6 +152,15 @@ export default function Presenze() {
     message: '',
     onConfirm: () => {},
   });
+
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'warning' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => {
+      setToast(null);
+    }, 4500);
+  };
 
   const triggerConfirm = (title: string, message: string, onConfirm: () => void, type: 'danger' | 'warning' | 'info' = 'danger') => {
     setConfirmConfig({
@@ -214,7 +240,96 @@ export default function Presenze() {
 
     const unsub = onSnapshot(docRef, async (docSnap) => {
       if (docSnap.exists()) {
-        setRapportino({ id: docSnap.id, ...docSnap.data() } as RapportinoPresenze);
+        const data = docSnap.data() as RapportinoPresenze;
+        const isCollab = isCollaboratore(myAssociatedName, dipendenti);
+        // Legacy support: if collaborator sheet exists but has no collaboratoreData, initialize it
+        if (isCollab && !data.collaboratoreData) {
+          const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === myAssociatedName.trim().toLowerCase());
+          const dailyRate = profile?.dailyRate ?? 0;
+          const inpsRate = profile?.inpsRate ?? 0;
+          const ivaRate = profile?.ivaRate ?? 0;
+          const raRate = profile?.raRate ?? 0;
+
+          let defaultGiornate = 0;
+          const daysInM = new Date(selectedYear, selectedMonth, 0).getDate();
+          for (let d = 1; d <= daysInM; d++) {
+            const dayOfWeek = new Date(selectedYear, selectedMonth - 1, d).getDay();
+            if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+              defaultGiornate++;
+            }
+          }
+
+          const compensoMensile = defaultGiornate * dailyRate;
+          const rimborsoKm = 0;
+          const totaleCompenso = compensoMensile;
+          const inps = compensoMensile * (inpsRate / 100);
+          const iva = (compensoMensile + inps) * (ivaRate / 100);
+          const ra = compensoMensile * (raRate / 100);
+          const totaleDovuto = totaleCompenso + inps + iva - ra;
+
+          data.collaboratoreData = {
+            giornate: defaultGiornate,
+            dailyRate,
+            spese: 0,
+            km: 0,
+            kmRate: 0.3,
+            inpsRate,
+            ivaRate,
+            raRate,
+            compensoMensile,
+            rimborsoKm,
+            totaleCompenso,
+            inps,
+            iva,
+            ra,
+            totaleDovuto
+          };
+        } else if (isCollab && data.collaboratoreData) {
+          const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === myAssociatedName.trim().toLowerCase());
+          if (profile) {
+            let updated = false;
+            const updatedData = { ...data.collaboratoreData };
+            
+            if ((!updatedData.dailyRate || updatedData.dailyRate === 0) && profile.dailyRate) {
+              updatedData.dailyRate = profile.dailyRate;
+              updated = true;
+            }
+            if ((!updatedData.inpsRate || updatedData.inpsRate === 0) && profile.inpsRate) {
+              updatedData.inpsRate = profile.inpsRate;
+              updated = true;
+            }
+            if ((!updatedData.ivaRate || updatedData.ivaRate === 0) && profile.ivaRate) {
+              updatedData.ivaRate = profile.ivaRate;
+              updated = true;
+            }
+            if ((!updatedData.raRate || updatedData.raRate === 0) && profile.raRate) {
+              updatedData.raRate = profile.raRate;
+              updated = true;
+            }
+            
+            if (updated) {
+              const compensoMensile = updatedData.giornate * updatedData.dailyRate;
+              const rimborsoKm = updatedData.km * updatedData.kmRate;
+              const totaleCompenso = compensoMensile + updatedData.spese + rimborsoKm;
+              const inps = (compensoMensile + rimborsoKm) * (updatedData.inpsRate / 100);
+              const iva = (compensoMensile + rimborsoKm + inps) * (updatedData.ivaRate / 100);
+              const ra = (compensoMensile + rimborsoKm) * (updatedData.raRate / 100);
+              const totaleDovuto = totaleCompenso + inps + iva - ra;
+              
+              data.collaboratoreData = {
+                ...updatedData,
+                compensoMensile,
+                rimborsoKm,
+                totaleCompenso,
+                inps,
+                iva,
+                ra,
+                totaleDovuto
+              };
+            }
+          }
+        }
+        setRapportino({ ...data, id: docSnap.id } as RapportinoPresenze);
         setLoadingSheet(false);
       } else {
         // Document doesn't exist, prefill it!
@@ -226,7 +341,7 @@ export default function Presenze() {
     });
 
     return () => unsub();
-  }, [viewMode, myAssociatedName, selectedMonth, selectedYear]);
+  }, [viewMode, myAssociatedName, selectedMonth, selectedYear, dipendenti]);
 
   // Ascolta le richieste di weekend approvate per l'utente loggato (per sbloccare la compilazione)
   useEffect(() => {
@@ -399,6 +514,51 @@ export default function Presenze() {
         };
       }
 
+      const isCollab = isCollaboratore(myAssociatedName, dipendenti);
+      let colData = undefined;
+      if (isCollab) {
+        const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === myAssociatedName.trim().toLowerCase());
+        const dailyRate = profile?.dailyRate ?? 0;
+        const inpsRate = profile?.inpsRate ?? 0;
+        const ivaRate = profile?.ivaRate ?? 0;
+        const raRate = profile?.raRate ?? 0;
+
+        let defaultGiornate = 0;
+        const daysInM = new Date(selectedYear, selectedMonth, 0).getDate();
+        for (let d = 1; d <= daysInM; d++) {
+          const dayOfWeek = new Date(selectedYear, selectedMonth - 1, d).getDay();
+          if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+            defaultGiornate++;
+          }
+        }
+
+        const compensoMensile = defaultGiornate * dailyRate;
+        const rimborsoKm = 0;
+        const totaleCompenso = compensoMensile;
+        const inps = compensoMensile * (inpsRate / 100);
+        const iva = (compensoMensile + inps) * (ivaRate / 100);
+        const ra = compensoMensile * (raRate / 100);
+        const totaleDovuto = totaleCompenso + inps + iva - ra;
+
+        colData = {
+          giornate: defaultGiornate,
+          dailyRate,
+          spese: 0,
+          km: 0,
+          kmRate: 0.3,
+          inpsRate,
+          ivaRate,
+          raRate,
+          compensoMensile,
+          rimborsoKm,
+          totaleCompenso,
+          inps,
+          iva,
+          ra,
+          totaleDovuto
+        };
+      }
+
       const newRapportino: RapportinoPresenze = {
         id: `${myAssociatedName}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`,
         dipendenteNome: myAssociatedName,
@@ -408,7 +568,8 @@ export default function Presenze() {
         stato: 'Bozza',
         noteDipendente: '',
         noteHR: '',
-        giorni
+        giorni,
+        ...(colData ? { collaboratoreData: colData } : {})
       };
 
       setRapportino(newRapportino);
@@ -449,6 +610,86 @@ export default function Presenze() {
     setRapportino({ ...rapportino, giorni: updatedGiorni });
   };
 
+  const handleCollabFieldChange = (field: string, value: number) => {
+    if (!rapportino || !rapportino.collaboratoreData || rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato') return;
+
+    const data = { ...rapportino.collaboratoreData };
+    (data as any)[field] = value;
+
+    const compensoMensile = data.giornate * data.dailyRate;
+    const rimborsoKm = data.km * data.kmRate;
+    const totaleCompenso = compensoMensile + data.spese + rimborsoKm;
+    const inps = (compensoMensile + rimborsoKm) * (data.inpsRate / 100);
+    const iva = (compensoMensile + rimborsoKm + inps) * (data.ivaRate / 100);
+    const ra = (compensoMensile + rimborsoKm) * (data.raRate / 100);
+    const totaleDovuto = totaleCompenso + inps + iva - ra;
+
+    const updatedCollabData = {
+      ...data,
+      compensoMensile,
+      rimborsoKm,
+      totaleCompenso,
+      inps,
+      iva,
+      ra,
+      totaleDovuto
+    };
+
+    setRapportino({
+      ...rapportino,
+      collaboratoreData: updatedCollabData
+    });
+  };
+
+  const handleReviewCollabFieldChange = (field: string, value: number) => {
+    if (!reviewingRapportino || !reviewingRapportino.collaboratoreData) return;
+
+    const data = { ...reviewingRapportino.collaboratoreData };
+    (data as any)[field] = value;
+
+    const compensoMensile = data.giornate * data.dailyRate;
+    const rimborsoKm = data.km * data.kmRate;
+    const totaleCompenso = compensoMensile + data.spese + rimborsoKm;
+    const inps = (compensoMensile + rimborsoKm) * (data.inpsRate / 100);
+    const iva = (compensoMensile + rimborsoKm + inps) * (data.ivaRate / 100);
+    const ra = (compensoMensile + rimborsoKm) * (data.raRate / 100);
+    const totaleDovuto = totaleCompenso + inps + iva - ra;
+
+    const updatedCollabData = {
+      ...data,
+      compensoMensile,
+      rimborsoKm,
+      totaleCompenso,
+      inps,
+      iva,
+      ra,
+      totaleDovuto
+    };
+
+    setReviewingRapportino({
+      ...reviewingRapportino,
+      collaboratoreData: updatedCollabData
+    });
+  };
+
+  const saveCollabProfileRates = async (collabData: any, targetName?: string) => {
+    try {
+      const name = targetName || myAssociatedName;
+      if (!name) return;
+      const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === name.trim().toLowerCase());
+      if (profile) {
+        await updateDoc(doc(db, 'dipendenti', profile.id), {
+          dailyRate: collabData.dailyRate,
+          inpsRate: collabData.inpsRate,
+          ivaRate: collabData.ivaRate,
+          raRate: collabData.raRate
+        });
+      }
+    } catch (err) {
+      console.error("Errore aggiornamento tariffe profilo:", err);
+    }
+  };
+
   const handleSaveDraft = async () => {
     if (!rapportino) return;
     setSaving(true);
@@ -458,10 +699,16 @@ export default function Presenze() {
         ...rapportino,
         timestamp: new Date().toISOString()
       });
-      alert("Bozza salvata con successo!");
+
+      const isCollab = isCollaboratore(myAssociatedName, dipendenti);
+      if (isCollab && rapportino.collaboratoreData) {
+        await saveCollabProfileRates(rapportino.collaboratoreData);
+      }
+
+      showToast("Bozza salvata con successo!");
     } catch (err) {
       console.error("Errore salvataggio bozza:", err);
-      alert("Errore durante il salvataggio.");
+      showToast("Errore durante il salvataggio.", "error");
     } finally {
       setSaving(false);
     }
@@ -482,17 +729,23 @@ export default function Presenze() {
             submittedAt: new Date().toISOString()
           };
           await setDoc(docRef, updated);
+
+          const isCollab = isCollaboratore(myAssociatedName, dipendenti);
+          if (isCollab && rapportino.collaboratoreData) {
+            await saveCollabProfileRates(rapportino.collaboratoreData);
+          }
+
           setRapportino(updated);
-          alert("Foglio presenze inviato con successo all'HR!");
+          showToast("Foglio presenze inviato con successo all'HR!");
 
           // Invia notifica all'HR
           try {
-            const hrDoc = await getDoc(doc(db, 'configurazione_sistema', 'hr'));
-            const hrEmail = hrDoc.exists() ? hrDoc.data().email : null;
-            if (hrEmail) {
-              const meseNome = MESI[selectedMonth - 1];
+            const hrSnap = await getDocs(collection(db, 'hr'));
+            const hrEmails = hrSnap.docs.map(d => d.data().email?.toLowerCase()).filter(Boolean);
+            const meseNome = MESI[selectedMonth - 1];
+            for (const email of hrEmails) {
               await queueMail(
-                hrEmail,
+                email,
                 `[Pianificazione] Nuovo Rapportino Presenze da approvare - ${myAssociatedName}`,
                 `
                   <p>Ciao,</p>
@@ -507,7 +760,7 @@ export default function Presenze() {
           }
         } catch (err) {
           console.error("Errore invio rapportino:", err);
-          alert("Errore durante l'invio.");
+          showToast("Errore durante l'invio.", "error");
         } finally {
           setSubmitting(false);
         }
@@ -520,7 +773,7 @@ export default function Presenze() {
     e.preventDefault();
     if (!myAssociatedName || !user?.email) return;
     if (!reqWeekendData) {
-      alert("Seleziona una data!");
+      showToast("Seleziona una data!", "warning");
       return;
     }
 
@@ -536,10 +789,10 @@ export default function Presenze() {
       });
       setReqWeekendData('');
       setReqWeekendMotivo('');
-      alert("Richiesta inviata con successo!");
+      showToast("Richiesta inviata con successo!");
     } catch (err) {
       console.error("Errore invio richiesta:", err);
-      alert("Errore nell'invio della richiesta.");
+      showToast("Errore nell'invio della richiesta.", "error");
     } finally {
       setReqWeekendLoading(false);
     }
@@ -567,7 +820,7 @@ export default function Presenze() {
         const plainText = `Ciao ${req.dipendenteName},\n\nLa tua richiesta di autorizzazione per lavorare il giorno ${formatDate(req.data)} (${req.motivo}) è stata ${newStatus.toLowerCase()}.\n\nQuesta è una notifica automatica.`;
         await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
       }
-      alert(`Richiesta ${newStatus.toLowerCase()} con successo!`);
+      showToast(`Richiesta ${newStatus.toLowerCase()} con successo!`);
     } catch (e) {
       console.error("Errore decisione weekend:", e);
     }
@@ -616,8 +869,14 @@ export default function Presenze() {
             approvedBy: user?.email || 'HR'
           };
           await setDoc(docRef, updated);
+
+          const isCollab = isCollaboratore(reviewingRapportino.dipendenteNome, dipendenti);
+          if (isCollab && reviewingRapportino.collaboratoreData) {
+            await saveCollabProfileRates(reviewingRapportino.collaboratoreData, reviewingRapportino.dipendenteNome);
+          }
+
           setReviewingRapportino(null);
-          alert("Rapportino approvato!");
+          showToast("Rapportino approvato!");
 
           // Invia notifica al dipendente
           if (updated.dipendenteEmail) {
@@ -634,7 +893,7 @@ export default function Presenze() {
           }
         } catch (err) {
           console.error("Errore approvazione:", err);
-          alert("Errore durante l'approvazione.");
+          showToast("Errore durante l'approvazione.", "error");
         }
       },
       'info'
@@ -656,7 +915,7 @@ export default function Presenze() {
       setReviewingRapportino(null);
       setIsFeedbackModalOpen(false);
       setHrFeedbackNote('');
-      alert("Richiesta di modifica inviata al dipendente.");
+      showToast("Richiesta di modifica inviata al dipendente.");
 
       // Invia notifica al dipendente
       if (updated.dipendenteEmail) {
@@ -677,7 +936,7 @@ export default function Presenze() {
       }
     } catch (err) {
       console.error("Errore invio modifiche:", err);
-      alert("Errore durante l'invio.");
+      showToast("Errore durante l'invio.", "error");
     }
   };
 
@@ -686,10 +945,16 @@ export default function Presenze() {
     try {
       const docRef = doc(db, 'presenze', reviewingRapportino.id);
       await setDoc(docRef, reviewingRapportino);
-      alert("Modifiche salvate con successo!");
+
+      const isCollab = isCollaboratore(reviewingRapportino.dipendenteNome, dipendenti);
+      if (isCollab && reviewingRapportino.collaboratoreData) {
+        await saveCollabProfileRates(reviewingRapportino.collaboratoreData, reviewingRapportino.dipendenteNome);
+      }
+
+      showToast("Modifiche salvate con successo!");
     } catch (err) {
       console.error("Errore salvataggio modifiche HR:", err);
-      alert("Errore durante il salvataggio.");
+      showToast("Errore durante il salvataggio.", "error");
     }
   };
 
@@ -733,10 +998,18 @@ export default function Presenze() {
         "Mese",
         "Anno",
         "Stato Rapportino",
-        "Giornate Intere",
-        "Mezze Giornate",
-        "Ore Totali Lavorate",
-        "Giorni Trasferta (T)"
+        "Giornate Lavorate",
+        "Tariffa Giornaliera (€)",
+        "Compenso Mensile (€)",
+        "Spese (€)",
+        "Km Percorsi",
+        "Tariffa Km (€/km)",
+        "Rimborso Km (€)",
+        "Totale Compenso (€)",
+        "Cassa INPS (€)",
+        "IVA (€)",
+        "Ritenuta d'Acconto (€)",
+        "Totale Dovuto (€)"
       ] : [
         "Dipendente",
         "Email",
@@ -763,6 +1036,7 @@ export default function Presenze() {
         const totals = sheet 
           ? calculateTotals(sheet.giorni, daysInMonth)
           : { oreOrd: 0, oreStra: 0, oreFerie: 0, orePerm: 0, ggMalattia: 0, ggTrasferta: 0, ggIntere: 0, ggMezze: 0 };
+        const cData = sheet?.collaboratoreData;
 
         return isCollabExport ? [
           dip.nome,
@@ -770,10 +1044,18 @@ export default function Presenze() {
           MESI[selectedMonth - 1],
           selectedYear.toString(),
           status,
-          totals.ggIntere.toString(),
-          totals.ggMezze.toString(),
-          totals.oreOrd.toString(),
-          totals.ggTrasferta.toString()
+          cData ? cData.giornate.toString() : "0",
+          cData ? cData.dailyRate.toString() : "0",
+          cData ? cData.compensoMensile.toFixed(2) : "0.00",
+          cData ? cData.spese.toFixed(2) : "0.00",
+          cData ? cData.km.toString() : "0",
+          cData ? cData.kmRate.toString() : "0.3",
+          cData ? cData.rimborsoKm.toFixed(2) : "0.00",
+          cData ? cData.totaleCompenso.toFixed(2) : "0.00",
+          cData ? cData.inps.toFixed(2) : "0.00",
+          cData ? cData.iva.toFixed(2) : "0.00",
+          cData ? cData.ra.toFixed(2) : "0.00",
+          cData ? cData.totaleDovuto.toFixed(2) : "0.00"
         ] : [
           dip.nome,
           dip.email || "",
@@ -803,7 +1085,7 @@ export default function Presenze() {
       document.body.removeChild(link);
     } catch (err) {
       console.error("Errore durante l'esportazione mensile:", err);
-      alert("Si è verificato un errore durante l'esportazione.");
+      showToast("Si è verificato un errore durante l'esportazione.", "error");
     }
   };
 
@@ -828,10 +1110,18 @@ export default function Presenze() {
         "Mese",
         "Anno",
         "Stato Rapportino",
-        "Giornate Intere",
-        "Mezze Giornate",
-        "Ore Totali Lavorate",
-        "Giorni Trasferta (T)"
+        "Giornate Lavorate",
+        "Tariffa Giornaliera (€)",
+        "Compenso Mensile (€)",
+        "Spese (€)",
+        "Km Percorsi",
+        "Tariffa Km (€/km)",
+        "Rimborso Km (€)",
+        "Totale Compenso (€)",
+        "Cassa INPS (€)",
+        "IVA (€)",
+        "Ritenuta d'Acconto (€)",
+        "Totale Dovuto (€)"
       ] : [
         "Dipendente",
         "Email",
@@ -862,6 +1152,7 @@ export default function Presenze() {
           const totals = sheet 
             ? calculateTotals(sheet.giorni, currentDaysInMonth)
             : { oreOrd: 0, oreStra: 0, oreFerie: 0, orePerm: 0, ggMalattia: 0, ggTrasferta: 0, ggIntere: 0, ggMezze: 0 };
+          const cData = sheet?.collaboratoreData;
 
           rows.push(isCollabExport ? [
             dip.nome,
@@ -869,10 +1160,18 @@ export default function Presenze() {
             MESI[m - 1],
             selectedYear.toString(),
             status,
-            totals.ggIntere.toString(),
-            totals.ggMezze.toString(),
-            totals.oreOrd.toString(),
-            totals.ggTrasferta.toString()
+            cData ? cData.giornate.toString() : "0",
+            cData ? cData.dailyRate.toString() : "0",
+            cData ? cData.compensoMensile.toFixed(2) : "0.00",
+            cData ? cData.spese.toFixed(2) : "0.00",
+            cData ? cData.km.toString() : "0",
+            cData ? cData.kmRate.toString() : "0.3",
+            cData ? cData.rimborsoKm.toFixed(2) : "0.00",
+            cData ? cData.totaleCompenso.toFixed(2) : "0.00",
+            cData ? cData.inps.toFixed(2) : "0.00",
+            cData ? cData.iva.toFixed(2) : "0.00",
+            cData ? cData.ra.toFixed(2) : "0.00",
+            cData ? cData.totaleDovuto.toFixed(2) : "0.00"
           ] : [
             dip.nome,
             dip.email || "",
@@ -903,7 +1202,7 @@ export default function Presenze() {
       document.body.removeChild(link);
     } catch (err) {
       console.error("Errore durante l'esportazione annuale:", err);
-      alert("Errore durante l'esportazione annuale.");
+      showToast("Errore durante l'esportazione annuale.", "error");
     } finally {
       setExportingAnnual(false);
     }
@@ -913,23 +1212,50 @@ export default function Presenze() {
     const docId = `${dipName}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
     const sheet = allRapportini[docId];
     if (!sheet) {
-      alert(`Nessun dato presenze registrato per ${dipName} in questo mese.`);
+      showToast(`Nessun dato presenze registrato per ${dipName} in questo mese.`, "warning");
       return;
     }
 
     const isCollab = isCollaboratore(dipName, dipendenti);
 
-    const headers = isCollab ? [
-      "Giorno",
-      "Data",
-      "Stato Giorno",
-      "Giornata Lavorata",
-      "Mezza Giornata",
-      "Ore Totali Lavorate",
-      "Trasferta",
-      "Luogo Trasferta",
-      "Note"
-    ] : [
+    if (isCollab) {
+      const cData = sheet.collaboratoreData;
+      if (!cData) {
+        showToast("Dati collaboratore non ancora inizializzati.", "warning");
+        return;
+      }
+      const collabHeaders = ["Parametro", "Valore"];
+      const collabRows = [
+        ["Mese", MESI[selectedMonth - 1]],
+        ["Anno", selectedYear.toString()],
+        ["Stato", sheet.stato],
+        ["Giornate Lavorate", cData.giornate.toString()],
+        ["Tariffa Giornaliera (€)", cData.dailyRate.toString()],
+        ["Compenso Mensile (€)", cData.compensoMensile.toFixed(2)],
+        ["Spese (€)", cData.spese.toFixed(2)],
+        ["Km Percorsi", cData.km.toString()],
+        ["Tariffa Km (€/km)", cData.kmRate.toString()],
+        ["Rimborso Km (€)", cData.rimborsoKm.toFixed(2)],
+        ["Totale Compenso (€)", cData.totaleCompenso.toFixed(2)],
+        [`Cassa INPS (${cData.inpsRate}%) (€)`, cData.inps.toFixed(2)],
+        [`IVA (${cData.ivaRate}%) (€)`, cData.iva.toFixed(2)],
+        [`Ritenuta d'Acconto (${cData.raRate}%) (€)`, cData.ra.toFixed(2)],
+        ["Totale Dovuto (€)", cData.totaleDovuto.toFixed(2)]
+      ];
+
+      const csvContent = "\uFEFF" + [collabHeaders.join(";"), ...collabRows.map(r => r.map(val => `"${val.replace(/"/g, '""')}"`).join(";"))].join("\n");
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `Fattura_${dipName.replace(/\s+/g, '_')}_${selectedMonth}_${selectedYear}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      return;
+    }
+
+    const headers = [
       "Giorno",
       "Data",
       "Stato Giorno",
@@ -954,17 +1280,7 @@ export default function Presenze() {
         dayStatus = "Weekend";
       }
 
-      rows.push(isCollab ? [
-        d.toString(),
-        formattedDate,
-        dayStatus,
-        g && g.ore === 8 ? "X" : "",
-        g && g.ore === 4 ? "X" : "",
-        g ? (g.ore || 0).toString() : "0",
-        g && g.trasferta ? "T" : "",
-        g ? (g.luogoTrasferta || "") : "",
-        g ? (g.noteGiorno || "") : ""
-      ] : [
+      rows.push([
         d.toString(),
         formattedDate,
         dayStatus,
@@ -1010,10 +1326,18 @@ export default function Presenze() {
         "Mese",
         "Anno",
         "Stato Rapportino",
-        "Giornate Intere",
-        "Mezze Giornate",
-        "Ore Totali Lavorate",
-        "Giorni Trasferta (T)"
+        "Giornate Lavorate",
+        "Tariffa Giornaliera (€)",
+        "Compenso Mensile (€)",
+        "Spese (€)",
+        "Km Percorsi",
+        "Tariffa Km (€/km)",
+        "Rimborso Km (€)",
+        "Totale Compenso (€)",
+        "Cassa INPS (€)",
+        "IVA (€)",
+        "Ritenuta d'Acconto (€)",
+        "Totale Dovuto (€)"
       ] : [
         "Dipendente",
         "Mese",
@@ -1036,16 +1360,25 @@ export default function Presenze() {
         const totals = sheet 
           ? calculateTotals(sheet.giorni, currentDaysInMonth)
           : { oreOrd: 0, oreStra: 0, oreFerie: 0, orePerm: 0, ggMalattia: 0, ggTrasferta: 0, ggIntere: 0, ggMezze: 0 };
+        const cData = sheet?.collaboratoreData;
 
         rows.push(isCollab ? [
           dipName,
           MESI[m - 1],
           selectedYear.toString(),
           status,
-          totals.ggIntere.toString(),
-          totals.ggMezze.toString(),
-          totals.oreOrd.toString(),
-          totals.ggTrasferta.toString()
+          cData ? cData.giornate.toString() : "0",
+          cData ? cData.dailyRate.toString() : "0",
+          cData ? cData.compensoMensile.toFixed(2) : "0.00",
+          cData ? cData.spese.toFixed(2) : "0.00",
+          cData ? cData.km.toString() : "0",
+          cData ? cData.kmRate.toString() : "0.3",
+          cData ? cData.rimborsoKm.toFixed(2) : "0.00",
+          cData ? cData.totaleCompenso.toFixed(2) : "0.00",
+          cData ? cData.inps.toFixed(2) : "0.00",
+          cData ? cData.iva.toFixed(2) : "0.00",
+          cData ? cData.ra.toFixed(2) : "0.00",
+          cData ? cData.totaleDovuto.toFixed(2) : "0.00"
         ] : [
           dipName,
           MESI[m - 1],
@@ -1072,7 +1405,7 @@ export default function Presenze() {
       document.body.removeChild(link);
     } catch (err) {
       console.error("Errore durante l'esportazione annuale:", err);
-      alert("Errore durante l'esportazione.");
+      showToast("Errore durante l'esportazione.", "error");
     } finally {
       setExportingAnnual(false);
     }
@@ -1099,7 +1432,7 @@ export default function Presenze() {
       const docId = `${selectedDipFilter}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
       const sheet = allRapportini[docId];
       if (!sheet) {
-        alert(`Nessun foglio presenze registrato per ${selectedDipFilter} in questo mese.`);
+        showToast(`Nessun foglio presenze registrato per ${selectedDipFilter} in questo mese.`, "warning");
         return;
       }
       setPrintTargetSheet(sheet);
@@ -1300,10 +1633,10 @@ export default function Presenze() {
                     <tr>
                       <th className="p-4 font-bold text-gray-700 text-sm">Collaboratore</th>
                       <th className="p-4 font-bold text-gray-700 text-sm text-center">Stato</th>
-                      <th className="p-4 font-bold text-gray-700 text-sm text-right">Giornate Intere</th>
-                      <th className="p-4 font-bold text-gray-700 text-sm text-right">Mezze Giornate</th>
-                      <th className="p-4 font-bold text-gray-700 text-sm text-right">Ore Totali</th>
-                      <th className="p-4 font-bold text-gray-700 text-sm text-center">Trasferte (Giorni)</th>
+                      <th className="p-4 font-bold text-gray-700 text-sm text-right">Giornate Lavorate</th>
+                      <th className="p-4 font-bold text-gray-700 text-sm text-right">Spese</th>
+                      <th className="p-4 font-bold text-gray-700 text-sm text-right">Rimborso Km</th>
+                      <th className="p-4 font-bold text-gray-700 text-sm text-right">Totale Dovuto</th>
                       <th className="p-4 font-bold text-gray-700 text-sm text-center no-print">Azione</th>
                     </tr>
                   )}
@@ -1345,10 +1678,18 @@ export default function Presenze() {
                             </>
                           ) : (
                             <>
-                              <td className="p-4 text-right font-semibold text-gray-700">{totals.ggIntere} gg</td>
-                              <td className="p-4 text-right font-semibold text-gray-700">{totals.ggMezze} gg</td>
-                              <td className="p-4 text-right font-bold text-indigo-600">{totals.oreOrd}h</td>
-                              <td className="p-4 text-center text-blue-600 font-bold">{totals.ggTrasferta > 0 ? totals.ggTrasferta : '-'}</td>
+                              <td className="p-4 text-right font-semibold text-gray-700">
+                                {sheet?.collaboratoreData ? `${sheet.collaboratoreData.giornate} gg` : '-'}
+                              </td>
+                              <td className="p-4 text-right font-semibold text-gray-700">
+                                {sheet?.collaboratoreData ? `${sheet.collaboratoreData.spese.toFixed(2)} €` : '-'}
+                              </td>
+                              <td className="p-4 text-right font-semibold text-gray-700">
+                                {sheet?.collaboratoreData ? `${sheet.collaboratoreData.rimborsoKm.toFixed(2)} €` : '-'}
+                              </td>
+                              <td className="p-4 text-right font-bold text-indigo-600">
+                                {sheet?.collaboratoreData ? `${sheet.collaboratoreData.totaleDovuto.toFixed(2)} €` : '-'}
+                              </td>
                             </>
                           )}
                           <td className="p-4 text-center no-print">
@@ -1484,6 +1825,229 @@ export default function Presenze() {
                 </div>
               )}
 
+              {isCollaboratore(myAssociatedName, dipendenti) ? (
+                // COLLABORATOR VIEW
+                <>
+                  {/* Digital invoice draft block */}
+                  <div className="bg-white rounded-[2rem] shadow-xl border overflow-hidden p-6 sm:p-8 space-y-6">
+                    <div className="flex justify-between items-center border-b pb-4">
+                      <div>
+                        <h4 className="font-extrabold text-lg text-gray-900">Bozza Fattura Collaboratore</h4>
+                        <p className="text-xs text-gray-500 font-semibold">Compila i dati del mese per calcolare il totale compenso e le imposte.</p>
+                      </div>
+                      <button onClick={() => window.print()} className="flex items-center gap-1.5 text-gray-700 hover:text-gray-900 font-extrabold text-xs bg-white border px-3 py-1.5 rounded-xl shadow-sm hover:shadow active:scale-95 transition-all no-print">
+                        <Printer className="w-3.5 h-3.5" /> Stampa Mia Fattura
+                      </button>
+                    </div>
+
+                    {rapportino.collaboratoreData ? (
+                      <div className="w-full overflow-x-auto scrollbar-thin">
+                        <table className="w-full text-left border-collapse min-w-[700px] text-xs">
+                          <thead>
+                            <tr className="bg-gray-100 border-b border-gray-200 uppercase font-bold text-gray-655 text-[10px]">
+                              <th className="p-3 w-1/3">Voce / Descrizione</th>
+                              <th className="p-3 w-1/3 text-right">Aliquota / Parametro</th>
+                              <th className="p-3 w-1/3 text-right">Importo (€)</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-200 font-medium text-gray-700">
+                            {/* COMPENSO MENSILE */}
+                            <tr>
+                              <td className="p-3 font-semibold">Giornate Lavorate</td>
+                              <td className="p-3 text-right">
+                                <input 
+                                  type="number"
+                                  step="any"
+                                  min="0"
+                                  disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                  value={rapportino.collaboratoreData.giornate}
+                                  onChange={e => handleCollabFieldChange('giornate', Number(e.target.value))}
+                                  className="w-24 p-1.5 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
+                                />
+                              </td>
+                              <td className="p-3 text-right">-</td>
+                            </tr>
+                            <tr>
+                              <td className="p-3 font-semibold">Compenso Giornaliero (Contratto)</td>
+                              <td className="p-3 text-right">
+                                <input 
+                                  type="number"
+                                  step="any"
+                                  min="0"
+                                  disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                  value={rapportino.collaboratoreData.dailyRate}
+                                  onChange={e => handleCollabFieldChange('dailyRate', Number(e.target.value))}
+                                  className="w-24 p-1.5 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
+                                /> €/gg
+                              </td>
+                              <td className="p-3 text-right">-</td>
+                            </tr>
+                            <tr className="bg-amber-50/20 font-bold">
+                              <td className="p-3">Compenso Mensile (Giornate × Tariffa)</td>
+                              <td className="p-3 text-right">-</td>
+                              <td className="p-3 text-right text-gray-900">{rapportino.collaboratoreData.compensoMensile.toFixed(2)} €</td>
+                            </tr>
+
+                            {/* SPESE & KM */}
+                            <tr>
+                              <td className="p-3 font-semibold">Spese (Vitto, alloggio, ecc.)</td>
+                              <td className="p-3 text-right">
+                                <input 
+                                  type="number"
+                                  step="any"
+                                  min="0"
+                                  disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                  value={rapportino.collaboratoreData.spese}
+                                  onChange={e => handleCollabFieldChange('spese', Number(e.target.value))}
+                                  className="w-24 p-1.5 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
+                                />
+                              </td>
+                              <td className="p-3 text-right text-gray-900">{rapportino.collaboratoreData.spese.toFixed(2)} €</td>
+                            </tr>
+                            <tr>
+                              <td className="p-3 font-semibold">Chilometri Percorsi</td>
+                              <td className="p-3 text-right">
+                                <input 
+                                  type="number"
+                                  step="any"
+                                  min="0"
+                                  disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                  value={rapportino.collaboratoreData.km}
+                                  onChange={e => handleCollabFieldChange('km', Number(e.target.value))}
+                                  className="w-24 p-1.5 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
+                                />
+                              </td>
+                              <td className="p-3 text-right">-</td>
+                            </tr>
+                            <tr>
+                              <td className="p-3 font-semibold">Tariffa Chilometrica (€/km)</td>
+                              <td className="p-3 text-right">
+                                <input 
+                                  type="number"
+                                  step="any"
+                                  min="0"
+                                  disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                  value={rapportino.collaboratoreData.kmRate}
+                                  onChange={e => handleCollabFieldChange('kmRate', Number(e.target.value))}
+                                  className="w-24 p-1.5 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
+                                />
+                              </td>
+                              <td className="p-3 text-right">-</td>
+                            </tr>
+                            <tr className="bg-amber-50/20 font-bold">
+                              <td className="p-3">Rimborso Chilometrico (Km × Tariffa)</td>
+                              <td className="p-3 text-right">-</td>
+                              <td className="p-3 text-right text-gray-900">{rapportino.collaboratoreData.rimborsoKm.toFixed(2)} €</td>
+                            </tr>
+
+                            {/* TOTAL COMPENSO */}
+                            <tr className="bg-amber-100/30 text-sm font-extrabold border-y border-amber-200">
+                              <td className="p-3 uppercase">Totale Compenso (Imponibile)</td>
+                              <td className="p-3 text-right">-</td>
+                              <td className="p-3 text-right text-amber-900">{rapportino.collaboratoreData.totaleCompenso.toFixed(2)} €</td>
+                            </tr>
+
+                            {/* TAX RATES */}
+                            <tr>
+                              <td className="p-3 font-semibold">Contributo Cassa INPS</td>
+                              <td className="p-3 text-right">
+                                <input 
+                                  type="number"
+                                  step="any"
+                                  min="0"
+                                  disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                  value={rapportino.collaboratoreData.inpsRate}
+                                  onChange={e => handleCollabFieldChange('inpsRate', Number(e.target.value))}
+                                  className="w-24 p-1.5 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
+                                /> %
+                              </td>
+                              <td className="p-3 text-right text-gray-900">{rapportino.collaboratoreData.inps.toFixed(2)} €</td>
+                            </tr>
+                            <tr>
+                              <td className="p-3 font-semibold">IVA</td>
+                              <td className="p-3 text-right">
+                                <input 
+                                  type="number"
+                                  step="any"
+                                  min="0"
+                                  disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                  value={rapportino.collaboratoreData.ivaRate}
+                                  onChange={e => handleCollabFieldChange('ivaRate', Number(e.target.value))}
+                                  className="w-24 p-1.5 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
+                                /> %
+                              </td>
+                              <td className="p-3 text-right text-gray-900">{rapportino.collaboratoreData.iva.toFixed(2)} €</td>
+                            </tr>
+                            <tr>
+                              <td className="p-3 font-semibold">Ritenuta d'Acconto</td>
+                              <td className="p-3 text-right">
+                                <input 
+                                  type="number"
+                                  step="any"
+                                  min="0"
+                                  disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                  value={rapportino.collaboratoreData.raRate}
+                                  onChange={e => handleCollabFieldChange('raRate', Number(e.target.value))}
+                                  className="w-24 p-1.5 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
+                                /> %
+                              </td>
+                              <td className="p-3 text-right text-red-655">- {rapportino.collaboratoreData.ra.toFixed(2)} €</td>
+                            </tr>
+
+                            {/* TOTAL DUE */}
+                            <tr className="bg-amber-600/10 text-base font-black border-t-2 border-amber-600">
+                              <td className="p-4 uppercase text-amber-950">TOTALE DOVUTO (A PAGARE)</td>
+                              <td className="p-4 text-right">-</td>
+                              <td className="p-4 text-right text-amber-900 text-lg font-black">{rapportino.collaboratoreData.totaleDovuto.toFixed(2)} €</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p className="text-gray-500 italic">Inizializzazione dati calcolo...</p>
+                    )}
+
+                    {/* Note Collaboratore */}
+                    <div className="space-y-2 pt-4 border-t">
+                      <label className="block text-sm font-extrabold text-gray-800">
+                        Note e Dettagli Aggiuntivi
+                      </label>
+                      <textarea
+                        rows={3}
+                        placeholder="Inserisci qui eventuali note o commenti per la fattura..."
+                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                        value={rapportino.noteDipendente || ''}
+                        onChange={e => setRapportino({ ...rapportino, noteDipendente: e.target.value })}
+                        className="w-full mt-2 p-3 text-xs border rounded-xl bg-white outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 font-medium"
+                      />
+                    </div>
+                  </div>
+
+                  {/* ACTION BUTTONS */}
+                  {(rapportino.stato === 'Bozza' || rapportino.stato === 'Richiede Modifica') && (
+                    <div className="flex justify-end gap-3 no-print">
+                      <button 
+                        onClick={handleSaveDraft}
+                        disabled={saving || submitting}
+                        className="flex items-center gap-2 bg-white hover:bg-gray-100 text-gray-700 border border-gray-200 font-extrabold px-6 py-3.5 rounded-xl transition shadow-md active:scale-95 disabled:opacity-50 cursor-pointer"
+                      >
+                        <Save className="w-4 h-4" />
+                        {saving ? 'Salvataggio...' : 'Salva Bozza'}
+                      </button>
+                      <button 
+                        onClick={handleSubmitToHR}
+                        disabled={saving || submitting}
+                        className="flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white font-extrabold px-7 py-3.5 rounded-xl transition shadow-lg active:scale-95 disabled:opacity-50 cursor-pointer"
+                      >
+                        <Send className="w-4 h-4" />
+                        {submitting ? 'Invio in corso...' : 'Invia a HR'}
+                      </button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                // STANDARD EMPLOYEE FORM
+                <>
               {/* TABELLA REGISTRO PRESENZE (giorni 1-31) */}
               <div className="bg-white rounded-[2rem] shadow-xl border overflow-hidden relative">
                 
@@ -1962,10 +2526,12 @@ export default function Presenze() {
                   </div>
                 </div>
               </div>
-            </div>
-          )}
-        </div>
-      )}
+          </>
+        )}
+      </div>
+    )}
+  </div>
+)}
 
       {/* ======================================================== */}
       {/* 3. MODAL DETTAGLIO / APPROVAZIONE RAPPORTINO (PER HR/ADMIN) */}
@@ -2016,6 +2582,189 @@ export default function Presenze() {
                 </div>
               </div>
 
+              {isCollaboratore(reviewingRapportino.dipendenteNome, dipendenti) ? (
+                // COLLABORATOR REVIEW LAYOUT
+                <div className="border rounded-2xl overflow-hidden shadow-sm bg-white p-6 space-y-4 text-left">
+                  <div className="flex justify-between items-center border-b pb-3">
+                    <div>
+                      <h4 className="font-extrabold text-sm text-gray-900 uppercase">Dettaglio Calcolo Fatturazione</h4>
+                      <p className="text-[10px] text-gray-500 font-semibold">Valori calcolati per il compenso mensile e le tasse del collaboratore.</p>
+                    </div>
+                    {reviewingRapportino.collaboratoreData && (
+                      <button onClick={() => window.print()} className="flex items-center gap-1.5 text-gray-700 hover:text-gray-900 font-extrabold text-[10px] bg-white border px-2.5 py-1.5 rounded-lg shadow-sm hover:shadow active:scale-95 transition-all no-print">
+                        <Printer className="w-3 h-3" /> Stampa Fattura
+                      </button>
+                    )}
+                  </div>
+
+                  {reviewingRapportino.collaboratoreData ? (
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-gray-100 border-b border-gray-200 uppercase font-bold text-gray-655 text-[9px]">
+                          <th className="p-2.5 w-1/3">Voce / Descrizione</th>
+                          <th className="p-2.5 w-1/3 text-right">Aliquota / Parametro</th>
+                          <th className="p-2.5 w-1/3 text-right">Importo (€)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200 font-medium text-gray-700">
+                        {/* COMPENSO MENSILE */}
+                        <tr>
+                          <td className="p-2.5 font-semibold">Giornate Lavorate</td>
+                          <td className="p-2.5 text-right">
+                            <input 
+                              type="number"
+                              step="any"
+                              min="0"
+                              disabled={reviewingRapportino.stato === 'Approvato'}
+                              value={reviewingRapportino.collaboratoreData.giornate}
+                              onChange={e => handleReviewCollabFieldChange('giornate', Number(e.target.value))}
+                              className="w-20 p-1 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
+                            />
+                          </td>
+                          <td className="p-2.5 text-right">-</td>
+                        </tr>
+                        <tr>
+                          <td className="p-2.5 font-semibold">Compenso Giornaliero (Contratto)</td>
+                          <td className="p-2.5 text-right">
+                            <input 
+                              type="number"
+                              step="any"
+                              min="0"
+                              disabled={reviewingRapportino.stato === 'Approvato'}
+                              value={reviewingRapportino.collaboratoreData.dailyRate}
+                              onChange={e => handleReviewCollabFieldChange('dailyRate', Number(e.target.value))}
+                              className="w-20 p-1 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
+                            /> €/gg
+                          </td>
+                          <td className="p-2.5 text-right">-</td>
+                        </tr>
+                        <tr className="bg-amber-50/20 font-bold">
+                          <td className="p-2.5">Compenso Mensile (Giornate × Tariffa)</td>
+                          <td className="p-2.5 text-right">-</td>
+                          <td className="p-2.5 text-right text-gray-900">{reviewingRapportino.collaboratoreData.compensoMensile.toFixed(2)} €</td>
+                        </tr>
+
+                        {/* SPESE & KM */}
+                        <tr>
+                          <td className="p-2.5 font-semibold">Spese (Vitto, alloggio, ecc.)</td>
+                          <td className="p-2.5 text-right">
+                            <input 
+                              type="number"
+                              step="any"
+                              min="0"
+                              disabled={reviewingRapportino.stato === 'Approvato'}
+                              value={reviewingRapportino.collaboratoreData.spese}
+                              onChange={e => handleReviewCollabFieldChange('spese', Number(e.target.value))}
+                              className="w-20 p-1 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
+                            />
+                          </td>
+                          <td className="p-2.5 text-right text-gray-900">{reviewingRapportino.collaboratoreData.spese.toFixed(2)} €</td>
+                        </tr>
+                        <tr>
+                          <td className="p-2.5 font-semibold">Chilometri Percorsi</td>
+                          <td className="p-2.5 text-right">
+                            <input 
+                              type="number"
+                              step="any"
+                              min="0"
+                              disabled={reviewingRapportino.stato === 'Approvato'}
+                              value={reviewingRapportino.collaboratoreData.km}
+                              onChange={e => handleReviewCollabFieldChange('km', Number(e.target.value))}
+                              className="w-20 p-1 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
+                            />
+                          </td>
+                          <td className="p-2.5 text-right">-</td>
+                        </tr>
+                        <tr>
+                          <td className="p-2.5 font-semibold">Tariffa Chilometrica (€/km)</td>
+                          <td className="p-2.5 text-right">
+                            <input 
+                              type="number"
+                              step="any"
+                              min="0"
+                              disabled={reviewingRapportino.stato === 'Approvato'}
+                              value={reviewingRapportino.collaboratoreData.kmRate}
+                              onChange={e => handleReviewCollabFieldChange('kmRate', Number(e.target.value))}
+                              className="w-20 p-1 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
+                            />
+                          </td>
+                          <td className="p-2.5 text-right">-</td>
+                        </tr>
+                        <tr className="bg-amber-50/20 font-bold">
+                          <td className="p-2.5">Rimborso Chilometrico (Km × Tariffa)</td>
+                          <td className="p-2.5 text-right">-</td>
+                          <td className="p-2.5 text-right text-gray-900">{reviewingRapportino.collaboratoreData.rimborsoKm.toFixed(2)} €</td>
+                        </tr>
+
+                        {/* TOTAL COMPENSO */}
+                        <tr className="bg-amber-100/30 text-xs font-extrabold border-y border-amber-200">
+                          <td className="p-2.5 uppercase">Totale Compenso (Imponibile)</td>
+                          <td className="p-2.5 text-right">-</td>
+                          <td className="p-2.5 text-right text-amber-900">{reviewingRapportino.collaboratoreData.totaleCompenso.toFixed(2)} €</td>
+                        </tr>
+
+                        {/* TAX RATES */}
+                        <tr>
+                          <td className="p-2.5 font-semibold">Contributo Cassa INPS</td>
+                          <td className="p-2.5 text-right">
+                            <input 
+                              type="number"
+                              step="any"
+                              min="0"
+                              disabled={reviewingRapportino.stato === 'Approvato'}
+                              value={reviewingRapportino.collaboratoreData.inpsRate}
+                              onChange={e => handleReviewCollabFieldChange('inpsRate', Number(e.target.value))}
+                              className="w-20 p-1 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
+                            /> %
+                          </td>
+                          <td className="p-2.5 text-right text-gray-900">{reviewingRapportino.collaboratoreData.inps.toFixed(2)} €</td>
+                        </tr>
+                        <tr>
+                          <td className="p-2.5 font-semibold">IVA</td>
+                          <td className="p-2.5 text-right">
+                            <input 
+                              type="number"
+                              step="any"
+                              min="0"
+                              disabled={reviewingRapportino.stato === 'Approvato'}
+                              value={reviewingRapportino.collaboratoreData.ivaRate}
+                              onChange={e => handleReviewCollabFieldChange('ivaRate', Number(e.target.value))}
+                              className="w-20 p-1 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
+                            /> %
+                          </td>
+                          <td className="p-2.5 text-right text-gray-900">{reviewingRapportino.collaboratoreData.iva.toFixed(2)} €</td>
+                        </tr>
+                        <tr>
+                          <td className="p-2.5 font-semibold">Ritenuta d'Acconto</td>
+                          <td className="p-2.5 text-right">
+                            <input 
+                              type="number"
+                              step="any"
+                              min="0"
+                              disabled={reviewingRapportino.stato === 'Approvato'}
+                              value={reviewingRapportino.collaboratoreData.raRate}
+                              onChange={e => handleReviewCollabFieldChange('raRate', Number(e.target.value))}
+                              className="w-20 p-1 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
+                            /> %
+                          </td>
+                          <td className="p-2.5 text-right text-red-655">- {reviewingRapportino.collaboratoreData.ra.toFixed(2)} €</td>
+                        </tr>
+
+                        {/* TOTAL DUE */}
+                        <tr className="bg-amber-600/10 text-xs font-black border-t-2 border-amber-600">
+                          <td className="p-3 uppercase text-amber-950">TOTALE DOVUTO (A PAGARE)</td>
+                          <td className="p-3 text-right">-</td>
+                          <td className="p-3 text-right text-amber-900 text-sm font-black">{reviewingRapportino.collaboratoreData.totaleDovuto.toFixed(2)} €</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  ) : (
+                    <p className="text-gray-500 italic">Nessun dato di calcolo collaboratore presente...</p>
+                  )}
+                </div>
+              ) : (
+                // STANDARD EMPLOYEE REVIEW TABLE
+                <>
               {/* Tabella 1-31 Modificabile dall'HR se necessario */}
               <div className="border rounded-2xl overflow-hidden shadow-sm bg-white">
                 <div className="px-4 py-2.5 bg-gray-50 text-[10px] text-gray-500 font-bold border-b">
@@ -2339,7 +3088,9 @@ export default function Presenze() {
                   </div>
                 )}
               </div>
-            </div>
+            </>
+          )}
+        </div>
 
             {/* Footer Modal con Azioni */}
             <div className="p-5 border-t bg-gray-50 flex justify-between items-center shrink-0">
@@ -2475,6 +3226,87 @@ export default function Presenze() {
               </div>
 
               {/* Tabellone Griglia 1-31 */}
+              {isCollab ? (
+                // Print collaborator invoice layout
+                <div className="border border-gray-900 rounded-lg overflow-hidden max-w-xl mx-auto my-4 text-[9px] text-left bg-white">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-gray-100 border-b border-gray-900 font-extrabold text-gray-900">
+                        <th className="p-2 border-r border-gray-900">VOCE / DESCRIZIONE</th>
+                        <th className="p-2 border-r border-gray-900 text-right">VALORE / PARAMETRO</th>
+                        <th className="p-2 text-right">IMPORTO (€)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-900 font-semibold text-gray-900">
+                      <tr>
+                        <td className="p-2 border-r border-gray-900">Mese di Riferimento</td>
+                        <td className="p-2 border-r border-gray-900 text-right capitalize">{MESI[selectedMonth - 1]} {selectedYear}</td>
+                        <td className="p-2 text-right">-</td>
+                      </tr>
+                      <tr>
+                        <td className="p-2 border-r border-gray-900">Giornate Lavorate</td>
+                        <td className="p-2 border-r border-gray-900 text-right">{sheetToPrint.collaboratoreData?.giornate ?? 0} gg</td>
+                        <td className="p-2 text-right">-</td>
+                      </tr>
+                      <tr>
+                        <td className="p-2 border-r border-gray-900">Tariffa Giornaliera Contratto</td>
+                        <td className="p-2 border-r border-gray-900 text-right">{sheetToPrint.collaboratoreData?.dailyRate ?? 0} €/gg</td>
+                        <td className="p-2 text-right">-</td>
+                      </tr>
+                      <tr className="bg-gray-50 font-bold">
+                        <td className="p-2 border-r border-gray-900">Compenso Mensile (Giornate × Tariffa)</td>
+                        <td className="p-2 border-r border-gray-900 text-right">-</td>
+                        <td className="p-2 text-right">{(sheetToPrint.collaboratoreData?.compensoMensile ?? 0).toFixed(2)} €</td>
+                      </tr>
+                      <tr>
+                        <td className="p-2 border-r border-gray-900">Spese e Altri Rimborsi</td>
+                        <td className="p-2 border-r border-gray-900 text-right">-</td>
+                        <td className="p-2 text-right">{(sheetToPrint.collaboratoreData?.spese ?? 0).toFixed(2)} €</td>
+                      </tr>
+                      <tr>
+                        <td className="p-2 border-r border-gray-900">Chilometri Percorsi</td>
+                        <td className="p-2 border-r border-gray-900 text-right">{sheetToPrint.collaboratoreData?.km ?? 0} km</td>
+                        <td className="p-2 text-right">-</td>
+                      </tr>
+                      <tr>
+                        <td className="p-2 border-r border-gray-900">Tariffa Chilometrica (€/km)</td>
+                        <td className="p-2 border-r border-gray-900 text-right">{sheetToPrint.collaboratoreData?.kmRate ?? 0} €/km</td>
+                        <td className="p-2 text-right">-</td>
+                      </tr>
+                      <tr className="bg-gray-50 font-bold">
+                        <td className="p-2 border-r border-gray-900">Rimborso Chilometrico (Km × Tariffa)</td>
+                        <td className="p-2 border-r border-gray-900 text-right">-</td>
+                        <td className="p-2 text-right">{(sheetToPrint.collaboratoreData?.rimborsoKm ?? 0).toFixed(2)} €</td>
+                      </tr>
+                      <tr className="bg-gray-100 font-extrabold border-y border-gray-900 text-[10px]">
+                        <td className="p-2 border-r border-gray-900 uppercase">Totale Compenso (Imponibile)</td>
+                        <td className="p-2 border-r border-gray-900 text-right">-</td>
+                        <td className="p-2 text-right">{(sheetToPrint.collaboratoreData?.totaleCompenso ?? 0).toFixed(2)} €</td>
+                      </tr>
+                      <tr>
+                        <td className="p-2 border-r border-gray-900">Contributo Cassa INPS ({sheetToPrint.collaboratoreData?.inpsRate ?? 0}%)</td>
+                        <td className="p-2 border-r border-gray-900 text-right">-</td>
+                        <td className="p-2 text-right">{(sheetToPrint.collaboratoreData?.inps ?? 0).toFixed(2)} €</td>
+                      </tr>
+                      <tr>
+                        <td className="p-2 border-r border-gray-900">IVA ({sheetToPrint.collaboratoreData?.ivaRate ?? 0}%)</td>
+                        <td className="p-2 border-r border-gray-900 text-right">-</td>
+                        <td className="p-2 text-right">{(sheetToPrint.collaboratoreData?.iva ?? 0).toFixed(2)} €</td>
+                      </tr>
+                      <tr>
+                        <td className="p-2 border-r border-gray-900">Ritenuta d'Acconto ({sheetToPrint.collaboratoreData?.raRate ?? 0}%)</td>
+                        <td className="p-2 border-r border-gray-900 text-right">-</td>
+                        <td className="p-2 text-right text-red-655">- {(sheetToPrint.collaboratoreData?.ra ?? 0).toFixed(2)} €</td>
+                      </tr>
+                      <tr className="bg-gray-200 font-extrabold text-[10px] border-t-2 border-gray-900">
+                        <td className="p-2 border-r border-gray-900 uppercase">TOTALE DOVUTO (A PAGARE)</td>
+                        <td className="p-2 border-r border-gray-900 text-right">-</td>
+                        <td className="p-2 text-right">{(sheetToPrint.collaboratoreData?.totaleDovuto ?? 0).toFixed(2)} €</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
               <table className="w-full text-center border border-gray-950 table-fixed">
                 <thead>
                   <tr className="bg-gray-150 border-b border-gray-950 font-bold text-gray-900 text-[8px]">
@@ -2637,6 +3469,7 @@ export default function Presenze() {
                   )}
                 </tbody>
               </table>
+              )}
 
               {/* Dettagli in basso per Stampa */}
               <div className="grid grid-cols-2 gap-6 pt-2">
@@ -2686,6 +3519,27 @@ export default function Presenze() {
           );
         })()}
       </div>
+      
+      {toast && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[99999] animate-in fade-in slide-in-from-top-4 duration-300">
+          <div className={`flex items-center gap-3 px-6 py-3.5 rounded-2xl shadow-2xl border font-bold text-sm ${
+            toast.type === 'success' 
+              ? 'bg-emerald-50 text-emerald-800 border-emerald-200' 
+              : toast.type === 'warning'
+                ? 'bg-amber-50 text-amber-800 border-amber-200'
+                : 'bg-rose-50 text-rose-800 border-rose-200'
+          }`}>
+            <span>{toast.type === 'success' ? '✅' : toast.type === 'warning' ? '⚠️' : '❌'}</span>
+            <span>{toast.message}</span>
+            <button 
+              onClick={() => setToast(null)} 
+              className="ml-2 hover:opacity-70 text-xs font-black"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       <ConfirmModal
         isOpen={confirmConfig.isOpen}

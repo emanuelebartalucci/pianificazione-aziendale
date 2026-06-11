@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, addDoc, onSnapshot, doc, updateDoc } from 'firebase/firestore';
@@ -28,6 +28,15 @@ interface RichiestaFerie {
 export default function Ferie() {
   const { isHR, isAdmin, myAssociatedName, dipendenti } = useAuth();
   
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'warning' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => {
+      setToast(null);
+    }, 4500);
+  };
+
   // State per la nuova richiesta
   const [requestMode, setRequestMode] = useState<'singolo' | 'range'>('singolo');
   const [dipendenteSelezionato, setDipendenteSelezionato] = useState(myAssociatedName || '');
@@ -60,8 +69,6 @@ export default function Ferie() {
       const list: RichiestaFerie[] = [];
       snapshot.forEach(docSnap => {
         const data = docSnap.data();
-        if (!isAdmin && !isHR && data.dipendenteName !== myAssociatedName) return;
-        
         list.push({
           id: docSnap.id,
           dipendenteName: data.dipendenteName,
@@ -81,45 +88,52 @@ export default function Ferie() {
       }));
     });
     return () => unsub();
-  }, [isAdmin, isHR, myAssociatedName]);
+  }, []);
+
+  const listRichieste = useMemo(() => {
+    if (isHR) {
+      return richieste;
+    }
+    return richieste.filter(r => r.dipendenteName === myAssociatedName);
+  }, [richieste, isHR, myAssociatedName]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const isPowerUser = isAdmin || isHR;
+    const isPowerUser = isHR;
     
     if (!isPowerUser && !myAssociatedName) {
-      alert("Devi avere un profilo associato nell'anagrafica per richiedere ferie.");
+      showToast("Devi avere un profilo associato nell'anagrafica per richiedere ferie.", "warning");
       return;
     }
 
     const targetDipName = isPowerUser ? dipendenteSelezionato : myAssociatedName;
     if (!targetDipName) {
-      alert("Seleziona un dipendente.");
+      showToast("Seleziona un dipendente.", "warning");
       return;
     }
     
     if (requestMode === 'singolo' && !dataRichiesta) {
-      alert("Seleziona una data.");
+      showToast("Seleziona una data.", "warning");
       return;
     }
     
     if (requestMode === 'range' && (!dataInizio || !dataFine)) {
-      alert("Seleziona sia la data di inizio che quella di fine.");
+      showToast("Seleziona sia la data di inizio che quella di fine.", "warning");
       return;
     }
     
     if (requestMode === 'range' && dataInizio > dataFine) {
-      alert("La data di inizio non può essere successiva alla data di fine.");
+      showToast("La data di inizio non può essere successiva alla data di fine.", "warning");
       return;
     }
 
     if (tipoRichiesta === 'permesso') {
       if (!oraInizio || !oraFine) {
-        alert("Inserisci l'ora di inizio e di fine del permesso.");
+        showToast("Inserisci l'ora di inizio e di fine del permesso.", "warning");
         return;
       }
       if (oraInizio >= oraFine) {
-        alert("L'ora di inizio deve essere precedente all'ora di fine.");
+        showToast("L'ora di inizio deve essere precedente all'ora di fine.", "warning");
         return;
       }
     }
@@ -154,8 +168,9 @@ export default function Ferie() {
       setDataFine('');
       setOraInizio('09:00');
       setOraFine('18:00');
+      showToast("Richiesta inviata con successo!");
     } catch (err) {
-      alert("Errore nell'invio della richiesta.");
+      showToast("Errore nell'invio della richiesta.", "error");
     } finally {
       setLoading(false);
     }
@@ -278,8 +293,8 @@ export default function Ferie() {
             return (
               <div key={req.id} className={`text-[10px] p-1.5 rounded border ${bg} flex items-center gap-1.5 font-medium leading-tight shadow-sm`}>
                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${t.color}`}></span>
-                <span className="truncate" title={`${isAdmin || isHR ? req.dipendenteName + ' - ' : ''}${t.label}${hourSuffix}`}>
-                  {(isAdmin || isHR) ? `${req.dipendenteName}${hourSuffix}` : `${t.label}${hourSuffix}`}
+                <span className="truncate" title={`${req.dipendenteName} - ${t.label}${hourSuffix}`}>
+                  {req.dipendenteName}{hourSuffix}
                 </span>
               </div>
             );
@@ -321,7 +336,7 @@ export default function Ferie() {
               </div>
             ) : (
               <form onSubmit={handleSubmit} className="space-y-5">
-                {(isAdmin || isHR) && (
+                {isHR && (
                   <div>
                     <label className="block text-sm font-bold text-green-900 mb-1.5 ml-1">Dipendente</label>
                     <select
@@ -462,14 +477,14 @@ export default function Ferie() {
           {/* LISTA RICHIESTE */}
           <div className="bg-white/60 p-8 rounded-3xl border border-gray-100 shadow-inner">
             <h3 className="font-extrabold text-2xl mb-6 text-gray-900">
-              {(isAdmin || isHR) ? "Richieste da Gestire" : "Le tue richieste"}
+              {isHR ? "Richieste da Gestire" : "Le tue richieste"}
             </h3>
             
             <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
-              {richieste.length === 0 ? (
+              {listRichieste.length === 0 ? (
                 <p className="text-center text-gray-400 py-10 font-medium">Nessuna richiesta presente.</p>
               ) : (
-                richieste.map(req => (
+                listRichieste.map(req => (
                   <div key={req.id} className="p-4 sm:p-5 border border-gray-100 rounded-2xl bg-white shadow-sm hover:shadow-md transition-shadow flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 group">
                     <div className="space-y-1.5 flex-1 min-w-0">
                       <div className="font-bold text-base sm:text-lg text-gray-900 truncate">{req.dipendenteName}</div>
@@ -488,7 +503,7 @@ export default function Ferie() {
                     <div className="flex flex-row sm:flex-col items-center sm:items-end justify-between w-full sm:w-auto gap-3">
                       {getStatusBadge(req.stato)}
                       
-                      {(isAdmin || isHR) && req.stato === 'In attesa' && (
+                      {isHR && req.stato === 'In attesa' && (
                         <div className="flex gap-2">
                           <button 
                             onClick={() => handleDecision(req.id, true)} 
@@ -541,6 +556,27 @@ export default function Ferie() {
           <div className="flex items-center gap-2 text-xs font-bold text-gray-700"><span className="w-3 h-3 rounded-full bg-red-400 shadow-sm"></span> Rifiutato</div>
         </div>
       </div>
+
+      {toast && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[99999] animate-in fade-in slide-in-from-top-4 duration-300">
+          <div className={`flex items-center gap-3 px-6 py-3.5 rounded-2xl shadow-2xl border font-bold text-sm ${
+            toast.type === 'success' 
+              ? 'bg-emerald-50 text-emerald-800 border-emerald-200' 
+              : toast.type === 'warning'
+                ? 'bg-amber-50 text-amber-800 border-amber-200'
+                : 'bg-rose-50 text-rose-800 border-rose-200'
+          }`}>
+            <span>{toast.type === 'success' ? '✅' : toast.type === 'warning' ? '⚠️' : '❌'}</span>
+            <span>{toast.message}</span>
+            <button 
+              onClick={() => setToast(null)} 
+              className="ml-2 hover:opacity-70 text-xs font-black"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

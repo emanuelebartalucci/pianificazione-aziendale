@@ -22,9 +22,9 @@
   * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
   .shadow, .shadow-sm, .shadow-lg, .shadow-xl { box-shadow: none !important; }
   .border { border-color: #374151 !important; }
-  .overflow-auto, .overflow-y-auto, .max-h-\[75vh\], .max-h-96 { overflow: visible !important; max-height: none !important; }
+  .overflow-auto, .overflow-y-auto, .max-h-\[75vh\], .max-h-96, .max-h-\[750px\] { overflow: visible !important; max-height: none !important; }
   table { border-collapse: collapse !important; width: 100% !important; }
-  th, td { border-color: #374151 !important; }
+  th, td { border-color: #374151 !important; position: static !important; }
 }
 
 /* Nascondi freccette degli input di tipo number */

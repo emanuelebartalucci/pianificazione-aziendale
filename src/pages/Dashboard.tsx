@@ -3,10 +3,11 @@ import { Briefcase, Calendar, Settings, FileText, MessageSquare, Plus, Trash2, M
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, addDoc, doc, deleteDoc, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { collection, addDoc, doc, deleteDoc, onSnapshot, query, orderBy, where } from 'firebase/firestore';
 import ConfirmModal from '../components/ConfirmModal';
 import ClimaModal from '../components/ClimaModal';
-import { isSoci } from './Impostazioni';
+import QuestionnaireModal from '../components/QuestionnaireModal';
+import { isSoci, isCollaboratore } from './Impostazioni';
 
 interface Announcement {
   id: string;
@@ -18,7 +19,7 @@ interface Announcement {
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { isAdmin, isHR, myAssociatedName, user } = useAuth();
+  const { isAdmin, isHR, myAssociatedName, user, dipendenti } = useAuth();
 
   // States per le comunicazioni
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
@@ -28,6 +29,19 @@ export default function Dashboard() {
   const [newAuthor, setNewAuthor] = useState<'HR' | 'Direzione'>('Direzione');
   const [loading, setLoading] = useState(false);
   const [isClimaModalOpen, setIsClimaModalOpen] = useState(false);
+  const [activeQuestionnaire, setActiveQuestionnaire] = useState<any | null>(null);
+  const [isQuestionnaireOpen, setIsQuestionnaireOpen] = useState(false);
+  const [hasCompletedSurvey, setHasCompletedSurvey] = useState(true);
+  const [hasSkippedSurvey, setHasSkippedSurvey] = useState(false);
+
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'warning' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => {
+      setToast(null);
+    }, 4500);
+  };
 
   // Stato per la modale di conferma
   const [confirmConfig, setConfirmConfig] = useState<{
@@ -72,6 +86,54 @@ export default function Dashboard() {
     }
   }, [myAssociatedName]);
 
+  // Controllo per il questionario HR attivo (esclusi i soci)
+  useEffect(() => {
+    if (isSoci(myAssociatedName)) return;
+
+    const unsub = onSnapshot(doc(db, 'configurazioni', 'questionario'), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.active) {
+          setActiveQuestionnaire(data);
+        } else {
+          setActiveQuestionnaire(null);
+        }
+      } else {
+        setActiveQuestionnaire(null);
+      }
+    });
+    return () => unsub();
+  }, [myAssociatedName]);
+
+  // Verifica se il dipendente ha completato il questionario attivo
+  useEffect(() => {
+    if (!activeQuestionnaire || !user?.uid) {
+      setHasCompletedSurvey(true);
+      return;
+    }
+
+    const q = query(
+      collection(db, 'questionari_completati'),
+      where('userId', '==', user.uid),
+      where('questionnaireId', '==', activeQuestionnaire.id)
+    );
+
+    const unsub = onSnapshot(q, (snapshot) => {
+      setHasCompletedSurvey(!snapshot.empty);
+    });
+
+    return () => unsub();
+  }, [activeQuestionnaire, user?.uid]);
+
+  // Innesca la modale del questionario
+  useEffect(() => {
+    if (!activeQuestionnaire || hasCompletedSurvey || hasSkippedSurvey) {
+      setIsQuestionnaireOpen(false);
+    } else {
+      setIsQuestionnaireOpen(true);
+    }
+  }, [activeQuestionnaire, hasCompletedSurvey, hasSkippedSurvey]);
+
   // Caricamento comunicazioni in tempo reale
   useEffect(() => {
     const q = query(collection(db, 'comunicazioni'), orderBy('createdAt', 'desc'));
@@ -109,9 +171,10 @@ export default function Dashboard() {
       setNewContent('');
       setNewAuthor('Direzione');
       setIsModalOpen(false);
+      showToast("Avviso pubblicato con successo!");
     } catch (err) {
       console.error("Errore nella pubblicazione dell'avviso:", err);
-      alert("Errore durante la pubblicazione.");
+      showToast("Errore durante la pubblicazione.", "error");
     } finally {
       setLoading(false);
     }
@@ -139,32 +202,52 @@ export default function Dashboard() {
     const d = today.getDate();
     const daysInMonth = new Date(y, m + 1, 0).getDate();
     
-    // Mostra il promemoria negli ultimi 2 giorni del mese (daysInMonth - 2, es. dal 28 in un mese di 30 giorni)
-    // o nei primi 5 giorni del mese successivo (fino al 5 compreso)
-    const showReminder = (d >= daysInMonth - 2) || (d <= 5);
-    
-    if (showReminder) {
-      // Se siamo nei primi 5 giorni, ricordiamo il mese precedente. Altrimenti il mese in corso.
-      const targetMonthIndex = d <= 5 ? (m === 0 ? 11 : m - 1) : m;
-      const targetYear = d <= 5 && m === 0 ? y - 1 : y;
+    const isUserCollaboratore = isCollaboratore(myAssociatedName, dipendenti);
+    const isUserSocio = isSoci(myAssociatedName);
+    const isUserDipendente = myAssociatedName && !isUserCollaboratore && !isUserSocio;
+
+    const list = [...announcements];
+
+    // Reminders are not visible to partners (soci)
+    if (isUserSocio) {
+      return list;
+    }
+
+    // 1. Employee reminder
+    // Visible only to dipendente, from last 2 days of the month to the 2nd of the next month (inclusive)
+    const showEmployeeReminder = isUserDipendente && ((d >= daysInMonth - 2) || (d <= 2));
+    if (showEmployeeReminder) {
+      const targetMonthIndex = d <= 2 ? (m === 0 ? 11 : m - 1) : m;
+      const targetYear = d <= 2 && m === 0 ? y - 1 : y;
       const nomeMese = [
         'Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno',
         'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre'
       ][targetMonthIndex];
 
-      const reminder: Announcement = {
+      list.unshift({
         id: 'system-reminder-presenze',
         titolo: '⚠️ Promemoria: Compilazione Registro Presenze',
         contenuto: `Si ricorda a tutti i dipendenti di compilare, verificare ed inviare il proprio foglio presenze per il mese di ${nomeMese} ${targetYear} all'HR per l'approvazione delle buste paga.`,
         autore: 'HR',
         data: `${String(d).padStart(2, '0')}/${String(m + 1).padStart(2, '0')}/${y}`
-      };
-      
-      return [reminder, ...announcements];
+      });
+    }
+
+    // 2. Collaborator reminder
+    // Visible only to collaborator, from the 10th to the 20th of each month (inclusive)
+    const showCollaboratorReminder = isUserCollaboratore && (d >= 10 && d <= 20);
+    if (showCollaboratorReminder) {
+      list.unshift({
+        id: 'system-reminder-collaboratori',
+        titolo: '⚠️ Promemoria Adempimenti Collaboratori',
+        contenuto: `Si ricorda ai collaboratori i seguenti adempimenti mensili:\n\n• entro il 15 di ogni mese: trasmettere la bozza della fattura per verifica ed approvazione da parte del reparto competente;\n• entro il 20 di ogni mese: previa conferma, procedere con l’emissione della fattura elettronica.`,
+        autore: 'HR',
+        data: `${String(d).padStart(2, '0')}/${String(m + 1).padStart(2, '0')}/${y}`
+      });
     }
     
-    return announcements;
-  }, [announcements]);
+    return list;
+  }, [announcements, myAssociatedName, dipendenti]);
 
   const welcomeName = (() => {
     if (!myAssociatedName) return user?.email || 'Utente';
@@ -254,8 +337,16 @@ export default function Dashboard() {
               onClick={() => navigate('/suggerimenti')} 
               className="bg-white/80 backdrop-blur-xl p-8 rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between min-h-[180px]"
             >
-              <div className="w-14 h-14 bg-purple-100 text-purple-600 rounded-2xl flex items-center justify-center group-hover:bg-purple-600 group-hover:text-white transition-colors">
+              <div className="w-14 h-14 bg-purple-100 text-purple-600 rounded-2xl flex items-center justify-center group-hover:bg-purple-600 group-hover:text-white transition-colors relative">
                 <MessageSquare className="w-7 h-7" />
+                {!isSoci(myAssociatedName) && activeQuestionnaire && activeQuestionnaire.active && !hasCompletedSurvey && (
+                  <span className="absolute -top-1 -right-1 flex h-5 w-5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-5 w-5 bg-red-500 text-[10px] font-black text-white items-center justify-center border border-white">
+                      1
+                    </span>
+                  </span>
+                )}
               </div>
               <div>
                 <h2 className="text-xl font-extrabold text-gray-800 mt-4">Cassetta delle Idee</h2>
@@ -311,7 +402,7 @@ export default function Dashboard() {
               ) : (
                 displayAnnouncements.map(ann => {
                   const isHRAuthor = ann.autore === 'HR';
-                  const isReminder = ann.id === 'system-reminder-presenze';
+                  const isReminder = ann.id.startsWith('system-reminder-');
                   return (
                     <div 
                       key={ann.id} 
@@ -445,6 +536,36 @@ export default function Dashboard() {
         isOpen={isClimaModalOpen}
         onClose={() => setIsClimaModalOpen(false)}
       />
+
+      {activeQuestionnaire && (
+        <QuestionnaireModal
+          isOpen={isQuestionnaireOpen}
+          onClose={() => setHasSkippedSurvey(true)}
+          activeQuestionnaire={activeQuestionnaire}
+          userId={user?.uid || ''}
+        />
+      )}
+
+      {toast && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[99999] animate-in fade-in slide-in-from-top-4 duration-300">
+          <div className={`flex items-center gap-3 px-6 py-3.5 rounded-2xl shadow-2xl border font-bold text-sm ${
+            toast.type === 'success' 
+              ? 'bg-emerald-50 text-emerald-800 border-emerald-200' 
+              : toast.type === 'warning'
+                ? 'bg-amber-50 text-amber-800 border-amber-200'
+                : 'bg-rose-50 text-rose-800 border-rose-200'
+          }`}>
+            <span>{toast.type === 'success' ? '✅' : toast.type === 'warning' ? '⚠️' : '❌'}</span>
+            <span>{toast.message}</span>
+            <button 
+              onClick={() => setToast(null)} 
+              className="ml-2 hover:opacity-70 text-xs font-black"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

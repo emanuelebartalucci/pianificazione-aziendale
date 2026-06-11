@@ -1,5 +1,6 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
+import { useEffect } from 'react';
 
 // Pages
 import Login from './pages/Login';
@@ -14,6 +15,16 @@ import PianificazionePersonale from './pages/PianificazionePersonale';
 // Components
 import Navbar from './components/Navbar';
 
+function ScrollToTop() {
+  const { pathname } = useLocation();
+
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [pathname]);
+
+  return null;
+}
+
 function App() {
   const { user, loading } = useAuth();
 
@@ -23,6 +34,7 @@ function App() {
 
   return (
     <Router>
+      <ScrollToTop />
       {user ? (
         <div className="bg-gray-100 text-gray-900 font-sans min-h-screen">
           <Navbar />
