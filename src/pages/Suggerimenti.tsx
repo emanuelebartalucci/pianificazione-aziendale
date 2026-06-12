@@ -173,8 +173,7 @@ const ClimaTrendChart = ({ responses }: { responses: RispostaClima[] }) => {
 export default function Suggerimenti() {
   const { isAdmin, isHR, myAssociatedName, user } = useAuth();
   
-  const [activeTab, setActiveTab] = useState<'invia' | 'dashboard' | 'questionario'>('invia');
-  const [subTab, setSubTab] = useState<'suggerimenti' | 'clima'>('suggerimenti');
+  const [activeTab, setActiveTab] = useState<'invia' | 'suggerimenti' | 'clima' | 'questionario'>('invia');
   const [questionnaireSubTab, setQuestionnaireSubTab] = useState<'risultati' | 'configura'>('risultati');
 
   // Categorie Suggerimenti
@@ -372,7 +371,7 @@ export default function Suggerimenti() {
   // Sincronizza tab predefinita per gli HR
   useEffect(() => {
     if (isAdmin || isHR) {
-      setActiveTab('dashboard');
+      setActiveTab('suggerimenti');
     } else {
       setActiveTab('invia');
     }
@@ -913,16 +912,22 @@ export default function Suggerimenti() {
         {(isAdmin || isHR) && (
           <div className="flex bg-gray-100/80 p-1.5 rounded-2xl shadow-inner flex-wrap gap-1">
             <button 
-              onClick={() => setActiveTab('dashboard')}
-              className={`px-4 sm:px-6 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2 cursor-pointer ${activeTab === 'dashboard' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              onClick={() => setActiveTab('suggerimenti')}
+              className={`px-4 sm:px-6 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2 cursor-pointer ${activeTab === 'suggerimenti' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
             >
-              <LayoutList className="w-4 h-4" /> Risultati HR
+              <LayoutList className="w-4 h-4" /> Suggerimenti Anonimi
+            </button>
+            <button 
+              onClick={() => setActiveTab('clima')}
+              className={`px-4 sm:px-6 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2 cursor-pointer ${activeTab === 'clima' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              <Smile className="w-4 h-4" /> Benessere & Stress
             </button>
             <button 
               onClick={() => setActiveTab('questionario')}
               className={`px-4 sm:px-6 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2 cursor-pointer ${activeTab === 'questionario' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
             >
-              <FileText className="w-4 h-4" /> Questionario HR
+              <FileText className="w-4 h-4" /> Questionario
             </button>
             <button 
               onClick={() => setActiveTab('invia')}
@@ -1024,264 +1029,243 @@ export default function Suggerimenti() {
         </div>
       )}
 
-      {/* DASHBOARD HR / ADMIN: SUGGERIMENTI & CLIMA */}
-      {activeTab === 'dashboard' && (isAdmin || isHR) && (
-        <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl p-6 sm:p-10 border border-white/50 flex flex-col mb-10">
-          
-          <div className="flex border-b border-gray-100 mb-6 gap-6">
-            <button 
-              onClick={() => setSubTab('suggerimenti')}
-              className={`pb-3 font-black text-sm transition-all relative cursor-pointer ${
-                subTab === 'suggerimenti' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-400 hover:text-gray-600'
-              }`}
-            >
-              Suggerimenti Anonimi ({suggerimenti.length})
-            </button>
-            <button 
-              onClick={() => setSubTab('clima')}
-              className={`pb-3 font-black text-sm transition-all relative cursor-pointer ${
-                subTab === 'clima' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-455'
-              }`}
-            >
-              Benessere & Stress (Clima) ({climaResponses.length})
-            </button>
+      {/* SEZIONE SUGGERIMENTI ANONIMI (HR/ADMIN) */}
+      {activeTab === 'suggerimenti' && (isAdmin || isHR) && (
+        <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl p-6 sm:p-10 border border-white/50 flex flex-col mb-10 animate-fadeIn">
+          {/* STATS OVERVIEW & CATEGORIES MANAGEMENT */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+            <div className="bg-gradient-to-br from-emerald-50 to-teal-50 p-6 rounded-3xl border border-emerald-100 flex items-center justify-between">
+              <div>
+                <h4 className="text-sm font-bold text-emerald-950/70 uppercase tracking-wider mb-1">Totale Suggerimenti</h4>
+                <div className="text-4xl font-black text-emerald-900">{stats.conteggio}</div>
+              </div>
+              <div className="p-4 bg-emerald-600 text-white rounded-2xl"><MessageSquare className="w-6 h-6" /></div>
+            </div>
+
+            <div className="bg-gradient-to-br from-purple-50 to-pink-50 p-6 rounded-3xl border border-purple-100 flex flex-col justify-between gap-4 lg:col-span-2">
+              <div>
+                <h4 className="text-sm font-bold text-purple-950/70 uppercase tracking-wider mb-2">Gestione Categorie</h4>
+                <div className="max-h-[120px] overflow-y-auto pr-1 space-y-2 mb-3">
+                  {categories.map(cat => (
+                    <div key={cat.id} className="flex justify-between items-center bg-white/60 p-2 rounded-xl border border-purple-100/50">
+                      <span className="text-xs font-bold text-purple-950">{cat.nome}</span>
+                      <button 
+                        onClick={() => handleDeleteCategory(cat.id, cat.nome)}
+                        className="text-gray-400 hover:text-red-600 p-1 rounded-lg hover:bg-red-50 transition cursor-pointer"
+                        title="Elimina categoria"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <form onSubmit={handleAddCategory} className="flex gap-2">
+                <input
+                  type="text"
+                  required
+                  placeholder="Nuova categoria..."
+                  value={newCategoryName}
+                  onChange={e => setNewCategoryName(e.target.value)}
+                  disabled={catLoading}
+                  className="flex-1 px-3 py-2 text-xs font-bold text-purple-950 border border-purple-200/50 bg-white rounded-xl focus:ring-2 focus:ring-purple-400 outline-none placeholder-gray-400"
+                />
+                <button
+                  type="submit"
+                  disabled={catLoading}
+                  className="bg-purple-600 text-white p-2 rounded-xl hover:bg-purple-700 active:scale-95 disabled:opacity-50 transition flex items-center justify-center shrink-0 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              </form>
+            </div>
           </div>
 
-          {subTab === 'suggerimenti' ? (
-            <>
-              {/* STATS OVERVIEW & CATEGORIES MANAGEMENT */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-                <div className="bg-gradient-to-br from-emerald-50 to-teal-50 p-6 rounded-3xl border border-emerald-100 flex items-center justify-between">
-                  <div>
-                    <h4 className="text-sm font-bold text-emerald-950/70 uppercase tracking-wider mb-1">Totale Suggerimenti</h4>
-                    <div className="text-4xl font-black text-emerald-900">{stats.conteggio}</div>
-                  </div>
-                  <div className="p-4 bg-emerald-600 text-white rounded-2xl"><MessageSquare className="w-6 h-6" /></div>
-                </div>
+          {/* FILTERS TOOLBAR */}
+          <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-gray-50/50 rounded-2xl border border-gray-100 mb-6">
+            <div className="flex items-center gap-2">
+              <Filter className="w-4 h-4 text-gray-400" />
+              <select
+                value={filterCat}
+                onChange={e => setFilterCat(e.target.value)}
+                className="pl-3 pr-8 py-2 border-none bg-white rounded-xl shadow-inner text-sm font-bold text-gray-700 focus:ring-2 focus:ring-indigo-400 outline-none w-52"
+              >
+                <option value="">Tutte le categorie</option>
+                {categories.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
+              </select>
+            </div>
+            <div className="text-xs font-bold text-gray-500">
+              Visualizzati: <strong>{filteredSuggerimenti.length}</strong> suggerimenti
+            </div>
+          </div>
 
-                <div className="bg-gradient-to-br from-purple-50 to-pink-50 p-6 rounded-3xl border border-purple-100 flex flex-col justify-between gap-4 lg:col-span-2">
-                  <div>
-                    <h4 className="text-sm font-bold text-purple-950/70 uppercase tracking-wider mb-2">Gestione Categorie</h4>
-                    <div className="max-h-[120px] overflow-y-auto pr-1 space-y-2 mb-3">
-                      {categories.map(cat => (
-                        <div key={cat.id} className="flex justify-between items-center bg-white/60 p-2 rounded-xl border border-purple-100/50">
-                          <span className="text-xs font-bold text-purple-950">{cat.nome}</span>
-                          <button 
-                            onClick={() => handleDeleteCategory(cat.id, cat.nome)}
-                            className="text-gray-400 hover:text-red-600 p-1 rounded-lg hover:bg-red-50 transition cursor-pointer"
-                            title="Elimina categoria"
+          {/* LISTA SUGGERIMENTI */}
+          <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
+            {filteredSuggerimenti.length === 0 ? (
+              <p className="text-center text-gray-400 py-10 font-bold italic">Nessun suggerimento presente.</p>
+            ) : (
+              filteredSuggerimenti.map(s => (
+                <div key={s.id} className="p-5 border border-gray-100 rounded-3xl bg-white shadow-sm hover:shadow-md transition flex justify-between items-start gap-4 animate-fadeIn">
+                  <div className="space-y-3 flex-1">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span className="text-xs font-extrabold bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full">{s.categoria}</span>
+                      <span className="text-xs font-bold text-gray-400">{s.data}</span>
+                    </div>
+                    <p className="text-sm text-gray-800 leading-relaxed font-medium whitespace-pre-wrap">{s.testo}</p>
+                  </div>
+
+                  <button
+                    onClick={() => handleDelete(s.id)}
+                    className="text-gray-300 hover:text-red-600 hover:bg-red-50 p-2 rounded-xl transition cursor-pointer"
+                    title="Elimina suggerimento"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* SEZIONE BENESSERE & STRESS (HR/ADMIN) */}
+      {activeTab === 'clima' && (isAdmin || isHR) && (
+        <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl p-6 sm:p-10 border border-white/50 flex flex-col mb-10 animate-fadeIn">
+          {/* STATS OVERVIEW CLIMA */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div className="bg-gradient-to-br from-indigo-50 to-purple-50 p-6 rounded-3xl border border-indigo-100 flex flex-col justify-between gap-4">
+              <div>
+                <h4 className="text-sm font-bold text-indigo-950/70 uppercase tracking-wider mb-1">Livello Benessere Medio</h4>
+                <div className="text-4xl font-black text-indigo-900 flex items-baseline gap-2">
+                  {climaStatsDynamic.media}
+                  <span className="text-sm font-bold opacity-75">/ 10</span>
+                </div>
+              </div>
+              <div className="flex gap-0.5 flex-wrap">
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(star => (
+                  <Star key={star} className={`w-3.5 h-3.5 ${Math.round(climaStatsDynamic.media) >= star ? 'text-indigo-600 fill-indigo-600' : 'text-gray-300'}`} />
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-gradient-to-br from-emerald-50 to-teal-50 p-6 rounded-3xl border border-emerald-100 flex items-center justify-between">
+              <div>
+                <h4 className="text-sm font-bold text-emerald-950/70 uppercase tracking-wider mb-1">Totale Test Giornalieri</h4>
+                <div className="text-4xl font-black text-emerald-900">{climaStatsDynamic.count}</div>
+              </div>
+              <div className="p-4 bg-emerald-600 text-white rounded-2xl"><ShieldCheck className="w-6 h-6" /></div>
+            </div>
+
+            {/* GESTIONE OPZIONI CLIMA */}
+            <div className="bg-gradient-to-br from-purple-50 to-pink-50 p-6 rounded-3xl border border-purple-200 flex flex-col justify-between gap-4 col-span-1 lg:col-span-2">
+              <div>
+                <div className="flex justify-between items-center mb-2 gap-2">
+                  <h4 className="text-sm font-bold text-purple-950/80 uppercase tracking-wider">Opzioni Questionario Clima</h4>
+                  <button 
+                    type="button"
+                    onClick={() => setIsTestClimaOpen(true)}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded-xl text-xs font-bold transition shadow-sm cursor-pointer border border-indigo-700"
+                  >
+                    👁️ Prova (Anteprima)
+                  </button>
+                </div>
+                <div className="max-h-[140px] overflow-y-auto pr-1 space-y-1.5 mb-2">
+                  {climaOptions.map((opt, idx) => (
+                    <div key={opt.id} className="flex justify-between items-center bg-white p-2 rounded-xl border border-purple-100 shadow-sm gap-2">
+                      <span className="text-xs font-bold text-purple-950 truncate flex-1">{opt.label}</span>
+                      <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-0.5 bg-gray-50 p-0.5 rounded-lg border border-gray-200">
+                          <button
+                            type="button"
+                            disabled={idx === 0}
+                            onClick={() => handleMoveClimaOption(opt.id, 'up')}
+                            className="text-gray-400 hover:text-indigo-600 p-1 rounded-lg hover:bg-gray-200 transition disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
+                            title="Sposta su"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <ChevronUp className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={idx === climaOptions.length - 1}
+                            onClick={() => handleMoveClimaOption(opt.id, 'down')}
+                            className="text-gray-400 hover:text-indigo-600 p-1 rounded-lg hover:bg-gray-200 transition disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
+                            title="Sposta giù"
+                          >
+                            <ChevronDown className="w-3.5 h-3.5" />
                           </button>
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                  <form onSubmit={handleAddCategory} className="flex gap-2">
-                    <input
-                      type="text"
-                      required
-                      placeholder="Nuova categoria..."
-                      value={newCategoryName}
-                      onChange={e => setNewCategoryName(e.target.value)}
-                      disabled={catLoading}
-                      className="flex-1 px-3 py-2 text-xs font-bold text-purple-950 border border-purple-200/50 bg-white rounded-xl focus:ring-2 focus:ring-purple-400 outline-none placeholder-gray-400"
-                    />
-                    <button
-                      type="submit"
-                      disabled={catLoading}
-                      className="bg-purple-600 text-white p-2 rounded-xl hover:bg-purple-700 active:scale-95 disabled:opacity-50 transition flex items-center justify-center shrink-0 cursor-pointer"
-                    >
-                      <Plus className="w-4 h-4" />
-                    </button>
-                  </form>
-                </div>
-              </div>
-
-              {/* FILTERS TOOLBAR */}
-              <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-gray-50/50 rounded-2xl border border-gray-100 mb-6">
-                <div className="flex items-center gap-2">
-                  <Filter className="w-4 h-4 text-gray-400" />
-                  <select
-                    value={filterCat}
-                    onChange={e => setFilterCat(e.target.value)}
-                    className="pl-3 pr-8 py-2 border-none bg-white rounded-xl shadow-inner text-sm font-bold text-gray-700 focus:ring-2 focus:ring-indigo-400 outline-none w-52"
-                  >
-                    <option value="">Tutte le categorie</option>
-                    {categories.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
-                  </select>
-                </div>
-                <div className="text-xs font-bold text-gray-500">
-                  Visualizzati: <strong>{filteredSuggerimenti.length}</strong> suggerimenti
-                </div>
-              </div>
-
-              {/* LISTA SUGGERIMENTI */}
-              <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
-                {filteredSuggerimenti.length === 0 ? (
-                  <p className="text-center text-gray-400 py-10 font-bold italic">Nessun suggerimento presente.</p>
-                ) : (
-                  filteredSuggerimenti.map(s => (
-                    <div key={s.id} className="p-5 border border-gray-100 rounded-3xl bg-white shadow-sm hover:shadow-md transition flex justify-between items-start gap-4 animate-fadeIn">
-                      <div className="space-y-3 flex-1">
-                        <div className="flex flex-wrap items-center gap-3">
-                          <span className="text-xs font-extrabold bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full">{s.categoria}</span>
-                          <span className="text-xs font-bold text-gray-400">{s.data}</span>
-                        </div>
-                        <p className="text-sm text-gray-800 leading-relaxed font-medium whitespace-pre-wrap">{s.testo}</p>
+                        <button 
+                          type="button"
+                          onClick={() => handleDeleteClimaOption(opt.id, opt.label)}
+                          className="text-gray-400 hover:text-red-600 p-1 rounded-lg hover:bg-red-50 transition cursor-pointer"
+                          title="Elimina opzione"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
-
-                      <button
-                        onClick={() => handleDelete(s.id)}
-                        className="text-gray-300 hover:text-red-600 hover:bg-red-50 p-2 rounded-xl transition cursor-pointer"
-                        title="Elimina suggerimento"
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </button>
                     </div>
-                  ))
+                  ))}
+                </div>
+              </div>
+              <form onSubmit={handleAddClimaOption} className="flex gap-2">
+                <input
+                  type="text"
+                  required
+                  placeholder="Nuova opzione (es. 🟢 Ottimo)..."
+                  value={newClimaOptionName}
+                  onChange={e => setNewClimaOptionName(e.target.value)}
+                  disabled={climaOptLoading}
+                  className="flex-1 px-3 py-2 text-xs font-bold text-purple-950 border border-purple-200/50 bg-white rounded-xl focus:ring-2 focus:ring-purple-400 outline-none placeholder-gray-400"
+                />
+                <button
+                  type="submit"
+                  disabled={climaOptLoading}
+                  className="bg-purple-600 text-white p-2 rounded-xl hover:bg-purple-700 active:scale-95 disabled:opacity-50 transition flex items-center justify-center shrink-0 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              </form>
+            </div>
+          </div>
+
+          {/* RIPARTIZIONE & ANDAMENTO GRAPHICS */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="bg-gradient-to-br from-slate-50 to-zinc-100 p-6 rounded-3xl border border-slate-200 flex flex-col justify-start gap-4 shadow-inner">
+              <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Distribuzione Risposte</h4>
+              <div className="space-y-3.5">
+                {Object.keys(climaStatsDynamic.distribution).length === 0 ? (
+                  <p className="text-xs text-gray-450 font-bold italic text-center py-6">Nessuna opzione caricata.</p>
+                ) : (
+                  Object.entries(climaStatsDynamic.distribution).map(([label, info]) => {
+                    const style = getOptionStyle(label);
+                    return (
+                      <div key={label} className="space-y-1">
+                        <div className="flex justify-between text-[11px] font-bold text-gray-700">
+                          <span className="truncate pr-2">{label}</span>
+                          <span className="shrink-0">{info.count} ({info.pct}%)</span>
+                        </div>
+                        <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden border border-gray-300/30">
+                          <div 
+                            className={`h-full rounded-full transition-all duration-500 ${
+                              style.color.includes('text-green') ? 'bg-green-500' :
+                              style.color.includes('text-red') ? 'bg-red-500' :
+                              style.color.includes('text-amber') ? 'bg-amber-500' :
+                              'bg-indigo-500'
+                            }`} 
+                            style={{ width: `${info.pct}%` }}
+                          ></div>
+                        </div>
+                      </div>
+                    );
+                  })
                 )}
               </div>
-            </>
-          ) : (
-            <>
-              {/* STATS OVERVIEW CLIMA */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-                <div className="bg-gradient-to-br from-indigo-50 to-purple-50 p-6 rounded-3xl border border-indigo-100 flex flex-col justify-between gap-4">
-                  <div>
-                    <h4 className="text-sm font-bold text-indigo-950/70 uppercase tracking-wider mb-1">Livello Benessere Medio</h4>
-                    <div className="text-4xl font-black text-indigo-900 flex items-baseline gap-2">
-                      {climaStatsDynamic.media}
-                      <span className="text-sm font-bold opacity-75">/ 10</span>
-                    </div>
-                  </div>
-                  <div className="flex gap-0.5 flex-wrap">
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(star => (
-                      <Star key={star} className={`w-3.5 h-3.5 ${Math.round(climaStatsDynamic.media) >= star ? 'text-indigo-600 fill-indigo-600' : 'text-gray-300'}`} />
-                    ))}
-                  </div>
-                </div>
+            </div>
 
-                <div className="bg-gradient-to-br from-emerald-50 to-teal-50 p-6 rounded-3xl border border-emerald-100 flex items-center justify-between">
-                  <div>
-                    <h4 className="text-sm font-bold text-emerald-950/70 uppercase tracking-wider mb-1">Totale Test Giornalieri</h4>
-                    <div className="text-4xl font-black text-emerald-900">{climaStatsDynamic.count}</div>
-                  </div>
-                  <div className="p-4 bg-emerald-600 text-white rounded-2xl"><ShieldCheck className="w-6 h-6" /></div>
-                </div>
-
-                {/* GESTIONE OPZIONI CLIMA */}
-                <div className="bg-gradient-to-br from-purple-50 to-pink-50 p-6 rounded-3xl border border-purple-200 flex flex-col justify-between gap-4 col-span-1 lg:col-span-2">
-                  <div>
-                    <div className="flex justify-between items-center mb-2 gap-2">
-                      <h4 className="text-sm font-bold text-purple-950/80 uppercase tracking-wider">Opzioni Questionario Clima</h4>
-                      <button 
-                        type="button"
-                        onClick={() => setIsTestClimaOpen(true)}
-                        className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded-xl text-xs font-bold transition shadow-sm cursor-pointer border border-indigo-700"
-                      >
-                        👁️ Prova (Anteprima)
-                      </button>
-                    </div>
-                    <div className="max-h-[140px] overflow-y-auto pr-1 space-y-1.5 mb-2">
-                      {climaOptions.map((opt, idx) => (
-                        <div key={opt.id} className="flex justify-between items-center bg-white p-2 rounded-xl border border-purple-100 shadow-sm gap-2">
-                          <span className="text-xs font-bold text-purple-950 truncate flex-1">{opt.label}</span>
-                          <div className="flex items-center gap-1">
-                            <div className="flex items-center gap-0.5 bg-gray-50 p-0.5 rounded-lg border border-gray-200">
-                              <button
-                                type="button"
-                                disabled={idx === 0}
-                                onClick={() => handleMoveClimaOption(opt.id, 'up')}
-                                className="text-gray-400 hover:text-indigo-600 p-0.5 rounded transition disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
-                                title="Sposta su"
-                              >
-                                <ChevronUp className="w-3 h-3" />
-                              </button>
-                              <button
-                                type="button"
-                                disabled={idx === climaOptions.length - 1}
-                                onClick={() => handleMoveClimaOption(opt.id, 'down')}
-                                className="text-gray-400 hover:text-indigo-600 p-0.5 rounded transition disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
-                                title="Sposta giù"
-                              >
-                                <ChevronDown className="w-3 h-3" />
-                              </button>
-                            </div>
-                            <button 
-                              type="button"
-                              onClick={() => handleDeleteClimaOption(opt.id, opt.label)}
-                              className="text-gray-400 hover:text-red-600 p-1 rounded-lg hover:bg-red-50 transition cursor-pointer"
-                              title="Elimina opzione"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  <form onSubmit={handleAddClimaOption} className="flex gap-2">
-                    <input
-                      type="text"
-                      required
-                      placeholder="Nuova opzione (es. 🟢 Ottimo)..."
-                      value={newClimaOptionName}
-                      onChange={e => setNewClimaOptionName(e.target.value)}
-                      disabled={climaOptLoading}
-                      className="flex-1 px-3 py-2 text-xs font-bold text-purple-950 border border-purple-200/50 bg-white rounded-xl focus:ring-2 focus:ring-purple-400 outline-none placeholder-gray-400"
-                    />
-                    <button
-                      type="submit"
-                      disabled={climaOptLoading}
-                      className="bg-purple-600 text-white p-2 rounded-xl hover:bg-purple-700 active:scale-95 disabled:opacity-50 transition flex items-center justify-center shrink-0 cursor-pointer"
-                    >
-                      <Plus className="w-4 h-4" />
-                    </button>
-                  </form>
-                </div>
-              </div>
-
-              {/* RIPARTIZIONE & ANDAMENTO GRAPHICS */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div className="bg-gradient-to-br from-slate-50 to-zinc-100 p-6 rounded-3xl border border-slate-200 flex flex-col justify-start gap-4 shadow-inner">
-                  <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Distribuzione Risposte</h4>
-                  <div className="space-y-3.5">
-                    {Object.keys(climaStatsDynamic.distribution).length === 0 ? (
-                      <p className="text-xs text-gray-400 font-bold italic text-center py-6">Nessuna opzione caricata.</p>
-                    ) : (
-                      Object.entries(climaStatsDynamic.distribution).map(([label, info]) => {
-                        const style = getOptionStyle(label);
-                        return (
-                          <div key={label} className="space-y-1">
-                            <div className="flex justify-between text-[11px] font-bold text-gray-700">
-                              <span className="truncate pr-2">{label}</span>
-                              <span className="shrink-0">{info.count} ({info.pct}%)</span>
-                            </div>
-                            <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden border border-gray-300/30">
-                              <div 
-                                className={`h-full rounded-full transition-all duration-500 ${
-                                  style.color.includes('text-green') ? 'bg-green-500' :
-                                  style.color.includes('text-red') ? 'bg-red-500' :
-                                  style.color.includes('text-amber') ? 'bg-amber-500' :
-                                  'bg-indigo-500'
-                                }`} 
-                                style={{ width: `${info.pct}%` }}
-                              ></div>
-                            </div>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
-
-                <div className="lg:col-span-2">
-                  <ClimaTrendChart responses={climaResponses} />
-                </div>
-              </div>
-            </>
-          )}
+            <div className="lg:col-span-2">
+              <ClimaTrendChart responses={climaResponses} />
+            </div>
+          </div>
         </div>
       )}
 
