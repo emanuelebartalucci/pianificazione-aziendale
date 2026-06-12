@@ -5,6 +5,7 @@ import { collection, onSnapshot, doc, getDoc, setDoc, query, where, getDocs } fr
 import { Users, Printer, ChevronLeft, ChevronRight, Save, Download, ZoomIn, ZoomOut, Trash2, Plus } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays } from '../utils/date';
 import AssegnazioneModal from '../components/AssegnazioneModal';
+import ConfirmModal from '../components/ConfirmModal';
 import { queueMail } from '../utils/mailSender';
 import { isCollaboratore } from './Impostazioni';
 import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
@@ -133,6 +134,21 @@ export default function PianificazionePersonale() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
 
   const [commesseToRemove, setCommesseToRemove] = useState<string[]>([]);
+
+  // Stato per la modale di conferma
+  const [confirmConfig, setConfirmConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    type?: 'danger' | 'warning' | 'info';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+    type: 'danger'
+  });
 
   // Tab 2 selection states
   const [selectedResourceForTab, setSelectedResourceForTab] = useState<string>('');
@@ -1377,12 +1393,19 @@ export default function PianificazionePersonale() {
                                   <button
                                     type="button"
                                     disabled={savingAllocations}
-                                    onClick={async () => {
-                                      if (confirm(`Sei sicuro di voler rimuovere ${r.nome} da questa commessa per il periodo selezionato?`)) {
-                                        await executeRemoveResourceFromCommessa(r.nome, selectedCommessaId);
-                                      }
+                                    onClick={() => {
+                                      setConfirmConfig({
+                                        isOpen: true,
+                                        title: 'Rimozione Risorsa',
+                                        message: `Sei sicuro di voler rimuovere ${r.nome} da questa commessa per il periodo selezionato?`,
+                                        type: 'danger',
+                                        onConfirm: async () => {
+                                          await executeRemoveResourceFromCommessa(r.nome, selectedCommessaId);
+                                          setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+                                        }
+                                      });
                                     }}
-                                    className="text-red-500 hover:text-red-750 hover:bg-red-50 p-1.5 rounded-lg transition-colors disabled:opacity-50"
+                                    className="text-red-500 hover:text-red-750 hover:bg-red-55 p-1.5 rounded-lg transition-colors disabled:opacity-50"
                                     title="Rimuovi risorsa da questa commessa"
                                   >
                                     <Trash2 className="w-4 h-4" />
@@ -1569,12 +1592,19 @@ export default function PianificazionePersonale() {
                                       <button
                                         type="button"
                                         disabled={savingAllocations}
-                                        onClick={async () => {
-                                          if (confirm(`Sei sicuro di voler rimuovere la commessa "${c.nome}" per ${selectedResourceForTab} nel periodo selezionato?`)) {
-                                            await executeRemoveResourceFromCommessa(selectedResourceForTab, c.id);
-                                          }
+                                        onClick={() => {
+                                          setConfirmConfig({
+                                            isOpen: true,
+                                            title: 'Rimozione Commessa',
+                                            message: `Sei sicuro di voler rimuovere la commessa "${c.nome}" per ${selectedResourceForTab} nel periodo selezionato?`,
+                                            type: 'danger',
+                                            onConfirm: async () => {
+                                              await executeRemoveResourceFromCommessa(selectedResourceForTab, c.id);
+                                              setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+                                            }
+                                          });
                                         }}
-                                        className="text-red-500 hover:text-red-750 hover:bg-red-50 p-1.5 rounded-lg transition-colors disabled:opacity-50"
+                                        className="text-red-500 hover:text-red-750 hover:bg-red-55 p-1.5 rounded-lg transition-colors disabled:opacity-50"
                                         title="Rimuovi questa commessa"
                                       >
                                         <Trash2 className="w-4 h-4" />
@@ -2250,6 +2280,15 @@ export default function PianificazionePersonale() {
         commesseCatalog={commesse}
         currentAssignments={assignments[`${modalData.dipendente}-${modalData.weekId}`] || []}
         dipendentiList={dipendenti}
+      />
+
+      <ConfirmModal
+        isOpen={confirmConfig.isOpen}
+        title={confirmConfig.title}
+        message={confirmConfig.message}
+        type={confirmConfig.type}
+        onConfirm={confirmConfig.onConfirm}
+        onCancel={() => setConfirmConfig(prev => ({ ...prev, isOpen: false }))}
       />
     </div>
   );

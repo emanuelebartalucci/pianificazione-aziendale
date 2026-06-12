@@ -270,75 +270,75 @@ export default function Dashboard() {
       </div>
 
       {/* Griglia a due colonne: Operational links a sinistra, News a destra */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         
         {/* COLONNA SINISTRA: SEZIONI OPERATIVE (2/3 di larghezza) */}
-        <div className="lg:col-span-2 space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+        <div className="lg:col-span-7 space-y-6">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-6">
             
             {/* Pianificazione Commesse */}
             <div 
               onClick={() => navigate('/commesse')} 
-              className="bg-white/80 backdrop-blur-xl p-8 rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between min-h-[180px]"
+              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 xl:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between aspect-square w-full"
             >
-              <div className="w-14 h-14 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-colors">
-                <Briefcase className="w-7 h-7" />
+              <div className="w-12 h-12 sm:w-14 sm:h-14 xl:w-16 xl:h-16 shrink-0 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                <Briefcase className="w-6 h-6 sm:w-7 sm:h-7 xl:w-8 xl:h-8" />
               </div>
               <div>
-                <h2 className="text-xl font-extrabold text-gray-800 mt-4">Pianificazione Commesse</h2>
-                <p className="text-xs font-semibold text-gray-400 mt-1">Gestisci e visualizza i tuoi impegni settimanali e i progetti.</p>
+                <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-800 mt-2">Pianificazione Commesse</h2>
+                <p className="hidden xl:block text-xs font-semibold text-gray-500 mt-1.5 leading-tight">Gestisci e visualizza i tuoi impegni settimanali e i progetti.</p>
               </div>
             </div>
             
             {/* Pianificazione Personale */}
             <div 
               onClick={() => navigate('/pianificazione-personale')} 
-              className="bg-white/80 backdrop-blur-xl p-8 rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between min-h-[180px]"
+              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 xl:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between aspect-square w-full"
             >
-              <div className="w-14 h-14 bg-orange-100 text-orange-600 rounded-2xl flex items-center justify-center group-hover:bg-orange-600 group-hover:text-white transition-colors">
-                <Users className="w-7 h-7" />
+              <div className="w-12 h-12 sm:w-14 sm:h-14 xl:w-16 xl:h-16 shrink-0 bg-orange-100 text-orange-600 rounded-2xl flex items-center justify-center group-hover:bg-orange-600 group-hover:text-white transition-colors">
+                <Users className="w-6 h-6 sm:w-7 sm:h-7 xl:w-8 xl:h-8" />
               </div>
               <div>
-                <h2 className="text-xl font-extrabold text-gray-800 mt-4">Pianificazione Personale</h2>
-                <p className="text-xs font-semibold text-gray-400 mt-1">Pianifica il personale sulle commesse e controlla i carichi di lavoro.</p>
+                <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-800 mt-2">Pianificazione Personale</h2>
+                <p className="hidden xl:block text-xs font-semibold text-gray-500 mt-1.5 leading-tight">Pianifica il personale sulle commesse e controlla i carichi di lavoro.</p>
               </div>
             </div>
             
             {/* Piano Ferie */}
             <div 
               onClick={() => navigate('/ferie')} 
-              className="bg-white/80 backdrop-blur-xl p-8 rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between min-h-[180px]"
+              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 xl:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between aspect-square w-full"
             >
-              <div className="w-14 h-14 bg-green-100 text-green-600 rounded-2xl flex items-center justify-center group-hover:bg-green-600 group-hover:text-white transition-colors">
-                <Calendar className="w-7 h-7" />
+              <div className="w-12 h-12 sm:w-14 sm:h-14 xl:w-16 xl:h-16 shrink-0 bg-green-100 text-green-600 rounded-2xl flex items-center justify-center group-hover:bg-green-600 group-hover:text-white transition-colors">
+                <Calendar className="w-6 h-6 sm:w-7 sm:h-7 xl:w-8 xl:h-8" />
               </div>
               <div>
-                <h2 className="text-xl font-extrabold text-gray-800 mt-4">Piano Ferie</h2>
-                <p className="text-xs font-semibold text-gray-400 mt-1">Richiedi giorni di ferie o assenze e controlla il calendario.</p>
+                <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-800 mt-2">Piano Ferie</h2>
+                <p className="hidden xl:block text-xs font-semibold text-gray-500 mt-1.5 leading-tight">Richiedi giorni di ferie o assenze e controlla il calendario.</p>
               </div>
             </div>
 
             {/* Registro Presenze */}
             <div 
               onClick={() => navigate('/presenze')} 
-              className="bg-white/80 backdrop-blur-xl p-8 rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between min-h-[180px]"
+              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 xl:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between aspect-square w-full"
             >
-              <div className="w-14 h-14 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center group-hover:bg-indigo-600 group-hover:text-white transition-colors">
-                <FileText className="w-7 h-7" />
+              <div className="w-12 h-12 sm:w-14 sm:h-14 xl:w-16 xl:h-16 shrink-0 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+                <FileText className="w-6 h-6 sm:w-7 sm:h-7 xl:w-8 xl:h-8" />
               </div>
               <div>
-                <h2 className="text-xl font-extrabold text-gray-800 mt-4">Registro Presenze</h2>
-                <p className="text-xs font-semibold text-gray-400 mt-1">Compila il rapportino mensile delle ore e dei rimborsi trasferte.</p>
+                <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-800 mt-2">Registro Presenze</h2>
+                <p className="hidden xl:block text-xs font-semibold text-gray-500 mt-1.5 leading-tight">Compila il rapportino mensile delle ore e dei rimborsi trasferte.</p>
               </div>
             </div>
 
             {/* Cassetta delle Idee */}
             <div 
               onClick={() => navigate('/suggerimenti')} 
-              className="bg-white/80 backdrop-blur-xl p-8 rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between min-h-[180px]"
+              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 xl:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between aspect-square w-full"
             >
-              <div className="w-14 h-14 bg-purple-100 text-purple-600 rounded-2xl flex items-center justify-center group-hover:bg-purple-600 group-hover:text-white transition-colors relative">
-                <MessageSquare className="w-7 h-7" />
+              <div className="w-12 h-12 sm:w-14 sm:h-14 xl:w-16 xl:h-16 shrink-0 bg-purple-100 text-purple-600 rounded-2xl flex items-center justify-center group-hover:bg-purple-600 group-hover:text-white transition-colors relative">
+                <MessageSquare className="w-6 h-6 sm:w-7 sm:h-7 xl:w-8 xl:h-8" />
                 {!isSoci(myAssociatedName) && activeQuestionnaire && activeQuestionnaire.active && !hasCompletedSurvey && (
                   <span className="absolute -top-1 -right-1 flex h-5 w-5">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
@@ -349,8 +349,8 @@ export default function Dashboard() {
                 )}
               </div>
               <div>
-                <h2 className="text-xl font-extrabold text-gray-800 mt-4">Cassetta delle Idee</h2>
-                <p className="text-xs font-semibold text-gray-400 mt-1">Invia suggerimenti e partecipa in forma anonima alla valutazione clima.</p>
+                <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-800 mt-2">Cassetta delle Idee</h2>
+                <p className="hidden xl:block text-xs font-semibold text-gray-500 mt-1.5 leading-tight">Invia suggerimenti e partecipa in forma anonima alla valutazione clima.</p>
               </div>
             </div>
 
@@ -358,14 +358,14 @@ export default function Dashboard() {
             {showAdminSettings && (
               <div 
                 onClick={() => navigate('/impostazioni')} 
-                className="bg-white/80 backdrop-blur-xl p-8 rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between min-h-[180px]"
+                className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 xl:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between aspect-square w-full"
               >
-                <div className="w-14 h-14 bg-gray-100 text-gray-600 rounded-2xl flex items-center justify-center group-hover:bg-gray-800 group-hover:text-white transition-colors">
-                  <Settings className="w-7 h-7" />
+                <div className="w-12 h-12 sm:w-14 sm:h-14 xl:w-16 xl:h-16 shrink-0 bg-gray-100 text-gray-600 rounded-2xl flex items-center justify-center group-hover:bg-gray-800 group-hover:text-white transition-colors">
+                  <Settings className="w-6 h-6 sm:w-7 sm:h-7 xl:w-8 xl:h-8" />
                 </div>
                 <div>
-                  <h2 className="text-xl font-extrabold text-gray-800 mt-4">Impostazioni Admin</h2>
-                  <p className="text-xs font-semibold text-gray-400 mt-1">Gestisci ruoli, anagrafica dipendenti e catalogo commesse.</p>
+                  <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-800 mt-2">Impostazioni Admin</h2>
+                  <p className="hidden xl:block text-xs font-semibold text-gray-500 mt-1.5 leading-tight">Gestisci ruoli, anagrafica dipendenti e catalogo commesse.</p>
                 </div>
               </div>
             )}
@@ -373,9 +373,9 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* COLONNA DESTRA: BACHECA NEWS (1/3 di larghezza) */}
-        <div className="lg:col-span-1">
-          <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-lg border border-white/50 p-6 flex flex-col min-h-[400px]">
+        {/* COLONNA DESTRA: BACHECA NEWS (5/12 di larghezza) */}
+        <div className="lg:col-span-5">
+          <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-lg border border-white/50 p-6 flex flex-col h-full">
             <div className="flex justify-between items-center pb-4 border-b border-gray-100 mb-4">
               <h3 className="text-xl font-black text-gray-900 flex items-center gap-2">
                 <Megaphone className="w-5 h-5 text-indigo-600" />
@@ -393,7 +393,7 @@ export default function Dashboard() {
             </div>
 
             {/* Elenco comunicazioni */}
-            <div className="space-y-4 overflow-y-auto max-h-[500px] pr-1 flex-1">
+            <div className="space-y-4 flex-1">
               {displayAnnouncements.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center py-12 text-gray-400">
                   <Megaphone className="w-10 h-10 stroke-[1.5] opacity-50 mb-2" />
@@ -413,7 +413,7 @@ export default function Dashboard() {
                       }`}
                     >
                       <div>
-                        <div className="flex justify-between items-start gap-2">
+                        <div className="flex justify-between items-center gap-2 pr-8">
                           <span className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full ${
                             isReminder 
                               ? 'bg-amber-100 text-amber-700 border border-amber-200' 
@@ -425,19 +425,20 @@ export default function Dashboard() {
                           </span>
                           <span className="text-[10px] font-bold text-gray-400">{ann.data}</span>
                         </div>
-                        <h4 className="text-base font-extrabold text-gray-900 mt-2">{ann.titolo}</h4>
+                        <h4 className="text-base font-extrabold text-gray-900 mt-2 pr-8">{ann.titolo}</h4>
                         <p className="text-sm text-gray-600 leading-relaxed font-medium whitespace-pre-wrap mt-1.5">{ann.contenuto}</p>
                       </div>
 
                       {canPublish && !isReminder && (
                         <button
                           onClick={() => handleDeleteNotice(ann.id, ann.titolo)}
-                          className="absolute top-4 right-4 text-gray-300 hover:text-red-600 p-1.5 rounded-lg hover:bg-red-50 transition opacity-0 group-hover/item:opacity-100"
+                          className="absolute top-4 right-4 text-gray-400 hover:text-red-600 hover:bg-red-50 p-1.5 rounded-xl transition-all"
                           title="Elimina avviso"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
                       )}
+
                     </div>
                   );
                 })

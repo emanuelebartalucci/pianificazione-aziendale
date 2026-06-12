@@ -1,10 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, addDoc, doc, setDoc, deleteDoc, onSnapshot, updateDoc } from 'firebase/firestore';
-import { Shield, UserCheck, Star, Briefcase, Users, Plus, Trash2, Settings, Printer, Building2, Search, ArrowRightLeft } from 'lucide-react';
+import { Shield, UserCheck, Star, Users, Plus, Trash2, Settings, Printer, Building2, Search, ArrowRightLeft } from 'lucide-react';
 import ConfirmModal from '../components/ConfirmModal';
-import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
 
 
 const COLLABORATORI = [
@@ -65,7 +64,7 @@ export const isSoci = (nome?: string | null): boolean => {
 };
 
 export default function Impostazioni() {
-  const { isAdmin, dipendenti, commesse } = useAuth();
+  const { isAdmin, dipendenti } = useAuth();
   
   // Stato per la modale di conferma personalizzata
   const [confirmConfig, setConfirmConfig] = useState<{
@@ -103,7 +102,7 @@ export default function Impostazioni() {
   };
   
   // States per i form
-  const [activeTab, setActiveTab] = useState<'commesse' | 'clienti' | 'risorse' | 'ruoli' | 'sistema'>('commesse');
+  const [activeTab, setActiveTab] = useState<'clienti' | 'risorse' | 'ruoli' | 'sistema'>('clienti');
   const [newAdminEmail, setNewAdminEmail] = useState('');
   const [newHrEmail, setNewHrEmail] = useState('');
   const [hrList, setHrList] = useState<{id: string, email: string}[]>([]);
@@ -111,23 +110,6 @@ export default function Impostazioni() {
   const [newPmEmail, setNewPmEmail] = useState('');
   
   // Collaborator editing states (unused ones removed)
-  
-  const [newCommessaDataInizio, setNewCommessaDataInizio] = useState('');
-  const [newCommessaDataFine, setNewCommessaDataFine] = useState('');
-  
-  const [newCommessaTipologia, setNewCommessaTipologia] = useState('A');
-  const [newCommessaAnno, setNewCommessaAnno] = useState(new Date().getFullYear().toString());
-  const [newCommessaLettera, setNewCommessaLettera] = useState('A');
-  const [newCommessaTitolo, setNewCommessaTitolo] = useState('');
-  const [newCommessaResponsabile, setNewCommessaResponsabile] = useState('');
-  const [newCommessaPM, setNewCommessaPM] = useState('');
-  
-  // Searchable Client Dropdown States
-  const [selectedClient, setSelectedClient] = useState<{codice: string, nome: string} | null>(null);
-  const [clientSearchText, setClientSearchText] = useState('');
-  const [isClientDropdownOpen, setIsClientDropdownOpen] = useState(false);
-  
-  const [searchCommessaQuery, setSearchCommessaQuery] = useState('');
   
   const [newDipNome, setNewDipNome] = useState('');
   const [newDipEmail, setNewDipEmail] = useState('');
@@ -139,18 +121,6 @@ export default function Impostazioni() {
   const [searchClientQuery, setSearchClientQuery] = useState('');
   const [clientiList, setClientiList] = useState<{id: string, codice: string, nome: string}[]>([]);
   const [pmsList, setPmsList] = useState<{id: string, email: string}[]>([]);
-
-  // Calcolo codice commessa in tempo reale ed eventuale duplicato
-  const generatedCodiceCommessa = useMemo(() => {
-    if (!selectedClient) return '';
-    const paddedClientCode = selectedClient.codice.padStart(4, '0');
-    return `${newCommessaTipologia}${newCommessaAnno.slice(-2)}${paddedClientCode}${newCommessaLettera}`;
-  }, [selectedClient, newCommessaTipologia, newCommessaAnno, newCommessaLettera]);
-
-  const isDuplicateCommessaCode = useMemo(() => {
-    if (!generatedCodiceCommessa) return false;
-    return commesse.some(c => c.codiceCommessa === generatedCodiceCommessa);
-  }, [generatedCodiceCommessa, commesse]);
 
   // Liste dinamiche da visualizzare (caricate da context o listener locali per eliminazione)
   const [adminsList, setAdminsList] = useState<{id: string, email: string}[]>([]);
@@ -270,66 +240,6 @@ export default function Impostazioni() {
     );
   };
 
-  const handleAddCommessa = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedClient || !newCommessaTitolo) {
-      showToast("Seleziona un cliente e inserisci il titolo della commessa.", "warning");
-      return;
-    }
-    
-    if (newCommessaDataInizio && newCommessaDataFine && newCommessaDataInizio > newCommessaDataFine) {
-      showToast("La data di inizio non può essere successiva alla data di fine.", "warning");
-      return;
-    }
-
-    const paddedClientCode = selectedClient.codice.padStart(4, '0');
-    const codiceCommessa = `${newCommessaTipologia}${newCommessaAnno.slice(-2)}${paddedClientCode}${newCommessaLettera}`;
-    
-    if (commesse.some(c => c.codiceCommessa === codiceCommessa)) {
-      showToast(`Errore: Esiste già una commessa con il codice "${codiceCommessa}". Modifica il progressivo.`, "error");
-      return;
-    }
-
-    const calculatedColor = TIPOLOGIA_COLORS[newCommessaTipologia] || '#64748b';
-
-    try {
-      const payload = {
-        nome: `${codiceCommessa} - ${newCommessaTitolo}`,
-        codiceCommessa,
-        anno: newCommessaAnno,
-        tipologia: newCommessaTipologia,
-        titolo: newCommessaTitolo,
-        cliente: selectedClient.nome,
-        stato: 'Aperta',
-        colore: calculatedColor,
-        dataInizio: newCommessaDataInizio || '',
-        dataFine: newCommessaDataFine || '',
-        responsabile: newCommessaResponsabile || '',
-        pm: newCommessaPM || ''
-      };
-      
-      await addDoc(collection(db, 'catalogo_commesse'), payload);
-      
-      setSelectedClient(null);
-      setClientSearchText('');
-      setNewCommessaTitolo('');
-      setNewCommessaDataInizio('');
-      setNewCommessaDataFine('');
-      setNewCommessaLettera('A');
-      setNewCommessaResponsabile('');
-      setNewCommessaPM('');
-      
-      showToast("Commessa salvata nel catalogo con successo!", "success");
-    } catch (err) {
-      console.error("Errore salvataggio commessa:", err);
-      showToast("Si è verificato un errore durante il salvataggio.", "error");
-    }
-  };
-
-  const handleRemoveCommessa = async (id: string) => {
-    await deleteDoc(doc(db, 'catalogo_commesse', id));
-  };
-
   const handleAddDipendente = async (e: React.FormEvent) => {
     e.preventDefault();
     if(newDipNome) {
@@ -400,93 +310,6 @@ export default function Impostazioni() {
       },
       'danger'
     );
-  };
-
-  const handlePrintCommesse = () => {
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
-
-    const htmlContent = `
-      <html>
-        <head>
-          <title>Anagrafica Clienti / Commesse</title>
-          <style>
-            body {
-              font-family: Arial, sans-serif;
-              margin: 30px;
-              color: #333;
-            }
-            h1 {
-              text-align: center;
-              margin-bottom: 30px;
-              font-size: 24px;
-            }
-            table {
-              width: 100%;
-              border-collapse: collapse;
-              margin-top: 20px;
-            }
-            th, td {
-              border: 1px solid #ccc;
-              padding: 12px 15px;
-              text-align: left;
-            }
-            th {
-              background-color: #f3f4f6;
-              font-weight: bold;
-            }
-            .color-indicator {
-              display: inline-block;
-              width: 16px;
-              height: 16px;
-              border-radius: 50%;
-              vertical-align: middle;
-              margin-right: 10px;
-              border: 1px solid #ccc;
-              -webkit-print-color-adjust: exact !important;
-              print-color-adjust: exact !important;
-            }
-          </style>
-        </head>
-        <body>
-          <h1>Anagrafica Clienti / Commesse</h1>
-          <table>
-            <thead>
-              <tr>
-                <th style="width: 15%;">#</th>
-                <th style="width: 85%;">Nome Commessa / Cliente</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${commesse.map((c, index) => {
-                const computedTipologia = getParsedField(c, 'tipologia');
-                const computedColor = TIPOLOGIA_COLORS[computedTipologia] || c.colore || '#64748b';
-                return `
-                  <tr>
-                    <td>${index + 1}</td>
-                    <td>
-                      <span class="color-indicator" style="background-color: ${computedColor}"></span>
-                      <strong>${c.nome}</strong>
-                    </td>
-                  </tr>
-                `;
-              }).join('')}
-            </tbody>
-          </table>
-          <script>
-            window.onload = function() {
-              window.print();
-              window.onafterprint = function() {
-                window.close();
-              };
-            };
-          </script>
-        </body>
-      </html>
-    `;
-
-    printWindow.document.write(htmlContent);
-    printWindow.document.close();
   };
 
   const handlePrintClienti = () => {
@@ -702,14 +525,7 @@ export default function Impostazioni() {
     printWindow.document.close();
   };
 
-  const getParsedField = (c: any, field: 'anno' | 'tipologia') => {
-    if (c[field]) return c[field];
-    if (!c.codiceCommessa) return '';
-    const match = c.codiceCommessa.match(/^([A-Za-z]+)(\d{2})/);
-    if (!match) return '';
-    if (field === 'anno') return `20${match[2]}`;
-    return match[1].toUpperCase();
-  };
+
 
   const getDipNomeFromEmail = (email: string) => {
     const dip = dipendenti.find(d => d.email?.toLowerCase() === email.toLowerCase());
@@ -725,18 +541,6 @@ export default function Impostazioni() {
       
       {/* Menu a schede (Tabs) */}
       <div className="flex flex-wrap gap-2 mb-8 border-b border-gray-150 pb-4">
-        <button
-          onClick={() => setActiveTab('commesse')}
-          className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm transition-all active:scale-95 cursor-pointer ${
-            activeTab === 'commesse'
-              ? 'bg-emerald-600 text-white shadow-md shadow-emerald-250'
-              : 'bg-gray-50 text-gray-650 hover:bg-gray-100'
-          }`}
-        >
-          <Briefcase className="w-4 h-4" />
-          <span>Catalogo Commesse</span>
-        </button>
-
         <button
           onClick={() => setActiveTab('clienti')}
           className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm transition-all active:scale-95 cursor-pointer ${
@@ -789,256 +593,6 @@ export default function Impostazioni() {
       {/* CONTENUTO SCHEDE */}
       <div>
         
-        {/* TAB 1: COMMESSE */}
-        {activeTab === 'commesse' && (
-          <div className="space-y-8">
-            <section className="bg-gradient-to-br from-emerald-50 to-teal-50 p-6 rounded-3xl border border-emerald-100 shadow-sm">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-xl font-bold text-emerald-900 flex items-center gap-2"><Briefcase className="w-6 h-6 text-emerald-600" /> Catalogo Commesse</h3>
-                <button 
-                  onClick={handlePrintCommesse}
-                  className="flex items-center gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 px-3.5 py-1.5 rounded-xl text-xs font-bold transition shadow-sm active:scale-95 cursor-pointer"
-                >
-                  <Printer className="w-3.5 h-3.5" /> Stampa Lista
-                </button>
-              </div>
-              
-              <div className="mb-6 bg-white/50 p-5 rounded-2xl border border-emerald-100/50 shadow-inner">
-                <form onSubmit={handleAddCommessa} className="space-y-4">
-                  
-                  {/* Selettore Cliente Ricercabile */}
-                  <div className="relative">
-                    <label className="block text-[10px] font-bold text-emerald-950 mb-1 ml-1">Cliente (Cerca e Seleziona)</label>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        placeholder="Digita per cercare un cliente per codice o ragione sociale..."
-                        value={selectedClient ? selectedClient.nome : clientSearchText}
-                        onChange={e => {
-                          setClientSearchText(e.target.value);
-                          if (selectedClient) setSelectedClient(null);
-                          setIsClientDropdownOpen(true);
-                        }}
-                        onFocus={() => setIsClientDropdownOpen(true)}
-                        className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs"
-                      />
-                      {selectedClient && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedClient(null);
-                            setClientSearchText('');
-                          }}
-                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-red-500 hover:text-red-700 font-extrabold text-[10px] bg-red-50 px-2 py-1 rounded-lg transition"
-                        >
-                          Rimuovi
-                        </button>
-                      )}
-                    </div>
-                    {isClientDropdownOpen && (
-                      <>
-                        <div className="fixed inset-0 z-10" onClick={() => setIsClientDropdownOpen(false)}></div>
-                        <div className="absolute left-0 right-0 z-20 mt-1 max-h-56 overflow-y-auto bg-white border border-gray-150 rounded-xl shadow-xl divide-y divide-gray-50">
-                          {(() => {
-                            const search = clientSearchText.toLowerCase();
-                            const filtered = clientiList.filter(c =>
-                              c.nome.toLowerCase().includes(search) || c.codice.includes(search)
-                            );
-                            if (filtered.length === 0) {
-                              return <div className="p-3 text-xs text-gray-450 italic font-bold">Nessun cliente trovato</div>;
-                            }
-                            return filtered.map(c => (
-                              <button
-                                key={c.codice}
-                                type="button"
-                                onClick={() => {
-                                  setSelectedClient(c);
-                                  setClientSearchText(c.nome);
-                                  setIsClientDropdownOpen(false);
-                                }}
-                                className="w-full text-left p-3 hover:bg-emerald-50 text-xs font-semibold text-gray-700 transition-colors flex justify-between items-center cursor-pointer"
-                              >
-                                <span>{c.nome}</span>
-                                <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-black">Cod. {c.codice}</span>
-                              </button>
-                            ));
-                          })()}
-                        </div>
-                      </>
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div>
-                      <label className="block text-[10px] font-bold text-emerald-950 mb-1 ml-1">Tipologia</label>
-                      <select value={newCommessaTipologia} onChange={e => setNewCommessaTipologia(e.target.value)} className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs">
-                        {Object.entries(TIPOLOGIE_COMMESSE).map(([code, desc]) => (
-                          <option key={code} value={code}>{code} - {desc}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-emerald-950 mb-1 ml-1">Anno</label>
-                      <input required type="text" maxLength={4} placeholder="Es. 2026" value={newCommessaAnno} onChange={e => setNewCommessaAnno(e.target.value)} className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs text-center" />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-emerald-950 mb-1 ml-1">Progressivo</label>
-                      <input required type="text" maxLength={2} placeholder="Es. A" value={newCommessaLettera} onChange={e => setNewCommessaLettera(e.target.value.toUpperCase())} className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs text-center" />
-                    </div>
-                  </div>
-
-                  {/* Anteprima Codice */}
-                  <div className={`${isDuplicateCommessaCode ? 'bg-rose-100 border-rose-300 text-rose-900' : 'bg-emerald-100/60 border-emerald-200 text-emerald-900'} p-3 rounded-xl border text-center text-xs font-bold flex flex-col sm:flex-row items-center justify-center gap-2 transition-colors duration-200`}>
-                    <span>Codice Commessa Generato:</span>
-                    <span className={`flex items-center gap-2 text-sm font-black tracking-wider bg-white px-2.5 py-1 rounded shadow-sm ${isDuplicateCommessaCode ? 'text-rose-700 border border-rose-250 shadow-inner' : 'text-emerald-700'}`}>
-                      <span className="w-2.5 h-2.5 rounded-full shrink-0 animate-pulse" style={{backgroundColor: isDuplicateCommessaCode ? '#f43f5e' : (TIPOLOGIA_COLORS[newCommessaTipologia] || '#64748b')}}></span>
-                      {selectedClient ? generatedCodiceCommessa : 'Seleziona un cliente'}
-                    </span>
-                    {isDuplicateCommessaCode && (
-                      <span className="text-[10px] text-rose-600 font-extrabold uppercase animate-bounce shrink-0 ml-1.5">
-                        ⚠️ Codice duplicato! Cambia il progressivo
-                      </span>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-bold text-emerald-950 mb-1 ml-1">Titolo della Commessa</label>
-                    <input required type="text" placeholder="Es. Progettazione impianti Villa Gori" value={newCommessaTitolo} onChange={e => setNewCommessaTitolo(e.target.value)} className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs" />
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[10px] font-bold text-emerald-950 mb-1 ml-1">Data Inizio (Opzionale)</label>
-                      <input type="date" value={newCommessaDataInizio} onChange={e => setNewCommessaDataInizio(e.target.value)} className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-medium text-gray-600 text-xs" />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-emerald-950 mb-1 ml-1">Data Fine (Opzionale)</label>
-                      <input type="date" value={newCommessaDataFine} onChange={e => setNewCommessaDataFine(e.target.value)} className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-medium text-gray-600 text-xs" />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[10px] font-bold text-emerald-950 mb-1 ml-1">Responsabile (Opzionale)</label>
-                      <select value={newCommessaResponsabile} onChange={e => setNewCommessaResponsabile(e.target.value)} className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs">
-                        <option value="">-- Nessuno --</option>
-                        {seniorsList.map(s => {
-                          const name = getDipNomeFromEmail(s.email);
-                          return <option key={s.id} value={name}>{name}</option>;
-                        })}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-emerald-950 mb-1 ml-1">Project Manager (PM - Opzionale)</label>
-                      <select value={newCommessaPM} onChange={e => setNewCommessaPM(e.target.value)} className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs">
-                        <option value="">-- Nessuno --</option>
-                        {pmsList.map(p => {
-                          const name = getDipNomeFromEmail(p.email);
-                          return <option key={p.id} value={name}>{name}</option>;
-                        })}
-                      </select>
-                    </div>
-                  </div>
-
-                  <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-xl transition font-bold shadow-md active:scale-95 text-sm flex items-center justify-center gap-1.5 mt-2 cursor-pointer">
-                    Salva Commessa nel Catalogo
-                  </button>
-                </form>
-              </div>
-
-              {/* Box di ricerca commesse */}
-              <div className="mb-3">
-                <input 
-                  type="text" 
-                  placeholder="Cerca commessa per codice, titolo, cliente o responsabile..." 
-                  value={searchCommessaQuery} 
-                  onChange={e => setSearchCommessaQuery(e.target.value)} 
-                  className="w-full p-3 border-none rounded-xl bg-white focus:bg-white outline-none focus:ring-2 focus:ring-emerald-400 transition shadow-inner font-semibold text-xs text-gray-700" 
-                />
-              </div>
-
-              <div className="max-h-[450px] overflow-auto bg-white/50 rounded-xl border border-emerald-100">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead className="sticky top-0 bg-emerald-100 text-emerald-900 font-extrabold shadow-sm z-10">
-                    <tr>
-                      <th className="p-2.5">Codice</th>
-                      <th className="p-2.5">Anno</th>
-                      <th className="p-2.5">Tip.</th>
-                      <th className="p-2.5">Titolo</th>
-                      <th className="p-2.5">Cliente</th>
-                      <th className="p-2.5">Stato</th>
-                      <th className="p-2.5">Resp.</th>
-                      <th className="p-2.5">PM</th>
-                      <th className="p-2.5 text-center"></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-emerald-55/60 font-medium text-emerald-950">
-                    {(() => {
-                      const filtered = commesse.filter(c => {
-                        const query = searchCommessaQuery.toLowerCase();
-                        const codice = (c as any).codiceCommessa || '';
-                        const titolo = (c as any).titolo || c.nome || '';
-                        const cliente = (c as any).cliente || '';
-                        const resp = c.responsabile || '';
-                        const pm = c.pm || '';
-                        return codice.toLowerCase().includes(query) ||
-                               titolo.toLowerCase().includes(query) ||
-                               cliente.toLowerCase().includes(query) ||
-                               resp.toLowerCase().includes(query) ||
-                               pm.toLowerCase().includes(query) ||
-                               c.nome.toLowerCase().includes(query);
-                      });
-
-                      if (filtered.length === 0) {
-                        return (
-                          <tr>
-                            <td colSpan={9} className="p-8 text-center text-gray-400 font-bold italic">
-                              Nessuna commessa trovata.
-                            </td>
-                          </tr>
-                        );
-                      }
-
-                      return filtered.map(c => {
-                        const computedTipologia = getParsedField(c, 'tipologia');
-                        const computedAnno = getParsedField(c, 'anno');
-                        const computedColor = TIPOLOGIA_COLORS[computedTipologia] || c.colore || '#64748b';
-
-                        return (
-                          <tr key={c.id} className="hover:bg-emerald-50/50 transition-colors">
-                            <td className="p-2.5 font-bold whitespace-nowrap">
-                              <div className="flex items-center gap-1.5">
-                                <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow-inner" style={{backgroundColor: computedColor}}></span>
-                                {(c as any).codiceCommessa || c.nome.split(' - ')[0]}
-                              </div>
-                            </td>
-                            <td className="p-2.5">{computedAnno}</td>
-                            <td className="p-2.5">{computedTipologia}</td>
-                            <td className="p-2.5 max-w-[200px] truncate" title={(c as any).titolo || c.nome}>{(c as any).titolo || c.nome}</td>
-                            <td className="p-2.5 max-w-[150px] truncate" title={(c as any).cliente || ''}>{(c as any).cliente || ''}</td>
-                            <td className="p-2.5 text-center">
-                              <span className={`px-2 py-0.5 rounded-full font-black text-[9px] uppercase tracking-wider ${
-                                (c as any).stato === 'Aperta' || !c.hasOwnProperty('stato') ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-650'
-                              }`}>
-                                {(c as any).stato || 'Aperta'}
-                              </span>
-                            </td>
-                            <td className="p-2.5 truncate max-w-[100px]" title={c.responsabile || ''}>{c.responsabile || ''}</td>
-                            <td className="p-2.5 truncate max-w-[100px]" title={c.pm || ''}>{c.pm || ''}</td>
-                            <td className="p-2.5 text-center">
-                              <button onClick={() => handleRemoveCommessa(c.id)} className="text-emerald-500 hover:text-red-650 p-1 transition-colors cursor-pointer"><Trash2 className="w-4 h-4"/></button>
-                            </td>
-                          </tr>
-                        );
-                      });
-                    })()}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          </div>
-        )}
-
         {/* TAB 2: CLIENTI */}
         {activeTab === 'clienti' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
