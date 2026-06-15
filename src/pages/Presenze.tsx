@@ -153,6 +153,10 @@ export default function Presenze() {
   const [myWeekendRequests, setMyWeekendRequests] = useState<any[]>([]);
   const [allWeekendRequests, setAllWeekendRequests] = useState<any[]>([]);
 
+  // Stati per badge notifica globali (solo per HR e non Admin)
+  const [globalPendingInviatiCount, setGlobalPendingInviatiCount] = useState(0);
+  const [globalPendingWeekendCount, setGlobalPendingWeekendCount] = useState(0);
+
   // Stato per la modale di conferma personalizzata
   const [confirmConfig, setConfirmConfig] = useState<{
     isOpen: boolean;
@@ -429,6 +433,33 @@ export default function Presenze() {
 
     return () => unsub();
   }, [viewMode]);
+
+  useEffect(() => {
+    if (!isHR) return;
+
+    // 1. Listen to all timesheets in status 'Inviato' (across all months/years)
+    const qInviati = query(
+      collection(db, 'presenze'),
+      where('stato', '==', 'Inviato')
+    );
+    const unsubInviati = onSnapshot(qInviati, (snapshot) => {
+      setGlobalPendingInviatiCount(snapshot.size);
+    });
+
+    // 2. Listen to all weekend requests in status 'In attesa'
+    const qWeekend = query(
+      collection(db, 'richieste_weekend'),
+      where('stato', '==', 'In attesa')
+    );
+    const unsubWeekend = onSnapshot(qWeekend, (snapshot) => {
+      setGlobalPendingWeekendCount(snapshot.size);
+    });
+
+    return () => {
+      unsubInviati();
+      unsubWeekend();
+    };
+  }, [isHR, isAdmin]);
 
   // --- PREFILL LOGIC ---
   const createPrefilledRapportino = async () => {
@@ -837,26 +868,7 @@ export default function Presenze() {
           setRapportino(updated);
           showToast("Foglio presenze inviato con successo all'HR!");
 
-          // Invia notifica all'HR
-          try {
-            const hrSnap = await getDocs(collection(db, 'hr'));
-            const hrEmails = hrSnap.docs.map(d => d.data().email?.toLowerCase()).filter(Boolean);
-            const meseNome = MESI[selectedMonth - 1];
-            for (const email of hrEmails) {
-              await queueMail(
-                email,
-                `[Pianificazione] Nuovo Rapportino Presenze da approvare - ${myAssociatedName}`,
-                `
-                  <p>Ciao,</p>
-                  <p>Il dipendente <strong>${myAssociatedName}</strong> ha completato e inviato il proprio rapportino presenze per il mese di <strong>${meseNome} ${selectedYear}</strong>.</p>
-                  <p>Puoi accedere all'applicazione per esaminare e approvare il foglio ore.</p>
-                  <p>Buon lavoro.</p>
-                `
-              );
-            }
-          } catch (emailErr) {
-            console.error("Errore notifica email HR:", emailErr);
-          }
+          // Notifica e-mail all'HR rimossa a favore del sistema di badge di notifica
         } catch (err) {
           console.error("Errore invio rapportino:", err);
           showToast("Errore durante l'invio.", "error");
@@ -955,6 +967,10 @@ export default function Presenze() {
 
   const handleHRApprove = () => {
     if (!reviewingRapportino) return;
+    if (reviewingRapportino.stato === 'Bozza') {
+      showToast("Impossibile approvare un rapportino in stato Bozza.", "warning");
+      return;
+    }
     triggerConfirm(
       "Approva Rapportino",
       `Approvare il foglio presenze di ${reviewingRapportino.dipendenteNome}?`,
@@ -1676,6 +1692,27 @@ export default function Presenze() {
     return list;
   };
 
+  // Calcolo dei conteggi per i badge interni (Dipendenti / Collaboratori) del mese selezionato
+  const pendingDipCount = useMemo(() => {
+    return dipendenti.filter(dip => {
+      const isCollab = isCollaboratore(dip.nome, dipendenti);
+      if (isCollab) return false;
+      const docId = `${dip.nome}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+      const sheet = allRapportini[docId];
+      return sheet?.stato === 'Inviato';
+    }).length;
+  }, [dipendenti, allRapportini, selectedYear, selectedMonth]);
+
+  const pendingCollabCount = useMemo(() => {
+    return dipendenti.filter(dip => {
+      const isCollab = isCollaboratore(dip.nome, dipendenti);
+      if (!isCollab) return false;
+      const docId = `${dip.nome}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+      const sheet = allRapportini[docId];
+      return sheet?.stato === 'Inviato';
+    }).length;
+  }, [dipendenti, allRapportini, selectedYear, selectedMonth]);
+
   return (
     <div className="flex flex-col gap-6">
       
@@ -1694,9 +1731,14 @@ export default function Presenze() {
           <div className="flex bg-gray-100/80 p-1.5 rounded-2xl shadow-inner">
             <button 
               onClick={() => { setViewMode('hr'); setReviewingRapportino(null); }}
-              className={`px-5 py-2.5 rounded-xl font-bold text-sm transition-all ${viewMode === 'hr' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              className={`px-5 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-1.5 ${viewMode === 'hr' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
             >
-              Dashboard HR
+              <span>Dashboard HR</span>
+              {isHR && (globalPendingInviatiCount + globalPendingWeekendCount) > 0 && (
+                <span className="bg-red-500 text-white text-[10px] font-extrabold px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center inline-block">
+                  {globalPendingInviatiCount + globalPendingWeekendCount}
+                </span>
+              )}
             </button>
             <button 
               onClick={() => { setViewMode('compila'); }}
@@ -1796,15 +1838,25 @@ export default function Presenze() {
             <div className="flex bg-gray-200/60 p-1.5 rounded-2xl">
               <button
                 onClick={() => setHrTab('dipendenti')}
-                className={`px-5 py-2 rounded-xl text-xs font-bold transition-all ${hrTab === 'dipendenti' ? 'bg-white text-indigo-700 shadow-sm font-extrabold' : 'text-gray-500 hover:text-gray-700'}`}
+                className={`px-5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${hrTab === 'dipendenti' ? 'bg-white text-indigo-700 shadow-sm font-extrabold' : 'text-gray-500 hover:text-gray-700'}`}
               >
-                Dipendenti
+                <span>Dipendenti</span>
+                {isHR && pendingDipCount > 0 && (
+                  <span className="bg-red-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">
+                    {pendingDipCount}
+                  </span>
+                )}
               </button>
               <button
                 onClick={() => setHrTab('collaboratori')}
-                className={`px-5 py-2 rounded-xl text-xs font-bold transition-all ${hrTab === 'collaboratori' ? 'bg-white text-indigo-700 shadow-sm font-extrabold' : 'text-gray-500 hover:text-gray-700'}`}
+                className={`px-5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${hrTab === 'collaboratori' ? 'bg-white text-indigo-700 shadow-sm font-extrabold' : 'text-gray-500 hover:text-gray-700'}`}
               >
-                Collaboratori (P. IVA)
+                <span>Collaboratori (P. IVA)</span>
+                {isHR && pendingCollabCount > 0 && (
+                  <span className="bg-red-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">
+                    {pendingCollabCount}
+                  </span>
+                )}
               </button>
             </div>
             <h3 className="font-extrabold text-lg text-gray-900">
@@ -1922,7 +1974,12 @@ export default function Presenze() {
         <div className={`bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl p-6 sm:p-8 border border-white/50 flex flex-col mb-10 overflow-hidden ${(printTargetSheet || reviewingRapportino) ? 'no-print' : ''}`}>
           <h3 className="font-extrabold text-xl text-gray-900 mb-2 flex items-center gap-2">
             <ShieldAlert className="w-6 h-6 text-indigo-600" />
-            Richieste Autorizzazione Weekend / Chiusure
+            <span>Richieste Autorizzazione Weekend / Chiusure</span>
+            {isHR && globalPendingWeekendCount > 0 && (
+              <span className="bg-red-500 text-white text-xs font-extrabold px-2 py-0.5 rounded-full">
+                {globalPendingWeekendCount}
+              </span>
+            )}
           </h3>
           <p className="text-xs text-gray-500 font-semibold mb-6">
             Elenco delle richieste di dipendenti e collaboratori per lavorare nei giorni di weekend o chiusura aziendale.
@@ -2966,7 +3023,7 @@ export default function Presenze() {
       {/* ======================================================== */}
       {reviewingRapportino && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 no-print overflow-y-auto">
-          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-6xl overflow-hidden flex flex-col my-4 max-h-[92vh]">
+          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-6xl xl:max-w-7xl overflow-hidden flex flex-col my-4 max-h-[92vh]">
             
             {/* Header Modal */}
             <div className="bg-gradient-to-r from-indigo-700 to-violet-800 p-5 flex justify-between items-center text-white shrink-0">
@@ -3199,10 +3256,10 @@ export default function Presenze() {
                   TABELLONE ORE (PUOI ESEGUIRE CORREZIONI DIRETTAMENTE SE NECESSARIO)
                 </div>
                 <div className="w-full overflow-x-auto scrollbar-thin">
-                  <table className="w-full text-center border-collapse min-w-[1100px] text-[11px]">
+                  <table className="w-full text-center border-collapse min-w-[980px] xl:min-w-0 text-[11px]">
                     <thead>
                       <tr className="bg-gray-100 border-b border-gray-200 text-[9px] uppercase font-bold text-gray-600">
-                        <th className="p-2.5 text-left w-32 font-bold bg-gray-100 sticky left-0 z-10 border-r">Giorno</th>
+                        <th className="p-2.5 text-left w-28 font-bold bg-gray-100 sticky left-0 z-10 border-r">Giorno</th>
                         {Array.from({ length: 31 }).map((_, i) => {
                           const d = i + 1;
                           const out = d > daysInMonth;
@@ -3675,7 +3732,13 @@ export default function Presenze() {
                     </button>
                     <button 
                       onClick={handleHRApprove}
-                      className="px-5 py-2.5 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl text-xs transition shadow-md active:scale-95"
+                      disabled={reviewingRapportino.stato === 'Bozza'}
+                      className={`px-5 py-2.5 font-bold rounded-xl text-xs transition active:scale-95 ${
+                        reviewingRapportino.stato === 'Bozza'
+                          ? 'bg-gray-300 text-gray-500 cursor-not-allowed shadow-none'
+                          : 'bg-green-600 hover:bg-green-700 text-white shadow-md'
+                      }`}
+                      title={reviewingRapportino.stato === 'Bozza' ? "Non è possibile approvare un rapportino in stato Bozza" : undefined}
                     >
                       Approva Rapportino
                     </button>

@@ -1,9 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, addDoc, onSnapshot, doc, deleteDoc, query, orderBy, getDocs, setDoc, where } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, doc, deleteDoc, query, orderBy, setDoc, where, getDocs } from 'firebase/firestore';
 import { Send, MessageSquare, Shield, Star, Filter, Trash2, LayoutList, Plus, ShieldCheck, FileText, Download, Edit3, BarChart3, Smile, Meh, Frown, ChevronUp, ChevronDown } from 'lucide-react';
-import { queueMail } from '../utils/mailSender';
 import ConfirmModal from '../components/ConfirmModal';
 import { DEFAULT_QUESTIONS, getQuestionSection } from '../utils/defaultQuestionnaire';
 import QuestionnaireModal from '../components/QuestionnaireModal';
@@ -118,7 +117,6 @@ const ClimaTrendChart = ({ responses }: { responses: RispostaClima[] }) => {
           <option value={15}>Ultimi 15 giorni attivi</option>
           <option value={30}>Ultimo mese attivo (30gg)</option>
           <option value={90}>Ultimi 3 mesi attivi (90gg)</option>
-          <option value={9999}>Tutto il periodo</option>
         </select>
       </div>
       <div className="relative w-full">
@@ -405,6 +403,35 @@ export default function Suggerimenti() {
     return () => unsub();
   }, [isAdmin, isHR]);
 
+  // Pulizia automatica delle risposte clima più vecchie di 90 giorni (solo per HR/Admin)
+  useEffect(() => {
+    if (!isAdmin && !isHR) return;
+    
+    const cleanupOldResponses = async () => {
+      try {
+        const ninetyDaysAgo = new Date();
+        ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+        const ninetyDaysAgoISO = ninetyDaysAgo.toISOString();
+
+        const q = query(
+          collection(db, 'risposte_clima'),
+          where('createdAt', '<', ninetyDaysAgoISO)
+        );
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          console.log(`[PULIZIA CLIMA] Trovati ${snap.size} elementi più vecchi di 90 giorni. Eliminazione in corso...`);
+          const promises = snap.docs.map(docSnap => deleteDoc(doc(db, 'risposte_clima', docSnap.id)));
+          await Promise.all(promises);
+          console.log("[PULIZIA CLIMA] Eliminazione completata.");
+        }
+      } catch (err) {
+        console.error("Errore durante la pulizia dei dati clima:", err);
+      }
+    };
+
+    cleanupOldResponses();
+  }, [isAdmin, isHR]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!categoria || !testo.trim()) {
@@ -423,28 +450,7 @@ export default function Suggerimenti() {
         data: todayStr
       });
 
-      // Invia notifica email
-      try {
-        const hrSnap = await getDocs(collection(db, 'hr'));
-        const hrEmails = hrSnap.docs.map(d => d.data().email?.toLowerCase()).filter(Boolean);
-        const subject = `[Pianificazione] Nuovo Suggerimento Anonimo Ricevuto`;
-        const htmlContent = `
-          <p>Ciao,</p>
-          <p>È stato inserito un nuovo suggerimento anonimo nella cassetta delle idee.</p>
-          <table border="0" cellspacing="0" cellpadding="0" style="margin: 20px 0; font-family: Arial, Helvetica, sans-serif; font-size: 14px; width: 100%; max-width: 400px; background-color: #f9fafb; border-radius: 8px; border: 1px solid #e5e7eb;">
-            <tr>
-              <td style="padding: 12px 16px; font-weight: bold; color: #374151; border-bottom: 1px solid #e5e7eb; width: 150px;">Categoria:</td>
-              <td style="padding: 12px 16px; color: #111827; border-bottom: 1px solid #e5e7eb;">${categoria}</td>
-            </tr>
-          </table>
-          <p>Puoi accedere all'applicazione per visualizzare il testo completo del suggerimento nella scheda della Dashboard HR.</p>
-        `;
-        for (const email of hrEmails) {
-          await queueMail(email, subject, htmlContent);
-        }
-      } catch (emailErr) {
-        console.error("Errore notifica email HR:", emailErr);
-      }
+      // Notifica e-mail all'HR rimossa a favore del sistema di badge di notifica
 
       setCategoria('');
       setTesto('');
@@ -915,7 +921,13 @@ export default function Suggerimenti() {
               onClick={() => setActiveTab('suggerimenti')}
               className={`px-4 sm:px-6 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2 cursor-pointer ${activeTab === 'suggerimenti' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
             >
-              <LayoutList className="w-4 h-4" /> Suggerimenti Anonimi
+              <LayoutList className="w-4 h-4" /> 
+              <span>Suggerimenti Anonimi</span>
+              {isHR && suggerimenti.length > 0 && (
+                <span className="bg-red-500 text-white text-[10px] font-extrabold px-1.5 py-0.5 rounded-full ml-1 min-w-[1.25rem] text-center inline-block">
+                  {suggerimenti.length}
+                </span>
+              )}
             </button>
             <button 
               onClick={() => setActiveTab('clima')}

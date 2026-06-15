@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, addDoc, onSnapshot, doc, updateDoc } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { Calendar, CheckCircle, XCircle, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
 import { queueMail } from '../utils/mailSender';
 
@@ -23,6 +23,7 @@ interface RichiestaFerie {
   dataFine?: string;
   oraInizio?: string;
   oraFine?: string;
+  timestamp?: string;
 }
 
 export default function Ferie() {
@@ -64,6 +65,11 @@ export default function Ferie() {
   const [richieste, setRichieste] = useState<RichiestaFerie[]>([]);
   const [loading, setLoading] = useState(false);
 
+  // States per l'annullamento ferie da parte di HR
+  const [cancellationRequest, setCancellationRequest] = useState<RichiestaFerie | null>(null);
+  const [cancellationReason, setCancellationReason] = useState('');
+  const [cancellationLoading, setCancellationLoading] = useState(false);
+
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'richieste_ferie'), (snapshot) => {
       const list: RichiestaFerie[] = [];
@@ -78,13 +84,14 @@ export default function Ferie() {
           dataInizio: data.dataInizio,
           dataFine: data.dataFine,
           oraInizio: data.oraInizio,
-          oraFine: data.oraFine
+          oraFine: data.oraFine,
+          timestamp: data.timestamp
         });
       });
       setRichieste(list.sort((a, b) => {
-        const dateA = new Date(a.dataInizio || a.data).getTime();
-        const dateB = new Date(b.dataInizio || b.data).getTime();
-        return dateB - dateA;
+        const timeA = a.timestamp ? new Date(a.timestamp).getTime() : new Date(a.dataInizio || a.data).getTime();
+        const timeB = b.timestamp ? new Date(b.timestamp).getTime() : new Date(b.dataInizio || b.data).getTime();
+        return timeB - timeA;
       }));
     });
     return () => unsub();
@@ -92,10 +99,19 @@ export default function Ferie() {
 
   const listRichieste = useMemo(() => {
     if (isHR) {
-      return richieste;
+      // Ottieni la data odierna nel formato YYYY-MM-DD
+      const todayStr = new Date().toLocaleDateString('sv-SE'); // Formato YYYY-MM-DD
+      return richieste.filter(r => {
+        const dateLimit = r.dataFine || r.dataInizio || r.data || '';
+        return !dateLimit || dateLimit >= todayStr;
+      });
     }
     return richieste.filter(r => r.dipendenteName === myAssociatedName);
   }, [richieste, isHR, myAssociatedName]);
+
+  const pendingCount = useMemo(() => {
+    return listRichieste.filter(r => r.stato === 'In attesa').length;
+  }, [listRichieste]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -220,6 +236,57 @@ export default function Ferie() {
     }
   };
 
+  const handleCancelApprovedLeave = async () => {
+    if (!cancellationRequest) return;
+    setCancellationLoading(true);
+    try {
+      const req = cancellationRequest;
+      // 1. Elimina il documento da Firestore
+      await deleteDoc(doc(db, 'richieste_ferie', req.id));
+
+      // 2. Invia e-mail di notifica di annullamento al dipendente
+      const targetDip = dipendenti.find(d => d.nome === req.dipendenteName);
+      if (targetDip && targetDip.email) {
+        const dateDesc = req.tipo === 'permesso' && req.oraInizio && req.oraFine
+          ? `il ${formatDate(req.dataInizio || req.data)} dalle ${req.oraInizio} alle ${req.oraFine}`
+          : req.dataInizio && req.dataFine && req.dataInizio !== req.dataFine 
+            ? `dal ${formatDate(req.dataInizio)} al ${formatDate(req.dataFine)}` 
+            : `il ${formatDate(req.dataInizio || req.data)}`;
+        
+        const typeLabels: Record<string, string> = {
+          ferie: 'Ferie',
+          malattia: 'Malattia',
+          permesso: 'Permesso',
+          smart: 'Lavoro da Casa',
+          mattina: 'Assenza Mattina',
+          pomeriggio: 'Assenza Pomeriggio'
+        };
+        const typeDesc = typeLabels[req.tipo] || req.tipo;
+
+        const subject = `[Notifica] Annullamento richiesta ${typeDesc}`;
+        const htmlBody = `
+          <p>Ciao <strong>${req.dipendenteName}</strong>,</p>
+          <p>Ti informiamo che la tua richiesta di <strong>${typeDesc}</strong> prevista <strong>${dateDesc}</strong> (in stato <em>${req.stato.toLowerCase()}</em>) è stata **annullata dall'amministrazione / HR**.</p>
+          ${cancellationReason.trim() ? `<p><strong>Motivazione dell'annullamento:</strong> ${cancellationReason.trim()}</p>` : ''}
+          <p>Il calendario e il registro presenze sono stati aggiornati di conseguenza.</p>
+          <p>Questa è una notifica automatica inviata dal sistema Pianificazione Aziendale. Si prega di non rispondere a questo messaggio.</p>
+        `;
+        const plainText = `Ciao ${req.dipendenteName},\n\nTi informiamo che la tua richiesta di ${typeDesc} prevista ${dateDesc} (in stato ${req.stato.toLowerCase()}) è stata annullata dall'amministrazione / HR.\n\n${cancellationReason.trim() ? `Motivazione dell'annullamento: ${cancellationReason.trim()}\n\n` : ''}Questa è una notifica automatica.`;
+
+        await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+      }
+
+      showToast("Ferie annullate con successo!");
+      setCancellationRequest(null);
+      setCancellationReason('');
+    } catch (err) {
+      console.error(err);
+      showToast("Errore durante l'annullamento delle ferie.", "error");
+    } finally {
+      setCancellationLoading(false);
+    }
+  };
+
   const getStatusBadge = (stato: string) => {
     switch(stato) {
       case 'Approvato': return <span className="flex items-center gap-1 text-[10px] sm:text-xs font-bold bg-green-100 text-green-700 px-2 py-1 rounded-full"><CheckCircle className="w-3 h-3"/> {stato}</span>;
@@ -290,8 +357,21 @@ export default function Ferie() {
 
             const hourSuffix = req.tipo === 'permesso' && req.oraInizio && req.oraFine ? ` (${req.oraInizio}-${req.oraFine})` : '';
 
+            const isPowerUser = isHR || isAdmin;
             return (
-              <div key={req.id} className={`text-[10px] p-1.5 rounded border ${bg} flex items-center gap-1.5 font-medium leading-tight shadow-sm`}>
+              <div 
+                key={req.id} 
+                onClick={() => {
+                  if (isPowerUser) {
+                    setCancellationRequest(req);
+                    setCancellationReason('');
+                  }
+                }}
+                className={`text-[10px] p-1.5 rounded border ${bg} flex items-center gap-1.5 font-medium leading-tight shadow-sm ${
+                  isPowerUser ? 'cursor-pointer hover:brightness-95 active:scale-95 transition-all' : ''
+                }`}
+                title={isPowerUser ? "Clicca per annullare/eliminare questa richiesta" : undefined}
+              >
                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${t.color}`}></span>
                 <span className="truncate" title={`${req.dipendenteName} - ${t.label}${hourSuffix}`}>
                   {req.dipendenteName}{hourSuffix}
@@ -476,9 +556,14 @@ export default function Ferie() {
 
           {/* LISTA RICHIESTE */}
           <div className="bg-white/60 p-8 rounded-3xl border border-gray-100 shadow-inner">
-            <h3 className="font-extrabold text-2xl mb-6 text-gray-900">
-              {isHR ? "Richieste da Gestire" : "Le tue richieste"}
-            </h3>
+             <h3 className="font-extrabold text-2xl mb-6 text-gray-900 flex items-center gap-2">
+               {isHR ? "Richieste da Gestire" : "Le tue richieste"}
+               {isHR && pendingCount > 0 && (
+                 <span className="bg-red-500 text-white text-xs font-extrabold px-2 py-0.5 rounded-full">
+                   {pendingCount}
+                 </span>
+               )}
+             </h3>
             
             <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
               {listRichieste.length === 0 ? (
@@ -556,6 +641,62 @@ export default function Ferie() {
           <div className="flex items-center gap-2 text-xs font-bold text-gray-700"><span className="w-3 h-3 rounded-full bg-red-400 shadow-sm"></span> Rifiutato</div>
         </div>
       </div>
+
+      {cancellationRequest && (
+        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl border border-gray-100 p-6 sm:p-8 max-w-md w-full animate-in fade-in zoom-in-95 duration-200 flex flex-col gap-5">
+            <div>
+              <h4 className="font-extrabold text-xl text-gray-900">Annulla Richiesta Assenza</h4>
+              <p className="text-xs text-gray-500 mt-1">Stai per eliminare definitivamente questa richiesta approvata o in attesa.</p>
+            </div>
+
+            <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100/50 text-xs text-gray-700 space-y-2 font-medium">
+              <div><strong>Dipendente:</strong> {cancellationRequest.dipendenteName}</div>
+              <div><strong>Tipo Assenza:</strong> <span className="capitalize">{getTipoData(cancellationRequest.tipo).label}</span></div>
+              <div>
+                <strong>Periodo:</strong> {
+                  cancellationRequest.tipo === 'permesso' && cancellationRequest.oraInizio && cancellationRequest.oraFine
+                    ? `Il ${formatDate(cancellationRequest.dataInizio || cancellationRequest.data)} dalle ${cancellationRequest.oraInizio} alle ${cancellationRequest.oraFine}`
+                    : cancellationRequest.dataInizio && cancellationRequest.dataFine && cancellationRequest.dataInizio !== cancellationRequest.dataFine 
+                      ? `Dal ${formatDate(cancellationRequest.dataInizio)} al ${formatDate(cancellationRequest.dataFine)}` 
+                      : `Il ${formatDate(cancellationRequest.dataInizio || cancellationRequest.data)}`
+                }
+              </div>
+              <div><strong>Stato Attuale:</strong> <span className="font-bold">{cancellationRequest.stato}</span></div>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-bold text-gray-500 ml-1">Motivazione annullamento (facoltativa, inviata via email)</label>
+              <textarea
+                placeholder="Es: Modifica della pianificazione o delle attività concordata con il dipendente..."
+                value={cancellationReason}
+                onChange={e => setCancellationReason(e.target.value)}
+                className="w-full p-3 border-none bg-gray-50 focus:bg-gray-100 rounded-xl text-xs outline-none focus:ring-2 focus:ring-red-500 shadow-inner font-semibold text-gray-700 min-h-[90px] resize-none"
+              />
+            </div>
+
+            <div className="flex gap-3">
+              <button 
+                onClick={() => {
+                  setCancellationRequest(null);
+                  setCancellationReason('');
+                }}
+                disabled={cancellationLoading}
+                className="flex-1 py-3 px-4 rounded-xl border border-gray-200 text-xs font-bold text-gray-655 hover:bg-gray-50 transition active:scale-95 disabled:opacity-50"
+              >
+                Annulla
+              </button>
+              <button 
+                onClick={handleCancelApprovedLeave}
+                disabled={cancellationLoading}
+                className="flex-1 py-3 px-4 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition active:scale-95 disabled:opacity-50 shadow-md shadow-red-200"
+              >
+                {cancellationLoading ? 'Elaborazione...' : 'Elimina Assenza'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {toast && (
         <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[99999] animate-in fade-in slide-in-from-top-4 duration-300">

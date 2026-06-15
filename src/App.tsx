@@ -36,20 +36,25 @@ function App() {
     <Router>
       <ScrollToTop />
       {user ? (
-        <div className="bg-gray-100 text-gray-900 font-sans min-h-screen">
-          <Navbar />
-          <main className="max-w-[1400px] mx-auto px-4 py-8">
-            <Routes>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/commesse" element={<Commesse />} />
-              <Route path="/ferie" element={<Ferie />} />
-              <Route path="/impostazioni" element={<Impostazioni />} />
-              <Route path="/presenze" element={<Presenze />} />
-              <Route path="/suggerimenti" element={<Suggerimenti />} />
-              <Route path="/pianificazione-personale" element={<PianificazionePersonale />} />
-              <Route path="*" element={<Navigate to="/" />} />
-            </Routes>
-          </main>
+        <div className="bg-gray-100 text-gray-900 font-sans min-h-screen flex flex-col justify-between">
+          <div className="flex-1">
+            <Navbar />
+            <main className="max-w-[1400px] mx-auto px-4 py-8">
+              <Routes>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/commesse" element={<Commesse />} />
+                <Route path="/ferie" element={<Ferie />} />
+                <Route path="/impostazioni" element={<Impostazioni />} />
+                <Route path="/presenze" element={<Presenze />} />
+                <Route path="/suggerimenti" element={<Suggerimenti />} />
+                <Route path="/pianificazione-personale" element={<PianificazionePersonale />} />
+                <Route path="*" element={<Navigate to="/" />} />
+              </Routes>
+            </main>
+          </div>
+          <footer className="text-center py-6 text-xs text-gray-400 opacity-40 select-none print:hidden">
+            Sviluppato da Emanuele Bartalucci
+          </footer>
         </div>
       ) : (
         <Routes>

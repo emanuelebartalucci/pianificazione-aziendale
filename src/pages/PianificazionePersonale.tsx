@@ -1898,9 +1898,10 @@ export default function PianificazionePersonale() {
           </div>
         </div>
 
-        {/* Load Grid */}
-        <div className="w-full overflow-auto scrollbar-thin flex-1">
-          <table className="w-full text-center border-collapse text-xs">
+        {/* Load Grid with clipping for rounded corners */}
+        <div className="w-full flex-1 overflow-hidden mb-4 rounded-b-2xl flex flex-col">
+          <div className="w-full overflow-auto scrollbar-thin flex-1">
+            <table className="w-full text-center border-separate border-spacing-0 text-xs">
             <thead className="sticky top-0 z-30 bg-gray-100 border-b border-gray-200 font-bold text-gray-600 shadow-sm">
               <tr className="h-14">
                 <th 
@@ -2259,9 +2260,10 @@ export default function PianificazionePersonale() {
             )}
           </table>
         </div>
+      </div>
 
         {/* Legend */}
-        <div className="p-4 bg-gray-50 flex flex-wrap gap-6 border-t justify-center text-xs font-bold text-gray-500">
+        <div className="p-4 bg-gray-50 flex flex-wrap gap-6 border-t justify-center text-xs font-bold text-gray-500 rounded-b-[2rem]">
           <div className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-gray-300"></span> Carico Vuoto (0%)</div>
           <div className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-amber-400"></span> Sotto-utilizzato (&lt; 100%)</div>
           <div className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-green-500"></span> Ottimale (100%)</div>

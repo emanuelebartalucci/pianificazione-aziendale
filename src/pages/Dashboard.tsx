@@ -34,6 +34,11 @@ export default function Dashboard() {
   const [hasCompletedSurvey, setHasCompletedSurvey] = useState(true);
   const [hasSkippedSurvey, setHasSkippedSurvey] = useState(false);
 
+  // Stati per i badge di notifica HR (solo se isHR && !isAdmin)
+  const [pendingFerieCount, setPendingFerieCount] = useState(0);
+  const [pendingPresenzeCount, setPendingPresenzeCount] = useState(0);
+  const [pendingSuggerimentiCount, setPendingSuggerimentiCount] = useState(0);
+
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
 
   const showToast = (message: string, type: 'success' | 'warning' | 'error' = 'success') => {
@@ -78,8 +83,8 @@ export default function Dashboard() {
     const todayStr = new Date().toDateString();
     
     if (lastAnswered !== todayStr) {
-      // 30% di probabilità di mostrare il pop-up all'accesso
-      const show = Math.random() < 0.3;
+      // 15% di probabilità di mostrare il pop-up all'accesso (in media ~1 volta ogni 7-8 giorni lavorativi per risorsa)
+      const show = Math.random() < 0.15;
       if (show) {
         setIsClimaModalOpen(true);
       }
@@ -149,6 +154,74 @@ export default function Dashboard() {
     });
     return () => unsub();
   }, []);
+
+  // Listeners per i badge di notifica HR
+  useEffect(() => {
+    if (!isHR) {
+      setPendingFerieCount(0);
+      setPendingPresenzeCount(0);
+      setPendingSuggerimentiCount(0);
+      return;
+    }
+
+    // 1. Ferie in attesa (non scadute)
+    const qFerie = query(
+      collection(db, 'richieste_ferie'),
+      where('stato', '==', 'In attesa')
+    );
+    const unsubFerie = onSnapshot(qFerie, (snapshot) => {
+      const todayStr = new Date().toLocaleDateString('sv-SE');
+      let count = 0;
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        const dateLimit = data.dataFine || data.dataInizio || data.data || '';
+        if (!dateLimit || dateLimit >= todayStr) {
+          count++;
+        }
+      });
+      setPendingFerieCount(count);
+    });
+
+    // 2. Presenze (Rapportini Inviati)
+    const qPresenze = query(
+      collection(db, 'presenze'),
+      where('stato', '==', 'Inviato')
+    );
+    let inviatiCount = 0;
+    let weekendCount = 0;
+
+    const updatePresenzeCount = (inv: number, wk: number) => {
+      setPendingPresenzeCount(inv + wk);
+    };
+
+    const unsubPresenze = onSnapshot(qPresenze, (snapshot) => {
+      inviatiCount = snapshot.size;
+      updatePresenzeCount(inviatiCount, weekendCount);
+    });
+
+    // 3. Richieste Weekend in attesa
+    const qWeekend = query(
+      collection(db, 'richieste_weekend'),
+      where('stato', '==', 'In attesa')
+    );
+    const unsubWeekend = onSnapshot(qWeekend, (snapshot) => {
+      weekendCount = snapshot.size;
+      updatePresenzeCount(inviatiCount, weekendCount);
+    });
+
+    // 4. Suggerimenti
+    const qSuggerimenti = query(collection(db, 'suggerimenti'));
+    const unsubSuggerimenti = onSnapshot(qSuggerimenti, (snapshot) => {
+      setPendingSuggerimentiCount(snapshot.size);
+    });
+
+    return () => {
+      unsubFerie();
+      unsubPresenze();
+      unsubWeekend();
+      unsubSuggerimenti();
+    };
+  }, [isHR, isAdmin]);
 
   const handleCreateNotice = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -309,8 +382,16 @@ export default function Dashboard() {
               onClick={() => navigate('/ferie')} 
               className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 xl:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between aspect-square w-full"
             >
-              <div className="w-12 h-12 sm:w-14 sm:h-14 xl:w-16 xl:h-16 shrink-0 bg-green-100 text-green-600 rounded-2xl flex items-center justify-center group-hover:bg-green-600 group-hover:text-white transition-colors">
+              <div className="w-12 h-12 sm:w-14 sm:h-14 xl:w-16 xl:h-16 shrink-0 bg-green-100 text-green-600 rounded-2xl flex items-center justify-center group-hover:bg-green-600 group-hover:text-white transition-colors relative">
                 <Calendar className="w-6 h-6 sm:w-7 sm:h-7 xl:w-8 xl:h-8" />
+                {isHR && pendingFerieCount > 0 && (
+                  <span className="absolute -top-1 -right-1 flex h-5 w-5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-5 w-5 bg-red-500 text-[10px] font-black text-white items-center justify-center border border-white">
+                      {pendingFerieCount}
+                    </span>
+                  </span>
+                )}
               </div>
               <div>
                 <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-800 mt-2">Piano Ferie</h2>
@@ -323,8 +404,16 @@ export default function Dashboard() {
               onClick={() => navigate('/presenze')} 
               className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 xl:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between aspect-square w-full"
             >
-              <div className="w-12 h-12 sm:w-14 sm:h-14 xl:w-16 xl:h-16 shrink-0 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+              <div className="w-12 h-12 sm:w-14 sm:h-14 xl:w-16 xl:h-16 shrink-0 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center group-hover:bg-indigo-600 group-hover:text-white transition-colors relative">
                 <FileText className="w-6 h-6 sm:w-7 sm:h-7 xl:w-8 xl:h-8" />
+                {isHR && pendingPresenzeCount > 0 && (
+                  <span className="absolute -top-1 -right-1 flex h-5 w-5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-5 w-5 bg-red-500 text-[10px] font-black text-white items-center justify-center border border-white">
+                      {pendingPresenzeCount}
+                    </span>
+                  </span>
+                )}
               </div>
               <div>
                 <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-800 mt-2">Registro Presenze</h2>
@@ -339,13 +428,24 @@ export default function Dashboard() {
             >
               <div className="w-12 h-12 sm:w-14 sm:h-14 xl:w-16 xl:h-16 shrink-0 bg-purple-100 text-purple-600 rounded-2xl flex items-center justify-center group-hover:bg-purple-600 group-hover:text-white transition-colors relative">
                 <MessageSquare className="w-6 h-6 sm:w-7 sm:h-7 xl:w-8 xl:h-8" />
-                {!isSoci(myAssociatedName) && activeQuestionnaire && activeQuestionnaire.active && !hasCompletedSurvey && (
-                  <span className="absolute -top-1 -right-1 flex h-5 w-5">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-5 w-5 bg-red-500 text-[10px] font-black text-white items-center justify-center border border-white">
-                      1
+                {isHR ? (
+                  pendingSuggerimentiCount > 0 && (
+                    <span className="absolute -top-1 -right-1 flex h-5 w-5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-5 w-5 bg-red-500 text-[10px] font-black text-white items-center justify-center border border-white">
+                        {pendingSuggerimentiCount}
+                      </span>
                     </span>
-                  </span>
+                  )
+                ) : (
+                  !isSoci(myAssociatedName) && activeQuestionnaire && activeQuestionnaire.active && !hasCompletedSurvey && (
+                    <span className="absolute -top-1 -right-1 flex h-5 w-5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-5 w-5 bg-red-500 text-[10px] font-black text-white items-center justify-center border border-white">
+                        1
+                      </span>
+                    </span>
+                  )
                 )}
               </div>
               <div>

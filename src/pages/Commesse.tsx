@@ -843,7 +843,7 @@ export default function Commesse() {
       {(activeTab === 'consultazione' || (!isAdmin && !isSenior)) && (
         <>
           {/* TIMELINE TABLE CARD */}
-          <div className="bg-white rounded-[2rem] shadow-xl border relative mb-10 flex flex-col max-h-[750px]">
+          <div className="bg-white rounded-[2rem] shadow-xl border relative mb-10 flex flex-col max-h-[750px] pb-4">
             
             {/* TOOLBAR */}
             <div className="p-4 border-b border-gray-200 flex flex-col md:flex-row md:items-center justify-between gap-4 no-print bg-gray-50/50 rounded-t-[2rem] shrink-0 md:h-20">
@@ -1053,9 +1053,10 @@ export default function Commesse() {
               </div>
             </div>
 
-            {/* Load Grid Wrapper */}
-            <div className="w-full overflow-auto scrollbar-thin flex-1">
-              <table className="w-full text-left border-separate border-spacing-0 text-xs">
+            {/* Load Grid Wrapper with clipping for rounded corners */}
+            <div className="w-full flex-1 overflow-hidden rounded-b-2xl flex flex-col">
+              <div className="w-full overflow-auto scrollbar-thin flex-1">
+                <table className="w-full text-left border-separate border-spacing-0 text-xs">
                 <thead className="sticky top-0 z-30 bg-white shadow-sm border-b-2 border-gray-200">
                   {/* Month Group Header Row */}
                   <tr className="bg-gray-50 border-b text-[11px] font-black text-gray-500 text-center uppercase tracking-wider" style={{ height: '40px' }}>
@@ -1269,6 +1270,7 @@ export default function Commesse() {
               </table>
             </div>
           </div>
+        </div>
 
           {editingCommessa && (
             <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
