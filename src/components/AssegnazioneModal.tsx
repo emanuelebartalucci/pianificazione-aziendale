@@ -3,7 +3,7 @@ import { type Commessa, type Dipendente } from '../contexts/AuthContext';
 import { X, Plus, Trash2 } from 'lucide-react';
 import { doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
-import { queueMail } from '../utils/mailSender';
+import { addPendingNotification } from '../utils/pendingNotifications';
 import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
 
 interface Assegnazione {
@@ -24,9 +24,10 @@ interface AssegnazioneModalProps {
   commesseCatalog: Commessa[];
   currentAssignments: Assegnazione[];
   dipendentiList: Dipendente[];
+  onAssignmentsChanged?: () => void;
 }
 
-export default function AssegnazioneModal({ isOpen, onClose, dipendente, weekId, weekLabel, weekSub, commesseCatalog, currentAssignments, dipendentiList }: AssegnazioneModalProps) {
+export default function AssegnazioneModal({ isOpen, onClose, dipendente, weekId, weekLabel, weekSub, commesseCatalog, currentAssignments, dipendentiList, onAssignmentsChanged }: AssegnazioneModalProps) {
   const [selectedCommessa, setSelectedCommessa] = useState('');
   const [selectedPercent, setSelectedPercent] = useState<string>('100');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
@@ -40,49 +41,7 @@ export default function AssegnazioneModal({ isOpen, onClose, dipendente, weekId,
 
   if (!isOpen) return null;
 
-  // Helper to send assignment email
-  const sendAssignmentEmail = async (newList: Assegnazione[]) => {
-    try {
-      const targetDip = dipendentiList.find(d => d.nome === dipendente);
-      if (!targetDip || !targetDip.email) return;
 
-      const listText = newList.length === 0 
-        ? "Nessuna commessa assegnata (settimana libera)." 
-        : newList.map(a => `- ${a.commessaName}: ${a.percentuale}%`).join('\n');
-
-      const listHtml = newList.length === 0
-        ? "<p style=\"font-style: italic;\">Nessuna commessa assegnata (settimana libera).</p>"
-        : `
-          <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin: 20px 0; font-family: Arial, Helvetica, sans-serif; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; width: 100%;">
-            <tr style="background-color: #f9fafb;">
-              <th align="left" style="padding: 10px 16px; font-size: 12px; font-weight: bold; color: #374151; border-bottom: 1px solid #e5e7eb; width: 70%;">Commessa</th>
-              <th align="right" style="padding: 10px 16px; font-size: 12px; font-weight: bold; color: #374151; border-bottom: 1px solid #e5e7eb; width: 30%;">Percentuale</th>
-            </tr>
-            ${newList.map(a => `
-              <tr>
-                <td align="left" style="padding: 12px 16px; font-size: 14px; color: #111827; border-bottom: 1px solid #f3f4f6;"><strong>${a.commessaName}</strong></td>
-                <td align="right" style="padding: 12px 16px; font-size: 14px; color: #111827; border-bottom: 1px solid #f3f4f6;">${a.percentuale}%</td>
-              </tr>
-            `).join('')}
-          </table>
-        `;
-
-      const subject = `[Pianificazione] Aggiornamento commesse - ${weekLabel}`;
-      const htmlBody = `
-        <p>Ciao <strong>${dipendente}</strong>,</p>
-        <p>Ci sono stati degli aggiornamenti sulle tue commesse assegnate per la <strong>${weekLabel}</strong> (${weekSub}).</p>
-        <p>Ecco le tue assegnazioni correnti:</p>
-        ${listHtml}
-        <p>Accedi alla piattaforma per vedere la pianificazione completa.</p>
-      `;
-
-      const plainText = `Ciao ${dipendente},\n\nCi sono stati degli aggiornamenti sulle tue commesse per la settimana ${weekLabel} (${weekSub}).\n\nEcco le tue assegnazioni correnti:\n${listText}\n\nAccedi alla piattaforma per maggiori dettagli.\n\n---\nQuesta è una notifica automatica, si prega di non rispondere a questo messaggio.`;
-      await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
-      console.log(`Email di pianificazione accodata per ${targetDip.email}`);
-    } catch (e) {
-      console.error("Errore nell'invio dell'email di assegnazione:", e);
-    }
-  };
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -105,7 +64,17 @@ export default function AssegnazioneModal({ isOpen, onClose, dipendente, weekId,
     try {
       const updatedList = [...currentAssignments, newAss];
       await setDoc(doc(db, 'assegnazioni', `${dipendente}-${weekId}`), { lista: updatedList });
-      await sendAssignmentEmail(updatedList);
+      
+      const targetDip = dipendentiList.find(d => d.nome === dipendente);
+      if (targetDip && targetDip.email) {
+        addPendingNotification(
+          dipendente,
+          targetDip.email,
+          `Settimana ${weekLabel.split('Sett. ')[1] || weekLabel}`,
+          `Assegnata commessa: ${comm.nome} (${selectedPercent}%)`
+        );
+        onAssignmentsChanged?.();
+      }
       
       setSelectedCommessa('');
       setSelectedPercent('100');
@@ -119,6 +88,7 @@ export default function AssegnazioneModal({ isOpen, onClose, dipendente, weekId,
   const handleRemove = async (index: number) => {
     try {
       const updatedList = [...currentAssignments];
+      const removedAss = currentAssignments[index];
       updatedList.splice(index, 1);
       
       if (updatedList.length === 0) {
@@ -126,7 +96,18 @@ export default function AssegnazioneModal({ isOpen, onClose, dipendente, weekId,
       } else {
         await setDoc(doc(db, 'assegnazioni', `${dipendente}-${weekId}`), { lista: updatedList });
       }
-      await sendAssignmentEmail(updatedList);
+      
+      const targetDip = dipendentiList.find(d => d.nome === dipendente);
+      if (targetDip && targetDip.email) {
+        addPendingNotification(
+          dipendente,
+          targetDip.email,
+          `Settimana ${weekLabel.split('Sett. ')[1] || weekLabel}`,
+          `Rimossa commessa: ${removedAss.commessaName}`
+        );
+        onAssignmentsChanged?.();
+      }
+      
       showToast("Assegnazione rimossa con successo!", "success");
     } catch (err) {
       console.error(err);

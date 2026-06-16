@@ -1,12 +1,12 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, onSnapshot, doc, getDoc, setDoc, query, where, getDocs } from 'firebase/firestore';
+import { collection, onSnapshot, doc, getDoc, setDoc, deleteDoc, query, where, getDocs } from 'firebase/firestore';
 import { Users, Printer, ChevronLeft, ChevronRight, Save, Download, ZoomIn, ZoomOut, Trash2, Plus } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays } from '../utils/date';
 import AssegnazioneModal from '../components/AssegnazioneModal';
 import ConfirmModal from '../components/ConfirmModal';
-import { queueMail } from '../utils/mailSender';
+import { addPendingNotification, getPendingNotifications, clearPendingNotifications, sendAllPendingNotifications } from '../utils/pendingNotifications';
 import { isCollaboratore } from './Impostazioni';
 import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
 
@@ -132,6 +132,10 @@ export default function PianificazionePersonale() {
   const [allocDataInizio, setAllocDataInizio] = useState('');
   const [allocDataFine, setAllocDataFine] = useState('');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
+
+  // Pending notifications states
+  const [pendingNotificationsCount, setPendingNotificationsCount] = useState(0);
+  const [sendingNotifications, setSendingNotifications] = useState(false);
 
   const [commesseToRemove, setCommesseToRemove] = useState<string[]>([]);
 
@@ -396,6 +400,16 @@ export default function PianificazionePersonale() {
     setTimelineWeeks(generateWeeksExtended(gridBaseDate, zoomWeeks));
   }, [gridBaseDate, zoomWeeks]);
 
+  // Load pending notifications count at mount
+  useEffect(() => {
+    updatePendingNotificationsCount();
+  }, []);
+
+  const updatePendingNotificationsCount = () => {
+    const pending = getPendingNotifications();
+    setPendingNotificationsCount(Object.keys(pending).length);
+  };
+
   const getWeekdayDate = (wkId: string, dayKey: string): string => {
     const parts = wkId.split('-W');
     if (parts.length !== 2) return '';
@@ -450,24 +464,27 @@ export default function PianificazionePersonale() {
           const currentList = docSnap.data().lista || [];
           const updatedList = currentList.filter((a: any) => a.commessaId !== commessaId);
           if (currentList.length !== updatedList.length) {
-            await setDoc(docRef, { lista: updatedList });
+            if (updatedList.length === 0) {
+              await deleteDoc(docRef);
+            } else {
+              await setDoc(docRef, { lista: updatedList });
+            }
 
-            // Invia e-mail
+            // Coda notifica
             const targetDip = dipendenti.find(d => d.nome === resName);
             if (targetDip && targetDip.email) {
               const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
-              const subject = `[Pianificazione] Rimozione Assegnazione Commessa - ${wkLabel}`;
-              const htmlBody = `
-                <p>Ciao <strong>${resName}</strong>,</p>
-                <p>Sei stato rimosso dalla commessa <strong>${commObj?.nome || commessaId}</strong> per la <strong>${wkLabel}</strong>.</p>
-                <p>Accedi alla piattaforma per visualizzare la tua pianificazione completa.</p>
-              `;
-              const plainText = `Ciao ${resName},\n\nSei stato rimosso dalla commessa ${commObj?.nome || commessaId} per la settimana ${wkLabel}.\n\nAccedi alla piattaforma per maggiori dettagli.`;
-              await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+              addPendingNotification(
+                resName,
+                targetDip.email,
+                wkLabel,
+                `Rimossa commessa: ${commObj?.nome || commessaId}`
+              );
             }
           }
         }
       }
+      updatePendingNotificationsCount();
       showToast("Rimozione completata con successo!", "success");
     } catch (err) {
       console.error(err);
@@ -586,21 +603,20 @@ export default function PianificazionePersonale() {
 
         await setDoc(docRef, { lista: [...filteredList, newAllocation] });
 
-        // Invia email di notifica
+        // Coda notifica
         const targetDip = dipendenti.find(d => d.nome === resName);
         if (targetDip && targetDip.email) {
           const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
-          const subject = `[Pianificazione] Nuova Assegnazione Commessa - ${wkLabel}`;
-          const htmlBody = `
-            <p>Ciao <strong>${resName}</strong>,</p>
-            <p>Sei stato assegnato alla commessa <strong>${commObj.nome}</strong> per la <strong>${wkLabel}</strong> con un carico del <strong>${actualPct}%</strong>.</p>
-            <p>Accedi alla piattaforma per visualizzare la tua pianificazione completa.</p>
-          `;
-          const plainText = `Ciao ${resName},\n\nSei stato assegnato alla commessa ${commObj.nome} per la settimana ${wkLabel} con un impegno del ${actualPct}%.\n\nAccedi alla piattaforma per maggiori dettagli.`;
-          await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+          addPendingNotification(
+            resName,
+            targetDip.email,
+            wkLabel,
+            `Assegnata commessa: ${commObj.nome} (${actualPct}%)${actualPct < basePct ? ' [Percentuale ricalcolata per ferie/assenza]' : ''}`
+          );
         }
       }
 
+      updatePendingNotificationsCount();
       showToast("Assegnazione completata con successo!", "success");
       if (warnings.length > 0) {
         showToast("Operazione completata con variazioni per assenza/ferie.", "warning");
@@ -799,19 +815,16 @@ export default function PianificazionePersonale() {
             const updatedList = [...filteredList, newAllocation];
             await setDoc(docRef, { lista: updatedList });
 
-            // Queue notification mail to the employee
+            // Coda notifica
             const targetDip = dipendenti.find(d => d.nome === resName);
             if (targetDip && targetDip.email) {
               const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
-              const subject = `[Pianificazione] Nuova Assegnazione Commessa - ${wkLabel}`;
-              const htmlBody = `
-                <p>Ciao <strong>${resName}</strong>,</p>
-                <p>Sei stato assegnato alla commessa <strong>${commObj.nome}</strong> per la <strong>${wkLabel}</strong> con un carico del <strong>${actualPct}%</strong>.</p>
-                ${actualPct < basePct ? `<p style="color: #ea580c; font-weight: bold;">Nota: La percentuale è stata ricalcolata in quanto risultano giornate di ferie/assenza approvate in questa settimana.</p>` : ''}
-                <p>Accedi alla piattaforma per visualizzare la tua pianificazione completa.</p>
-              `;
-              const plainText = `Ciao ${resName},\n\nSei stato assegnato alla commessa ${commObj.nome} per la settimana ${wkLabel} con un impegno del ${actualPct}%.\n\nAccedi alla piattaforma per maggiori dettagli.`;
-              await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+              addPendingNotification(
+                resName,
+                targetDip.email,
+                wkLabel,
+                `Assegnata commessa: ${commObj.nome} (${actualPct}%)${actualPct < basePct ? ' [Percentuale ricalcolata per ferie/assenza]' : ''}`
+              );
             }
           }
         }
@@ -834,25 +847,27 @@ export default function PianificazionePersonale() {
                 const updatedList = currentList.filter((a: any) => !commesseToRemove.includes(a.commessaId));
                 
                 if (currentList.length !== updatedList.length) {
-                  await setDoc(docRef, { lista: updatedList });
+                  if (updatedList.length === 0) {
+                    await deleteDoc(docRef);
+                  } else {
+                    await setDoc(docRef, { lista: updatedList });
+                  }
 
                   // Nomi delle commesse rimosse
                   const removedNames = commesseToRemove
                     .map(cId => commesse.find(c => c.id === cId)?.nome || cId)
                     .join(', ');
 
-                  // Invia email di notifica
+                  // Coda notifica
                   const targetDip = dipendenti.find(d => d.nome === resName);
                   if (targetDip && targetDip.email) {
                     const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
-                    const subject = `[Pianificazione] Rimozione Assegnazioni Commesse - ${wkLabel}`;
-                    const htmlBody = `
-                      <p>Ciao <strong>${resName}</strong>,</p>
-                      <p>Le tue assegnazioni per le seguenti commesse sono state rimosse per la <strong>${wkLabel}</strong>: <strong>${removedNames}</strong>.</p>
-                      <p>Accedi alla piattaforma per visualizzare la tua pianificazione completa.</p>
-                    `;
-                    const plainText = `Ciao ${resName},\n\nLe tue assegnazioni per le seguenti commesse sono state rimosse per la settimana ${wkLabel}: ${removedNames}.\n\nAccedi alla piattaforma per maggiori dettagli.`;
-                    await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+                    addPendingNotification(
+                      resName,
+                      targetDip.email,
+                      wkLabel,
+                      `Rimosse commesse: ${removedNames}`
+                    );
                   }
                 }
               }
@@ -869,21 +884,24 @@ export default function PianificazionePersonale() {
               if (docSnap.exists()) {
                 const currentList = docSnap.data().lista || [];
                 const updatedList = currentList.filter((a: any) => a.commessaId !== selectedCommessaId);
+                
                 if (currentList.length !== updatedList.length) {
-                  await setDoc(docRef, { lista: updatedList });
+                  if (updatedList.length === 0) {
+                    await deleteDoc(docRef);
+                  } else {
+                    await setDoc(docRef, { lista: updatedList });
+                  }
 
-                  // Queue notification mail to the employee about removal
+                  // Coda notifica
                   const targetDip = dipendenti.find(d => d.nome === resName);
                   if (targetDip && targetDip.email) {
                     const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
-                    const subject = `[Pianificazione] Rimozione Assegnazione Commessa - ${wkLabel}`;
-                    const htmlBody = `
-                      <p>Ciao <strong>${resName}</strong>,</p>
-                      <p>Sei stato rimosso dalla commessa <strong>${commObj?.nome || ''}</strong> per la <strong>${wkLabel}</strong>.</p>
-                      <p>Accedi alla piattaforma per visualizzare la tua pianificazione completa.</p>
-                    `;
-                    const plainText = `Ciao ${resName},\n\nSei stato rimosso dalla commessa ${commObj?.nome || ''} per la settimana ${wkLabel}.\n\nAccedi alla piattaforma per maggiori dettagli.`;
-                    await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+                    addPendingNotification(
+                      resName,
+                      targetDip.email,
+                      wkLabel,
+                      `Rimossa commessa: ${commObj?.nome || ''}`
+                    );
                   }
                 }
               }
@@ -901,20 +919,23 @@ export default function PianificazionePersonale() {
               if (docSnap.exists()) {
                 const currentList = docSnap.data().lista || [];
                 const updatedList = currentList.filter((a: any) => a.commessaId !== selectedCommessaId);
+                
                 if (currentList.length !== updatedList.length) {
-                  await setDoc(docRef, { lista: updatedList });
+                  if (updatedList.length === 0) {
+                    await deleteDoc(docRef);
+                  } else {
+                    await setDoc(docRef, { lista: updatedList });
+                  }
 
-                  // Only notify if actually removed
+                  // Coda notifica
                   if (dip.email) {
                     const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
-                    const subject = `[Pianificazione] Rimozione Assegnazione Commessa - ${wkLabel}`;
-                    const htmlBody = `
-                      <p>Ciao <strong>${resName}</strong>,</p>
-                      <p>Sei stato rimosso dalla commessa <strong>${commObj?.nome || ''}</strong> per la <strong>${wkLabel}</strong>.</p>
-                      <p>Accedi alla piattaforma per visualizzare la tua pianificazione completa.</p>
-                    `;
-                    const plainText = `Ciao ${resName},\n\nSei stato rimosso dalla commessa ${commObj?.nome || ''} per la settimana ${wkLabel}.\n\nAccedi alla piattaforma per maggiori dettagli.`;
-                    await queueMail(dip.email.toLowerCase(), subject, htmlBody, plainText);
+                    addPendingNotification(
+                      resName,
+                      dip.email,
+                      wkLabel,
+                      `Rimossa commessa: ${commObj?.nome || ''}`
+                    );
                   }
                 }
               }
@@ -926,20 +947,18 @@ export default function PianificazionePersonale() {
             for (const wkId of targetWeekIds) {
               const docId = `${resName}-${wkId}`;
               const docRef = doc(db, 'assegnazioni', docId);
-              await setDoc(docRef, { lista: [] });
+              await deleteDoc(docRef);
 
-              // Queue notification mail to the employee about full clearance
+              // Coda notifica
               const targetDip = dipendenti.find(d => d.nome === resName);
               if (targetDip && targetDip.email) {
                 const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
-                const subject = `[Pianificazione] Svuotamento Carico di Lavoro - ${wkLabel}`;
-                const htmlBody = `
-                  <p>Ciao <strong>${resName}</strong>,</p>
-                  <p>Tutte le tue assegnazioni per la <strong>${wkLabel}</strong> sono state rimosse (carico di lavoro azzerato).</p>
-                  <p>Accedi alla piattaforma per visualizzare la tua pianificazione completa.</p>
-                `;
-                const plainText = `Ciao ${resName},\n\nTutte le tue assegnazioni per la settimana ${wkLabel} sono state rimosse.\n\nAccedi alla piattaforma per maggiori dettagli.`;
-                await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+                addPendingNotification(
+                  resName,
+                  targetDip.email,
+                  wkLabel,
+                  `Svuotato carico di lavoro (rimosse tutte le commesse)`
+                );
               }
             }
           }
@@ -992,7 +1011,11 @@ export default function PianificazionePersonale() {
 
           // Remove allocation from A
           const updatedListA = currentListA.filter((a: any) => a.commessaId !== selectedCommessaId);
-          await setDoc(docRefA, { lista: updatedListA });
+          if (updatedListA.length === 0) {
+            await deleteDoc(docRefA);
+          } else {
+            await setDoc(docRefA, { lista: updatedListA });
+          }
 
           // Copy and adjust percentage/days for B (targetResource)
           const basePct = oldAlloc.percentuale;
@@ -1043,36 +1066,32 @@ export default function PianificazionePersonale() {
             warnings.push(`- ${targetResource} (${wkLabel}): non assegnato (assenza totale).`);
           }
 
-          // Notify A (sourceResource) of replacement/removal
+          // Coda notifica A
           const targetDipA = dipendenti.find(d => d.nome === sourceResource);
           if (targetDipA && targetDipA.email) {
-            const subjectA = `[Pianificazione] Sostituzione Commessa - ${wkLabel}`;
-            const htmlBodyA = `
-              <p>Ciao <strong>${sourceResource}</strong>,</p>
-              <p>Sei stato sostituito da <strong>${targetResource}</strong> per la commessa <strong>${commObj.nome}</strong> nella <strong>${wkLabel}</strong>.</p>
-              <p>Accedi alla piattaforma per visualizzare la tua pianificazione completa.</p>
-            `;
-            const plainTextA = `Ciao ${sourceResource},\n\nSei stato sostituito da ${targetResource} per la commessa ${commObj.nome} nella settimana ${wkLabel}.\n\nAccedi alla piattaforma per maggiori dettagli.`;
-            await queueMail(targetDipA.email.toLowerCase(), subjectA, htmlBodyA, plainTextA);
+            addPendingNotification(
+              sourceResource,
+              targetDipA.email,
+              wkLabel,
+              `Sostituito da ${targetResource} per la commessa ${commObj.nome}`
+            );
           }
 
-          // Notify B (targetResource) of assignment/sostituzione
+          // Coda notifica B
           const targetDipB = dipendenti.find(d => d.nome === targetResource);
           if (targetDipB && targetDipB.email) {
-            const subjectB = `[Pianificazione] Nuova Assegnazione per Sostituzione - ${wkLabel}`;
-            const htmlBodyB = `
-              <p>Ciao <strong>${targetResource}</strong>,</p>
-              <p>Sei stato assegnato alla commessa <strong>${commObj.nome}</strong> in sostituzione di <strong>${sourceResource}</strong> per la <strong>${wkLabel}</strong> con un carico del <strong>${actualPctB}%</strong>.</p>
-              ${actualPctB < basePct ? `<p style="color: #ea580c; font-weight: bold;">Nota: La percentuale è stata ricalcolata in quanto risultano giornate di ferie/assenza approvate in questa settimana.</p>` : ''}
-              <p>Accedi alla piattaforma per visualizzare la tua pianificazione completa.</p>
-            `;
-            const plainTextB = `Ciao ${targetResource},\n\nSei stato assegnato alla commessa ${commObj.nome} in sostituzione di ${sourceResource} nella settimana ${wkLabel} con un impegno del ${actualPctB}%.\n\nAccedi alla piattaforma per maggiori dettagli.`;
-            await queueMail(targetDipB.email.toLowerCase(), subjectB, htmlBodyB, plainTextB);
+            addPendingNotification(
+              targetResource,
+              targetDipB.email,
+              wkLabel,
+              `Assegnato alla commessa ${commObj.nome} in sostituzione di ${sourceResource} (${actualPctB}%)${actualPctB < basePct ? ' [Percentuale ricalcolata per ferie/assenza]' : ''}`
+            );
           }
         }
         showToast("Sostituzione completata con successo!", "success");
       }
 
+      updatePendingNotificationsCount();
       // Reset selection states
       setSelectedResourceNames([]);
       setAllocDataInizio('');
@@ -1155,6 +1174,35 @@ export default function PianificazionePersonale() {
     document.body.removeChild(link);
   };
 
+  const handleSendPendingNotifications = async () => {
+    setSendingNotifications(true);
+    try {
+      await sendAllPendingNotifications();
+      showToast("Notifiche inviate con successo!");
+      updatePendingNotificationsCount();
+    } catch (err) {
+      console.error(err);
+      showToast("Errore durante l'invio delle notifiche.", "error");
+    } finally {
+      setSendingNotifications(false);
+    }
+  };
+
+  const handleIgnorePendingNotifications = () => {
+    setConfirmConfig({
+      isOpen: true,
+      title: "Ignora Notifiche",
+      message: "Sei sicuro di voler ignorare e cancellare tutte le notifiche in sospeso per questa sessione? I dipendenti non riceveranno alcuna email sulle modifiche apportate.",
+      type: "warning",
+      onConfirm: () => {
+        clearPendingNotifications();
+        showToast("Notifiche in sospeso cancellate.");
+        updatePendingNotificationsCount();
+        setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+      }
+    });
+  };
+
   const shiftGridPeriod = (weeksOffset: number) => {
     setGridBaseDate(prev => addDays(prev, weeksOffset * 7));
   };
@@ -1189,6 +1237,34 @@ export default function PianificazionePersonale() {
           <span>Pianificazione del Personale e Carichi</span>
         </h2>
       </div>
+
+      {/* PENDING NOTIFICATIONS BANNER */}
+      {pendingNotificationsCount > 0 && (
+        <div className="bg-gradient-to-r from-indigo-600 to-indigo-800 text-white rounded-[2rem] p-4 px-6 sm:p-5 sm:px-8 shadow-lg flex flex-col sm:flex-row justify-between items-center gap-4 animate-in fade-in slide-in-from-top-4 duration-300 no-print">
+          <div className="flex items-center gap-3 text-center sm:text-left">
+            <span className="text-xl">✉️</span>
+            <div>
+              <p className="font-extrabold text-sm sm:text-base">Ci sono notifiche di pianificazione in sospeso</p>
+              <p className="text-xs text-indigo-100 font-semibold">{pendingNotificationsCount} {pendingNotificationsCount === 1 ? 'dipendente coinvolto' : 'dipendenti coinvolti'} nelle modifiche della sessione.</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={handleIgnorePendingNotifications}
+              className="px-4 py-2 bg-indigo-700/60 hover:bg-indigo-900 text-white font-bold text-xs sm:text-sm rounded-xl transition cursor-pointer"
+            >
+              Ignora Notifiche
+            </button>
+            <button
+              onClick={handleSendPendingNotifications}
+              disabled={sendingNotifications}
+              className="px-5 py-2 bg-white text-indigo-700 hover:bg-indigo-50 disabled:opacity-50 font-black text-xs sm:text-sm rounded-xl shadow-md active:scale-95 transition cursor-pointer"
+            >
+              {sendingNotifications ? 'Invio...' : 'Invia Notifiche Ora'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 1. BULK ALLOCATION PANEL */}
       {(isAdmin || isSenior || isPMOrResponsabile) && (
@@ -2282,6 +2358,7 @@ export default function PianificazionePersonale() {
         commesseCatalog={commesse}
         currentAssignments={assignments[`${modalData.dipendente}-${modalData.weekId}`] || []}
         dipendentiList={dipendenti}
+        onAssignmentsChanged={updatePendingNotificationsCount}
       />
 
       <ConfirmModal
