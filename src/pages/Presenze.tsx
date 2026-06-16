@@ -131,6 +131,7 @@ export default function Presenze() {
   const [loadingSheet, setLoadingSheet] = useState(false);
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [activeTab, setActiveTab] = useState<'ore' | 'spese' | 'weekend'>('ore');
 
   // State for HR Mode
   const [allRapportini, setAllRapportini] = useState<Record<string, RapportinoPresenze>>({});
@@ -147,6 +148,7 @@ export default function Presenze() {
 
   // Stati per autorizzazione weekend/chiusure
   const [approvedWeekends, setApprovedWeekends] = useState<Record<string, boolean>>({});
+  const [approvedLeaves, setApprovedLeaves] = useState<Record<string, { tipo: string; oraInizio?: string; oraFine?: string }>>({});
   const [reqWeekendData, setReqWeekendData] = useState('');
   const [reqWeekendMotivo, setReqWeekendMotivo] = useState('');
   const [reqWeekendLoading, setReqWeekendLoading] = useState(false);
@@ -206,6 +208,9 @@ export default function Presenze() {
 
   const isDayLockedForUser = (dNum: number) => {
     const dateStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`;
+    if (approvedLeaves[dateStr]) {
+      return true;
+    }
     const isWk = isWeekend(dNum);
     const isChiusura = isInChiusuraAziendale(dateStr);
     return (isWk || isChiusura) && !approvedWeekends[dateStr];
@@ -247,6 +252,60 @@ export default function Presenze() {
 
     return () => unsub();
   }, [viewMode, selectedMonth, selectedYear]);
+
+  // --- EMPLOYEE: LISTEN TO APPROVED LEAVES ---
+  useEffect(() => {
+    if (viewMode !== 'compila' || !myAssociatedName) {
+      setApprovedLeaves({});
+      return;
+    }
+
+    const q = query(
+      collection(db, 'richieste_ferie'),
+      where('dipendenteName', '==', myAssociatedName),
+      where('stato', '==', 'Approvato')
+    );
+
+    const unsub = onSnapshot(q, (snapshot) => {
+      const leaves: Record<string, { tipo: string; oraInizio?: string; oraFine?: string }> = {};
+      
+      snapshot.forEach(docSnap => {
+        const d = docSnap.data();
+        const start = d.dataInizio || d.data;
+        const end = d.dataFine || d.data;
+        
+        if (start && end) {
+          const [startYear, startMonth, startDay] = start.split('-').map(Number);
+          const [endYear, endMonth, endDay] = end.split('-').map(Number);
+          
+          const currDate = new Date(startYear, startMonth - 1, startDay);
+          const lastDate = new Date(endYear, endMonth - 1, endDay);
+          
+          while (currDate <= lastDate) {
+            const y = currDate.getFullYear();
+            const m = String(currDate.getMonth() + 1).padStart(2, '0');
+            const dStr = String(currDate.getDate()).padStart(2, '0');
+            const dateStr = `${y}-${m}-${dStr}`;
+            
+            if (dateStr.startsWith(`${selectedYear}-${String(selectedMonth).padStart(2, '0')}`)) {
+              leaves[dateStr] = {
+                tipo: d.tipo,
+                oraInizio: d.oraInizio,
+                oraFine: d.oraFine
+              };
+            }
+            currDate.setDate(currDate.getDate() + 1);
+          }
+        }
+      });
+      
+      setApprovedLeaves(leaves);
+    }, (err) => {
+      console.error("Errore nel caricamento delle ferie approvate:", err);
+    });
+
+    return () => unsub();
+  }, [viewMode, myAssociatedName, selectedMonth, selectedYear]);
 
   // --- EMPLOYEE: LISTEN OR FETCH CURRENT RAPPORTINO ---
   useEffect(() => {
@@ -362,7 +421,196 @@ export default function Presenze() {
             altroSpecificare: '',
           };
         }
-        setRapportino({ ...data, id: docSnap.id } as RapportinoPresenze);
+        let finalData = { ...data, id: docSnap.id } as RapportinoPresenze;
+        if (finalData.stato === 'Bozza' || finalData.stato === 'Richiede Modifica') {
+          try {
+            const updatedGiorni = { ...finalData.giorni };
+            let hasChanges = false;
+            const numDays = new Date(selectedYear, selectedMonth, 0).getDate();
+
+            for (let day = 1; day <= 31; day++) {
+              if (day > numDays) continue;
+
+              const dateStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+              const dateObj = new Date(selectedYear, selectedMonth - 1, day);
+              const dayOfWeek = dateObj.getDay();
+              const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+
+              const currentDay = updatedGiorni[String(day)];
+              if (!currentDay) continue;
+
+              const abs = approvedLeaves[dateStr];
+
+              if (abs) {
+                // Sincronizzazione forzata: ferie/assenze approvate hanno la precedenza assoluta
+                let targetOre = isWeekend ? 0 : 8;
+                let targetFerie = 0;
+                let targetPermessi = 0;
+                let targetMalattia = false;
+                let targetTrasferta = currentDay.trasferta;
+                let targetLuogoTrasferta = currentDay.luogoTrasferta || '';
+                let targetItinerarioTrasferta = currentDay.itinerarioTrasferta || '';
+                let targetKmTrasferta = currentDay.kmTrasferta || 0;
+                let targetStraordinari = currentDay.straordinari;
+                let targetNoteGiorno = currentDay.noteGiorno || '';
+
+                if (!isWeekend) {
+                  if (abs.tipo === 'ferie') {
+                    targetOre = 0;
+                    targetFerie = 8;
+                  } else if (abs.tipo === 'malattia' || abs.tipo === 'maternita') {
+                    targetOre = 0;
+                    targetMalattia = true;
+                  } else if (abs.tipo === 'mattina' || abs.tipo === 'pomeriggio') {
+                    targetOre = 4;
+                    targetPermessi = 4;
+                  } else if (abs.tipo === 'smart') {
+                    targetOre = 8;
+                  } else if (abs.tipo === 'permesso') {
+                    let hrs = 4;
+                    if (abs.oraInizio && abs.oraFine) {
+                      const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
+                      const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
+                      const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
+                      hrs = Math.round(diffMs / 3600000);
+                    }
+                    targetOre = Math.max(0, 8 - hrs);
+                    targetPermessi = hrs;
+                  }
+                }
+
+                // Per assenze a giornata intera, azzeriamo trasferte, straordinari e note
+                const isFullDayAbsence = abs.tipo === 'ferie' || abs.tipo === 'malattia' || abs.tipo === 'maternita';
+                if (isFullDayAbsence) {
+                  targetTrasferta = false;
+                  targetLuogoTrasferta = '';
+                  targetItinerarioTrasferta = '';
+                  targetKmTrasferta = 0;
+                  targetStraordinari = 0;
+                  targetNoteGiorno = '';
+                }
+
+                if (
+                  currentDay.ore !== targetOre ||
+                  currentDay.ferie !== targetFerie ||
+                  currentDay.permessi !== targetPermessi ||
+                  currentDay.malattia !== targetMalattia ||
+                  currentDay.trasferta !== targetTrasferta ||
+                  currentDay.luogoTrasferta !== targetLuogoTrasferta ||
+                  currentDay.itinerarioTrasferta !== targetItinerarioTrasferta ||
+                  currentDay.kmTrasferta !== targetKmTrasferta ||
+                  currentDay.straordinari !== targetStraordinari ||
+                  (currentDay.noteGiorno || '') !== targetNoteGiorno
+                ) {
+                  updatedGiorni[String(day)] = {
+                    ...currentDay,
+                    ore: targetOre,
+                    ferie: targetFerie,
+                    permessi: targetPermessi,
+                    malattia: targetMalattia,
+                    trasferta: targetTrasferta,
+                    luogoTrasferta: targetLuogoTrasferta,
+                    itinerarioTrasferta: targetItinerarioTrasferta,
+                    kmTrasferta: targetKmTrasferta,
+                    straordinari: targetStraordinari,
+                    noteGiorno: targetNoteGiorno
+                  };
+                  hasChanges = true;
+                }
+              } else {
+                // Nessuna richiesta approvata per questo giorno: sincronizziamo solo se il giorno era precedentemente sincronizzato (clean state) o non modificato
+                const isDefaultWeekend = isWeekend &&
+                  currentDay.ore === 0 &&
+                  currentDay.straordinari === 0 &&
+                  currentDay.ferie === 0 &&
+                  currentDay.permessi === 0 &&
+                  !currentDay.malattia &&
+                  !currentDay.trasferta;
+
+                const isDefaultWeekday = !isWeekend &&
+                  currentDay.ore === 8 &&
+                  currentDay.straordinari === 0 &&
+                  currentDay.ferie === 0 &&
+                  currentDay.permessi === 0 &&
+                  !currentDay.malattia &&
+                  !currentDay.trasferta;
+
+                const isCleanFerie = 
+                  currentDay.ore === 0 &&
+                  currentDay.ferie === 8 &&
+                  currentDay.straordinari === 0 &&
+                  currentDay.permessi === 0 &&
+                  !currentDay.malattia &&
+                  !currentDay.trasferta;
+
+                const isCleanMalattia = 
+                  currentDay.ore === 0 &&
+                  currentDay.malattia &&
+                  currentDay.straordinari === 0 &&
+                  currentDay.ferie === 0 &&
+                  currentDay.permessi === 0 &&
+                  !currentDay.trasferta;
+
+                const isCleanHalfDay = 
+                  currentDay.ore === 4 &&
+                  currentDay.permessi === 4 &&
+                  currentDay.straordinari === 0 &&
+                  currentDay.ferie === 0 &&
+                  !currentDay.malattia &&
+                  !currentDay.trasferta;
+
+                const isCleanPermesso = 
+                  currentDay.ore + currentDay.permessi === 8 &&
+                  currentDay.permessi > 0 &&
+                  currentDay.straordinari === 0 &&
+                  currentDay.ferie === 0 &&
+                  !currentDay.malattia &&
+                  !currentDay.trasferta;
+
+                const hasNoNote = !currentDay.noteGiorno || currentDay.noteGiorno.trim() === '';
+                const hasNoTrasfertaDetails = !currentDay.luogoTrasferta && !currentDay.itinerarioTrasferta && !currentDay.kmTrasferta;
+
+                const isSyncable = hasNoNote && hasNoTrasfertaDetails && (
+                  isDefaultWeekend || isDefaultWeekday || isCleanFerie || isCleanMalattia || isCleanHalfDay || isCleanPermesso
+                );
+
+                if (isSyncable) {
+                  let targetOre = isWeekend ? 0 : 8;
+                  let targetFerie = 0;
+                  let targetPermessi = 0;
+                  let targetMalattia = false;
+
+                  if (
+                    currentDay.ore !== targetOre ||
+                    currentDay.ferie !== targetFerie ||
+                    currentDay.permessi !== targetPermessi ||
+                    currentDay.malattia !== targetMalattia
+                  ) {
+                    updatedGiorni[String(day)] = {
+                      ...currentDay,
+                      ore: targetOre,
+                      ferie: targetFerie,
+                      permessi: targetPermessi,
+                      malattia: targetMalattia
+                    };
+                    hasChanges = true;
+                  }
+                }
+              }
+            }
+
+            if (hasChanges) {
+              finalData = {
+                ...finalData,
+                giorni: updatedGiorni
+              };
+              await setDoc(docRef, finalData);
+            }
+          } catch (syncErr) {
+            console.error("Errore durante la sincronizzazione automatica delle ferie:", syncErr);
+          }
+        }
+        setRapportino(finalData);
         setLoadingSheet(false);
       } else {
         // Document doesn't exist, prefill it!
@@ -374,7 +622,7 @@ export default function Presenze() {
     });
 
     return () => unsub();
-  }, [viewMode, myAssociatedName, selectedMonth, selectedYear, dipendenti]);
+  }, [viewMode, myAssociatedName, selectedMonth, selectedYear, dipendenti, approvedLeaves]);
 
   // Ascolta le richieste di weekend approvate per l'utente loggato (per sbloccare la compilazione)
   useEffect(() => {
@@ -542,7 +790,7 @@ export default function Presenze() {
           if (abs.tipo === 'ferie') {
             ore = 0;
             ferie = 8;
-          } else if (abs.tipo === 'malattia') {
+          } else if (abs.tipo === 'malattia' || abs.tipo === 'maternita') {
             ore = 0;
             malattia = true;
           } else if (abs.tipo === 'mattina' || abs.tipo === 'pomeriggio') {
@@ -659,6 +907,11 @@ export default function Presenze() {
   // --- ACTIONS FOR EMPLOYEES ---
   const handleCellChange = (day: string, field: keyof GiornoPresenza, value: any) => {
     if (!rapportino || rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato') return;
+
+    if (isDayLockedForUser(Number(day))) {
+      showToast("Questo giorno è bloccato da una richiesta di ferie/assenza approvata dall'HR.", "warning");
+      return;
+    }
 
     const updatedGiorni = { ...rapportino.giorni };
     const currentDay = { ...updatedGiorni[day] };
@@ -1784,6 +2037,34 @@ export default function Presenze() {
             })()}
           </select>
 
+          {viewMode === 'compila' && myAssociatedName && (
+            <div className="flex bg-gray-100 p-1 rounded-xl shadow-inner border border-gray-200/50 flex-wrap gap-1 ml-0 sm:ml-4">
+              <button
+                type="button"
+                onClick={() => setActiveTab('ore')}
+                className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'ore' ? 'bg-white text-indigo-600 shadow-sm font-extrabold' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                📋 Foglio Ore
+              </button>
+              {!isCollaboratore(myAssociatedName, dipendenti) && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('spese')}
+                  className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'spese' ? 'bg-white text-indigo-600 shadow-sm font-extrabold' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  🚗 Nota Spese
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setActiveTab('weekend')}
+                className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'weekend' ? 'bg-white text-indigo-600 shadow-sm font-extrabold' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                🛡️ Weekend/Chiusure
+              </button>
+            </div>
+          )}
+
           {/* Selettore Dipendente (Filtro / Esportazione Singolo) */}
           {viewMode === 'hr' && (
             <div className="flex items-center gap-2">
@@ -1831,6 +2112,70 @@ export default function Presenze() {
       {/* ========================================== */}
       {viewMode === 'hr' && (
         <>
+          {/* TABELLA RICHIESTE WEEKEND / CHIUSURE PENDENTI LATO HR */}
+          <div className={`bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl p-6 sm:p-8 border border-white/50 flex flex-col mb-10 overflow-hidden ${(printTargetSheet || reviewingRapportino) ? 'no-print' : ''}`}>
+            <h3 className="font-extrabold text-xl text-gray-900 mb-2 flex items-center gap-2">
+              <ShieldAlert className="w-6 h-6 text-indigo-600" />
+              <span>Richieste Autorizzazione Weekend / Chiusure</span>
+              {isHR && globalPendingWeekendCount > 0 && (
+                <span className="bg-red-500 text-white text-xs font-extrabold px-2 py-0.5 rounded-full">
+                  {globalPendingWeekendCount}
+                </span>
+              )}
+            </h3>
+            <p className="text-xs text-gray-500 font-semibold mb-6">
+              Elenco delle richieste di dipendenti e collaboratori per lavorare nei giorni di weekend o chiusura aziendale.
+            </p>
+
+            <div className="w-full overflow-x-auto">
+              {allWeekendRequests.length === 0 ? (
+                <p className="text-center text-gray-400 py-6 font-medium italic">Nessuna richiesta di autorizzazione presente.</p>
+              ) : (
+                <table className="w-full text-left border-collapse min-w-[700px] text-xs">
+                  <thead className="bg-gray-50 border-b border-gray-100">
+                    <tr className="font-bold text-gray-700">
+                      <th className="p-3">Dipendente</th>
+                      <th className="p-3">Data</th>
+                      <th className="p-3">Motivazione</th>
+                      <th className="p-3 text-center">Stato</th>
+                      <th className="p-3 text-center no-print">Azioni</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {allWeekendRequests.map(req => (
+                      <tr key={req.id} className="hover:bg-indigo-50/10 transition-colors">
+                        <td className="p-3 font-bold text-gray-800">{req.dipendenteName}</td>
+                        <td className="p-3 font-bold text-indigo-600">{formatDate(req.data)}</td>
+                        <td className="p-3 text-gray-600 max-w-[300px] truncate" title={req.motivo}>{req.motivo}</td>
+                        <td className="p-3 text-center align-middle">{getStatusBadge(req.stato)}</td>
+                        <td className="p-3 text-center align-middle no-print">
+                          {req.stato === 'In attesa' ? (
+                            <div className="flex justify-center gap-2">
+                              <button 
+                                onClick={() => handleWeekendDecision(req.id, true)} 
+                                className="px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white font-bold rounded-lg text-[10px] shadow active:scale-95"
+                              >
+                                Approva
+                              </button>
+                              <button 
+                                onClick={() => handleWeekendDecision(req.id, false)} 
+                                className="px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white font-bold rounded-lg text-[10px] shadow active:scale-95"
+                              >
+                                Rifiuta
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-gray-400 italic">Nessuna azione</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+
           <div className={`bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl border border-white/50 flex flex-col mb-10 overflow-hidden ${(printTargetSheet || reviewingRapportino) ? 'no-print' : ''}`}>
           
           {/* Tabs Dipendenti / Collaboratori */}
@@ -1880,7 +2225,7 @@ export default function Presenze() {
                       <th className="p-4 font-bold text-gray-700 text-sm text-right">Straordinari</th>
                       <th className="p-4 font-bold text-gray-700 text-sm text-right">Ferie / Mal.</th>
                       <th className="p-4 font-bold text-gray-700 text-sm text-right">Permessi</th>
-                      <th className="p-4 font-bold text-gray-700 text-sm text-center">Malattia (Giorni)</th>
+                      <th className="p-4 font-bold text-gray-700 text-sm text-center">Malattia/Maternità (Giorni)</th>
                       <th className="p-4 font-bold text-gray-700 text-sm text-center">Trasferte (Giorni)</th>
                       <th className="p-4 font-bold text-gray-700 text-sm text-center no-print">Azione</th>
                     </tr>
@@ -1970,69 +2315,7 @@ export default function Presenze() {
           </div>
         </div>
 
-        {/* TABELLA RICHIESTE WEEKEND / CHIUSURE PENDENTI LATO HR */}
-        <div className={`bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl p-6 sm:p-8 border border-white/50 flex flex-col mb-10 overflow-hidden ${(printTargetSheet || reviewingRapportino) ? 'no-print' : ''}`}>
-          <h3 className="font-extrabold text-xl text-gray-900 mb-2 flex items-center gap-2">
-            <ShieldAlert className="w-6 h-6 text-indigo-600" />
-            <span>Richieste Autorizzazione Weekend / Chiusure</span>
-            {isHR && globalPendingWeekendCount > 0 && (
-              <span className="bg-red-500 text-white text-xs font-extrabold px-2 py-0.5 rounded-full">
-                {globalPendingWeekendCount}
-              </span>
-            )}
-          </h3>
-          <p className="text-xs text-gray-500 font-semibold mb-6">
-            Elenco delle richieste di dipendenti e collaboratori per lavorare nei giorni di weekend o chiusura aziendale.
-          </p>
 
-          <div className="w-full overflow-x-auto">
-            {allWeekendRequests.length === 0 ? (
-              <p className="text-center text-gray-400 py-6 font-medium italic">Nessuna richiesta di autorizzazione presente.</p>
-            ) : (
-              <table className="w-full text-left border-collapse min-w-[700px] text-xs">
-                <thead className="bg-gray-50 border-b border-gray-100">
-                  <tr className="font-bold text-gray-700">
-                    <th className="p-3">Dipendente</th>
-                    <th className="p-3">Data</th>
-                    <th className="p-3">Motivazione</th>
-                    <th className="p-3 text-center">Stato</th>
-                    <th className="p-3 text-center no-print">Azioni</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {allWeekendRequests.map(req => (
-                    <tr key={req.id} className="hover:bg-indigo-50/10 transition-colors">
-                      <td className="p-3 font-bold text-gray-800">{req.dipendenteName}</td>
-                      <td className="p-3 font-bold text-indigo-600">{formatDate(req.data)}</td>
-                      <td className="p-3 text-gray-600 max-w-[300px] truncate" title={req.motivo}>{req.motivo}</td>
-                      <td className="p-3 text-center align-middle">{getStatusBadge(req.stato)}</td>
-                      <td className="p-3 text-center align-middle no-print">
-                        {req.stato === 'In attesa' ? (
-                          <div className="flex justify-center gap-2">
-                            <button 
-                              onClick={() => handleWeekendDecision(req.id, true)} 
-                              className="px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white font-bold rounded-lg text-[10px] shadow active:scale-95"
-                            >
-                              Approva
-                            </button>
-                            <button 
-                              onClick={() => handleWeekendDecision(req.id, false)} 
-                              className="px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white font-bold rounded-lg text-[10px] shadow active:scale-95"
-                            >
-                              Rifiuta
-                            </button>
-                          </div>
-                        ) : (
-                          <span className="text-[10px] text-gray-400 italic">Nessuna azione</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
         </>
       )}
 
@@ -2085,7 +2368,72 @@ export default function Presenze() {
                 </div>
               )}
 
-              {isCollaboratore(myAssociatedName, dipendenti) ? (
+              {activeTab === 'weekend' ? (
+                <div className="bg-gradient-to-br from-indigo-50 to-blue-50 p-6 rounded-3xl border border-indigo-100 shadow-sm no-print animate-in fade-in slide-in-from-bottom-4 duration-350">
+                  <h3 className="font-extrabold text-xl mb-4 text-indigo-950 flex items-center gap-2">
+                    <ShieldAlert className="w-5 h-5 text-indigo-600" />
+                    Autorizzazione Lavoro Weekend e Chiusure Aziendali
+                  </h3>
+                  <p className="text-xs text-indigo-900/80 mb-5 leading-relaxed">
+                    Per poter registrare ore di lavoro il sabato, la domenica o nei periodi di chiusura aziendale, devi inviare una richiesta preventiva all'HR. Una volta approvata, i giorni corrispondenti saranno sbloccati nel tuo tabellone presenze.
+                  </p>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    {/* Form */}
+                    <form onSubmit={handleRequestWeekendSubmit} className="space-y-4 bg-white/60 p-5 rounded-2xl border border-indigo-100">
+                      <h4 className="text-sm font-bold text-indigo-900">Invia Nuova Richiesta</h4>
+                      <div>
+                        <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Giorno</label>
+                        <input 
+                          type="date"
+                          required
+                          value={reqWeekendData}
+                          onChange={e => setReqWeekendData(e.target.value)}
+                          className="w-full p-2.5 border-none bg-white rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Motivazione</label>
+                        <textarea
+                          required
+                          rows={2}
+                          value={reqWeekendMotivo}
+                          onChange={e => setReqWeekendMotivo(e.target.value)}
+                          placeholder="Es. Straordinari urgenti commessa GSK, trasferta cliente..."
+                          className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm"
+                        />
+                      </div>
+                      <button 
+                        type="submit"
+                        disabled={reqWeekendLoading}
+                        className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow transition active:scale-95 disabled:opacity-50"
+                      >
+                        {reqWeekendLoading ? 'Invio in corso...' : 'Invia Richiesta'}
+                      </button>
+                    </form>
+
+                    {/* Storico Richieste Utente */}
+                    <div className="space-y-3">
+                      <h4 className="text-sm font-bold text-indigo-900">Storico delle tue Richieste</h4>
+                      <div className="max-h-[220px] overflow-y-auto pr-1 space-y-2.5 custom-scrollbar">
+                        {myWeekendRequests.length === 0 ? (
+                          <p className="text-xs text-gray-400 italic p-2 bg-white/30 rounded-xl">Nessuna richiesta inviata.</p>
+                        ) : (
+                          myWeekendRequests.map(req => (
+                            <div key={req.id} className="bg-white p-3 rounded-xl border border-gray-100 shadow-sm flex justify-between items-center gap-3">
+                              <div className="min-w-0">
+                                <div className="text-xs font-bold text-gray-900">{formatDate(req.data)}</div>
+                                <div className="text-[10px] text-gray-500 truncate" title={req.motivo}>{req.motivo}</div>
+                              </div>
+                              <div className="shrink-0">{getStatusBadge(req.stato)}</div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : isCollaboratore(myAssociatedName, dipendenti) ? (
                 // COLLABORATOR VIEW
                 <>
                   {/* Digital invoice draft block */}
@@ -2308,8 +2656,10 @@ export default function Presenze() {
               ) : (
                 // STANDARD EMPLOYEE FORM
                 <>
-              {/* TABELLA REGISTRO PRESENZE (giorni 1-31) */}
-              <div className="bg-white rounded-[2rem] shadow-xl border overflow-hidden relative">
+                  {activeTab === 'ore' && (
+                    <>
+                      {/* TABELLA REGISTRO PRESENZE (giorni 1-31) */}
+                      <div className="bg-white rounded-[2rem] shadow-xl border overflow-hidden relative">
                 
                 {/* Legenda rapida */}
                 <div className="px-6 py-4 bg-gray-50 border-b border-gray-100 flex flex-wrap gap-4 items-center justify-between no-print">
@@ -2579,7 +2929,7 @@ export default function Presenze() {
                           {/* DIPENDENTI STANDARD RIGA 5: CONTRASSEGNO MALATTIA */}
                           <tr className="hover:bg-gray-50/50 transition-colors">
                             <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 flex items-center gap-1.5">
-                              Malattia <span className="text-[9px] font-bold bg-red-100 text-red-700 px-1 py-0.5 rounded font-mono">M</span>
+                              Malattia/Maternità <span className="text-[9px] font-bold bg-red-100 text-red-700 px-1 py-0.5 rounded font-mono">M</span>
                             </td>
                             {Array.from({ length: 31 }).map((_, i) => {
                               const d = i + 1;
@@ -2683,7 +3033,7 @@ export default function Presenze() {
                         Note Dipendente
                       </label>
                       <p className="text-[10px] text-gray-500 leading-relaxed font-bold">
-                        * NEL CASO DI MALATTIA O MATERNITÀ INDICARE NELLE NOTE IL N° DELL'ATTESTATO DI MALATTIA RILASCIATO DAL MEDICO.
+                        * NEL CASO DI MALATTIA O MATERNITÀ INDICARE NELLE NOTE IL N° DELL'ATTESTATO RILASCIATO DAL MEDICO.
                       </p>
                       <textarea
                         rows={3}
@@ -2699,8 +3049,33 @@ export default function Presenze() {
                 </div>
               </div>
 
+              {/* PULSANTI DI AZIONE PER TAB ORE */}
+              {(rapportino.stato === 'Bozza' || rapportino.stato === 'Richiede Modifica') && (
+                <div className="flex justify-end gap-3 no-print mt-6">
+                  <button 
+                    onClick={handleSaveDraft}
+                    disabled={saving || submitting}
+                    className="flex items-center gap-2 bg-white hover:bg-gray-100 text-gray-700 border border-gray-200 font-extrabold px-6 py-3.5 rounded-xl transition shadow-md active:scale-95 disabled:opacity-50"
+                  >
+                    <Save className="w-4 h-4" />
+                    {saving ? 'Salvataggio...' : 'Salva Bozza'}
+                  </button>
+                  <button 
+                    onClick={handleSubmitToHR}
+                    disabled={saving || submitting}
+                    className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold px-7 py-3.5 rounded-xl transition shadow-lg active:scale-95 disabled:opacity-50"
+                  >
+                    <Send className="w-4 h-4" />
+                    {submitting ? 'Invio in corso...' : 'Invia a HR'}
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+
+          {activeTab === 'spese' && (
+            <>
               {/* NOTA SPESE E RIMBORSO TRASFERTE PER DIPENDENTI */}
-              {!isCollaboratore(myAssociatedName, dipendenti) && (
                 <div className="bg-white rounded-[2rem] shadow-xl border overflow-hidden p-6 sm:p-8 space-y-6 no-print">
                   <div className="border-b pb-4">
                     <h4 className="font-extrabold text-lg text-gray-900">Nota Spese e Trasferte</h4>
@@ -2922,95 +3297,30 @@ export default function Presenze() {
                     );
                   })()}
                 </div>
-              )}
 
-              {/* PULSANTI DI AZIONE */}
-              {(rapportino.stato === 'Bozza' || rapportino.stato === 'Richiede Modifica') && (
-                <div className="flex justify-end gap-3 no-print">
-                  <button 
-                    onClick={handleSaveDraft}
-                    disabled={saving || submitting}
-                    className="flex items-center gap-2 bg-white hover:bg-gray-100 text-gray-700 border border-gray-200 font-extrabold px-6 py-3.5 rounded-xl transition shadow-md active:scale-95 disabled:opacity-50"
-                  >
-                    <Save className="w-4 h-4" />
-                    {saving ? 'Salvataggio...' : 'Salva Bozza'}
-                  </button>
-                  <button 
-                    onClick={handleSubmitToHR}
-                    disabled={saving || submitting}
-                    className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold px-7 py-3.5 rounded-xl transition shadow-lg active:scale-95 disabled:opacity-50"
-                  >
-                    <Send className="w-4 h-4" />
-                    {submitting ? 'Invio in corso...' : 'Invia a HR'}
-                  </button>
-                </div>
-              )}
-
-              {/* SEZIONE COMPILATORE: RICHIESTA AUTORIZZAZIONE WEEKEND / CHIUSURE */}
-              <div className="bg-gradient-to-br from-indigo-50 to-blue-50 p-6 rounded-3xl border border-indigo-100 shadow-sm mt-8 no-print animate-in fade-in slide-in-from-bottom-4 duration-350">
-                <h3 className="font-extrabold text-xl mb-4 text-indigo-950 flex items-center gap-2">
-                  <ShieldAlert className="w-5 h-5 text-indigo-600" />
-                  Autorizzazione Lavoro Weekend e Chiusure Aziendali
-                </h3>
-                <p className="text-xs text-indigo-900/80 mb-5 leading-relaxed">
-                  Per poter registrare ore di lavoro il sabato, la domenica o nei periodi di chiusura aziendale, devi inviare una richiesta preventiva all'HR. Una volta approvata, i giorni corrispondenti saranno sbloccati nel tuo tabellone presenze.
-                </p>
-
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                  {/* Form */}
-                  <form onSubmit={handleRequestWeekendSubmit} className="space-y-4 bg-white/60 p-5 rounded-2xl border border-indigo-100">
-                    <h4 className="text-sm font-bold text-indigo-900">Invia Nuova Richiesta</h4>
-                    <div>
-                      <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Giorno</label>
-                      <input 
-                        type="date"
-                        required
-                        value={reqWeekendData}
-                        onChange={e => setReqWeekendData(e.target.value)}
-                        className="w-full p-2.5 border-none bg-white rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Motivazione</label>
-                      <textarea
-                        required
-                        rows={2}
-                        value={reqWeekendMotivo}
-                        onChange={e => setReqWeekendMotivo(e.target.value)}
-                        placeholder="Es. Straordinari urgenti commessa GSK, trasferta cliente..."
-                        className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm"
-                      />
-                    </div>
+                {/* PULSANTI DI AZIONE PER TAB SPESE */}
+                {(rapportino.stato === 'Bozza' || rapportino.stato === 'Richiede Modifica') && (
+                  <div className="flex justify-end gap-3 no-print mt-6">
                     <button 
-                      type="submit"
-                      disabled={reqWeekendLoading}
-                      className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow transition active:scale-95 disabled:opacity-50"
+                      onClick={handleSaveDraft}
+                      disabled={saving || submitting}
+                      className="flex items-center gap-2 bg-white hover:bg-gray-100 text-gray-700 border border-gray-200 font-extrabold px-6 py-3.5 rounded-xl transition shadow-md active:scale-95 disabled:opacity-50"
                     >
-                      {reqWeekendLoading ? 'Invio in corso...' : 'Invia Richiesta'}
+                      <Save className="w-4 h-4" />
+                      {saving ? 'Salvataggio...' : 'Salva Bozza'}
                     </button>
-                  </form>
-
-                  {/* Storico Richieste Utente */}
-                  <div className="space-y-3">
-                    <h4 className="text-sm font-bold text-indigo-900">Storico delle tue Richieste</h4>
-                    <div className="max-h-[220px] overflow-y-auto pr-1 space-y-2.5 custom-scrollbar">
-                      {myWeekendRequests.length === 0 ? (
-                        <p className="text-xs text-gray-400 italic p-2 bg-white/30 rounded-xl">Nessuna richiesta inviata.</p>
-                      ) : (
-                        myWeekendRequests.map(req => (
-                          <div key={req.id} className="bg-white p-3 rounded-xl border border-gray-100 shadow-sm flex justify-between items-center gap-3">
-                            <div className="min-w-0">
-                              <div className="text-xs font-bold text-gray-900">{formatDate(req.data)}</div>
-                              <div className="text-[10px] text-gray-500 truncate" title={req.motivo}>{req.motivo}</div>
-                            </div>
-                            <div className="shrink-0">{getStatusBadge(req.stato)}</div>
-                          </div>
-                        ))
-                      )}
-                    </div>
+                    <button 
+                      onClick={handleSubmitToHR}
+                      disabled={saving || submitting}
+                      className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold px-7 py-3.5 rounded-xl transition shadow-lg active:scale-95 disabled:opacity-50"
+                    >
+                      <Send className="w-4 h-4" />
+                      {submitting ? 'Invio in corso...' : 'Invia a HR'}
+                    </button>
                   </div>
-                </div>
-              </div>
+                )}
+              </>
+            )}
           </>
         )}
       </div>
@@ -3487,7 +3797,7 @@ export default function Presenze() {
 
                           {/* DIPENDENTI STANDARD RIGA 5: CONTRASSEGNO MALATTIA */}
                           <tr>
-                            <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Malattia</td>
+                            <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Malattia/Maternità</td>
                             {Array.from({ length: 31 }).map((_, i) => {
                               const d = i + 1;
                               const out = d > daysInMonth;

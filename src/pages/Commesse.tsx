@@ -316,7 +316,7 @@ export default function Commesse() {
           const [wY, wM, wD] = wDateStr.split('-').map(Number);
           const wDate = new Date(wY, wM - 1, wD);
           if (wDate >= curr && wDate <= last) {
-            let label = leave.tipo === 'ferie' ? 'Ferie' : leave.tipo === 'malattia' ? 'Malattia' : leave.tipo === 'smart' ? 'Smart' : leave.tipo;
+            let label = leave.tipo === 'ferie' ? 'Ferie' : leave.tipo === 'malattia' ? 'Malattia' : leave.tipo === 'maternita' ? 'Maternità' : leave.tipo === 'smart' ? 'Smart' : leave.tipo;
             if (leave.tipo === 'mattina') label = 'Ass. Matt.';
             if (leave.tipo === 'pomeriggio') label = 'Ass. Pom.';
             if (leave.tipo === 'permesso') label = `Perm. (${leave.oraInizio || ''}-${leave.oraFine || ''})`;
@@ -1248,7 +1248,7 @@ export default function Commesse() {
                                             <div className="mt-1 pt-1 border-t border-red-100 text-[9.5px] text-red-600 font-bold flex flex-col gap-0.5">
                                               {leaves.map((l, lIdx) => (
                                                 <span key={lIdx} className="flex items-center gap-0.5 truncate" title={`${l.giorno}: ${l.dettagli}`}>
-                                                  ⚠️ {l.giorno}: {l.tipo === 'ferie' ? 'F' : l.tipo === 'malattia' ? 'M' : l.tipo === 'permesso' ? 'P' : 'A'}
+                                                  ⚠️ {l.giorno}: {l.tipo === 'ferie' ? 'F' : (l.tipo === 'malattia' || l.tipo === 'maternita') ? 'M' : l.tipo === 'permesso' ? 'P' : 'A'}
                                                 </span>
                                               ))}
                                             </div>

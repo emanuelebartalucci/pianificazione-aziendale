@@ -38,6 +38,7 @@ export default function Dashboard() {
   const [pendingFerieCount, setPendingFerieCount] = useState(0);
   const [pendingPresenzeCount, setPendingPresenzeCount] = useState(0);
   const [pendingSuggerimentiCount, setPendingSuggerimentiCount] = useState(0);
+  const [myMaternityLeaves, setMyMaternityLeaves] = useState<any[]>([]);
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
 
@@ -154,6 +155,33 @@ export default function Dashboard() {
     });
     return () => unsub();
   }, []);
+
+  // Caricamento richieste maternità approvate del dipendente corrente
+  useEffect(() => {
+    if (!myAssociatedName) {
+      setMyMaternityLeaves([]);
+      return;
+    }
+    const q = query(
+      collection(db, 'richieste_ferie'),
+      where('dipendenteName', '==', myAssociatedName),
+      where('tipo', '==', 'maternita'),
+      where('stato', '==', 'Approvato')
+    );
+    const unsub = onSnapshot(q, (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        list.push({
+          id: docSnap.id,
+          dataInizio: data.dataInizio || data.data || '',
+          dataFine: data.dataFine || data.data || '',
+        });
+      });
+      setMyMaternityLeaves(list);
+    });
+    return () => unsub();
+  }, [myAssociatedName]);
 
   // Listeners per i badge di notifica HR
   useEffect(() => {
@@ -292,18 +320,32 @@ export default function Dashboard() {
     if (showEmployeeReminder) {
       const targetMonthIndex = d <= 2 ? (m === 0 ? 11 : m - 1) : m;
       const targetYear = d <= 2 && m === 0 ? y - 1 : y;
-      const nomeMese = [
-        'Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno',
-        'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre'
-      ][targetMonthIndex];
 
-      list.unshift({
-        id: 'system-reminder-presenze',
-        titolo: '⚠️ Promemoria: Compilazione Registro Presenze',
-        contenuto: `Si ricorda a tutti i dipendenti di compilare, verificare ed inviare il proprio foglio presenze per il mese di ${nomeMese} ${targetYear} all'HR per l'approvazione delle buste paga.`,
-        autore: 'HR',
-        data: `${String(d).padStart(2, '0')}/${String(m + 1).padStart(2, '0')}/${y}`
+      const targetMonthStr = String(targetMonthIndex + 1).padStart(2, '0');
+      const firstDayOfMonthStr = `${targetYear}-${targetMonthStr}-01`;
+      const lastDayVal = new Date(targetYear, targetMonthIndex + 1, 0).getDate();
+      const lastDayOfMonthStr = `${targetYear}-${targetMonthStr}-${String(lastDayVal).padStart(2, '0')}`;
+
+      const isFullyCoveredByMaternity = myMaternityLeaves.some(leave => {
+        const start = leave.dataInizio;
+        const end = leave.dataFine;
+        return start && end && start <= firstDayOfMonthStr && end >= lastDayOfMonthStr;
       });
+
+      if (!isFullyCoveredByMaternity) {
+        const nomeMese = [
+          'Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno',
+          'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre'
+        ][targetMonthIndex];
+
+        list.unshift({
+          id: 'system-reminder-presenze',
+          titolo: '⚠️ Promemoria: Compilazione Registro Presenze',
+          contenuto: `Si ricorda a tutti i dipendenti di compilare, verificare ed inviare il proprio foglio presenze per il mese di ${nomeMese} ${targetYear} all'HR per l'approvazione delle buste paga.`,
+          autore: 'HR',
+          data: `${String(d).padStart(2, '0')}/${String(m + 1).padStart(2, '0')}/${y}`
+        });
+      }
     }
 
     // 2. Collaborator reminder
@@ -320,7 +362,7 @@ export default function Dashboard() {
     }
     
     return list;
-  }, [announcements, myAssociatedName, dipendenti]);
+  }, [announcements, myAssociatedName, dipendenti, myMaternityLeaves]);
 
   const welcomeName = (() => {
     if (!myAssociatedName) return user?.email || 'Utente';

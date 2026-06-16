@@ -214,6 +214,7 @@ export default function Ferie() {
         const typeLabels: Record<string, string> = {
           ferie: 'Ferie',
           malattia: 'Malattia',
+          maternita: 'Maternità',
           permesso: 'Permesso',
           smart: 'Lavoro da Casa',
           mattina: 'Assenza Mattina',
@@ -256,6 +257,7 @@ export default function Ferie() {
         const typeLabels: Record<string, string> = {
           ferie: 'Ferie',
           malattia: 'Malattia',
+          maternita: 'Maternità',
           permesso: 'Permesso',
           smart: 'Lavoro da Casa',
           mattina: 'Assenza Mattina',
@@ -299,6 +301,7 @@ export default function Ferie() {
     const tipi: Record<string, {label: string, color: string}> = {
       ferie: {label: 'Ferie', color: 'bg-red-500'},
       malattia: {label: 'Malattia', color: 'bg-purple-600'},
+      maternita: {label: 'Maternità', color: 'bg-pink-500'},
       permesso: {label: 'Permesso', color: 'bg-amber-500'},
       smart: {label: 'Lavora da Casa', color: 'bg-blue-500'},
       mattina: {label: 'Assenza Mattina', color: 'bg-yellow-400'},
@@ -532,6 +535,7 @@ export default function Ferie() {
                   >
                     <option value="ferie">Ferie</option>
                     <option value="malattia">Malattia</option>
+                    <option value="maternita">Maternità</option>
                     <option value="smart">Lavora da Casa</option>
                     {requestMode === 'singolo' && (
                       <>

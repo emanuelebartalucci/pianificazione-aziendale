@@ -365,7 +365,7 @@ export default function PianificazionePersonale() {
           const [wY, wM, wD] = wDateStr.split('-').map(Number);
           const wDate = new Date(wY, wM - 1, wD);
           if (wDate >= curr && wDate <= last) {
-            let label = leave.tipo === 'ferie' ? 'Ferie' : leave.tipo === 'malattia' ? 'Malattia' : leave.tipo === 'smart' ? 'Smart' : leave.tipo;
+            let label = leave.tipo === 'ferie' ? 'Ferie' : leave.tipo === 'malattia' ? 'Malattia' : leave.tipo === 'maternita' ? 'Maternità' : leave.tipo === 'smart' ? 'Smart' : leave.tipo;
             if (leave.tipo === 'mattina') label = 'Ass. Matt.';
             if (leave.tipo === 'pomeriggio') label = 'Ass. Pom.';
             if (leave.tipo === 'permesso') label = `Perm. (${leave.oraInizio || ''}-${leave.oraFine || ''})`;
@@ -2082,6 +2082,7 @@ export default function PianificazionePersonale() {
 
                             const ferieCount = leaves.filter(l => l.tipo === 'ferie').length;
                             const malattiaCount = leaves.filter(l => l.tipo === 'malattia').length;
+                            const maternitaCount = leaves.filter(l => l.tipo === 'maternita').length;
                             const permessoCount = leaves.filter(l => l.tipo === 'permesso' || l.tipo === 'mattina' || l.tipo === 'pomeriggio').length;
                             const smartCount = leaves.filter(l => l.tipo === 'smart').length;
 
@@ -2125,6 +2126,11 @@ export default function PianificazionePersonale() {
                                           {malattiaCount > 0 && (
                                             <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-red-100 text-red-700 border border-red-200" title="Malattia">
                                               🤒 {malattiaCount}g
+                                            </span>
+                                          )}
+                                          {maternitaCount > 0 && (
+                                            <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-pink-100 text-pink-700 border border-pink-200" title="Maternità">
+                                              🍼 {maternitaCount}g
                                             </span>
                                           )}
                                           {permessoCount > 0 && (
@@ -2241,6 +2247,7 @@ export default function PianificazionePersonale() {
 
                             const ferieCount = leaves.filter(l => l.tipo === 'ferie').length;
                             const malattiaCount = leaves.filter(l => l.tipo === 'malattia').length;
+                            const maternitaCount = leaves.filter(l => l.tipo === 'maternita').length;
                             const permessoCount = leaves.filter(l => l.tipo === 'permesso' || l.tipo === 'mattina' || l.tipo === 'pomeriggio').length;
                             const smartCount = leaves.filter(l => l.tipo === 'smart').length;
 
@@ -2284,6 +2291,11 @@ export default function PianificazionePersonale() {
                                           {malattiaCount > 0 && (
                                             <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-red-100 text-red-700 border border-red-200" title="Malattia">
                                               🤒 {malattiaCount}g
+                                            </span>
+                                          )}
+                                          {maternitaCount > 0 && (
+                                            <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-pink-100 text-pink-700 border border-pink-200" title="Maternità">
+                                              🍼 {maternitaCount}g
                                             </span>
                                           )}
                                           {permessoCount > 0 && (
