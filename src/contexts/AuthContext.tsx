@@ -59,6 +59,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   // Listeners Firestore base
   useEffect(() => {
+    if (!user) {
+      setDynamicAdmins([]);
+      setDynamicHrs([]);
+      setDynamicSeniors([]);
+      setDipendenti([]);
+      setCommesse([]);
+      return;
+    }
+
     const unsubAdmins = onSnapshot(collection(db, 'admins'), (snapshot) => {
       setDynamicAdmins(snapshot.docs.map(doc => doc.data().email?.toLowerCase()));
     });
@@ -122,7 +131,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       unsubDipendenti();
       unsubCommesse();
     };
-  }, []);
+  }, [user]);
 
   // Ascolto stato utente Firebase
   useEffect(() => {
