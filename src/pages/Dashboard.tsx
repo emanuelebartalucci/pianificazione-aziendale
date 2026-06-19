@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Briefcase, Calendar, Settings, FileText, MessageSquare, Plus, Trash2, Megaphone, X, Users } from 'lucide-react';
+import { Briefcase, Calendar, Settings, FileText, MessageSquare, Plus, Trash2, Megaphone, X, Users, CalendarDays } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
@@ -460,6 +460,20 @@ export default function Dashboard() {
               <div>
                 <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-800 mt-2">Registro Presenze</h2>
                 <p className="hidden xl:block text-xs font-semibold text-gray-500 mt-1.5 leading-tight">Compila il rapportino mensile delle ore e dei rimborsi trasferte.</p>
+              </div>
+            </div>
+
+            {/* Prenotazione Risorse */}
+            <div 
+              onClick={() => navigate('/prenotazioni')} 
+              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 xl:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between aspect-square w-full"
+            >
+              <div className="w-12 h-12 sm:w-14 sm:h-14 xl:w-16 xl:h-16 shrink-0 bg-teal-100 text-teal-600 rounded-2xl flex items-center justify-center group-hover:bg-teal-600 group-hover:text-white transition-colors">
+                <CalendarDays className="w-6 h-6 sm:w-7 sm:h-7 xl:w-8 xl:h-8" />
+              </div>
+              <div>
+                <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-800 mt-2">Prenotazione Risorse</h2>
+                <p className="hidden xl:block text-xs font-semibold text-gray-500 mt-1.5 leading-tight">Prenota sale riunioni, auto aziendali o gestisci i PC CAD condivisi.</p>
               </div>
             </div>
 

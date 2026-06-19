@@ -11,6 +11,7 @@ import Impostazioni from './pages/Impostazioni';
 import Presenze from './pages/Presenze';
 import Suggerimenti from './pages/Suggerimenti';
 import PianificazionePersonale from './pages/PianificazionePersonale';
+import Prenotazioni from './pages/Prenotazioni';
 
 // Components
 import Navbar from './components/Navbar';
@@ -48,6 +49,7 @@ function App() {
                 <Route path="/presenze" element={<Presenze />} />
                 <Route path="/suggerimenti" element={<Suggerimenti />} />
                 <Route path="/pianificazione-personale" element={<PianificazionePersonale />} />
+                <Route path="/prenotazioni" element={<Prenotazioni />} />
                 <Route path="*" element={<Navigate to="/" />} />
               </Routes>
             </main>
