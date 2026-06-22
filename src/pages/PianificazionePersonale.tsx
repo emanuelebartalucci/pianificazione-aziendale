@@ -178,8 +178,9 @@ export default function PianificazionePersonale() {
   }, [commesse, myAssociatedName]);
 
   const selectableCommesse = useMemo(() => {
-    if (isAdmin || isSenior) return commesse;
-    return commesse.filter(c => c.pm === myAssociatedName || c.responsabile === myAssociatedName);
+    const openCommesse = commesse.filter(c => c.stato !== 'Chiusa');
+    if (isAdmin || isSenior) return openCommesse;
+    return openCommesse.filter(c => c.pm === myAssociatedName || c.responsabile === myAssociatedName);
   }, [commesse, isAdmin, isSenior, myAssociatedName]);
 
   const assignedCommesseForSelected = useMemo(() => {

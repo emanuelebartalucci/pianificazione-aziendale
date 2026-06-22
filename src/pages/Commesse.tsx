@@ -194,6 +194,7 @@ export default function Commesse() {
   const [editPM, setEditPM] = useState('');
   const [editDataInizio, setEditDataInizio] = useState('');
   const [editDataFine, setEditDataFine] = useState('');
+  const [editStato, setEditStato] = useState('Aperta');
   const [savingEdit, setSavingEdit] = useState(false);
   
   const [seniorsEmails, setSeniorsEmails] = useState<string[]>([]);
@@ -492,6 +493,7 @@ export default function Commesse() {
     
     setEditDataInizio(comm.dataInizio || '');
     setEditDataFine(comm.dataFine || '');
+    setEditStato(comm.stato || 'Aperta');
   };
 
   const handleSaveCommessaDetails = async (e: React.FormEvent) => {
@@ -510,7 +512,8 @@ export default function Commesse() {
         responsabile: editResponsabile,
         pm: editPM,
         dataInizio: editDataInizio,
-        dataFine: editDataFine
+        dataFine: editDataFine,
+        stato: editStato
       };
 
       await setDoc(docRef, updates, { merge: true });
@@ -1329,7 +1332,18 @@ export default function Commesse() {
                     </select>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Stato</label>
+                      <select 
+                        value={editStato} 
+                        onChange={e => setEditStato(e.target.value)}
+                        className="w-full p-3 border-none bg-gray-50 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-bold text-gray-700"
+                      >
+                        <option value="Aperta">Aperta</option>
+                        <option value="Chiusa">Chiusa</option>
+                      </select>
+                    </div>
                     <div>
                       <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Data Inizio (Opzionale)</label>
                       <input 
@@ -1610,7 +1624,22 @@ export default function Commesse() {
                           <td className="p-2.5 truncate max-w-[100px]" title={c.responsabile || ''}>{c.responsabile || ''}</td>
                           <td className="p-2.5 truncate max-w-[100px]" title={c.pm || ''}>{c.pm || ''}</td>
                           <td className="p-2.5 text-center">
-                            <button onClick={() => handleRemoveCommessa(c.id, c.nome)} className="text-emerald-600 hover:text-red-650 p-1 transition-colors cursor-pointer"><Trash2 className="w-4 h-4"/></button>
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button 
+                                onClick={() => handleOpenEditModal(c)} 
+                                className="text-emerald-650 hover:text-blue-655 p-1 transition-colors cursor-pointer"
+                                title="Modifica commessa"
+                              >
+                                <Pencil className="w-3.5 h-3.5"/>
+                              </button>
+                              <button 
+                                onClick={() => handleRemoveCommessa(c.id, c.nome)} 
+                                className="text-emerald-650 hover:text-red-655 p-1 transition-colors cursor-pointer"
+                                title="Elimina commessa"
+                              >
+                                <Trash2 className="w-3.5 h-3.5"/>
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );

@@ -472,7 +472,7 @@ export default function Dashboard() {
                 <CalendarDays className="w-6 h-6 sm:w-7 sm:h-7 xl:w-8 xl:h-8" />
               </div>
               <div>
-                <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-800 mt-2">Prenotazione Risorse</h2>
+                <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-800 mt-2">Prenotazioni</h2>
                 <p className="hidden xl:block text-xs font-semibold text-gray-500 mt-1.5 leading-tight">Prenota sale riunioni, auto aziendali o gestisci i PC CAD condivisi.</p>
               </div>
             </div>

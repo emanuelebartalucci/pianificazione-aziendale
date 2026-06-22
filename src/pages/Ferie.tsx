@@ -313,8 +313,7 @@ export default function Ferie() {
   const getTipoLabel = (tipo: string) => {
     const t = getTipoData(tipo);
     return (
-      <span className="flex items-center gap-2 text-sm font-medium text-gray-700 capitalize">
-        <span className={`w-3 h-3 rounded-full ${t.color} shadow-sm`}></span>
+      <span className="text-xs sm:text-sm font-bold text-gray-600 bg-gray-100 px-2 py-1 rounded-lg capitalize">
         {t.label}
       </span>
     );
@@ -354,9 +353,19 @@ export default function Ferie() {
           {dayRequests.map(req => {
             const t = getTipoData(req.tipo);
             let bg = 'bg-gray-100 border-gray-200 text-gray-800';
-            if(req.stato === 'Approvato') bg = 'bg-green-50 border-green-200 text-green-800';
-            if(req.stato === 'Rifiutato') bg = 'bg-red-50 border-red-200 text-red-800 opacity-50 line-through';
-            if(req.stato === 'In attesa') bg = 'bg-yellow-50 border-yellow-200 text-yellow-800';
+            let dotBg = 'bg-gray-400';
+            if(req.stato === 'Approvato') {
+              bg = 'bg-green-50 border-green-200 text-green-800';
+              dotBg = 'bg-green-400';
+            }
+            if(req.stato === 'Rifiutato') {
+              bg = 'bg-red-50 border-red-200 text-red-800 opacity-50 line-through';
+              dotBg = 'bg-red-400';
+            }
+            if(req.stato === 'In attesa') {
+              bg = 'bg-yellow-50 border-yellow-200 text-yellow-800';
+              dotBg = 'bg-yellow-300';
+            }
 
             const hourSuffix = req.tipo === 'permesso' && req.oraInizio && req.oraFine ? ` (${req.oraInizio}-${req.oraFine})` : '';
 
@@ -375,9 +384,9 @@ export default function Ferie() {
                 }`}
                 title={isPowerUser ? "Clicca per annullare/eliminare questa richiesta" : undefined}
               >
-                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${t.color}`}></span>
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotBg}`}></span>
                 <span className="truncate" title={`${req.dipendenteName} - ${t.label}${hourSuffix}`}>
-                  {req.dipendenteName}{hourSuffix}
+                  {req.dipendenteName} ({t.label}){hourSuffix}
                 </span>
               </div>
             );
