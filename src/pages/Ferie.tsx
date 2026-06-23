@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, query, where } from 'firebase/firestore';
 import { Calendar, CheckCircle, XCircle, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
 import { queueMail } from '../utils/mailSender';
 
@@ -61,8 +61,10 @@ export default function Ferie() {
     return d;
   });
 
-  // Lista richieste
-  const [richieste, setRichieste] = useState<RichiestaFerie[]>([]);
+  // Liste richieste suddivise per ottimizzazione letture
+  const [myRichieste, setMyRichieste] = useState<RichiestaFerie[]>([]);
+  const [othersApprovedRichieste, setOthersApprovedRichieste] = useState<RichiestaFerie[]>([]);
+  const [hrRichieste, setHrRichieste] = useState<RichiestaFerie[]>([]);
   const [loading, setLoading] = useState(false);
 
   // States per l'annullamento ferie da parte di HR
@@ -70,8 +72,21 @@ export default function Ferie() {
   const [cancellationReason, setCancellationReason] = useState('');
   const [cancellationLoading, setCancellationLoading] = useState(false);
 
+  // 1. HR/Admin: listen to all requests with dataFine >= startLimit
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'richieste_ferie'), (snapshot) => {
+    if (!isHR && !isAdmin) {
+      setHrRichieste([]);
+      return;
+    }
+    const halfYearAgo = new Date();
+    halfYearAgo.setMonth(halfYearAgo.getMonth() - 6);
+    const startLimit = halfYearAgo.toLocaleDateString('sv-SE');
+
+    const q = query(
+      collection(db, 'richieste_ferie'),
+      where('dataFine', '>=', startLimit)
+    );
+    const unsub = onSnapshot(q, (snapshot) => {
       const list: RichiestaFerie[] = [];
       snapshot.forEach(docSnap => {
         const data = docSnap.data();
@@ -88,14 +103,98 @@ export default function Ferie() {
           timestamp: data.timestamp
         });
       });
-      setRichieste(list.sort((a, b) => {
-        const timeA = a.timestamp ? new Date(a.timestamp).getTime() : new Date(a.dataInizio || a.data).getTime();
-        const timeB = b.timestamp ? new Date(b.timestamp).getTime() : new Date(b.dataInizio || b.data).getTime();
-        return timeB - timeA;
-      }));
+      setHrRichieste(list);
     });
-    return () => unsub();
-  }, []);
+    return unsub;
+  }, [isHR, isAdmin]);
+
+  // 2. Regular user: listen to own requests (all)
+  useEffect(() => {
+    if (isHR || isAdmin || !myAssociatedName) {
+      setMyRichieste([]);
+      return;
+    }
+    const q = query(
+      collection(db, 'richieste_ferie'),
+      where('dipendenteName', '==', myAssociatedName)
+    );
+    const unsub = onSnapshot(q, (snapshot) => {
+      const list: RichiestaFerie[] = [];
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        list.push({
+          id: docSnap.id,
+          dipendenteName: data.dipendenteName,
+          data: data.data || '',
+          tipo: data.tipo,
+          stato: data.stato || 'In attesa',
+          dataInizio: data.dataInizio,
+          dataFine: data.dataFine,
+          oraInizio: data.oraInizio,
+          oraFine: data.oraFine,
+          timestamp: data.timestamp
+        });
+      });
+      setMyRichieste(list);
+    });
+    return unsub;
+  }, [myAssociatedName, isHR, isAdmin]);
+
+  // 3. Regular user: listen to approved requests of others >= startLimitOthers
+  useEffect(() => {
+    if (isHR || isAdmin || !myAssociatedName) {
+      setOthersApprovedRichieste([]);
+      return;
+    }
+    const sixtyDaysAgo = new Date();
+    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+    const startLimitOthers = sixtyDaysAgo.toLocaleDateString('sv-SE');
+
+    const q = query(
+      collection(db, 'richieste_ferie'),
+      where('stato', '==', 'Approvato'),
+      where('dataFine', '>=', startLimitOthers)
+    );
+    const unsub = onSnapshot(q, (snapshot) => {
+      const list: RichiestaFerie[] = [];
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        if (data.dipendenteName === myAssociatedName) return;
+        list.push({
+          id: docSnap.id,
+          dipendenteName: data.dipendenteName,
+          data: data.data || '',
+          tipo: data.tipo,
+          stato: data.stato || 'In attesa',
+          dataInizio: data.dataInizio,
+          dataFine: data.dataFine,
+          oraInizio: data.oraInizio,
+          oraFine: data.oraFine,
+          timestamp: data.timestamp
+        });
+      });
+      setOthersApprovedRichieste(list);
+    });
+    return unsub;
+  }, [myAssociatedName, isHR, isAdmin]);
+
+  // Union list for regular users
+  const requestsList = useMemo(() => {
+    const map: Record<string, RichiestaFerie> = {};
+    myRichieste.forEach(r => { map[r.id] = r; });
+    othersApprovedRichieste.forEach(r => { map[r.id] = r; });
+    return Object.values(map);
+  }, [myRichieste, othersApprovedRichieste]);
+
+  // Sorted full list depending on role
+  const richieste = useMemo(() => {
+    const list = (isHR || isAdmin) ? hrRichieste : requestsList;
+    return list.sort((a, b) => {
+      const timeA = a.timestamp ? new Date(a.timestamp).getTime() : new Date(a.dataInizio || a.data).getTime();
+      const timeB = b.timestamp ? new Date(b.timestamp).getTime() : new Date(b.dataInizio || b.data).getTime();
+      return timeB - timeA;
+    });
+  }, [hrRichieste, requestsList, isHR, isAdmin]);
 
   const listRichieste = useMemo(() => {
     if (isHR) {
@@ -106,6 +205,7 @@ export default function Ferie() {
         return !dateLimit || dateLimit >= todayStr;
       });
     }
+    // For regular users, show only their own requests in the list (approved of others are calendar-only)
     return richieste.filter(r => r.dipendenteName === myAssociatedName);
   }, [richieste, isHR, myAssociatedName]);
 

@@ -8,7 +8,9 @@ import {
   addDoc, 
   updateDoc, 
   deleteDoc, 
-  setDoc
+  setDoc,
+  query,
+  where
 } from 'firebase/firestore';
 import { 
   Laptop, 
@@ -22,7 +24,9 @@ import {
   Info, 
   Clock, 
   History, 
-  ShieldAlert
+  ShieldAlert,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import ConfirmModal from '../components/ConfirmModal';
 
@@ -126,6 +130,141 @@ export default function Prenotazioni() {
   const [carKmInput, setCarKmInput] = useState<number | ''>('');
   const [carDestInput, setCarDestInput] = useState('');
 
+  // State per calendario Sale Riunioni
+  const [currentMonthRoom, setCurrentMonthRoom] = useState(() => {
+    const d = new Date();
+    d.setDate(1);
+    return d;
+  });
+
+  // State per calendario Auto Aziendali
+  const [currentMonthCar, setCurrentMonthCar] = useState(() => {
+    const d = new Date();
+    d.setDate(1);
+    return d;
+  });
+
+  const shiftMonthRoom = (delta: number) => {
+    const d = new Date(currentMonthRoom);
+    d.setMonth(d.getMonth() + delta);
+    setCurrentMonthRoom(d);
+  };
+
+  const daysInMonthRoom = new Date(currentMonthRoom.getFullYear(), currentMonthRoom.getMonth() + 1, 0).getDate();
+  const firstDayIndexRoom = (new Date(currentMonthRoom.getFullYear(), currentMonthRoom.getMonth(), 1).getDay() + 6) % 7;
+  const monthNameRoom = currentMonthRoom.toLocaleString('it-IT', { month: 'long', year: 'numeric' });
+
+  const shiftMonthCar = (delta: number) => {
+    const d = new Date(currentMonthCar);
+    d.setMonth(d.getMonth() + delta);
+    setCurrentMonthCar(d);
+  };
+
+  const daysInMonthCar = new Date(currentMonthCar.getFullYear(), currentMonthCar.getMonth() + 1, 0).getDate();
+  const firstDayIndexCar = (new Date(currentMonthCar.getFullYear(), currentMonthCar.getMonth(), 1).getDay() + 6) % 7;
+  const monthNameCar = currentMonthCar.toLocaleString('it-IT', { month: 'long', year: 'numeric' });
+
+  const getRoomCalendarCells = () => {
+    const cells = [];
+    for (let i = 0; i < firstDayIndexRoom; i++) {
+      cells.push(<div key={`empty-room-${i}`} className="min-h-[100px] bg-gray-50/50 rounded-xl border border-transparent"></div>);
+    }
+    for (let day = 1; day <= daysInMonthRoom; day++) {
+      const dateStr = `${currentMonthRoom.getFullYear()}-${String(currentMonthRoom.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const dayBookings = bookings.filter(b => b.tipoRisorsa === 'room' && b.dataInizio.substring(0, 10) === dateStr);
+      const sortedDayBookings = dayBookings.sort((a, b) => a.dataInizio.localeCompare(b.dataInizio));
+      
+      cells.push(
+        <div key={`room-day-${day}`} className="min-h-[100px] bg-white rounded-xl border border-gray-200 p-2 shadow-sm hover:shadow-md transition-shadow flex flex-col">
+          <div className="font-bold text-gray-700 mb-1 text-right">{day}</div>
+          <div className="flex-1 flex flex-col gap-1 overflow-y-auto custom-scrollbar pr-1">
+            {sortedDayBookings.map(b => {
+              const room = resources.find(r => r.id === b.risorsaId);
+              const roomName = room ? room.nome : b.risorsaId;
+              const startH = b.dataInizio.split('T')[1].substring(0, 5);
+              const endH = b.dataFine.split('T')[1].substring(0, 5);
+              const isMe = b.dipendenteEmail?.toLowerCase() === currentUserEmail?.toLowerCase();
+              const canCancel = isMe || isAdmin;
+              return (
+                <div 
+                  key={b.id}
+                  onClick={() => canCancel && handleCancelBooking(b)}
+                  className={`text-[10px] p-1.5 rounded border bg-indigo-50 border-indigo-200 text-indigo-800 flex flex-col gap-0.5 font-medium leading-tight shadow-sm ${
+                    canCancel ? 'cursor-pointer hover:bg-red-50 hover:border-red-200 hover:text-red-800 transition-colors' : ''
+                  }`}
+                  title={canCancel ? "Clicca per cancellare questa prenotazione" : undefined}
+                >
+                  <div className="font-extrabold flex justify-between items-center gap-1">
+                    <span className="truncate">{roomName}</span>
+                    <span className="text-[9px] text-indigo-600 bg-indigo-100/80 px-1 rounded-sm shrink-0">{startH}-{endH}</span>
+                  </div>
+                  <div className="truncate text-gray-750 font-bold">{b.dipendenteNome}</div>
+                  {b.note && <div className="text-[9px] text-gray-500 italic truncate">"{b.note}"</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+    return cells;
+  };
+
+  const getCarCalendarCells = () => {
+    const cells = [];
+    for (let i = 0; i < firstDayIndexCar; i++) {
+      cells.push(<div key={`empty-car-${i}`} className="min-h-[100px] bg-gray-50/50 rounded-xl border border-transparent"></div>);
+    }
+    for (let day = 1; day <= daysInMonthCar; day++) {
+      const dateStr = `${currentMonthCar.getFullYear()}-${String(currentMonthCar.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const dayBookings = bookings.filter(b => b.tipoRisorsa === 'car' && b.dataInizio.substring(0, 10) <= dateStr && b.dataFine.substring(0, 10) >= dateStr);
+      const sortedDayBookings = dayBookings.sort((a, b) => a.dataInizio.localeCompare(b.dataInizio));
+      
+      cells.push(
+        <div key={`car-day-${day}`} className="min-h-[100px] bg-white rounded-xl border border-gray-200 p-2 shadow-sm hover:shadow-md transition-shadow flex flex-col">
+          <div className="font-bold text-gray-700 mb-1 text-right">{day}</div>
+          <div className="flex-1 flex flex-col gap-1 overflow-y-auto custom-scrollbar pr-1">
+            {sortedDayBookings.map(b => {
+              const car = resources.find(r => r.id === b.risorsaId);
+              const carName = car ? car.nome : b.risorsaId;
+              const isMe = b.dipendenteEmail?.toLowerCase() === currentUserEmail?.toLowerCase();
+              const canCancel = (isMe || isAdmin) && b.statoUso !== 'concluso';
+              
+              let bg = 'bg-teal-50 border-teal-200 text-teal-800';
+              let dotBg = 'bg-teal-400';
+              if (b.statoUso === 'concluso') {
+                bg = 'bg-gray-100 border-gray-200 text-gray-650 opacity-60';
+                dotBg = 'bg-gray-400';
+              } else if (b.statoUso === 'in_corso') {
+                bg = 'bg-amber-50 border-amber-200 text-amber-800';
+                dotBg = 'bg-amber-400';
+              }
+
+              return (
+                <div 
+                  key={b.id}
+                  onClick={() => canCancel && handleCancelBooking(b)}
+                  className={`text-[10px] p-1.5 rounded border ${bg} flex flex-col gap-0.5 font-medium leading-tight shadow-sm ${
+                    canCancel ? 'cursor-pointer hover:bg-red-50 hover:border-red-200 hover:text-red-800 transition-colors' : ''
+                  }`}
+                  title={canCancel ? "Clicca per cancellare questa prenotazione" : undefined}
+                >
+                  <div className="font-extrabold flex justify-between items-center gap-1">
+                    <span className="truncate">{carName}</span>
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotBg}`}></span>
+                  </div>
+                  <div className="truncate text-gray-750 font-bold">{b.dipendenteNome}</div>
+                  {b.note && <div className="text-[9px] text-gray-500 italic truncate">"{b.note}"</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+    return cells;
+  };
+
   // Admin Modals
   const [isAdminAddResourceOpen, setIsAdminAddResourceOpen] = useState(false);
   const [newResourceData, setNewResourceData] = useState({
@@ -182,8 +321,17 @@ export default function Prenotazioni() {
       showToast("Errore nel caricamento delle risorse.", "error");
     });
 
-    // 2. Listen for bookings
-    const unsubBookings = onSnapshot(collection(db, 'prenotazioni_risorse'), (snapshot) => {
+    // 2. Listen for bookings (last 60 days to prevent infinite data load)
+    const sixtyDaysAgo = new Date();
+    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+    const limitDate = sixtyDaysAgo.toLocaleDateString('sv-SE');
+
+    const bookingsQuery = query(
+      collection(db, 'prenotazioni_risorse'),
+      where('dataFine', '>=', limitDate)
+    );
+
+    const unsubBookings = onSnapshot(bookingsQuery, (snapshot) => {
       const bookList: Booking[] = snapshot.docs.map(docSnap => ({
         id: docSnap.id,
         ...docSnap.data()
@@ -908,7 +1056,8 @@ export default function Prenotazioni() {
 
       {/* --- TAB 2: SALE RIUNIONI --- */}
       {activeTab === 'room' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        <div className="space-y-8 animate-in fade-in">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           {/* Sezione Sinistra: Nuova Prenotazione & Info (5 colonne) */}
           <div className="lg:col-span-5 space-y-6">
             <div className="bg-white/80 backdrop-blur-xl p-6 rounded-[2rem] shadow-md border border-white/50">
@@ -1058,7 +1207,33 @@ export default function Prenotazioni() {
                     );
                   })
                 )}
+          </div>
+        </div>
+      </div>
+    </div>
+          
+          {/* CALENDARIO SALE */}
+          <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-md p-6 sm:p-8 border border-white/50 no-print">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="font-extrabold text-xl text-gray-900 capitalize flex items-center gap-2">
+                <CalendarDays className="w-5 h-5 text-indigo-600" />
+                <span>Calendario Mensile Sale - {monthNameRoom}</span>
+              </h3>
+              <div className="flex items-center gap-1 bg-white p-1.5 rounded-xl border border-gray-200 shadow-sm">
+                <button type="button" onClick={() => shiftMonthRoom(-1)} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600 transition"><ChevronLeft className="w-4 h-4" /></button>
+                <button type="button" onClick={() => setCurrentMonthRoom(new Date(new Date().getFullYear(), new Date().getMonth(), 1))} className="px-4 py-2 text-xs font-extrabold text-gray-700 hover:bg-gray-100 rounded-lg transition">Oggi</button>
+                <button type="button" onClick={() => shiftMonthRoom(1)} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600 transition"><ChevronRight className="w-4 h-4" /></button>
               </div>
+            </div>
+
+            <div className="grid grid-cols-7 gap-2 mb-2">
+              {['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'].map(d => (
+                <div key={d} className="text-center font-bold text-gray-400 text-xs py-2">{d}</div>
+              ))}
+            </div>
+            
+            <div className="grid grid-cols-7 gap-2">
+              {getRoomCalendarCells()}
             </div>
           </div>
         </div>
@@ -1300,6 +1475,38 @@ export default function Prenotazioni() {
                   )}
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* CALENDARIO AUTO */}
+          <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-md p-6 sm:p-8 border border-white/50 no-print">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="font-extrabold text-xl text-gray-900 capitalize flex items-center gap-2">
+                <Car className="w-5 h-5 text-teal-600" />
+                <span>Calendario Mensile Auto - {monthNameCar}</span>
+              </h3>
+              <div className="flex items-center gap-1 bg-white p-1.5 rounded-xl border border-gray-200 shadow-sm">
+                <button type="button" onClick={() => shiftMonthCar(-1)} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600 transition"><ChevronLeft className="w-4 h-4" /></button>
+                <button type="button" onClick={() => setCurrentMonthCar(new Date(new Date().getFullYear(), new Date().getMonth(), 1))} className="px-4 py-2 text-xs font-extrabold text-gray-700 hover:bg-gray-100 rounded-lg transition">Oggi</button>
+                <button type="button" onClick={() => shiftMonthCar(1)} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600 transition"><ChevronRight className="w-4 h-4" /></button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-7 gap-2 mb-2">
+              {['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'].map(d => (
+                <div key={d} className="text-center font-bold text-gray-400 text-xs py-2">{d}</div>
+              ))}
+            </div>
+            
+            <div className="grid grid-cols-7 gap-2">
+              {getCarCalendarCells()}
+            </div>
+
+            <div className="mt-6 flex flex-wrap gap-4 p-4 bg-gray-50/50 rounded-2xl border border-gray-100 justify-center">
+              <div className="text-xs font-bold text-gray-500 mr-2">Legenda Colori Stato Auto:</div>
+              <div className="flex items-center gap-2 text-[11px] font-bold text-gray-700"><span className="w-2.5 h-2.5 rounded-full bg-teal-400 shadow-sm"></span> Prenotato</div>
+              <div className="flex items-center gap-2 text-[11px] font-bold text-gray-700"><span className="w-2.5 h-2.5 rounded-full bg-amber-400 shadow-sm"></span> In Viaggio</div>
+              <div className="flex items-center gap-2 text-[11px] font-bold text-gray-700"><span className="w-2.5 h-2.5 rounded-full bg-gray-400 shadow-sm"></span> Concluso (Storico)</div>
             </div>
           </div>
         </div>

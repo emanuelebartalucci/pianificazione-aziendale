@@ -311,11 +311,16 @@ export default function PianificazionePersonale() {
 
   const [approvedLeaves, setApprovedLeaves] = useState<any[]>([]);
 
-  // Load approved leaves in real-time
+  // Load approved leaves in real-time (last 60 days to prevent infinite data load)
   useEffect(() => {
+    const sixtyDaysAgo = new Date();
+    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+    const limitDate = sixtyDaysAgo.toLocaleDateString('sv-SE');
+
     const q = query(
       collection(db, 'richieste_ferie'),
-      where('stato', '==', 'Approvato')
+      where('stato', '==', 'Approvato'),
+      where('dataFine', '>=', limitDate)
     );
     const unsub = onSnapshot(q, (snapshot) => {
       const list: any[] = [];
@@ -2368,7 +2373,7 @@ export default function PianificazionePersonale() {
         weekId={modalData.weekId}
         weekLabel={modalData.weekLabel}
         weekSub={modalData.weekSub}
-        commesseCatalog={commesse}
+        commesseCatalog={selectableCommesse}
         currentAssignments={assignments[`${modalData.dipendente}-${modalData.weekId}`] || []}
         dipendentiList={dipendenti}
         onAssignmentsChanged={updatePendingNotificationsCount}

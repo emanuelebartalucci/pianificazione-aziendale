@@ -262,11 +262,16 @@ export default function Commesse() {
 
   const [approvedLeaves, setApprovedLeaves] = useState<any[]>([]);
 
-  // Load approved leaves in real-time
+  // Load approved leaves in real-time (last 60 days to prevent infinite data load)
   useEffect(() => {
+    const sixtyDaysAgo = new Date();
+    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+    const limitDate = sixtyDaysAgo.toLocaleDateString('sv-SE');
+
     const q = query(
       collection(db, 'richieste_ferie'),
-      where('stato', '==', 'Approvato')
+      where('stato', '==', 'Approvato'),
+      where('dataFine', '>=', limitDate)
     );
     const unsub = onSnapshot(q, (snapshot) => {
       const list: any[] = [];
@@ -1275,115 +1280,6 @@ export default function Commesse() {
           </div>
         </div>
 
-          {editingCommessa && (
-            <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
-              <div className="bg-white rounded-[2rem] shadow-2xl max-w-md w-full border border-gray-150 p-6 flex flex-col gap-6 animate-in fade-in zoom-in-95 duration-200">
-                <div className="flex justify-between items-center">
-                  <h3 className="text-xl font-black text-gray-900 flex items-center gap-2">
-                    <Briefcase className="w-6 h-6 text-blue-600" />
-                    <span>Assegna Resp/PM & Date</span>
-                  </h3>
-                  <button onClick={() => setEditingCommessa(null)} className="text-gray-400 hover:text-gray-600 p-1.5 rounded-xl hover:bg-gray-100 transition">
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-
-                <div className="bg-blue-50 border border-blue-100 p-4 rounded-2xl">
-                  <div className="text-[11px] font-bold uppercase tracking-wider text-blue-500">Commessa in modifica</div>
-                  <div className="font-extrabold text-blue-900 text-sm mt-0.5">{editingCommessa.nome}</div>
-                </div>
-
-                <form onSubmit={handleSaveCommessaDetails} className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Responsabile</label>
-                    <select 
-                      value={editResponsabile} 
-                      onChange={e => setEditResponsabile(e.target.value)}
-                      className="w-full p-3 border-none bg-gray-50 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-bold text-gray-700"
-                    >
-                      <option value="">-- Nessuno --</option>
-                      {(() => {
-                        const list = dipendenti.filter(d => d.email && seniorsEmails.includes(d.email.toLowerCase()));
-                        if (editResponsabile && !list.some(d => d.nome === editResponsabile)) {
-                          const current = dipendenti.find(d => d.nome === editResponsabile);
-                          if (current) list.push(current);
-                        }
-                        return list.map(d => <option key={d.id} value={d.nome}>{d.nome}</option>);
-                      })()}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Project Manager (PM)</label>
-                    <select 
-                      value={editPM} 
-                      onChange={e => setEditPM(e.target.value)}
-                      className="w-full p-3 border-none bg-gray-50 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-bold text-gray-700"
-                    >
-                      <option value="">-- Nessuno --</option>
-                      {(() => {
-                        const list = dipendenti.filter(d => d.email && pmsEmails.includes(d.email.toLowerCase()));
-                        if (editPM && !list.some(d => d.nome === editPM)) {
-                          const current = dipendenti.find(d => d.nome === editPM);
-                          if (current) list.push(current);
-                        }
-                        return list.map(d => <option key={d.id} value={d.nome}>{d.nome}</option>);
-                      })()}
-                    </select>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Stato</label>
-                      <select 
-                        value={editStato} 
-                        onChange={e => setEditStato(e.target.value)}
-                        className="w-full p-3 border-none bg-gray-50 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-bold text-gray-700"
-                      >
-                        <option value="Aperta">Aperta</option>
-                        <option value="Chiusa">Chiusa</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Data Inizio (Opzionale)</label>
-                      <input 
-                        type="date" 
-                        value={editDataInizio} 
-                        onChange={e => setEditDataInizio(e.target.value)}
-                        className="w-full p-3 border-none bg-gray-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-semibold text-gray-650"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Data Fine (Opzionale)</label>
-                      <input 
-                        type="date" 
-                        value={editDataFine} 
-                        onChange={e => setEditDataFine(e.target.value)}
-                        className="w-full p-3 border-none bg-gray-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-semibold text-gray-650"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex gap-3 pt-4">
-                    <button 
-                      type="button" 
-                      onClick={() => setEditingCommessa(null)} 
-                      className="flex-1 py-3 px-4 rounded-xl border border-gray-200 text-xs font-bold text-gray-650 hover:bg-gray-50 transition"
-                    >
-                      Annulla
-                    </button>
-                    <button 
-                      type="submit" 
-                      disabled={savingEdit}
-                      className="flex-1 py-3 px-4 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 transition active:scale-95 disabled:opacity-50"
-                    >
-                      {savingEdit ? 'Salvataggio...' : 'Salva Modifiche'}
-                    </button>
-                  </div>
-                </form>
-              </div>
-            </div>
-          )}
         </>
       )}
 
@@ -1649,6 +1545,116 @@ export default function Commesse() {
               </table>
             </div>
           </section>
+        </div>
+      )}
+
+      {editingCommessa && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2rem] shadow-2xl max-w-md w-full border border-gray-150 p-6 flex flex-col gap-6 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex justify-between items-center">
+              <h3 className="text-xl font-black text-gray-900 flex items-center gap-2">
+                <Briefcase className="w-6 h-6 text-blue-600" />
+                <span>Assegna Resp/PM & Date</span>
+              </h3>
+              <button onClick={() => setEditingCommessa(null)} className="text-gray-400 hover:text-gray-600 p-1.5 rounded-xl hover:bg-gray-100 transition">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="bg-blue-50 border border-blue-100 p-4 rounded-2xl">
+              <div className="text-[11px] font-bold uppercase tracking-wider text-blue-500">Commessa in modifica</div>
+              <div className="font-extrabold text-blue-900 text-sm mt-0.5">{editingCommessa.nome}</div>
+            </div>
+
+            <form onSubmit={handleSaveCommessaDetails} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Responsabile</label>
+                <select 
+                  value={editResponsabile} 
+                  onChange={e => setEditResponsabile(e.target.value)}
+                  className="w-full p-3 border-none bg-gray-50 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-bold text-gray-700"
+                >
+                  <option value="">-- Nessuno --</option>
+                  {(() => {
+                    const list = dipendenti.filter(d => d.email && seniorsEmails.includes(d.email.toLowerCase()));
+                    if (editResponsabile && !list.some(d => d.nome === editResponsabile)) {
+                      const current = dipendenti.find(d => d.nome === editResponsabile);
+                      if (current) list.push(current);
+                    }
+                    return list.map(d => <option key={d.id} value={d.nome}>{d.nome}</option>);
+                  })()}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Project Manager (PM)</label>
+                <select 
+                  value={editPM} 
+                  onChange={e => setEditPM(e.target.value)}
+                  className="w-full p-3 border-none bg-gray-50 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-bold text-gray-700"
+                >
+                  <option value="">-- Nessuno --</option>
+                  {(() => {
+                    const list = dipendenti.filter(d => d.email && pmsEmails.includes(d.email.toLowerCase()));
+                    if (editPM && !list.some(d => d.nome === editPM)) {
+                      const current = dipendenti.find(d => d.nome === editPM);
+                      if (current) list.push(current);
+                    }
+                    return list.map(d => <option key={d.id} value={d.nome}>{d.nome}</option>);
+                  })()}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Stato</label>
+                  <select 
+                    value={editStato} 
+                    onChange={e => setEditStato(e.target.value)}
+                    className="w-full p-3 border-none bg-gray-50 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-bold text-gray-700"
+                  >
+                    <option value="Aperta">Aperta</option>
+                    <option value="Chiusa">Chiusa</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Data Inizio (Opzionale)</label>
+                  <input 
+                    type="date" 
+                    value={editDataInizio} 
+                    onChange={e => setEditDataInizio(e.target.value)}
+                    className="w-full p-3 border-none bg-gray-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-semibold text-gray-650"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Data Fine (Opzionale)</label>
+                  <input 
+                    type="date" 
+                    value={editDataFine} 
+                    onChange={e => setEditDataFine(e.target.value)}
+                    className="w-full p-3 border-none bg-gray-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-semibold text-gray-650"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button 
+                  type="button" 
+                  onClick={() => setEditingCommessa(null)} 
+                  className="flex-1 py-3 px-4 rounded-xl border border-gray-200 text-xs font-bold text-gray-650 hover:bg-gray-50 transition"
+                >
+                  Annulla
+                </button>
+                <button 
+                  type="submit" 
+                  disabled={savingEdit}
+                  className="flex-1 py-3 px-4 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 transition active:scale-95 disabled:opacity-50"
+                >
+                  {savingEdit ? 'Salvataggio...' : 'Salva Modifiche'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 

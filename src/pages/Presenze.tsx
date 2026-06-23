@@ -260,10 +260,15 @@ export default function Presenze() {
       return;
     }
 
+    const startOfYear = `${selectedYear}-01-01`;
+    const endOfYear = `${selectedYear}-12-31`;
+
     const q = query(
       collection(db, 'richieste_ferie'),
       where('dipendenteName', '==', myAssociatedName),
-      where('stato', '==', 'Approvato')
+      where('stato', '==', 'Approvato'),
+      where('dataFine', '>=', startOfYear),
+      where('dataInizio', '<=', endOfYear)
     );
 
     const unsub = onSnapshot(q, (snapshot) => {
