@@ -30,3 +30,19 @@ dist-ssr
 .env.test.local
 .env.production.local
 
+# Antigravity and Gemini session/history files
+.gemini/
+*.pb
+
+# Local history and temporary files
+.history/
+*.tmp
+~$*
+~WRD*.tmp
+*~
+
+# Additional build, cache, and system files
+.cache/
+.parcel-cache/
+.eslintcache
+
