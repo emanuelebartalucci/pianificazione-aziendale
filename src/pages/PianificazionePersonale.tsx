@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, onSnapshot, doc, getDoc, setDoc, deleteDoc, query, where, getDocs } from 'firebase/firestore';
-import { Users, Printer, ChevronLeft, ChevronRight, Save, Download, ZoomIn, ZoomOut, Trash2, Plus } from 'lucide-react';
+import { collection, onSnapshot, doc, query, where, getDocs, writeBatch } from 'firebase/firestore';
+import { Users, Printer, ChevronLeft, ChevronRight, Save, Download, ZoomIn, ZoomOut, Trash2, Plus, RefreshCw } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays } from '../utils/date';
 import AssegnazioneModal from '../components/AssegnazioneModal';
 import ConfirmModal from '../components/ConfirmModal';
@@ -117,14 +117,24 @@ export default function PianificazionePersonale() {
   const isNarrow = useMemo(() => parseInt(weekColumnMinWidth) < 80, [weekColumnMinWidth]);
   const isUltraNarrow = useMemo(() => parseInt(weekColumnMinWidth) < 50, [weekColumnMinWidth]);
   
+  const [dbAssignments, setDbAssignments] = useState<Record<string, Assegnazione[]>>({});
   const [assignments, setAssignments] = useState<Record<string, Assegnazione[]>>({});
+  const [isDirty, setIsDirty] = useState(false);
+  const [draftNotifications, setDraftNotifications] = useState<{
+    dipendenteNome: string;
+    email: string;
+    weekLabel: string;
+    description: string;
+  }[]>([]);
+  const [loadingAssignments, setLoadingAssignments] = useState(true);
+  const [savingChanges, setSavingChanges] = useState(false);
   
   // Selection states for bulk allocator
   const [activeTab, setActiveTab] = useState<'commessa' | 'risorsa' | 'sostituisci'>('commessa');
   const [selectedCommessaId, setSelectedCommessaId] = useState('');
   const [selectedResourceNames, setSelectedResourceNames] = useState<string[]>([]);
   const [resourcePercentages] = useState<Record<string, string>>({});
-  const [savingAllocations, setSavingAllocations] = useState(false);
+  const [savingAllocations, _setSavingAllocations] = useState(false);
   const [allocAction, setAllocAction] = useState<'assegna' | 'rimuovi' | 'sostituisci'>('assegna');
   const [sourceResource, setSourceResource] = useState('');
   const [targetResource, setTargetResource] = useState('');
@@ -389,16 +399,27 @@ export default function PianificazionePersonale() {
     return leaveDaysFound;
   };
 
-  // Load assignments in real-time
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'assegnazioni'), (snapshot) => {
+  const fetchAssignments = async () => {
+    setLoadingAssignments(true);
+    try {
+      const snap = await getDocs(collection(db, 'assegnazioni'));
       const ass: Record<string, Assegnazione[]> = {};
-      snapshot.forEach(docSnap => {
+      snap.forEach(docSnap => {
         ass[docSnap.id] = docSnap.data().lista || [];
       });
+      setDbAssignments(ass);
       setAssignments(ass);
-    });
-    return () => unsub();
+    } catch (err) {
+      console.error("Errore caricamento assegnazioni:", err);
+      showToast("Errore nel caricamento delle assegnazioni.", "error");
+    } finally {
+      setLoadingAssignments(false);
+    }
+  };
+
+  // Carica le assegnazioni una volta all'avvio
+  useEffect(() => {
+    fetchAssignments();
   }, []);
 
   // Update timeline weeks for the grid
@@ -458,45 +479,44 @@ export default function PianificazionePersonale() {
       }
     }
 
-    setSavingAllocations(true);
+    const updatedAssignments = { ...assignments };
+    const newNotifications = [...draftNotifications];
+
     try {
       const targetWeekIds = getWeeksSpannedByDates(allocDataInizio, allocDataFine);
 
       for (const wkId of targetWeekIds) {
         const docId = `${resName}-${wkId}`;
-        const docRef = doc(db, 'assegnazioni', docId);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          const currentList = docSnap.data().lista || [];
-          const updatedList = currentList.filter((a: any) => a.commessaId !== commessaId);
-          if (currentList.length !== updatedList.length) {
-            if (updatedList.length === 0) {
-              await deleteDoc(docRef);
-            } else {
-              await setDoc(docRef, { lista: updatedList });
-            }
+        const currentList = updatedAssignments[docId] || [];
+        const filteredList = currentList.filter((a: any) => a.commessaId !== commessaId);
+        
+        if (currentList.length !== filteredList.length) {
+          if (filteredList.length === 0) {
+            delete updatedAssignments[docId];
+          } else {
+            updatedAssignments[docId] = filteredList;
+          }
 
-            // Coda notifica
-            const targetDip = dipendenti.find(d => d.nome === resName);
-            if (targetDip && targetDip.email) {
-              const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
-              addPendingNotification(
-                resName,
-                targetDip.email,
-                wkLabel,
-                `Rimossa commessa: ${commObj?.nome || commessaId}`
-              );
-            }
+          // Coda notifica
+          const targetDip = dipendenti.find(d => d.nome === resName);
+          if (targetDip && targetDip.email) {
+            const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
+            newNotifications.push({
+              dipendenteNome: resName,
+              email: targetDip.email,
+              weekLabel: wkLabel,
+              description: `Rimossa commessa: ${commObj?.nome || commessaId}`
+            });
           }
         }
       }
-      updatePendingNotificationsCount();
-      showToast("Rimozione completata con successo!", "success");
+      setAssignments(updatedAssignments);
+      setDraftNotifications(newNotifications);
+      setIsDirty(true);
+      showToast("Rimozione registrata in bozza!", "success");
     } catch (err) {
       console.error(err);
-      showToast("Si è verificato un errore durante la rimozione.", "error");
-    } finally {
-      setSavingAllocations(false);
+      showToast("Si è verificato un errore durante la rimozione locale.", "error");
     }
   };
 
@@ -521,24 +541,18 @@ export default function PianificazionePersonale() {
       return;
     }
 
-    setSavingAllocations(true);
     const warnings: string[] = [];
+    const updatedAssignments = { ...assignments };
+    const newNotifications = [...draftNotifications];
 
     try {
       const targetWeekIds = getWeeksSpannedByDates(allocDataInizio, allocDataFine);
 
-      // Carica assenze approvate per evitare conflitti
-      const qAbs = query(
-        collection(db, 'richieste_ferie'),
-        where('dipendenteName', '==', resName),
-        where('stato', '==', 'Approvato')
-      );
-      const absSnap = await getDocs(qAbs);
       const blockedDates: Record<string, boolean> = {};
-      absSnap.forEach(dSnap => {
-        const d = dSnap.data();
-        const start = d.dataInizio || d.data;
-        const end = d.dataFine || d.data;
+      approvedLeaves.forEach(leave => {
+        if (leave.dipendenteName !== resName) return;
+        const start = leave.dataInizio || leave.data;
+        const end = leave.dataFine || leave.data;
         if (start && end) {
           const [sY, sM, sD] = start.split('-').map(Number);
           const [eY, eM, eD] = end.split('-').map(Number);
@@ -591,13 +605,7 @@ export default function PianificazionePersonale() {
           warnings.push(`- ${resName} (${wkLabel}): assegnato al ${actualPct}% per assenze.`);
         }
 
-        const docRef = doc(db, 'assegnazioni', docId);
-        const docSnap = await getDoc(docRef);
-        let currentList: any[] = [];
-        if (docSnap.exists()) {
-          currentList = docSnap.data().lista || [];
-        }
-
+        const currentList = updatedAssignments[docId] || [];
         const filteredList = currentList.filter(a => a.commessaId !== commessaId);
         const newAllocation = {
           commessaId: commessaId,
@@ -607,31 +615,132 @@ export default function PianificazionePersonale() {
           giorni: allowedDays
         };
 
-        await setDoc(docRef, { lista: [...filteredList, newAllocation] });
+        updatedAssignments[docId] = [...filteredList, newAllocation];
 
         // Coda notifica
         const targetDip = dipendenti.find(d => d.nome === resName);
         if (targetDip && targetDip.email) {
           const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
-          addPendingNotification(
-            resName,
-            targetDip.email,
-            wkLabel,
-            `Assegnata commessa: ${commObj.nome} (${actualPct}%)${actualPct < basePct ? ' [Percentuale ricalcolata per ferie/assenza]' : ''}`
-          );
+          newNotifications.push({
+            dipendenteNome: resName,
+            email: targetDip.email,
+            weekLabel: wkLabel,
+            description: `Assegnata commessa: ${commObj.nome} (${actualPct}%)${actualPct < basePct ? ' [Percentuale ricalcolata per ferie/assenza]' : ''}`
+          });
         }
       }
 
-      updatePendingNotificationsCount();
-      showToast("Assegnazione completata con successo!", "success");
+      setAssignments(updatedAssignments);
+      setDraftNotifications(newNotifications);
+      setIsDirty(true);
+      showToast("Assegnazione registrata in bozza!", "success");
       if (warnings.length > 0) {
         showToast("Operazione completata con variazioni per assenza/ferie.", "warning");
       }
     } catch (err) {
       console.error(err);
-      showToast("Si è verificato un errore durante il salvataggio.", "error");
+      showToast("Si è verificato un errore durante il salvataggio locale.", "error");
+    }
+  };
+
+  const handleLocalCellChange = (
+    dipNome: string,
+    weekId: string,
+    _weekLabel: string,
+    updatedList: Assegnazione[],
+    addedNotif?: string,
+    removedNotif?: string
+  ) => {
+    const key = `${dipNome}-${weekId}`;
+    const updatedAssignments = {
+      ...assignments,
+      [key]: updatedList
+    };
+    
+    if (updatedList.length === 0) {
+      delete updatedAssignments[key];
+    }
+    
+    setAssignments(updatedAssignments);
+    setIsDirty(true);
+    
+    const targetDip = dipendenti.find(d => d.nome === dipNome);
+    if (targetDip && targetDip.email) {
+      const wkLabel = `Sett. ${weekId.split('-W')[1] || ''}`;
+      const newNotifications = [...draftNotifications];
+      
+      if (addedNotif) {
+        newNotifications.push({
+          dipendenteNome: dipNome,
+          email: targetDip.email,
+          weekLabel: wkLabel,
+          description: addedNotif
+        });
+      }
+      if (removedNotif) {
+        newNotifications.push({
+          dipendenteNome: dipNome,
+          email: targetDip.email,
+          weekLabel: wkLabel,
+          description: removedNotif
+        });
+      }
+      setDraftNotifications(newNotifications);
+    }
+  };
+
+  const handleDiscardChanges = () => {
+    setAssignments(dbAssignments);
+    setDraftNotifications([]);
+    setIsDirty(false);
+    showToast("Modifiche locali annullate con successo!", "success");
+  };
+
+  const handleSaveChanges = async () => {
+    setSavingChanges(true);
+    try {
+      const batch = writeBatch(db);
+      
+      const allKeys = new Set([...Object.keys(assignments), ...Object.keys(dbAssignments)]);
+      
+      let writeCount = 0;
+      allKeys.forEach(key => {
+        const currentList = assignments[key] || [];
+        const dbList = dbAssignments[key] || [];
+        
+        const currentStr = JSON.stringify(currentList);
+        const dbStr = JSON.stringify(dbList);
+        
+        if (currentStr !== dbStr) {
+          const docRef = doc(db, 'assegnazioni', key);
+          if (currentList.length === 0) {
+            batch.delete(docRef);
+          } else {
+            batch.set(docRef, { lista: currentList });
+          }
+          writeCount++;
+        }
+      });
+
+      if (writeCount > 0) {
+        await batch.commit();
+      }
+
+      // Applica le notifiche accumulate in locale
+      draftNotifications.forEach(n => {
+        addPendingNotification(n.dipendenteNome, n.email, n.weekLabel, n.description);
+      });
+      updatePendingNotificationsCount();
+      
+      setDbAssignments(assignments);
+      setDraftNotifications([]);
+      setIsDirty(false);
+      showToast("Tutte le modifiche sono state salvate con successo!", "success");
+    } catch (err) {
+      console.error("Errore salvataggio modifiche:", err);
+      showToast("Errore durante il salvataggio definitivo.", "error");
     } finally {
-      setSavingAllocations(false);
+      setSavingChanges(false);
     }
   };
 
@@ -712,8 +821,9 @@ export default function PianificazionePersonale() {
       }
     }
 
-    setSavingAllocations(true);
     const warnings: string[] = [];
+    const updatedAssignments = { ...assignments };
+    const newNotifications = [...draftNotifications];
 
     try {
       const targetWeekIds = getWeeksSpannedByDates(allocDataInizio, allocDataFine);
@@ -722,18 +832,12 @@ export default function PianificazionePersonale() {
         if (!commObj) return;
         const useDateRange = true;
         for (const resName of selectedResourceNames) {
-          // Fetch approved leaves for this resource to avoid booking on leave days
-          const qAbs = query(
-            collection(db, 'richieste_ferie'),
-            where('dipendenteName', '==', resName),
-            where('stato', '==', 'Approvato')
-          );
-          const absSnap = await getDocs(qAbs);
+          // Fetch approved leaves locally
           const blockedDates: Record<string, boolean> = {};
-          absSnap.forEach(dSnap => {
-            const d = dSnap.data();
-            const start = d.dataInizio || d.data;
-            const end = d.dataFine || d.data;
+          approvedLeaves.forEach(leave => {
+            if (leave.dipendenteName !== resName) return;
+            const start = leave.dataInizio || leave.data;
+            const end = leave.dataFine || leave.data;
             if (start && end) {
               const [sY, sM, sD] = start.split('-').map(Number);
               const [eY, eM, eD] = end.split('-').map(Number);
@@ -751,7 +855,6 @@ export default function PianificazionePersonale() {
 
           for (const wkId of targetWeekIds) {
             const docId = `${resName}-${wkId}`;
-
             const baseDays = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
             const allowedDays: string[] = [];
 
@@ -763,15 +866,12 @@ export default function PianificazionePersonale() {
               basePct = Math.round((basePct * coveredDays) / 5);
             }
 
-            // How many days to allocate based on basePct
             const targetDayCount = Math.round(basePct / 20);
 
             let allocatedCount = 0;
             for (const day of baseDays) {
               if (allocatedCount >= targetDayCount) break;
               const dayDate = getWeekdayDate(wkId, day);
-              
-              // Must be within date range if using date range
               const isWithinRange = !useDateRange || (dayDate >= allocDataInizio && dayDate <= allocDataFine);
               
               if (isWithinRange && !blockedDates[dayDate]) {
@@ -780,13 +880,11 @@ export default function PianificazionePersonale() {
               }
             }
 
-            // Calculate actual percentage (omitting leave days)
             const actualPct = targetDayCount > 0
               ? Math.round((basePct * allowedDays.length) / targetDayCount)
               : 0;
 
             if (actualPct === 0) {
-              // Resource has full-week leave, skip assignment for this week
               const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
               warnings.push(`- ${resName} (${wkLabel}): non assegnato (assenza totale).`);
               continue;
@@ -797,19 +895,9 @@ export default function PianificazionePersonale() {
               warnings.push(`- ${resName} (${wkLabel}): assegnato solo al ${actualPct}% (invece del ${basePct}%) per giornate di assenza/ferie.`);
             }
 
-            // Read current assignments
-            const docRef = doc(db, 'assegnazioni', docId);
-            const docSnap = await getDoc(docRef);
-            
-            let currentList: any[] = [];
-            if (docSnap.exists()) {
-              currentList = docSnap.data().lista || [];
-            }
-
-            // Filter out previous assignment for this commessa
+            const currentList = updatedAssignments[docId] || [];
             const filteredList = currentList.filter(a => a.commessaId !== selectedCommessaId);
 
-            // Build new allocation
             const newAllocation = {
               commessaId: selectedCommessaId,
               commessaName: commObj.nome,
@@ -818,23 +906,22 @@ export default function PianificazionePersonale() {
               giorni: allowedDays
             };
 
-            const updatedList = [...filteredList, newAllocation];
-            await setDoc(docRef, { lista: updatedList });
+            updatedAssignments[docId] = [...filteredList, newAllocation];
 
             // Coda notifica
             const targetDip = dipendenti.find(d => d.nome === resName);
             if (targetDip && targetDip.email) {
               const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
-              addPendingNotification(
-                resName,
-                targetDip.email,
-                wkLabel,
-                `Assegnata commessa: ${commObj.nome} (${actualPct}%)${actualPct < basePct ? ' [Percentuale ricalcolata per ferie/assenza]' : ''}`
-              );
+              newNotifications.push({
+                dipendenteNome: resName,
+                email: targetDip.email,
+                weekLabel: wkLabel,
+                description: `Assegnata commessa: ${commObj.nome} (${actualPct}%)${actualPct < basePct ? ' [Percentuale ricalcolata per ferie/assenza]' : ''}`
+              });
             }
           }
         }
-        showToast("Assegnazioni salvate con successo!", "success");
+        showToast("Assegnazioni registrate in bozza!", "success");
 
       } else if (allocAction === 'rimuovi') {
         const hasCommessa = !!selectedCommessaId;
@@ -842,149 +929,121 @@ export default function PianificazionePersonale() {
         const hasSpecificRemove = commesseToRemove.length > 0;
 
         if (hasResources && hasSpecificRemove) {
-          // Rimuovi SOLO le commesse selezionate nella checklist per le risorse selezionate
           for (const resName of selectedResourceNames) {
             for (const wkId of targetWeekIds) {
               const docId = `${resName}-${wkId}`;
-              const docRef = doc(db, 'assegnazioni', docId);
-              const docSnap = await getDoc(docRef);
-              if (docSnap.exists()) {
-                const currentList = docSnap.data().lista || [];
-                const updatedList = currentList.filter((a: any) => !commesseToRemove.includes(a.commessaId));
-                
-                if (currentList.length !== updatedList.length) {
-                  if (updatedList.length === 0) {
-                    await deleteDoc(docRef);
-                  } else {
-                    await setDoc(docRef, { lista: updatedList });
-                  }
+              const currentList = updatedAssignments[docId] || [];
+              const filteredList = currentList.filter((a: any) => !commesseToRemove.includes(a.commessaId));
+              
+              if (currentList.length !== filteredList.length) {
+                if (filteredList.length === 0) {
+                  delete updatedAssignments[docId];
+                } else {
+                  updatedAssignments[docId] = filteredList;
+                }
 
-                  // Nomi delle commesse rimosse
-                  const removedNames = commesseToRemove
-                    .map(cId => commesse.find(c => c.id === cId)?.nome || cId)
-                    .join(', ');
+                const removedNames = commesseToRemove
+                  .map(cId => commesse.find(c => c.id === cId)?.nome || cId)
+                  .join(', ');
 
-                  // Coda notifica
-                  const targetDip = dipendenti.find(d => d.nome === resName);
-                  if (targetDip && targetDip.email) {
-                    const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
-                    addPendingNotification(
-                      resName,
-                      targetDip.email,
-                      wkLabel,
-                      `Rimosse commesse: ${removedNames}`
-                    );
-                  }
+                const targetDip = dipendenti.find(d => d.nome === resName);
+                if (targetDip && targetDip.email) {
+                  const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
+                  newNotifications.push({
+                    dipendenteNome: resName,
+                    email: targetDip.email,
+                    weekLabel: wkLabel,
+                    description: `Rimosse commesse: ${removedNames}`
+                  });
                 }
               }
             }
           }
         } else if (hasCommessa && hasResources) {
           if (!commObj) return;
-          // Flow 1: Specific Commessa and Selected Resources
           for (const resName of selectedResourceNames) {
             for (const wkId of targetWeekIds) {
               const docId = `${resName}-${wkId}`;
-              const docRef = doc(db, 'assegnazioni', docId);
-              const docSnap = await getDoc(docRef);
-              if (docSnap.exists()) {
-                const currentList = docSnap.data().lista || [];
-                const updatedList = currentList.filter((a: any) => a.commessaId !== selectedCommessaId);
-                
-                if (currentList.length !== updatedList.length) {
-                  if (updatedList.length === 0) {
-                    await deleteDoc(docRef);
-                  } else {
-                    await setDoc(docRef, { lista: updatedList });
-                  }
+              const currentList = updatedAssignments[docId] || [];
+              const filteredList = currentList.filter((a: any) => a.commessaId !== selectedCommessaId);
+              
+              if (currentList.length !== filteredList.length) {
+                if (filteredList.length === 0) {
+                  delete updatedAssignments[docId];
+                } else {
+                  updatedAssignments[docId] = filteredList;
+                }
 
-                  // Coda notifica
-                  const targetDip = dipendenti.find(d => d.nome === resName);
-                  if (targetDip && targetDip.email) {
-                    const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
-                    addPendingNotification(
-                      resName,
-                      targetDip.email,
-                      wkLabel,
-                      `Rimossa commessa: ${commObj?.nome || ''}`
-                    );
-                  }
+                const targetDip = dipendenti.find(d => d.nome === resName);
+                if (targetDip && targetDip.email) {
+                  const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
+                  newNotifications.push({
+                    dipendenteNome: resName,
+                    email: targetDip.email,
+                    weekLabel: wkLabel,
+                    description: `Rimossa commessa: ${commObj?.nome || ''}`
+                  });
                 }
               }
             }
           }
         } else if (hasCommessa && !hasResources) {
           if (!commObj) return;
-          // Flow 2: Only Commessa (Remove from ALL resources)
           for (const dip of dipendenti) {
             const resName = dip.nome;
             for (const wkId of targetWeekIds) {
               const docId = `${resName}-${wkId}`;
-              const docRef = doc(db, 'assegnazioni', docId);
-              const docSnap = await getDoc(docRef);
-              if (docSnap.exists()) {
-                const currentList = docSnap.data().lista || [];
-                const updatedList = currentList.filter((a: any) => a.commessaId !== selectedCommessaId);
-                
-                if (currentList.length !== updatedList.length) {
-                  if (updatedList.length === 0) {
-                    await deleteDoc(docRef);
-                  } else {
-                    await setDoc(docRef, { lista: updatedList });
-                  }
+              const currentList = updatedAssignments[docId] || [];
+              const filteredList = currentList.filter((a: any) => a.commessaId !== selectedCommessaId);
+              
+              if (currentList.length !== filteredList.length) {
+                if (filteredList.length === 0) {
+                  delete updatedAssignments[docId];
+                } else {
+                  updatedAssignments[docId] = filteredList;
+                }
 
-                  // Coda notifica
-                  if (dip.email) {
-                    const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
-                    addPendingNotification(
-                      resName,
-                      dip.email,
-                      wkLabel,
-                      `Rimossa commessa: ${commObj?.nome || ''}`
-                    );
-                  }
+                if (dip.email) {
+                  const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
+                  newNotifications.push({
+                    dipendenteNome: resName,
+                    email: dip.email,
+                    weekLabel: wkLabel,
+                    description: `Rimossa commessa: ${commObj?.nome || ''}`
+                  });
                 }
               }
             }
           }
         } else if (!hasCommessa && hasResources) {
-          // Flow 3: Only Resources (Clear all assignments)
           for (const resName of selectedResourceNames) {
             for (const wkId of targetWeekIds) {
               const docId = `${resName}-${wkId}`;
-              const docRef = doc(db, 'assegnazioni', docId);
-              await deleteDoc(docRef);
+              delete updatedAssignments[docId];
 
-              // Coda notifica
               const targetDip = dipendenti.find(d => d.nome === resName);
               if (targetDip && targetDip.email) {
                 const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
-                addPendingNotification(
-                  resName,
-                  targetDip.email,
-                  wkLabel,
-                  `Svuotato carico di lavoro (rimosse tutte le commesse)`
-                );
+                newNotifications.push({
+                  dipendenteNome: resName,
+                  email: targetDip.email,
+                  weekLabel: wkLabel,
+                  description: `Svuotato carico di lavoro (rimosse tutte le commesse)`
+                });
               }
             }
           }
         }
-        showToast("Rimozione completata con successo!", "success");
+        showToast("Rimozioni registrate in bozza!", "success");
 
       } else if (allocAction === 'sostituisci') {
         if (!commObj) return;
-        // Fetch approved leaves for targetResource (B)
-        const qAbsB = query(
-          collection(db, 'richieste_ferie'),
-          where('dipendenteName', '==', targetResource),
-          where('stato', '==', 'Approvato')
-        );
-        const absSnapB = await getDocs(qAbsB);
+        // Fetch approved leaves for B locally
         const blockedDatesB: Record<string, boolean> = {};
-        absSnapB.forEach(dSnap => {
-          const d = dSnap.data();
-          const start = d.dataInizio || d.data;
-          const end = d.dataFine || d.data;
+        approvedLeaves.forEach(leave => {
+          if (leave.dipendenteName !== targetResource) return;
+          const start = leave.dataInizio || leave.data;
+          const end = leave.dataFine || leave.data;
           if (start && end) {
             const [sY, sM, sD] = start.split('-').map(Number);
             const [eY, eM, eD] = end.split('-').map(Number);
@@ -1002,25 +1061,19 @@ export default function PianificazionePersonale() {
 
         for (const wkId of targetWeekIds) {
           const docIdA = `${sourceResource}-${wkId}`;
-          const docRefA = doc(db, 'assegnazioni', docIdA);
-          const docSnapA = await getDoc(docRefA);
-          let currentListA: any[] = [];
-          if (docSnapA.exists()) {
-            currentListA = docSnapA.data().lista || [];
-          }
+          const currentListA = updatedAssignments[docIdA] || [];
 
           const oldAlloc = currentListA.find((a: any) => a.commessaId === selectedCommessaId);
           if (!oldAlloc) {
-            // Resource A didn't have this commessa assigned for this week, skip
             continue;
           }
 
           // Remove allocation from A
           const updatedListA = currentListA.filter((a: any) => a.commessaId !== selectedCommessaId);
           if (updatedListA.length === 0) {
-            await deleteDoc(docRefA);
+            delete updatedAssignments[docIdA];
           } else {
-            await setDoc(docRefA, { lista: updatedListA });
+            updatedAssignments[docIdA] = updatedListA;
           }
 
           // Copy and adjust percentage/days for B (targetResource)
@@ -1047,12 +1100,7 @@ export default function PianificazionePersonale() {
 
           if (actualPctB > 0) {
             const docIdB = `${targetResource}-${wkId}`;
-            const docRefB = doc(db, 'assegnazioni', docIdB);
-            const docSnapB = await getDoc(docRefB);
-            let currentListB: any[] = [];
-            if (docSnapB.exists()) {
-              currentListB = docSnapB.data().lista || [];
-            }
+            const currentListB = updatedAssignments[docIdB] || [];
             
             const filteredListB = currentListB.filter((a: any) => a.commessaId !== selectedCommessaId);
             const newAllocationB = {
@@ -1062,8 +1110,7 @@ export default function PianificazionePersonale() {
               colore: TIPOLOGIA_COLORS[commObj.tipologia || ''] || commObj.colore || '#64748b',
               giorni: allowedDaysB
             };
-            const updatedListB = [...filteredListB, newAllocationB];
-            await setDoc(docRefB, { lista: updatedListB });
+            updatedAssignments[docIdB] = [...filteredListB, newAllocationB];
 
             if (actualPctB < basePct) {
               warnings.push(`- ${targetResource} (${wkLabel}): assegnato solo al ${actualPctB}% (invece del ${basePct}%) per giornate di assenza/ferie.`);
@@ -1075,29 +1122,32 @@ export default function PianificazionePersonale() {
           // Coda notifica A
           const targetDipA = dipendenti.find(d => d.nome === sourceResource);
           if (targetDipA && targetDipA.email) {
-            addPendingNotification(
-              sourceResource,
-              targetDipA.email,
-              wkLabel,
-              `Sostituito da ${targetResource} per la commessa ${commObj.nome}`
-            );
+            newNotifications.push({
+              dipendenteNome: sourceResource,
+              email: targetDipA.email,
+              weekLabel: wkLabel,
+              description: `Sostituito da ${targetResource} per la commessa ${commObj.nome}`
+            });
           }
 
           // Coda notifica B
           const targetDipB = dipendenti.find(d => d.nome === targetResource);
           if (targetDipB && targetDipB.email) {
-            addPendingNotification(
-              targetResource,
-              targetDipB.email,
-              wkLabel,
-              `Assegnato alla commessa ${commObj.nome} in sostituzione di ${sourceResource} (${actualPctB}%)${actualPctB < basePct ? ' [Percentuale ricalcolata per ferie/assenza]' : ''}`
-            );
+            newNotifications.push({
+              dipendenteNome: targetResource,
+              email: targetDipB.email,
+              weekLabel: wkLabel,
+              description: `Assegnato alla commessa ${commObj.nome} in sostituzione di ${sourceResource} (${actualPctB}%)${actualPctB < basePct ? ' [Percentuale ricalcolata per ferie/assenza]' : ''}`
+            });
           }
         }
-        showToast("Sostituzione completata con successo!", "success");
+        showToast("Sostituzioni registrate in bozza!", "success");
       }
 
-      updatePendingNotificationsCount();
+      setAssignments(updatedAssignments);
+      setDraftNotifications(newNotifications);
+      setIsDirty(true);
+
       // Reset selection states
       setSelectedResourceNames([]);
       setAllocDataInizio('');
@@ -1106,15 +1156,14 @@ export default function PianificazionePersonale() {
       setTargetResource('');
       setSelectedCommessaId('');
       setCommessaSearchText('');
+      setCommesseToRemove([]);
 
       if (warnings.length > 0) {
         showToast("Operazione completata con alcune variazioni (assenza/ferie).", "warning");
       }
     } catch (err) {
-      console.error("Errore salvataggio:", err);
-      showToast("Si è verificato un errore durante il salvataggio.", "error");
-    } finally {
-      setSavingAllocations(false);
+      console.error("Errore salvataggio locale:", err);
+      showToast("Si è verificato un errore durante la modifica locale.", "error");
     }
   };
 
@@ -1240,9 +1289,47 @@ export default function PianificazionePersonale() {
       <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-sm p-4 sm:p-6 border border-white/50 no-print flex flex-col md:flex-row justify-between items-center gap-4">
         <h2 className="text-3xl font-extrabold text-gray-900 flex items-center gap-3">
           <div className="p-3 bg-indigo-100 rounded-2xl"><Users className="text-indigo-600 w-8 h-8" /></div>
-          <span>Pianificazione del Personale e Carichi</span>
+          <div className="flex items-center gap-3">
+            <span>Pianificazione del Personale e Carichi</span>
+            <button 
+              onClick={fetchAssignments}
+              title="Aggiorna Dati"
+              className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 border border-transparent hover:border-indigo-100 rounded-xl transition-all cursor-pointer hover:rotate-180 duration-500"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+          </div>
         </h2>
       </div>
+
+      {/* BOZZA DRAFT BANNER */}
+      {isDirty && (
+        <div className="bg-gradient-to-r from-amber-500 to-amber-600 text-white rounded-[2rem] p-4 px-6 sm:p-5 sm:px-8 shadow-lg flex flex-col sm:flex-row justify-between items-center gap-4 animate-in fade-in slide-in-from-top-4 duration-300 no-print">
+          <div className="flex items-center gap-3 text-center sm:text-left">
+            <span className="text-2xl">⚠️</span>
+            <div>
+              <p className="font-extrabold text-lg">Modifiche in Bozza</p>
+              <p className="text-white/85 text-sm">Ci sono delle modifiche alla pianificazione non ancora salvate. Salvale per renderle visibili a tutti.</p>
+            </div>
+          </div>
+          <div className="flex gap-3">
+            <button 
+              disabled={savingChanges}
+              onClick={handleSaveChanges}
+              className="bg-white text-amber-900 font-extrabold px-6 py-2.5 rounded-2xl shadow-md hover:bg-gray-50 transition-all active:scale-95 text-sm disabled:opacity-50"
+            >
+              {savingChanges ? "Salvataggio..." : "Salva Modifiche"}
+            </button>
+            <button 
+              disabled={savingChanges}
+              onClick={handleDiscardChanges}
+              className="bg-transparent hover:bg-white/10 text-white font-extrabold px-6 py-2.5 rounded-2xl border border-white/30 transition-all active:scale-95 text-sm disabled:opacity-50"
+            >
+              Annulla
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* PENDING NOTIFICATIONS BANNER */}
       {pendingNotificationsCount > 0 && (
@@ -2011,7 +2098,15 @@ export default function PianificazionePersonale() {
                 })}
               </tr>
             </thead>
-            {employees.length === 0 && collaborators.length === 0 ? (
+            {loadingAssignments ? (
+              <tbody className="divide-y divide-gray-100 font-medium bg-white">
+                <tr>
+                  <td colSpan={timelineWeeks.length + 1} className="p-12 text-center text-gray-400 font-bold italic bg-white">
+                    Caricamento assegnazioni...
+                  </td>
+                </tr>
+              </tbody>
+            ) : employees.length === 0 && collaborators.length === 0 ? (
               <tbody className="divide-y divide-gray-100 font-medium bg-white">
                 <tr>
                   <td colSpan={timelineWeeks.length + 1} className="p-12 text-center text-gray-400 font-bold italic bg-white">
@@ -2063,6 +2158,12 @@ export default function PianificazionePersonale() {
 
                             const isEditable = isAdmin || isSenior;
                             
+                            const isCellModified = (() => {
+                              const listStr = JSON.stringify(list);
+                              const dbListStr = JSON.stringify(dbAssignments[key] || []);
+                              return listStr !== dbListStr;
+                            })();
+
                             let bgClass = "bg-slate-50/50 text-slate-400";
                             if (isEditable) bgClass += " hover:bg-slate-100/60";
                             let indicatorColor = "bg-gray-300";
@@ -2099,7 +2200,12 @@ export default function PianificazionePersonale() {
                                 className={`border-l border-b border-gray-100 align-middle transition-colors ${isEditable ? 'cursor-pointer' : 'cursor-default'} ${bgClass} ${
                                   isUltraNarrow ? 'p-1' : isNarrow ? 'p-1.5' : 'p-3'
                                 }`}
-                                style={{ minWidth: weekColumnMinWidth, width: weekColumnMinWidth }}
+                                style={{ 
+                                  minWidth: weekColumnMinWidth, 
+                                  width: weekColumnMinWidth,
+                                  outline: isCellModified ? '2px dashed #d97706' : undefined,
+                                  outlineOffset: '-2px'
+                                }}
                               >
                                 <div 
                                   className="flex flex-col items-center justify-center relative group/cell"
@@ -2228,6 +2334,12 @@ export default function PianificazionePersonale() {
 
                             const isEditable = isAdmin || isSenior;
                             
+                            const isCellModified = (() => {
+                              const listStr = JSON.stringify(list);
+                              const dbListStr = JSON.stringify(dbAssignments[key] || []);
+                              return listStr !== dbListStr;
+                            })();
+
                             let bgClass = "bg-slate-50/50 text-slate-400";
                             if (isEditable) bgClass += " hover:bg-slate-100/60";
                             let indicatorColor = "bg-gray-300";
@@ -2264,7 +2376,12 @@ export default function PianificazionePersonale() {
                                 className={`border-l border-b border-gray-100 align-middle transition-colors ${isEditable ? 'cursor-pointer' : 'cursor-default'} ${bgClass} ${
                                   isUltraNarrow ? 'p-1' : isNarrow ? 'p-1.5' : 'p-3'
                                 }`}
-                                style={{ minWidth: weekColumnMinWidth, width: weekColumnMinWidth }}
+                                style={{ 
+                                  minWidth: weekColumnMinWidth, 
+                                  width: weekColumnMinWidth,
+                                  outline: isCellModified ? '2px dashed #d97706' : undefined,
+                                  outlineOffset: '-2px'
+                                }}
                               >
                                 <div 
                                   className="flex flex-col items-center justify-center relative group/cell"
@@ -2376,7 +2493,10 @@ export default function PianificazionePersonale() {
         commesseCatalog={selectableCommesse}
         currentAssignments={assignments[`${modalData.dipendente}-${modalData.weekId}`] || []}
         dipendentiList={dipendenti}
-        onAssignmentsChanged={updatePendingNotificationsCount}
+        onSave={(updatedList, addedNotif, removedNotif) => {
+          handleLocalCellChange(modalData.dipendente, modalData.weekId, modalData.weekLabel, updatedList, addedNotif, removedNotif);
+          setIsModalOpen(false);
+        }}
       />
 
       <ConfirmModal

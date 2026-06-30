@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, doc, setDoc, getDocs, onSnapshot, query, where, addDoc, updateDoc } from 'firebase/firestore';
-import { FileText, Printer, Save, Send, CheckCircle, AlertCircle, Edit, MessageSquare, Clock, MapPin, Check, X, ShieldAlert, Download } from 'lucide-react';
+import { collection, doc, setDoc, getDocs, query, where, addDoc, updateDoc, getDoc } from 'firebase/firestore';
+import { FileText, Printer, Save, Send, CheckCircle, AlertCircle, Edit, MessageSquare, Clock, MapPin, Check, X, ShieldAlert, Download, RefreshCw } from 'lucide-react';
 import { queueMail } from '../utils/mailSender';
 import ConfirmModal from '../components/ConfirmModal';
 
@@ -75,6 +75,7 @@ interface RapportinoPresenze {
   submittedAt?: string;
   approvedAt?: string;
   approvedBy?: string;
+  timestamp?: string;
   giorni: { [giorno: string]: GiornoPresenza };
   collaboratoreData?: {
     giornate: number;
@@ -113,7 +114,7 @@ const MESI = [
 ];
 
 export default function Presenze() {
-  const { user, isAdmin, isHR, myAssociatedName, dipendenti } = useAuth();
+  const { user, isAdmin, isHR, myAssociatedName, dipendenti, refreshData } = useAuth();
 
   // queueEmailNotification rimossa a favore di queueMail centralizzata
   
@@ -218,502 +219,6 @@ export default function Presenze() {
 
   // Convert 1-31 number to padded string
   const dayStr = (d: number) => String(d);
-
-  // --- HR / ADMIN: LISTEN TO ALL RAPPORTINI FOR THE SELECTED MONTH ---
-  useEffect(() => {
-    if (viewMode !== 'hr') return;
-    
-    setLoadingHR(true);
-    const q = query(
-      collection(db, 'presenze'),
-      where('mese', '==', selectedMonth),
-      where('anno', '==', selectedYear)
-    );
-
-    const unsub = onSnapshot(q, (snapshot) => {
-      const dataMap: Record<string, RapportinoPresenze> = {};
-      snapshot.forEach(docSnap => {
-        dataMap[docSnap.id] = { id: docSnap.id, ...docSnap.data() } as RapportinoPresenze;
-      });
-      setAllRapportini(dataMap);
-      setLoadingHR(false);
-      
-      // Update currently reviewing if it changes in database
-      if (reviewingRapportino) {
-        const updated = dataMap[reviewingRapportino.id];
-        if (updated) {
-          setReviewingRapportino(updated);
-        }
-      }
-    }, (err) => {
-      console.error("Errore nel caricamento delle presenze:", err);
-      setLoadingHR(false);
-    });
-
-    return () => unsub();
-  }, [viewMode, selectedMonth, selectedYear]);
-
-  // --- EMPLOYEE: LISTEN TO APPROVED LEAVES ---
-  useEffect(() => {
-    if (viewMode !== 'compila' || !myAssociatedName) {
-      setApprovedLeaves({});
-      return;
-    }
-
-    const startOfYear = `${selectedYear}-01-01`;
-    const endOfYear = `${selectedYear}-12-31`;
-
-    const q = query(
-      collection(db, 'richieste_ferie'),
-      where('dipendenteName', '==', myAssociatedName),
-      where('stato', '==', 'Approvato'),
-      where('dataFine', '>=', startOfYear),
-      where('dataInizio', '<=', endOfYear)
-    );
-
-    const unsub = onSnapshot(q, (snapshot) => {
-      const leaves: Record<string, { tipo: string; oraInizio?: string; oraFine?: string }> = {};
-      
-      snapshot.forEach(docSnap => {
-        const d = docSnap.data();
-        const start = d.dataInizio || d.data;
-        const end = d.dataFine || d.data;
-        
-        if (start && end) {
-          const [startYear, startMonth, startDay] = start.split('-').map(Number);
-          const [endYear, endMonth, endDay] = end.split('-').map(Number);
-          
-          const currDate = new Date(startYear, startMonth - 1, startDay);
-          const lastDate = new Date(endYear, endMonth - 1, endDay);
-          
-          while (currDate <= lastDate) {
-            const y = currDate.getFullYear();
-            const m = String(currDate.getMonth() + 1).padStart(2, '0');
-            const dStr = String(currDate.getDate()).padStart(2, '0');
-            const dateStr = `${y}-${m}-${dStr}`;
-            
-            if (dateStr.startsWith(`${selectedYear}-${String(selectedMonth).padStart(2, '0')}`)) {
-              leaves[dateStr] = {
-                tipo: d.tipo,
-                oraInizio: d.oraInizio,
-                oraFine: d.oraFine
-              };
-            }
-            currDate.setDate(currDate.getDate() + 1);
-          }
-        }
-      });
-      
-      setApprovedLeaves(leaves);
-    }, (err) => {
-      console.error("Errore nel caricamento delle ferie approvate:", err);
-    });
-
-    return () => unsub();
-  }, [viewMode, myAssociatedName, selectedMonth, selectedYear]);
-
-  // --- EMPLOYEE: LISTEN OR FETCH CURRENT RAPPORTINO ---
-  useEffect(() => {
-    if (viewMode !== 'compila' || !myAssociatedName) return;
-
-    setLoadingSheet(true);
-    const docId = `${myAssociatedName}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
-    const docRef = doc(db, 'presenze', docId);
-
-    const unsub = onSnapshot(docRef, async (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data() as RapportinoPresenze;
-        const isCollab = isCollaboratore(myAssociatedName, dipendenti);
-        // Legacy support: if collaborator sheet exists but has no collaboratoreData, initialize it
-        if (isCollab && !data.collaboratoreData) {
-          const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === myAssociatedName.trim().toLowerCase());
-          const dailyRate = profile?.dailyRate ?? 0;
-          const inpsRate = profile?.inpsRate ?? 0;
-          const ivaRate = profile?.ivaRate ?? 0;
-          const raRate = profile?.raRate ?? 0;
-
-          let defaultGiornate = 0;
-          const daysInM = new Date(selectedYear, selectedMonth, 0).getDate();
-          for (let d = 1; d <= daysInM; d++) {
-            const dayOfWeek = new Date(selectedYear, selectedMonth - 1, d).getDay();
-            if (dayOfWeek !== 0 && dayOfWeek !== 6) {
-              defaultGiornate++;
-            }
-          }
-
-          const compensoMensile = defaultGiornate * dailyRate;
-          const rimborsoKm = 0;
-          const totaleCompenso = compensoMensile;
-          const inps = compensoMensile * (inpsRate / 100);
-          const iva = (compensoMensile + inps) * (ivaRate / 100);
-          const ra = compensoMensile * (raRate / 100);
-          const totaleDovuto = totaleCompenso + inps + iva - ra;
-
-          data.collaboratoreData = {
-            giornate: defaultGiornate,
-            dailyRate,
-            spese: 0,
-            km: 0,
-            kmRate: 0.3,
-            inpsRate,
-            ivaRate,
-            raRate,
-            compensoMensile,
-            rimborsoKm,
-            totaleCompenso,
-            inps,
-            iva,
-            ra,
-            totaleDovuto
-          };
-        } else if (isCollab && data.collaboratoreData) {
-          const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === myAssociatedName.trim().toLowerCase());
-          if (profile) {
-            let updated = false;
-            const updatedData = { ...data.collaboratoreData };
-            
-            if ((!updatedData.dailyRate || updatedData.dailyRate === 0) && profile.dailyRate) {
-              updatedData.dailyRate = profile.dailyRate;
-              updated = true;
-            }
-            if ((!updatedData.inpsRate || updatedData.inpsRate === 0) && profile.inpsRate) {
-              updatedData.inpsRate = profile.inpsRate;
-              updated = true;
-            }
-            if ((!updatedData.ivaRate || updatedData.ivaRate === 0) && profile.ivaRate) {
-              updatedData.ivaRate = profile.ivaRate;
-              updated = true;
-            }
-            if ((!updatedData.raRate || updatedData.raRate === 0) && profile.raRate) {
-              updatedData.raRate = profile.raRate;
-              updated = true;
-            }
-            
-            if (updated) {
-              const compensoMensile = updatedData.giornate * updatedData.dailyRate;
-              const rimborsoKm = updatedData.km * updatedData.kmRate;
-              const totaleCompenso = compensoMensile + updatedData.spese + rimborsoKm;
-              const inps = (compensoMensile + rimborsoKm) * (updatedData.inpsRate / 100);
-              const iva = (compensoMensile + rimborsoKm + inps) * (updatedData.ivaRate / 100);
-              const ra = (compensoMensile + rimborsoKm) * (updatedData.raRate / 100);
-              const totaleDovuto = totaleCompenso + inps + iva - ra;
-              
-              data.collaboratoreData = {
-                ...updatedData,
-                compensoMensile,
-                rimborsoKm,
-                totaleCompenso,
-                inps,
-                iva,
-                ra,
-                totaleDovuto
-              };
-            }
-          }
-        }
-        // Legacy support: if standard employee sheet exists but has no rimborsoSpeseData, initialize it
-        if (!isCollab && !data.rimborsoSpeseData) {
-          data.rimborsoSpeseData = {
-            marcaAutomezzo: '',
-            modelloAutomezzo: '',
-            speseViaggio: 0,
-            speseTaxiBus: 0,
-            speseParcheggi: 0,
-            speseVitto: 0,
-            speseAlloggio: 0,
-            spesePedaggi: 0,
-            speseAltro: 0,
-            altroSpecificare: '',
-          };
-        }
-        let finalData = { ...data, id: docSnap.id } as RapportinoPresenze;
-        if (finalData.stato === 'Bozza' || finalData.stato === 'Richiede Modifica') {
-          try {
-            const updatedGiorni = { ...finalData.giorni };
-            let hasChanges = false;
-            const numDays = new Date(selectedYear, selectedMonth, 0).getDate();
-
-            for (let day = 1; day <= 31; day++) {
-              if (day > numDays) continue;
-
-              const dateStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-              const dateObj = new Date(selectedYear, selectedMonth - 1, day);
-              const dayOfWeek = dateObj.getDay();
-              const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-
-              const currentDay = updatedGiorni[String(day)];
-              if (!currentDay) continue;
-
-              const abs = approvedLeaves[dateStr];
-
-              if (abs) {
-                // Sincronizzazione forzata: ferie/assenze approvate hanno la precedenza assoluta
-                let targetOre = isWeekend ? 0 : 8;
-                let targetFerie = 0;
-                let targetPermessi = 0;
-                let targetMalattia = false;
-                let targetTrasferta = currentDay.trasferta;
-                let targetLuogoTrasferta = currentDay.luogoTrasferta || '';
-                let targetItinerarioTrasferta = currentDay.itinerarioTrasferta || '';
-                let targetKmTrasferta = currentDay.kmTrasferta || 0;
-                let targetStraordinari = currentDay.straordinari;
-                let targetNoteGiorno = currentDay.noteGiorno || '';
-
-                if (!isWeekend) {
-                  if (abs.tipo === 'ferie') {
-                    targetOre = 0;
-                    targetFerie = 8;
-                  } else if (abs.tipo === 'malattia' || abs.tipo === 'maternita') {
-                    targetOre = 0;
-                    targetMalattia = true;
-                  } else if (abs.tipo === 'mattina' || abs.tipo === 'pomeriggio') {
-                    targetOre = 4;
-                    targetPermessi = 4;
-                  } else if (abs.tipo === 'smart') {
-                    targetOre = 8;
-                  } else if (abs.tipo === 'permesso') {
-                    let hrs = 4;
-                    if (abs.oraInizio && abs.oraFine) {
-                      const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
-                      const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
-                      const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
-                      hrs = Math.round(diffMs / 3600000);
-                    }
-                    targetOre = Math.max(0, 8 - hrs);
-                    targetPermessi = hrs;
-                  }
-                }
-
-                // Per assenze a giornata intera, azzeriamo trasferte, straordinari e note
-                const isFullDayAbsence = abs.tipo === 'ferie' || abs.tipo === 'malattia' || abs.tipo === 'maternita';
-                if (isFullDayAbsence) {
-                  targetTrasferta = false;
-                  targetLuogoTrasferta = '';
-                  targetItinerarioTrasferta = '';
-                  targetKmTrasferta = 0;
-                  targetStraordinari = 0;
-                  targetNoteGiorno = '';
-                }
-
-                if (
-                  currentDay.ore !== targetOre ||
-                  currentDay.ferie !== targetFerie ||
-                  currentDay.permessi !== targetPermessi ||
-                  currentDay.malattia !== targetMalattia ||
-                  currentDay.trasferta !== targetTrasferta ||
-                  currentDay.luogoTrasferta !== targetLuogoTrasferta ||
-                  currentDay.itinerarioTrasferta !== targetItinerarioTrasferta ||
-                  currentDay.kmTrasferta !== targetKmTrasferta ||
-                  currentDay.straordinari !== targetStraordinari ||
-                  (currentDay.noteGiorno || '') !== targetNoteGiorno
-                ) {
-                  updatedGiorni[String(day)] = {
-                    ...currentDay,
-                    ore: targetOre,
-                    ferie: targetFerie,
-                    permessi: targetPermessi,
-                    malattia: targetMalattia,
-                    trasferta: targetTrasferta,
-                    luogoTrasferta: targetLuogoTrasferta,
-                    itinerarioTrasferta: targetItinerarioTrasferta,
-                    kmTrasferta: targetKmTrasferta,
-                    straordinari: targetStraordinari,
-                    noteGiorno: targetNoteGiorno
-                  };
-                  hasChanges = true;
-                }
-              } else {
-                // Nessuna richiesta approvata per questo giorno: sincronizziamo solo se il giorno era precedentemente sincronizzato (clean state) o non modificato
-                const isDefaultWeekend = isWeekend &&
-                  currentDay.ore === 0 &&
-                  currentDay.straordinari === 0 &&
-                  currentDay.ferie === 0 &&
-                  currentDay.permessi === 0 &&
-                  !currentDay.malattia &&
-                  !currentDay.trasferta;
-
-                const isDefaultWeekday = !isWeekend &&
-                  currentDay.ore === 8 &&
-                  currentDay.straordinari === 0 &&
-                  currentDay.ferie === 0 &&
-                  currentDay.permessi === 0 &&
-                  !currentDay.malattia &&
-                  !currentDay.trasferta;
-
-                const isCleanFerie = 
-                  currentDay.ore === 0 &&
-                  currentDay.ferie === 8 &&
-                  currentDay.straordinari === 0 &&
-                  currentDay.permessi === 0 &&
-                  !currentDay.malattia &&
-                  !currentDay.trasferta;
-
-                const isCleanMalattia = 
-                  currentDay.ore === 0 &&
-                  currentDay.malattia &&
-                  currentDay.straordinari === 0 &&
-                  currentDay.ferie === 0 &&
-                  currentDay.permessi === 0 &&
-                  !currentDay.trasferta;
-
-                const isCleanHalfDay = 
-                  currentDay.ore === 4 &&
-                  currentDay.permessi === 4 &&
-                  currentDay.straordinari === 0 &&
-                  currentDay.ferie === 0 &&
-                  !currentDay.malattia &&
-                  !currentDay.trasferta;
-
-                const isCleanPermesso = 
-                  currentDay.ore + currentDay.permessi === 8 &&
-                  currentDay.permessi > 0 &&
-                  currentDay.straordinari === 0 &&
-                  currentDay.ferie === 0 &&
-                  !currentDay.malattia &&
-                  !currentDay.trasferta;
-
-                const hasNoNote = !currentDay.noteGiorno || currentDay.noteGiorno.trim() === '';
-                const hasNoTrasfertaDetails = !currentDay.luogoTrasferta && !currentDay.itinerarioTrasferta && !currentDay.kmTrasferta;
-
-                const isSyncable = hasNoNote && hasNoTrasfertaDetails && (
-                  isDefaultWeekend || isDefaultWeekday || isCleanFerie || isCleanMalattia || isCleanHalfDay || isCleanPermesso
-                );
-
-                if (isSyncable) {
-                  let targetOre = isWeekend ? 0 : 8;
-                  let targetFerie = 0;
-                  let targetPermessi = 0;
-                  let targetMalattia = false;
-
-                  if (
-                    currentDay.ore !== targetOre ||
-                    currentDay.ferie !== targetFerie ||
-                    currentDay.permessi !== targetPermessi ||
-                    currentDay.malattia !== targetMalattia
-                  ) {
-                    updatedGiorni[String(day)] = {
-                      ...currentDay,
-                      ore: targetOre,
-                      ferie: targetFerie,
-                      permessi: targetPermessi,
-                      malattia: targetMalattia
-                    };
-                    hasChanges = true;
-                  }
-                }
-              }
-            }
-
-            if (hasChanges) {
-              finalData = {
-                ...finalData,
-                giorni: updatedGiorni
-              };
-              await setDoc(docRef, finalData);
-            }
-          } catch (syncErr) {
-            console.error("Errore durante la sincronizzazione automatica delle ferie:", syncErr);
-          }
-        }
-        setRapportino(finalData);
-        setLoadingSheet(false);
-      } else {
-        // Document doesn't exist, prefill it!
-        await createPrefilledRapportino();
-      }
-    }, (err) => {
-      console.error("Errore caricamento foglio presenze:", err);
-      setLoadingSheet(false);
-    });
-
-    return () => unsub();
-  }, [viewMode, myAssociatedName, selectedMonth, selectedYear, dipendenti, approvedLeaves]);
-
-  // Ascolta le richieste di weekend approvate per l'utente loggato (per sbloccare la compilazione)
-  useEffect(() => {
-    if (viewMode !== 'compila' || !myAssociatedName) return;
-
-    const q = query(
-      collection(db, 'richieste_weekend'),
-      where('dipendenteName', '==', myAssociatedName),
-      where('stato', '==', 'Approvato')
-    );
-
-    const unsub = onSnapshot(q, (snapshot) => {
-      const dates: Record<string, boolean> = {};
-      snapshot.forEach(docSnap => {
-        dates[docSnap.data().data] = true;
-      });
-      setApprovedWeekends(dates);
-    });
-
-    return () => unsub();
-  }, [viewMode, myAssociatedName]);
-
-  // Ascolta tutte le richieste di weekend personali (per la lista dello storico)
-  useEffect(() => {
-    if (viewMode !== 'compila' || !myAssociatedName) return;
-
-    const q = query(
-      collection(db, 'richieste_weekend'),
-      where('dipendenteName', '==', myAssociatedName)
-    );
-
-    const unsub = onSnapshot(q, (snapshot) => {
-      const list: any[] = [];
-      snapshot.forEach(docSnap => {
-        list.push({ id: docSnap.id, ...docSnap.data() });
-      });
-      setMyWeekendRequests(list.sort((a, b) => b.data.localeCompare(a.data)));
-    });
-
-    return () => unsub();
-  }, [viewMode, myAssociatedName]);
-
-  // Ascolta tutte le richieste di weekend per HR
-  useEffect(() => {
-    if (viewMode !== 'hr') return;
-
-    const q = query(collection(db, 'richieste_weekend'));
-
-    const unsub = onSnapshot(q, (snapshot) => {
-      const list: any[] = [];
-      snapshot.forEach(docSnap => {
-        list.push({ id: docSnap.id, ...docSnap.data() });
-      });
-      setAllWeekendRequests(list.sort((a, b) => b.timestamp?.localeCompare(a.timestamp || '') || b.data.localeCompare(a.data)));
-    });
-
-    return () => unsub();
-  }, [viewMode]);
-
-  useEffect(() => {
-    if (!isHR) return;
-
-    // 1. Listen to all timesheets in status 'Inviato' (across all months/years)
-    const qInviati = query(
-      collection(db, 'presenze'),
-      where('stato', '==', 'Inviato')
-    );
-    const unsubInviati = onSnapshot(qInviati, (snapshot) => {
-      setGlobalPendingInviatiCount(snapshot.size);
-    });
-
-    // 2. Listen to all weekend requests in status 'In attesa'
-    const qWeekend = query(
-      collection(db, 'richieste_weekend'),
-      where('stato', '==', 'In attesa')
-    );
-    const unsubWeekend = onSnapshot(qWeekend, (snapshot) => {
-      setGlobalPendingWeekendCount(snapshot.size);
-    });
-
-    return () => {
-      unsubInviati();
-      unsubWeekend();
-    };
-  }, [isHR, isAdmin]);
-
   // --- PREFILL LOGIC ---
   const createPrefilledRapportino = async () => {
     if (!myAssociatedName || !user?.email) return;
@@ -765,7 +270,6 @@ export default function Presenze() {
 
       for (let day = 1; day <= 31; day++) {
         if (day > numDays) {
-          // Non-existent days in this month
           giorni[String(day)] = {
             ore: 0,
             straordinari: 0,
@@ -802,9 +306,9 @@ export default function Presenze() {
             ore = 4;
             permessi = 4;
           } else if (abs.tipo === 'smart') {
-            ore = 8; // smart working is 8 hours worked
+            ore = 8;
           } else if (abs.tipo === 'permesso') {
-            let hrs = 4; // default fallback
+            let hrs = 4;
             if (abs.oraInizio && abs.oraFine) {
               const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
               const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
@@ -822,40 +326,52 @@ export default function Presenze() {
           ferie,
           permessi,
           malattia,
-          trasferta,
-          luogoTrasferta: '',
-          itinerarioTrasferta: '',
-          kmTrasferta: 0
+          trasferta
         };
       }
 
+      // 3. Create document in Firestore
+      const docId = `${myAssociatedName}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+      const docRef = doc(db, 'presenze', docId);
+
       const isCollab = isCollaboratore(myAssociatedName, dipendenti);
-      let colData = undefined;
-      if (isCollab) {
-        const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === myAssociatedName.trim().toLowerCase());
-        const dailyRate = profile?.dailyRate ?? 0;
-        const inpsRate = profile?.inpsRate ?? 0;
-        const ivaRate = profile?.ivaRate ?? 0;
-        const raRate = profile?.raRate ?? 0;
+      const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === myAssociatedName.trim().toLowerCase());
+      const dailyRate = profile?.dailyRate ?? 0;
+      const inpsRate = profile?.inpsRate ?? 0;
+      const ivaRate = profile?.ivaRate ?? 0;
+      const raRate = profile?.raRate ?? 0;
 
-        let defaultGiornate = 0;
-        const daysInM = new Date(selectedYear, selectedMonth, 0).getDate();
-        for (let d = 1; d <= daysInM; d++) {
-          const dayOfWeek = new Date(selectedYear, selectedMonth - 1, d).getDay();
-          if (dayOfWeek !== 0 && dayOfWeek !== 6) {
-            defaultGiornate++;
-          }
+      let defaultGiornate = 0;
+      for (let d = 1; d <= numDays; d++) {
+        const dayOfWeek = new Date(selectedYear, selectedMonth - 1, d).getDay();
+        if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+          defaultGiornate++;
         }
+      }
 
-        const compensoMensile = defaultGiornate * dailyRate;
-        const rimborsoKm = 0;
-        const totaleCompenso = compensoMensile;
-        const inps = compensoMensile * (inpsRate / 100);
-        const iva = (compensoMensile + inps) * (ivaRate / 100);
-        const ra = compensoMensile * (raRate / 100);
-        const totaleDovuto = totaleCompenso + inps + iva - ra;
+      const compensoMensile = defaultGiornate * dailyRate;
+      const rimborsoKm = 0;
+      const totaleCompenso = compensoMensile;
+      const inps = compensoMensile * (inpsRate / 100);
+      const iva = (compensoMensile + inps) * (ivaRate / 100);
+      const ra = compensoMensile * (raRate / 100);
+      const totaleDovuto = totaleCompenso + inps + iva - ra;
 
-        colData = {
+      const newRapportino: RapportinoPresenze = {
+        id: docId,
+        dipendenteNome: myAssociatedName,
+        dipendenteEmail: user.email,
+        mese: selectedMonth,
+        anno: selectedYear,
+        stato: 'Bozza',
+        noteDipendente: '',
+        noteHR: '',
+        giorni,
+        timestamp: new Date().toISOString()
+      };
+
+      if (isCollab) {
+        newRapportino.collaboratoreData = {
           giornate: defaultGiornate,
           dailyRate,
           spese: 0,
@@ -872,35 +388,23 @@ export default function Presenze() {
           ra,
           totaleDovuto
         };
+      } else {
+        newRapportino.rimborsoSpeseData = {
+          marcaAutomezzo: '',
+          modelloAutomezzo: '',
+          speseViaggio: 0,
+          speseTaxiBus: 0,
+          speseParcheggi: 0,
+          speseVitto: 0,
+          speseAlloggio: 0,
+          spesePedaggi: 0,
+          speseAltro: 0,
+          altroSpecificare: '',
+        };
       }
 
-      const newRapportino: RapportinoPresenze = {
-        id: `${myAssociatedName}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`,
-        dipendenteNome: myAssociatedName,
-        dipendenteEmail: user.email,
-        mese: selectedMonth,
-        anno: selectedYear,
-        stato: 'Bozza',
-        noteDipendente: '',
-        noteHR: '',
-        giorni,
-        ...(colData ? { collaboratoreData: colData } : {}),
-        ...(!isCollab ? {
-          rimborsoSpeseData: {
-            marcaAutomezzo: '',
-            modelloAutomezzo: '',
-            speseViaggio: 0,
-            speseTaxiBus: 0,
-            speseParcheggi: 0,
-            speseVitto: 0,
-            speseAlloggio: 0,
-            spesePedaggi: 0,
-            speseAltro: 0,
-            altroSpecificare: '',
-          }
-        } : {})
-      };
-
+      setLoadingSheet(true);
+      await setDoc(docRef, newRapportino);
       setRapportino(newRapportino);
       setLoadingSheet(false);
     } catch (e) {
@@ -908,6 +412,383 @@ export default function Presenze() {
       setLoadingSheet(false);
     }
   };
+
+  const loadPresenzeData = async () => {
+    try {
+      if (viewMode === 'hr') {
+        setLoadingHR(true);
+        const [presSnap, wkSnap] = await Promise.all([
+          getDocs(query(collection(db, 'presenze'), where('mese', '==', selectedMonth), where('anno', '==', selectedYear))),
+          getDocs(collection(db, 'richieste_weekend'))
+        ]);
+
+        const dataMap: Record<string, RapportinoPresenze> = {};
+        presSnap.forEach(docSnap => {
+          dataMap[docSnap.id] = { id: docSnap.id, ...docSnap.data() } as RapportinoPresenze;
+        });
+        setAllRapportini(dataMap);
+
+        if (reviewingRapportino) {
+          const updated = dataMap[reviewingRapportino.id];
+          if (updated) {
+            setReviewingRapportino(updated);
+          }
+        }
+
+        const listWk: any[] = [];
+        wkSnap.forEach(docSnap => {
+          listWk.push({ id: docSnap.id, ...docSnap.data() });
+        });
+        setAllWeekendRequests(listWk.sort((a, b) => b.timestamp?.localeCompare(a.timestamp || '') || b.data.localeCompare(a.data)));
+
+        if (isHR) {
+          const [inviatiSnap, weekendSnap] = await Promise.all([
+            getDocs(query(collection(db, 'presenze'), where('stato', '==', 'Inviato'))),
+            getDocs(query(collection(db, 'richieste_weekend'), where('stato', '==', 'In attesa')))
+          ]);
+          setGlobalPendingInviatiCount(inviatiSnap.size);
+          setGlobalPendingWeekendCount(weekendSnap.size);
+        } else {
+          setGlobalPendingInviatiCount(0);
+          setGlobalPendingWeekendCount(0);
+        }
+        setLoadingHR(false);
+      }
+
+      if (viewMode === 'compila' && myAssociatedName) {
+        setLoadingSheet(true);
+        
+        const startOfYear = `${selectedYear}-01-01`;
+        const endOfYear = `${selectedYear}-12-31`;
+
+        const [leavesSnap, docSnap, wkAppSnap, wkAllSnap] = await Promise.all([
+          getDocs(query(
+            collection(db, 'richieste_ferie'),
+            where('dipendenteName', '==', myAssociatedName),
+            where('stato', '==', 'Approvato'),
+            where('dataInizio', '<=', endOfYear)
+          )).catch(err => {
+            console.error("Errore query ferie:", err);
+            return null;
+          }),
+          getDoc(doc(db, 'presenze', `${myAssociatedName}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`)),
+          getDocs(query(collection(db, 'richieste_weekend'), where('dipendenteName', '==', myAssociatedName), where('stato', '==', 'Approvato'))).catch(err => {
+            console.error("Errore query weekend approvati:", err);
+            return null;
+          }),
+          getDocs(query(collection(db, 'richieste_weekend'), where('dipendenteName', '==', myAssociatedName))).catch(err => {
+            console.error("Errore query all weekend:", err);
+            return null;
+          })
+        ]);
+
+        const leaves: Record<string, { tipo: string; oraInizio?: string; oraFine?: string }> = {};
+        if (leavesSnap) {
+          leavesSnap.forEach(docSnap => {
+            const d = docSnap.data();
+            const start = d.dataInizio || d.data;
+            const end = d.dataFine || d.data;
+            if (start && end && end >= startOfYear) {
+              const [startY, startM, startD] = start.split('-').map(Number);
+              const [endY, endM, endD] = end.split('-').map(Number);
+              const currDate = new Date(startY, startM - 1, startD);
+              const lastDate = new Date(endY, endM - 1, endD);
+              while (currDate <= lastDate) {
+                const y = currDate.getFullYear();
+                const m = String(currDate.getMonth() + 1).padStart(2, '0');
+                const dStr = String(currDate.getDate()).padStart(2, '0');
+                const dateStr = `${y}-${m}-${dStr}`;
+                if (dateStr.startsWith(`${selectedYear}-${String(selectedMonth).padStart(2, '0')}`)) {
+                  leaves[dateStr] = {
+                    tipo: d.tipo,
+                    oraInizio: d.oraInizio,
+                    oraFine: d.oraFine
+                  };
+                }
+                currDate.setDate(currDate.getDate() + 1);
+              }
+            }
+          });
+        }
+        setApprovedLeaves(leaves);
+
+        const weekendsAppMap: Record<string, boolean> = {};
+        if (wkAppSnap) {
+          wkAppSnap.forEach(docSnap => {
+            weekendsAppMap[docSnap.data().data] = true;
+          });
+        }
+        setApprovedWeekends(weekendsAppMap);
+
+        const myWkList: any[] = [];
+        if (wkAllSnap) {
+          wkAllSnap.forEach(docSnap => {
+            myWkList.push({ id: docSnap.id, ...docSnap.data() });
+          });
+        }
+        setMyWeekendRequests(myWkList.sort((a, b) => b.data.localeCompare(a.data)));
+
+        if (docSnap.exists()) {
+          const data = docSnap.data() as RapportinoPresenze;
+          const isCollab = isCollaboratore(myAssociatedName, dipendenti);
+          
+          if (isCollab && !data.collaboratoreData) {
+            const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === myAssociatedName.trim().toLowerCase());
+            const dailyRate = profile?.dailyRate ?? 0;
+            const inpsRate = profile?.inpsRate ?? 0;
+            const ivaRate = profile?.ivaRate ?? 0;
+            const raRate = profile?.raRate ?? 0;
+
+            let defaultGiornate = 0;
+            const daysInM = new Date(selectedYear, selectedMonth, 0).getDate();
+            for (let d = 1; d <= daysInM; d++) {
+              const dayOfWeek = new Date(selectedYear, selectedMonth - 1, d).getDay();
+              if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+                defaultGiornate++;
+              }
+            }
+
+            const compensoMensile = defaultGiornate * dailyRate;
+            const rimborsoKm = 0;
+            const totaleCompenso = compensoMensile;
+            const inps = compensoMensile * (inpsRate / 100);
+            const iva = (compensoMensile + inps) * (ivaRate / 100);
+            const ra = compensoMensile * (raRate / 100);
+            const totaleDovuto = totaleCompenso + inps + iva - ra;
+
+            data.collaboratoreData = {
+              giornate: defaultGiornate,
+              dailyRate,
+              spese: 0,
+              km: 0,
+              kmRate: 0.3,
+              inpsRate,
+              ivaRate,
+              raRate,
+              compensoMensile,
+              rimborsoKm,
+              totaleCompenso,
+              inps,
+              iva,
+              ra,
+              totaleDovuto
+            };
+          } else if (isCollab && data.collaboratoreData) {
+            const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === myAssociatedName.trim().toLowerCase());
+            if (profile) {
+              let updated = false;
+              const updatedData = { ...data.collaboratoreData };
+              if ((!updatedData.dailyRate || updatedData.dailyRate === 0) && profile.dailyRate) {
+                updatedData.dailyRate = profile.dailyRate;
+                updated = true;
+              }
+              if ((!updatedData.inpsRate || updatedData.inpsRate === 0) && profile.inpsRate) {
+                updatedData.inpsRate = profile.inpsRate;
+                updated = true;
+              }
+              if ((!updatedData.ivaRate || updatedData.ivaRate === 0) && profile.ivaRate) {
+                updatedData.ivaRate = profile.ivaRate;
+                updated = true;
+              }
+              if ((!updatedData.raRate || updatedData.raRate === 0) && profile.raRate) {
+                updatedData.raRate = profile.raRate;
+                updated = true;
+              }
+              if (updated) {
+                const compensoMensile = updatedData.giornate * updatedData.dailyRate;
+                const rimborsoKm = updatedData.km * updatedData.kmRate;
+                const totaleCompenso = compensoMensile + updatedData.spese + rimborsoKm;
+                const inps = (compensoMensile + rimborsoKm) * (updatedData.inpsRate / 100);
+                const iva = (compensoMensile + rimborsoKm + inps) * (updatedData.ivaRate / 100);
+                const ra = (compensoMensile + rimborsoKm) * (updatedData.raRate / 100);
+                const totaleDovuto = totaleCompenso + inps + iva - ra;
+                data.collaboratoreData = {
+                  ...updatedData,
+                  compensoMensile,
+                  rimborsoKm,
+                  totaleCompenso,
+                  inps,
+                  iva,
+                  ra,
+                  totaleDovuto
+                };
+              }
+            }
+          }
+
+          if (!isCollab && !data.rimborsoSpeseData) {
+            data.rimborsoSpeseData = {
+              marcaAutomezzo: '',
+              modelloAutomezzo: '',
+              speseViaggio: 0,
+              speseTaxiBus: 0,
+              speseParcheggi: 0,
+              speseVitto: 0,
+              speseAlloggio: 0,
+              spesePedaggi: 0,
+              speseAltro: 0,
+              altroSpecificare: '',
+            };
+          }
+
+          let finalData = { ...data, id: docSnap.id } as RapportinoPresenze;
+          if (finalData.stato === 'Bozza' || finalData.stato === 'Richiede Modifica') {
+            try {
+              const updatedGiorni = { ...finalData.giorni };
+              let hasChanges = false;
+              const numDays = new Date(selectedYear, selectedMonth, 0).getDate();
+
+              for (let day = 1; day <= 31; day++) {
+                if (day > numDays) continue;
+
+                const dateStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const dateObj = new Date(selectedYear, selectedMonth - 1, day);
+                const dayOfWeek = dateObj.getDay();
+                const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+
+                const currentDay = updatedGiorni[String(day)];
+                if (!currentDay) continue;
+
+                const abs = leaves[dateStr];
+                if (abs) {
+                  let targetOre = isWeekend ? 0 : 8;
+                  let targetFerie = 0;
+                  let targetPermessi = 0;
+                  let targetMalattia = false;
+                  let targetTrasferta = currentDay.trasferta;
+                  let targetLuogoTrasferta = currentDay.luogoTrasferta || '';
+                  let targetItinerarioTrasferta = currentDay.itinerarioTrasferta || '';
+                  let targetKmTrasferta = currentDay.kmTrasferta || 0;
+                  let targetStraordinari = currentDay.straordinari;
+                  let targetNoteGiorno = currentDay.noteGiorno || '';
+
+                  if (!isWeekend) {
+                    if (abs.tipo === 'ferie') {
+                      targetOre = 0;
+                      targetFerie = 8;
+                    } else if (abs.tipo === 'malattia' || abs.tipo === 'maternita') {
+                      targetOre = 0;
+                      targetMalattia = true;
+                    } else if (abs.tipo === 'mattina' || abs.tipo === 'pomeriggio') {
+                      targetOre = 4;
+                      targetPermessi = 4;
+                    } else if (abs.tipo === 'smart') {
+                      targetOre = 8;
+                    } else if (abs.tipo === 'permesso') {
+                      let hrs = 4;
+                      if (abs.oraInizio && abs.oraFine) {
+                        const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
+                        const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
+                        const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
+                        hrs = Math.round(diffMs / 3600000);
+                      }
+                      targetOre = Math.max(0, 8 - hrs);
+                      targetPermessi = hrs;
+                    }
+                  }
+
+                  const isFullDayAbsence = abs.tipo === 'ferie' || abs.tipo === 'malattia' || abs.tipo === 'maternita';
+                  if (isFullDayAbsence) {
+                    targetTrasferta = false;
+                    targetLuogoTrasferta = '';
+                    targetItinerarioTrasferta = '';
+                    targetKmTrasferta = 0;
+                    targetStraordinari = 0;
+                    targetNoteGiorno = '';
+                  }
+
+                  if (
+                    currentDay.ore !== targetOre ||
+                    currentDay.ferie !== targetFerie ||
+                    currentDay.permessi !== targetPermessi ||
+                    currentDay.malattia !== targetMalattia ||
+                    currentDay.trasferta !== targetTrasferta ||
+                    currentDay.luogoTrasferta !== targetLuogoTrasferta ||
+                    currentDay.itinerarioTrasferta !== targetItinerarioTrasferta ||
+                    currentDay.kmTrasferta !== targetKmTrasferta ||
+                    currentDay.straordinari !== targetStraordinari ||
+                    (currentDay.noteGiorno || '') !== targetNoteGiorno
+                  ) {
+                    updatedGiorni[String(day)] = {
+                      ...currentDay,
+                      ore: targetOre,
+                      ferie: targetFerie,
+                      permessi: targetPermessi,
+                      malattia: targetMalattia,
+                      trasferta: targetTrasferta,
+                      luogoTrasferta: targetLuogoTrasferta,
+                      itinerarioTrasferta: targetItinerarioTrasferta,
+                      kmTrasferta: targetKmTrasferta,
+                      straordinari: targetStraordinari,
+                      noteGiorno: targetNoteGiorno
+                    };
+                    hasChanges = true;
+                  }
+                } else {
+                  const isCleanFerie = 
+                    currentDay.ore === 0 &&
+                    currentDay.ferie === 8 &&
+                    currentDay.straordinari === 0 &&
+                    currentDay.permessi === 0 &&
+                    !currentDay.malattia &&
+                    !currentDay.trasferta;
+
+                  const isCleanMalattia = 
+                    currentDay.ore === 0 &&
+                    currentDay.malattia &&
+                    currentDay.straordinari === 0 &&
+                    currentDay.ferie === 0 &&
+                    currentDay.permessi === 0 &&
+                    !currentDay.trasferta;
+
+                  const isCleanPermesso = 
+                    currentDay.ore === 4 &&
+                    currentDay.permessi === 4 &&
+                    currentDay.straordinari === 0 &&
+                    currentDay.ferie === 0 &&
+                    !currentDay.malattia &&
+                    !currentDay.trasferta;
+
+                  const wasModifiedDueToAbsence = isCleanFerie || isCleanMalattia || isCleanPermesso;
+
+                  if (wasModifiedDueToAbsence) {
+                    updatedGiorni[String(day)] = {
+                      ...currentDay,
+                      ore: isWeekend ? 0 : 8,
+                      ferie: 0,
+                      permessi: 0,
+                      malattia: false
+                    };
+                    hasChanges = true;
+                  }
+                }
+              }
+
+              if (hasChanges) {
+                finalData.giorni = updatedGiorni;
+                const docRef = doc(db, 'presenze', finalData.id);
+                await setDoc(docRef, finalData);
+              }
+            } catch (syncErr) {
+              console.error("Error auto-syncing absences in timesheet sheet load:", syncErr);
+            }
+          }
+          setRapportino(finalData);
+        } else {
+          await createPrefilledRapportino();
+        }
+        setLoadingSheet(false);
+      }
+    } catch (err) {
+      console.error("Errore in loadPresenzeData:", err);
+      setLoadingHR(false);
+      setLoadingSheet(false);
+    }
+  };
+
+  useEffect(() => {
+    loadPresenzeData();
+  }, [viewMode, selectedMonth, selectedYear, myAssociatedName, isHR, isAdmin, user?.uid, dipendenti]);
 
   // --- ACTIONS FOR EMPLOYEES ---
   const handleCellChange = (day: string, field: keyof GiornoPresenza, value: any) => {
@@ -1072,6 +953,7 @@ export default function Presenze() {
           ivaRate: collabData.ivaRate,
           raRate: collabData.raRate
         });
+        await refreshData();
       }
     } catch (err) {
       console.error("Errore aggiornamento tariffe profilo:", err);
@@ -1094,6 +976,7 @@ export default function Presenze() {
       }
 
       showToast("Bozza salvata con successo!");
+      loadPresenzeData();
     } catch (err) {
       console.error("Errore salvataggio bozza:", err);
       showToast("Errore durante il salvataggio.", "error");
@@ -1125,8 +1008,7 @@ export default function Presenze() {
 
           setRapportino(updated);
           showToast("Foglio presenze inviato con successo all'HR!");
-
-          // Notifica e-mail all'HR rimossa a favore del sistema di badge di notifica
+          loadPresenzeData();
         } catch (err) {
           console.error("Errore invio rapportino:", err);
           showToast("Errore durante l'invio.", "error");
@@ -1159,6 +1041,7 @@ export default function Presenze() {
       setReqWeekendData('');
       setReqWeekendMotivo('');
       showToast("Richiesta inviata con successo!");
+      loadPresenzeData();
     } catch (err) {
       console.error("Errore invio richiesta:", err);
       showToast("Errore nell'invio della richiesta.", "error");
@@ -1176,6 +1059,7 @@ export default function Presenze() {
       await updateDoc(doc(db, 'richieste_weekend', id), {
         stato: newStatus
       });
+      loadPresenzeData();
 
       // Invia email al dipendente
       const targetDip = dipendenti.find(d => d.nome === req.dipendenteName);
@@ -1250,6 +1134,7 @@ export default function Presenze() {
 
           setReviewingRapportino(null);
           showToast("Rapportino approvato!");
+          loadPresenzeData();
 
           // Invia notifica al dipendente
           if (updated.dipendenteEmail) {
@@ -1289,6 +1174,7 @@ export default function Presenze() {
       setIsFeedbackModalOpen(false);
       setHrFeedbackNote('');
       showToast("Richiesta di modifica inviata al dipendente.");
+      loadPresenzeData();
 
       // Invia notifica al dipendente
       if (updated.dipendenteEmail) {
@@ -1325,6 +1211,7 @@ export default function Presenze() {
       }
 
       showToast("Modifiche salvate con successo!");
+      loadPresenzeData();
     } catch (err) {
       console.error("Errore salvataggio modifiche HR:", err);
       showToast("Errore durante il salvataggio.", "error");
@@ -1979,7 +1866,16 @@ export default function Presenze() {
         <div className="flex items-center gap-3">
           <div className="p-3 bg-indigo-100 rounded-2xl"><FileText className="text-indigo-600 w-8 h-8" /></div>
           <div>
-            <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">Registro Presenze</h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">Registro Presenze</h2>
+              <button 
+                onClick={loadPresenzeData}
+                title="Aggiorna Dati"
+                className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 border border-transparent hover:border-indigo-100 rounded-xl transition-all cursor-pointer hover:rotate-180 duration-500"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
+            </div>
             <p className="text-xs text-gray-500 font-semibold mt-0.5">Gestione foglio ore e riepilogo mensile per amministrazione</p>
           </div>
         </div>

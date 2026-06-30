@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { type User, onAuthStateChanged } from 'firebase/auth';
-import { collection, doc, onSnapshot, addDoc, deleteDoc } from 'firebase/firestore';
+import { collection, doc, addDoc, deleteDoc, getDocs, getDoc } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
 
 const DEFAULT_ADMINS = ['aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it'];
@@ -40,6 +40,7 @@ interface AuthContextType {
   myAssociatedName: string | null;
   dipendenti: Dipendente[];
   commesse: Commessa[];
+  refreshData: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({} as AuthContextType);
@@ -57,9 +58,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [dipendenti, setDipendenti] = useState<Dipendente[]>([]);
   const [commesse, setCommesse] = useState<Commessa[]>([]);
 
-  // Listeners Firestore base
-  useEffect(() => {
-    if (!user) {
+  // Funzione per caricare/aggiornare i dati on-demand
+  const refreshData = async (currentUser?: User | null) => {
+    const activeUser = currentUser !== undefined ? currentUser : user;
+    if (!activeUser) {
       setDynamicAdmins([]);
       setDynamicHrs([]);
       setDynamicSeniors([]);
@@ -68,22 +70,23 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       return;
     }
 
-    const unsubAdmins = onSnapshot(collection(db, 'admins'), (snapshot) => {
-      setDynamicAdmins(snapshot.docs.map(doc => doc.data().email?.toLowerCase()));
-    });
+    try {
+      const [adminsSnap, seniorsSnap, hrSnap, dipendentiSnap, commesseSnap, legacyHrSnap] = await Promise.all([
+        getDocs(collection(db, 'admins')),
+        getDocs(collection(db, 'seniors')),
+        getDocs(collection(db, 'hr')),
+        getDocs(collection(db, 'dipendenti')),
+        getDocs(collection(db, 'catalogo_commesse')),
+        getDoc(doc(db, 'configurazione_sistema', 'hr'))
+      ]);
 
-    const unsubSeniors = onSnapshot(collection(db, 'seniors'), (snapshot) => {
-      setDynamicSeniors(snapshot.docs.map(doc => doc.data().email?.toLowerCase()));
-    });
+      setDynamicAdmins(adminsSnap.docs.map(doc => doc.data().email?.toLowerCase()));
+      setDynamicSeniors(seniorsSnap.docs.map(doc => doc.data().email?.toLowerCase()));
+      setDynamicHrs(hrSnap.docs.map(doc => doc.data().email?.toLowerCase()).filter(Boolean));
 
-    const unsubHr = onSnapshot(collection(db, 'hr'), (snapshot) => {
-      setDynamicHrs(snapshot.docs.map(doc => doc.data().email?.toLowerCase()).filter(Boolean));
-    });
-
-    // Automatic migration from legacy hr document to new 'hr' collection
-    const unsubLegacyHr = onSnapshot(doc(db, 'configurazione_sistema', 'hr'), async (docSnap) => {
-      if (docSnap.exists()) {
-        const legacyEmail = docSnap.data().email?.toLowerCase();
+      // Automatic migration from legacy hr document to new 'hr' collection
+      if (legacyHrSnap.exists()) {
+        const legacyEmail = legacyHrSnap.data().email?.toLowerCase();
         if (legacyEmail) {
           try {
             await addDoc(collection(db, 'hr'), { email: legacyEmail });
@@ -93,20 +96,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           }
         }
       }
-    });
 
-    const unsubDipendenti = onSnapshot(collection(db, 'dipendenti'), (snapshot) => {
-      const deps = snapshot.docs.map(doc => ({
+      const deps = dipendentiSnap.docs.map(doc => ({
         id: doc.id,
         nome: doc.data().nome,
         email: doc.data().email || "",
-        tipo: doc.data().tipo
+        tipo: doc.data().tipo,
+        dailyRate: doc.data().dailyRate,
+        inpsRate: doc.data().inpsRate,
+        ivaRate: doc.data().ivaRate,
+        raRate: doc.data().raRate,
       }));
       setDipendenti(deps.sort((a, b) => a.nome.localeCompare(b.nome)));
-    });
 
-    const unsubCommesse = onSnapshot(collection(db, 'catalogo_commesse'), (snapshot) => {
-      const comms = snapshot.docs.map(doc => ({
+      const comms = commesseSnap.docs.map(doc => ({
         id: doc.id,
         nome: doc.data().nome,
         colore: doc.data().colore || '#3b82f6',
@@ -121,23 +124,32 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         stato: doc.data().stato || 'Aperta'
       }));
       setCommesse(comms.sort((a, b) => a.nome.localeCompare(b.nome)));
-    });
 
-    return () => {
-      unsubAdmins();
-      unsubSeniors();
-      unsubHr();
-      unsubLegacyHr();
-      unsubDipendenti();
-      unsubCommesse();
-    };
-  }, [user]);
+    } catch (error) {
+      console.error("Error refreshing auth context data:", error);
+    }
+  };
 
-  // Ascolto stato utente Firebase
+  // Ascolto stato utente Firebase e caricamento dati iniziali
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
-      setLoading(false);
+      if (!currentUser) {
+        setDynamicAdmins([]);
+        setDynamicHrs([]);
+        setDynamicSeniors([]);
+        setDipendenti([]);
+        setCommesse([]);
+        setLoading(false);
+      } else {
+        try {
+          await refreshData(currentUser);
+        } catch (error) {
+          console.error("Error loading initial data:", error);
+        } finally {
+          setLoading(false);
+        }
+      }
     });
     return () => unsubscribe();
   }, []);
@@ -160,7 +172,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       isSenior,
       myAssociatedName,
       dipendenti,
-      commesse
+      commesse,
+      refreshData
     }}>
       {children}
     </AuthContext.Provider>

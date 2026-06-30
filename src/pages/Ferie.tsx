@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, query, where } from 'firebase/firestore';
-import { Calendar, CheckCircle, XCircle, Clock, ChevronLeft, ChevronRight } from 'lucide-react';
+import { collection, addDoc, doc, updateDoc, deleteDoc, query, where, getDocs } from 'firebase/firestore';
+import { Calendar, CheckCircle, XCircle, Clock, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
 import { queueMail } from '../utils/mailSender';
 
 const formatDate = (dateStr: string) => {
@@ -72,110 +72,98 @@ export default function Ferie() {
   const [cancellationReason, setCancellationReason] = useState('');
   const [cancellationLoading, setCancellationLoading] = useState(false);
 
-  // 1. HR/Admin: listen to all requests with dataFine >= startLimit
-  useEffect(() => {
-    if (!isHR && !isAdmin) {
-      setHrRichieste([]);
-      return;
-    }
-    const halfYearAgo = new Date();
-    halfYearAgo.setMonth(halfYearAgo.getMonth() - 6);
-    const startLimit = halfYearAgo.toLocaleDateString('sv-SE');
+  const loadFerieData = async () => {
+    try {
+      if (isHR || isAdmin) {
+        const halfYearAgo = new Date();
+        halfYearAgo.setMonth(halfYearAgo.getMonth() - 6);
+        const startLimit = halfYearAgo.toLocaleDateString('sv-SE');
 
-    const q = query(
-      collection(db, 'richieste_ferie'),
-      where('dataFine', '>=', startLimit)
-    );
-    const unsub = onSnapshot(q, (snapshot) => {
-      const list: RichiestaFerie[] = [];
-      snapshot.forEach(docSnap => {
-        const data = docSnap.data();
-        list.push({
-          id: docSnap.id,
-          dipendenteName: data.dipendenteName,
-          data: data.data || '',
-          tipo: data.tipo,
-          stato: data.stato || 'In attesa',
-          dataInizio: data.dataInizio,
-          dataFine: data.dataFine,
-          oraInizio: data.oraInizio,
-          oraFine: data.oraFine,
-          timestamp: data.timestamp
+        const q = query(
+          collection(db, 'richieste_ferie'),
+          where('dataFine', '>=', startLimit)
+        );
+        const snapshot = await getDocs(q);
+        const list: RichiestaFerie[] = [];
+        snapshot.forEach(docSnap => {
+          const data = docSnap.data();
+          list.push({
+            id: docSnap.id,
+            dipendenteName: data.dipendenteName,
+            data: data.data || '',
+            tipo: data.tipo,
+            stato: data.stato || 'In attesa',
+            dataInizio: data.dataInizio,
+            dataFine: data.dataFine,
+            oraInizio: data.oraInizio,
+            oraFine: data.oraFine,
+            timestamp: data.timestamp
+          });
         });
-      });
-      setHrRichieste(list);
-    });
-    return unsub;
-  }, [isHR, isAdmin]);
+        setHrRichieste(list);
+      }
 
-  // 2. Regular user: listen to own requests (all)
-  useEffect(() => {
-    if (isHR || isAdmin || !myAssociatedName) {
-      setMyRichieste([]);
-      return;
-    }
-    const q = query(
-      collection(db, 'richieste_ferie'),
-      where('dipendenteName', '==', myAssociatedName)
-    );
-    const unsub = onSnapshot(q, (snapshot) => {
-      const list: RichiestaFerie[] = [];
-      snapshot.forEach(docSnap => {
-        const data = docSnap.data();
-        list.push({
-          id: docSnap.id,
-          dipendenteName: data.dipendenteName,
-          data: data.data || '',
-          tipo: data.tipo,
-          stato: data.stato || 'In attesa',
-          dataInizio: data.dataInizio,
-          dataFine: data.dataFine,
-          oraInizio: data.oraInizio,
-          oraFine: data.oraFine,
-          timestamp: data.timestamp
+      if (myAssociatedName) {
+        const qMy = query(
+          collection(db, 'richieste_ferie'),
+          where('dipendenteName', '==', myAssociatedName)
+        );
+        const mySnap = await getDocs(qMy);
+        const listMy: RichiestaFerie[] = [];
+        mySnap.forEach(docSnap => {
+          const data = docSnap.data();
+          listMy.push({
+            id: docSnap.id,
+            dipendenteName: data.dipendenteName,
+            data: data.data || '',
+            tipo: data.tipo,
+            stato: data.stato || 'In attesa',
+            dataInizio: data.dataInizio,
+            dataFine: data.dataFine,
+            oraInizio: data.oraInizio,
+            oraFine: data.oraFine,
+            timestamp: data.timestamp
+          });
         });
-      });
-      setMyRichieste(list);
-    });
-    return unsub;
-  }, [myAssociatedName, isHR, isAdmin]);
+        setMyRichieste(listMy);
 
-  // 3. Regular user: listen to approved requests of others >= startLimitOthers
-  useEffect(() => {
-    if (isHR || isAdmin || !myAssociatedName) {
-      setOthersApprovedRichieste([]);
-      return;
-    }
-    const sixtyDaysAgo = new Date();
-    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
-    const startLimitOthers = sixtyDaysAgo.toLocaleDateString('sv-SE');
+        const sixtyDaysAgo = new Date();
+        sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+        const startLimitOthers = sixtyDaysAgo.toLocaleDateString('sv-SE');
 
-    const q = query(
-      collection(db, 'richieste_ferie'),
-      where('stato', '==', 'Approvato'),
-      where('dataFine', '>=', startLimitOthers)
-    );
-    const unsub = onSnapshot(q, (snapshot) => {
-      const list: RichiestaFerie[] = [];
-      snapshot.forEach(docSnap => {
-        const data = docSnap.data();
-        if (data.dipendenteName === myAssociatedName) return;
-        list.push({
-          id: docSnap.id,
-          dipendenteName: data.dipendenteName,
-          data: data.data || '',
-          tipo: data.tipo,
-          stato: data.stato || 'In attesa',
-          dataInizio: data.dataInizio,
-          dataFine: data.dataFine,
-          oraInizio: data.oraInizio,
-          oraFine: data.oraFine,
-          timestamp: data.timestamp
+        const qOthers = query(
+          collection(db, 'richieste_ferie'),
+          where('stato', '==', 'Approvato'),
+          where('dataFine', '>=', startLimitOthers)
+        );
+        const othersSnap = await getDocs(qOthers);
+        const listOthers: RichiestaFerie[] = [];
+        othersSnap.forEach(docSnap => {
+          const data = docSnap.data();
+          if (data.dipendenteName === myAssociatedName) return;
+          listOthers.push({
+            id: docSnap.id,
+            dipendenteName: data.dipendenteName,
+            data: data.data || '',
+            tipo: data.tipo,
+            stato: data.stato || 'In attesa',
+            dataInizio: data.dataInizio,
+            dataFine: data.dataFine,
+            oraInizio: data.oraInizio,
+            oraFine: data.oraFine,
+            timestamp: data.timestamp
+          });
         });
-      });
-      setOthersApprovedRichieste(list);
-    });
-    return unsub;
+        setOthersApprovedRichieste(listOthers);
+      }
+    } catch (err) {
+      console.error("Error loading ferie data:", err);
+      showToast("Errore nel caricamento delle ferie.", "error");
+    }
+  };
+
+  useEffect(() => {
+    loadFerieData();
   }, [myAssociatedName, isHR, isAdmin]);
 
   // Union list for regular users
@@ -285,6 +273,7 @@ export default function Ferie() {
       setOraInizio('09:00');
       setOraFine('18:00');
       showToast("Richiesta inviata con successo!");
+      loadFerieData();
     } catch (err) {
       showToast("Errore nell'invio della richiesta.", "error");
     } finally {
@@ -332,6 +321,7 @@ export default function Ferie() {
 
         await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
       }
+      loadFerieData();
     } catch (e) {
       console.error("Errore aggiornamento:", e);
     }
@@ -381,6 +371,7 @@ export default function Ferie() {
       showToast("Ferie annullate con successo!");
       setCancellationRequest(null);
       setCancellationReason('');
+      loadFerieData();
     } catch (err) {
       console.error(err);
       showToast("Errore durante l'annullamento delle ferie.", "error");
@@ -502,7 +493,16 @@ export default function Ferie() {
         <div className="flex justify-between items-center mb-8">
           <h2 className="text-3xl font-extrabold text-gray-900 flex items-center gap-3">
             <div className="p-3 bg-green-100 rounded-2xl"><Calendar className="w-8 h-8 text-green-600" /></div>
-            Piano Ferie e Assenze
+            <div className="flex items-center gap-3">
+              <span>Piano Ferie e Assenze</span>
+              <button 
+                onClick={loadFerieData}
+                title="Aggiorna Dati"
+                className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 border border-transparent hover:border-green-100 rounded-xl transition-all cursor-pointer hover:rotate-180 duration-500"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
+            </div>
           </h2>
           <button onClick={() => window.print()} className="hidden md:flex items-center gap-2 bg-gray-900 text-white hover:bg-gray-800 px-5 py-2.5 rounded-xl font-bold transition shadow-lg active:scale-95">
             Stampa

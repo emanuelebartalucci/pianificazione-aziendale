@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, addDoc, onSnapshot, doc, deleteDoc, query, orderBy, setDoc, where, getDocs } from 'firebase/firestore';
-import { Send, MessageSquare, Shield, Star, Filter, Trash2, LayoutList, Plus, ShieldCheck, FileText, Download, Edit3, BarChart3, Smile, Meh, Frown, ChevronUp, ChevronDown } from 'lucide-react';
+import { collection, addDoc, doc, deleteDoc, query, orderBy, setDoc, where, getDocs, getDoc } from 'firebase/firestore';
+import { Send, MessageSquare, Shield, Star, Filter, Trash2, LayoutList, Plus, ShieldCheck, FileText, Download, Edit3, BarChart3, Smile, Meh, Frown, ChevronUp, ChevronDown, RefreshCw } from 'lucide-react';
 import ConfirmModal from '../components/ConfirmModal';
 import { DEFAULT_QUESTIONS, getQuestionSection } from '../utils/defaultQuestionnaire';
 import QuestionnaireModal from '../components/QuestionnaireModal';
@@ -250,44 +250,62 @@ export default function Suggerimenti() {
     });
   };
 
-  // Caricamento categorie suggerimenti
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'categorie_suggerimenti'), (snapshot) => {
-      if (snapshot.empty) {
+  const loadData = async () => {
+    try {
+      // 1. Categorie suggerimenti
+      const catSnap = await getDocs(collection(db, 'categorie_suggerimenti'));
+      if (catSnap.empty) {
         const defaultCats = ['Ambiente di lavoro', 'Strumenti e Risorse', 'Processi e Organizzazione', 'Altro'];
-        defaultCats.forEach(async (catName) => {
-          await addDoc(collection(db, 'categorie_suggerimenti'), { nome: catName });
+        const promises = defaultCats.map(catName => addDoc(collection(db, 'categorie_suggerimenti'), { nome: catName }));
+        await Promise.all(promises);
+        
+        const reloadCatSnap = await getDocs(collection(db, 'categorie_suggerimenti'));
+        const list: { id: string; nome: string }[] = [];
+        reloadCatSnap.forEach(docSnap => {
+          const data = docSnap.data();
+          if (data.nome) list.push({ id: docSnap.id, nome: data.nome });
         });
+        list.sort((a, b) => a.nome.localeCompare(b.nome));
+        setCategories(list);
       } else {
         const list: { id: string; nome: string }[] = [];
-        snapshot.forEach(docSnap => {
+        catSnap.forEach(docSnap => {
           const data = docSnap.data();
           if (data.nome) list.push({ id: docSnap.id, nome: data.nome });
         });
         list.sort((a, b) => a.nome.localeCompare(b.nome));
         setCategories(list);
       }
-    });
-    return () => unsub();
-  }, []);
 
-  // Caricamento opzioni clima
-  useEffect(() => {
-    if (!isAdmin && !isHR) return;
-    const unsub = onSnapshot(collection(db, 'opzioni_clima'), (snapshot) => {
-      if (snapshot.empty) {
+      // 2. Opzioni clima
+      const climaSnap = await getDocs(collection(db, 'opzioni_clima'));
+      if (climaSnap.empty) {
         const defaultOpts = [
           '🟢 Ottimo, sono sereno e motivato',
           '🟡 Gestibile, ma sento un po\' di stanchezza',
           '🔴 Stressante, mi sento in sovraccarico'
         ];
-        defaultOpts.forEach(async (optName, index) => {
-          await addDoc(collection(db, 'opzioni_clima'), { label: optName, order: index });
+        const promises = defaultOpts.map((optName, index) => addDoc(collection(db, 'opzioni_clima'), { label: optName, order: index }));
+        await Promise.all(promises);
+        
+        const reloadClimaSnap = await getDocs(collection(db, 'opzioni_clima'));
+        const list: { id: string; label: string; order: number }[] = [];
+        let index = 0;
+        reloadClimaSnap.forEach(docSnap => {
+          const data = docSnap.data();
+          list.push({
+            id: docSnap.id,
+            label: data.label || '',
+            order: data.order !== undefined ? data.order : index
+          });
+          index++;
         });
+        list.sort((a, b) => a.order - b.order);
+        setClimaOptions(list);
       } else {
         const list: { id: string; label: string; order: number }[] = [];
         let index = 0;
-        snapshot.forEach(docSnap => {
+        climaSnap.forEach(docSnap => {
           const data = docSnap.data();
           list.push({
             id: docSnap.id,
@@ -299,16 +317,14 @@ export default function Suggerimenti() {
         list.sort((a, b) => a.order - b.order);
         setClimaOptions(list);
       }
-    });
-    return () => unsub();
-  }, [isAdmin, isHR]);
 
-  // Caricamento configurazione questionario attivo (per tutti gli utenti, per consentire la compilazione)
-  useEffect(() => {
-    const unsub = onSnapshot(doc(db, 'configurazioni', 'questionario'), (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
+      // 3. Questionario
+      const questDoc = await getDoc(doc(db, 'configurazioni', 'questionario'));
+      let questionnaireData: any = null;
+      if (questDoc.exists()) {
+        const data = questDoc.data();
         if (data.active || isAdmin || isHR) {
+          questionnaireData = data;
           setActiveQuestionnaire(data as any);
         } else {
           setActiveQuestionnaire(null);
@@ -321,87 +337,61 @@ export default function Suggerimenti() {
             active: false,
             sentAt: ''
           };
-          setDoc(doc(db, 'configurazioni', 'questionario'), initialConfig);
+          await setDoc(doc(db, 'configurazioni', 'questionario'), initialConfig);
+          questionnaireData = initialConfig;
           setActiveQuestionnaire(initialConfig);
         }
       }
-    });
-    return () => unsub();
-  }, [isAdmin, isHR]);
 
-  // Verifica se il dipendente ha completato il questionario attivo
-  useEffect(() => {
-    if (isSoci(myAssociatedName)) {
-      setHasCompletedSurvey(true);
-      return;
+      // 4. Questionari completati
+      if (isSoci(myAssociatedName)) {
+        setHasCompletedSurvey(true);
+      } else if (!questionnaireData || !user?.uid) {
+        setHasCompletedSurvey(true);
+      } else {
+        const qComp = query(
+          collection(db, 'questionari_completati'),
+          where('userId', '==', user.uid),
+          where('questionnaireId', '==', questionnaireData.id)
+        );
+        const compSnap = await getDocs(qComp);
+        setHasCompletedSurvey(!compSnap.empty);
+      }
+
+      // 5. Dati specifici Admin/HR
+      if (isAdmin || isHR) {
+        const [answersSnap, sugSnap, responsesSnap] = await Promise.all([
+          getDocs(collection(db, 'risposte_questionario')),
+          getDocs(query(collection(db, 'suggerimenti'), orderBy('data', 'desc'))),
+          getDocs(query(collection(db, 'risposte_clima'), orderBy('createdAt', 'desc')))
+        ]);
+
+        const listAnswers: any[] = [];
+        answersSnap.forEach(docSnap => {
+          listAnswers.push({ id: docSnap.id, ...docSnap.data() });
+        });
+        setQuestionAnswers(listAnswers);
+
+        const listSug: Suggerimento[] = [];
+        sugSnap.forEach(docSnap => {
+          listSug.push({ id: docSnap.id, ...docSnap.data() } as Suggerimento);
+        });
+        setSuggerimenti(listSug);
+
+        const listClima: RispostaClima[] = [];
+        responsesSnap.forEach(docSnap => {
+          listClima.push({ id: docSnap.id, ...docSnap.data() } as RispostaClima);
+        });
+        setClimaResponses(listClima);
+      }
+    } catch (err) {
+      console.error("Errore caricamento dati Suggerimenti:", err);
     }
-    if (!activeQuestionnaire || !user?.uid) {
-      setHasCompletedSurvey(true);
-      return;
-    }
+  };
 
-    const q = query(
-      collection(db, 'questionari_completati'),
-      where('userId', '==', user.uid),
-      where('questionnaireId', '==', activeQuestionnaire.id)
-    );
-
-    const unsub = onSnapshot(q, (snapshot) => {
-      setHasCompletedSurvey(!snapshot.empty);
-    });
-
-    return () => unsub();
-  }, [activeQuestionnaire, user?.uid, myAssociatedName]);
-
-  // Caricamento risposte al questionario
   useEffect(() => {
-    if (!isAdmin && !isHR) return;
-    const unsub = onSnapshot(collection(db, 'risposte_questionario'), (snapshot) => {
-      const list: any[] = [];
-      snapshot.forEach(docSnap => {
-        list.push({ id: docSnap.id, ...docSnap.data() });
-      });
-      setQuestionAnswers(list);
-    });
-    return () => unsub();
-  }, [isAdmin, isHR]);
-
-  // Sincronizza tab predefinita per gli HR
-  useEffect(() => {
-    if (isAdmin || isHR) {
-      setActiveTab('suggerimenti');
-    } else {
-      setActiveTab('invia');
-    }
-  }, [isAdmin, isHR]);
-
-  // Caricamento suggerimenti in tempo reale
-  useEffect(() => {
-    if (!isAdmin && !isHR) return;
-    const q = query(collection(db, 'suggerimenti'), orderBy('data', 'desc'));
-    const unsub = onSnapshot(q, (snapshot) => {
-      const list: Suggerimento[] = [];
-      snapshot.forEach(docSnap => {
-        list.push({ id: docSnap.id, ...docSnap.data() } as Suggerimento);
-      });
-      setSuggerimenti(list);
-    });
-    return () => unsub();
-  }, [isAdmin, isHR]);
-
-  // Caricamento risposte clima in tempo reale
-  useEffect(() => {
-    if (!isAdmin && !isHR) return;
-    const q = query(collection(db, 'risposte_clima'), orderBy('createdAt', 'desc'));
-    const unsub = onSnapshot(q, (snapshot) => {
-      const list: RispostaClima[] = [];
-      snapshot.forEach(docSnap => {
-        list.push({ id: docSnap.id, ...docSnap.data() } as RispostaClima);
-      });
-      setClimaResponses(list);
-    });
-    return () => unsub();
-  }, [isAdmin, isHR]);
+    loadData();
+  }, [isAdmin, isHR, user?.uid, myAssociatedName]);
 
   // Pulizia automatica delle risposte clima più vecchie di 90 giorni (solo per HR/Admin)
   useEffect(() => {
@@ -449,8 +439,7 @@ export default function Suggerimenti() {
         testo: testo.trim(),
         data: todayStr
       });
-
-      // Notifica e-mail all'HR rimossa a favore del sistema di badge di notifica
+      loadData();
 
       setCategoria('');
       setTesto('');
@@ -471,6 +460,7 @@ export default function Suggerimenti() {
       async () => {
         try {
           await deleteDoc(doc(db, 'suggerimenti', id));
+          loadData();
         } catch (err) {
           console.error("Errore nell'eliminazione:", err);
         }
@@ -492,6 +482,7 @@ export default function Suggerimenti() {
     try {
       await addDoc(collection(db, 'categorie_suggerimenti'), { nome: newCategoryName.trim() });
       setNewCategoryName('');
+      loadData();
     } catch (err) {
       console.error(err);
     } finally {
@@ -506,6 +497,7 @@ export default function Suggerimenti() {
       async () => {
         try {
           await deleteDoc(doc(db, 'categorie_suggerimenti', catId));
+          loadData();
         } catch (err) {
           console.error(err);
         }
@@ -532,6 +524,7 @@ export default function Suggerimenti() {
         order: maxOrder + 1
       });
       setNewClimaOptionName('');
+      loadData();
     } catch (err) {
       console.error(err);
     } finally {
@@ -556,6 +549,7 @@ export default function Suggerimenti() {
 
       await setDoc(doc(db, 'opzioni_clima', optionA.id), { label: optionA.label, order: orderB });
       await setDoc(doc(db, 'opzioni_clima', optionB.id), { label: optionB.label, order: orderA });
+      loadData();
     } catch (err) {
       console.error("Errore nello spostamento dell'opzione clima:", err);
     }
@@ -568,6 +562,7 @@ export default function Suggerimenti() {
       async () => {
         try {
           await deleteDoc(doc(db, 'opzioni_clima', optId));
+          loadData();
         } catch (err) {
           console.error(err);
         }
@@ -602,6 +597,7 @@ export default function Suggerimenti() {
         questions: updated
       });
       setEditingQuestionId(null);
+      loadData();
     } catch (err) {
       console.error(err);
     }
@@ -619,6 +615,7 @@ export default function Suggerimenti() {
             ...activeQuestionnaire,
             questions: updated
           });
+          loadData();
         } catch (err) {
           console.error(err);
         }
@@ -648,6 +645,7 @@ export default function Suggerimenti() {
       setNewQuestionText('');
       setNewQuestionOptionsStr('');
       setNewQuestionSection(1);
+      loadData();
     } catch (err) {
       console.error(err);
     }
@@ -662,7 +660,6 @@ export default function Suggerimenti() {
     
     const qSection = getQuestionSection(questions[index]);
     
-    // Filtra le domande appartenenti alla stessa sezione
     const sectionQuestions = questions.filter(q => getQuestionSection(q) === qSection);
     const secIndex = sectionQuestions.findIndex(q => q.id === qId);
     
@@ -675,10 +672,9 @@ export default function Suggerimenti() {
       sectionQuestions[secIndex + 1] = sectionQuestions[secIndex];
       sectionQuestions[secIndex] = temp;
     } else {
-      return; // Impossibile muovere oltre
+      return;
     }
     
-    // Ricostruisci mantenendo le sezioni separate ma ordinando quella corrente
     const updatedQuestions: any[] = [];
     for (let s = 1; s <= 4; s++) {
       if (s === qSection) {
@@ -693,6 +689,7 @@ export default function Suggerimenti() {
         ...activeQuestionnaire,
         questions: updatedQuestions
       });
+      loadData();
     } catch (err) {
       console.error(err);
     }
@@ -712,6 +709,7 @@ export default function Suggerimenti() {
             active: true,
             sentAt: new Date().toISOString()
           });
+          loadData();
         } catch (err) {
           console.error(err);
         }
@@ -731,6 +729,7 @@ export default function Suggerimenti() {
             ...activeQuestionnaire,
             active: false
           });
+          loadData();
         } catch (err) {
           console.error(err);
         }
@@ -910,10 +909,19 @@ export default function Suggerimenti() {
       
       {/* HEADER E TABS PRINCIPALI */}
       <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-sm p-4 sm:p-6 border border-white/50 flex flex-col md:flex-row justify-between items-center gap-4">
-        <h2 className="text-3xl font-extrabold text-gray-900 flex items-center gap-3">
-          <div className="p-3 bg-indigo-100 rounded-2xl"><MessageSquare className="text-indigo-600 w-8 h-8" /></div>
-          <span>Cassetta delle Idee</span>
-        </h2>
+        <div className="flex items-center gap-4">
+          <h2 className="text-3xl font-extrabold text-gray-900 flex items-center gap-3">
+            <div className="p-3 bg-indigo-100 rounded-2xl"><MessageSquare className="text-indigo-600 w-8 h-8" /></div>
+            <span>Cassetta delle Idee</span>
+          </h2>
+          <button 
+            onClick={loadData}
+            title="Aggiorna Dati"
+            className="p-3 text-gray-500 hover:text-indigo-600 bg-gray-50 hover:bg-indigo-50 border border-gray-100 hover:border-indigo-100 rounded-2xl transition-all cursor-pointer hover:rotate-180 duration-500"
+          >
+            <RefreshCw className="w-5 h-5" />
+          </button>
+        </div>
 
         {(isAdmin || isHR) && (
           <div className="flex bg-gray-100/80 p-1.5 rounded-2xl shadow-inner flex-wrap gap-1">
@@ -1723,7 +1731,10 @@ export default function Suggerimenti() {
       {activeQuestionnaire && !isSoci(myAssociatedName) && (
         <QuestionnaireModal
           isOpen={isEmployeeSurveyOpen}
-          onClose={() => setIsEmployeeSurveyOpen(false)}
+          onClose={() => {
+            setIsEmployeeSurveyOpen(false);
+            loadData();
+          }}
           activeQuestionnaire={activeQuestionnaire}
           userId={user?.uid || ''}
         />

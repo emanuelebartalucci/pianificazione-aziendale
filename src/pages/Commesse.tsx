@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, onSnapshot, query, where, doc, setDoc, addDoc, deleteDoc, getDocs } from 'firebase/firestore';
-import { Briefcase, Printer, ChevronLeft, ChevronRight, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2 } from 'lucide-react';
+import { collection, query, where, doc, setDoc, addDoc, deleteDoc, getDocs } from 'firebase/firestore';
+import { Briefcase, Printer, ChevronLeft, ChevronRight, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays } from '../utils/date';
 import { queueMail } from '../utils/mailSender';
 import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
@@ -122,7 +122,7 @@ const generateWeeksExtended = (baseDate: Date, numWeeks: number): WeekInfo[] => 
 };
 
 export default function Commesse() {
-  const { isAdmin, isSenior, myAssociatedName, dipendenti, commesse } = useAuth();
+  const { isAdmin, isSenior, myAssociatedName, dipendenti, commesse, refreshData } = useAuth();
   
   const [baseDate, setBaseDate] = useState<Date>(new Date());
   const [zoomWeeks, setZoomWeeks] = useState<number>(13); // Default to 3 Months (13 Weeks)
@@ -229,58 +229,55 @@ export default function Commesse() {
     }
   };
   
-  // Real-time listener for allocations and roles
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'assegnazioni'), (snapshot) => {
-      const ass: Record<string, Assegnazione[]> = {};
-      snapshot.forEach(docSnap => {
-        ass[docSnap.id] = docSnap.data().lista || [];
-      });
-      setAssignments(ass);
-    });
+  const [approvedLeaves, setApprovedLeaves] = useState<any[]>([]);
 
-    const unsubS = onSnapshot(collection(db, 'seniors'), (snapshot) => {
-      const emails = snapshot.docs.map(d => (d.data().email || '').toLowerCase());
-      setSeniorsEmails(emails);
-    });
-
-    const unsubP = onSnapshot(collection(db, 'project_managers'), (snapshot) => {
-      const emails = snapshot.docs.map(d => (d.data().email || '').toLowerCase());
-      setPmsEmails(emails);
-    });
-
-    const unsubC = onSnapshot(collection(db, 'clienti'), (snapshot) => {
-      setClientiList(snapshot.docs.map(d => ({
+  const loadCommesseData = async () => {
+    try {
+      await refreshData();
+      const [seniorsSnap, pmsSnap, clientiSnap, assegnazioniSnap] = await Promise.all([
+        getDocs(collection(db, 'seniors')),
+        getDocs(collection(db, 'project_managers')),
+        getDocs(collection(db, 'clienti')),
+        getDocs(collection(db, 'assegnazioni'))
+      ]);
+      
+      setSeniorsEmails(seniorsSnap.docs.map(d => (d.data().email || '').toLowerCase()));
+      setPmsEmails(pmsSnap.docs.map(d => (d.data().email || '').toLowerCase()));
+      setClientiList(clientiSnap.docs.map(d => ({
         id: d.id,
         codice: d.data().codice || '',
         nome: d.data().nome || ''
       })).sort((a, b) => Number(a.codice) - Number(b.codice)));
-    });
 
-    return () => { unsub(); unsubS(); unsubP(); unsubC(); };
-  }, []);
+      const ass: Record<string, Assegnazione[]> = {};
+      assegnazioniSnap.forEach(docSnap => {
+        ass[docSnap.id] = docSnap.data().lista || [];
+      });
+      setAssignments(ass);
 
-  const [approvedLeaves, setApprovedLeaves] = useState<any[]>([]);
-
-  // Load approved leaves in real-time (last 60 days to prevent infinite data load)
-  useEffect(() => {
-    const sixtyDaysAgo = new Date();
-    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
-    const limitDate = sixtyDaysAgo.toLocaleDateString('sv-SE');
-
-    const q = query(
-      collection(db, 'richieste_ferie'),
-      where('stato', '==', 'Approvato'),
-      where('dataFine', '>=', limitDate)
-    );
-    const unsub = onSnapshot(q, (snapshot) => {
+      // Fetch approved leaves
+      const sixtyDaysAgo = new Date();
+      sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+      const limitDate = sixtyDaysAgo.toLocaleDateString('sv-SE');
+      const q = query(
+        collection(db, 'richieste_ferie'),
+        where('stato', '==', 'Approvato'),
+        where('dataFine', '>=', limitDate)
+      );
+      const leavesSnap = await getDocs(q);
       const list: any[] = [];
-      snapshot.forEach(docSnap => {
+      leavesSnap.forEach(docSnap => {
         list.push({ id: docSnap.id, ...docSnap.data() });
       });
       setApprovedLeaves(list);
-    });
-    return () => unsub();
+    } catch (err) {
+      console.error("Error loading data in Commesse page:", err);
+      showToast("Errore nel caricamento delle commesse.", "error");
+    }
+  };
+
+  useEffect(() => {
+    loadCommesseData();
   }, []);
 
   const getLeavesForResourceInWeek = (resName: string, wkId: string) => {
@@ -522,6 +519,7 @@ export default function Commesse() {
       };
 
       await setDoc(docRef, updates, { merge: true });
+      await loadCommesseData();
 
       // Invia notifiche email se sono state fatte assegnazioni
       if (editResponsabile && editResponsabile !== editingCommessa.responsabile) {
@@ -640,6 +638,7 @@ export default function Commesse() {
       };
       
       await addDoc(collection(db, 'catalogo_commesse'), payload);
+      await loadCommesseData();
       
       setSelectedClient(null);
       setClientSearchText('');
@@ -683,7 +682,7 @@ export default function Commesse() {
               }
             }
           }
-          
+          await loadCommesseData();
           showToast("Commessa e relative assegnazioni rimosse con successo!", "success");
         } catch (err) {
           console.error("Errore rimozione commessa:", err);
@@ -809,7 +808,16 @@ export default function Commesse() {
       <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-sm p-4 sm:p-6 border border-white/50 no-print flex flex-col md:flex-row justify-between items-center gap-4">
         <h2 className="text-3xl font-extrabold text-gray-900 flex items-center gap-3">
           <div className="p-3 bg-blue-100 rounded-2xl"><Briefcase className="text-blue-600 w-8 h-8" /></div>
-          <span>Pianificazione Avanzamento Commesse</span>
+          <div className="flex items-center gap-3">
+            <span>Pianificazione Avanzamento Commesse</span>
+            <button 
+              onClick={loadCommesseData}
+              title="Aggiorna Dati"
+              className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 border border-transparent hover:border-blue-100 rounded-xl transition-all cursor-pointer hover:rotate-180 duration-500"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+          </div>
         </h2>
         
         <div className={`flex items-center gap-2 text-xs font-bold px-4 py-2 rounded-xl border ${

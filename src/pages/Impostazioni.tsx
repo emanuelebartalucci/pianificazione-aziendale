@@ -64,7 +64,7 @@ export const isSoci = (nome?: string | null): boolean => {
 };
 
 export default function Impostazioni() {
-  const { isAdmin, dipendenti } = useAuth();
+  const { isAdmin, dipendenti, refreshData } = useAuth();
   
   // Stato per la modale di conferma personalizzata
   const [confirmConfig, setConfirmConfig] = useState<{
@@ -157,12 +157,16 @@ export default function Impostazioni() {
   // Handlers
   const handleAddAdmin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if(newAdminEmail) await addDoc(collection(db, 'admins'), { email: newAdminEmail.toLowerCase() });
+    if(newAdminEmail) {
+      await addDoc(collection(db, 'admins'), { email: newAdminEmail.toLowerCase() });
+      await refreshData();
+    }
     setNewAdminEmail('');
   };
   
   const handleRemoveAdmin = async (id: string) => {
     await deleteDoc(doc(db, 'admins', id));
+    await refreshData();
   };
 
   const handleAddHR = async (e: React.FormEvent) => {
@@ -173,22 +177,28 @@ export default function Impostazioni() {
         return;
       }
       await addDoc(collection(db, 'hr'), { email: newHrEmail.toLowerCase() });
+      await refreshData();
       setNewHrEmail('');
     }
   };
 
   const handleRemoveHR = async (id: string) => {
     await deleteDoc(doc(db, 'hr', id));
+    await refreshData();
   };
 
   const handleAddSenior = async (e: React.FormEvent) => {
     e.preventDefault();
-    if(newSeniorEmail) await addDoc(collection(db, 'seniors'), { email: newSeniorEmail.toLowerCase() });
+    if(newSeniorEmail) {
+      await addDoc(collection(db, 'seniors'), { email: newSeniorEmail.toLowerCase() });
+      await refreshData();
+    }
     setNewSeniorEmail('');
   };
 
   const handleRemoveSenior = async (id: string) => {
     await deleteDoc(doc(db, 'seniors', id));
+    await refreshData();
   };
 
   const handleAddPM = async (e: React.FormEvent) => {
@@ -248,6 +258,7 @@ export default function Impostazioni() {
         email: newDipEmail.toLowerCase(),
         tipo: 'dipendente'
       });
+      await refreshData();
       setNewDipNome('');
       setNewDipEmail('');
     }
@@ -261,6 +272,7 @@ export default function Impostazioni() {
         email: newCollabEmail.toLowerCase(),
         tipo: 'collaboratore'
       });
+      await refreshData();
       setNewCollabNome('');
       setNewCollabEmail('');
     }
@@ -281,6 +293,7 @@ export default function Impostazioni() {
           await updateDoc(doc(db, 'dipendenti', id), {
             tipo: newTipo
           });
+          await refreshData();
           showToast(`Risorsa spostata in ${newTipo === 'collaboratore' ? 'Collaboratori P. IVA' : 'Dipendenti'} con successo!`, "success");
         } catch (err) {
           console.error("Errore nello spostamento della risorsa:", err);
@@ -304,6 +317,7 @@ export default function Impostazioni() {
       async () => {
         try {
           await deleteDoc(doc(db, 'dipendenti', id));
+          await refreshData();
         } catch (err) {
           console.error("Errore nella rimozione del dipendente:", err);
         }

@@ -3,7 +3,7 @@ import { Briefcase, Calendar, Settings, FileText, MessageSquare, Plus, Trash2, M
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, addDoc, doc, deleteDoc, onSnapshot, query, orderBy, where } from 'firebase/firestore';
+import { collection, addDoc, doc, deleteDoc, query, orderBy, where, getDoc, getDocs } from 'firebase/firestore';
 import ConfirmModal from '../components/ConfirmModal';
 import ClimaModal from '../components/ClimaModal';
 import QuestionnaireModal from '../components/QuestionnaireModal';
@@ -30,9 +30,10 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [isClimaModalOpen, setIsClimaModalOpen] = useState(false);
   const [activeQuestionnaire, setActiveQuestionnaire] = useState<any | null>(null);
-  const [isQuestionnaireOpen, setIsQuestionnaireOpen] = useState(false);
   const [hasCompletedSurvey, setHasCompletedSurvey] = useState(true);
   const [hasSkippedSurvey, setHasSkippedSurvey] = useState(false);
+
+  const isQuestionnaireOpen = !!(activeQuestionnaire && !hasCompletedSurvey && !hasSkippedSurvey);
 
   // Stati per i badge di notifica HR (solo se isHR && !isAdmin)
   const [pendingFerieCount, setPendingFerieCount] = useState(0);
@@ -92,164 +93,114 @@ export default function Dashboard() {
     }
   }, [myAssociatedName]);
 
-  // Controllo per il questionario HR attivo (esclusi i soci)
-  useEffect(() => {
-    if (isSoci(myAssociatedName)) return;
-
-    const unsub = onSnapshot(doc(db, 'configurazioni', 'questionario'), (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        if (data.active) {
-          setActiveQuestionnaire(data);
+  const loadDashboardData = async () => {
+    try {
+      // 1. Questionario
+      let activeSurvey: any = null;
+      if (!isSoci(myAssociatedName)) {
+        const docSnap = await getDoc(doc(db, 'configurazioni', 'questionario'));
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          if (data.active) {
+            activeSurvey = data;
+            setActiveQuestionnaire(data);
+          } else {
+            setActiveQuestionnaire(null);
+          }
         } else {
           setActiveQuestionnaire(null);
         }
-      } else {
-        setActiveQuestionnaire(null);
       }
-    });
-    return () => unsub();
-  }, [myAssociatedName]);
 
-  // Verifica se il dipendente ha completato il questionario attivo
-  useEffect(() => {
-    if (!activeQuestionnaire || !user?.uid) {
-      setHasCompletedSurvey(true);
-      return;
-    }
+      // 2. Questionario completato
+      if (activeSurvey && user?.uid) {
+        const qComp = query(
+          collection(db, 'questionari_completati'),
+          where('userId', '==', user.uid),
+          where('questionnaireId', '==', activeSurvey.id)
+        );
+        const compSnap = await getDocs(qComp);
+        setHasCompletedSurvey(!compSnap.empty);
+      } else {
+        setHasCompletedSurvey(true);
+      }
 
-    const q = query(
-      collection(db, 'questionari_completati'),
-      where('userId', '==', user.uid),
-      where('questionnaireId', '==', activeQuestionnaire.id)
-    );
-
-    const unsub = onSnapshot(q, (snapshot) => {
-      setHasCompletedSurvey(!snapshot.empty);
-    });
-
-    return () => unsub();
-  }, [activeQuestionnaire, user?.uid]);
-
-  // Innesca la modale del questionario
-  useEffect(() => {
-    if (!activeQuestionnaire || hasCompletedSurvey || hasSkippedSurvey) {
-      setIsQuestionnaireOpen(false);
-    } else {
-      setIsQuestionnaireOpen(true);
-    }
-  }, [activeQuestionnaire, hasCompletedSurvey, hasSkippedSurvey]);
-
-  // Caricamento comunicazioni in tempo reale
-  useEffect(() => {
-    const q = query(collection(db, 'comunicazioni'), orderBy('createdAt', 'desc'));
-    const unsub = onSnapshot(q, (snapshot) => {
-      const list: Announcement[] = [];
-      snapshot.forEach(docSnap => {
-        list.push({
+      // 3. Comunicazioni
+      const noticesSnap = await getDocs(query(collection(db, 'comunicazioni'), orderBy('createdAt', 'desc')));
+      const listNotices: Announcement[] = [];
+      noticesSnap.forEach(docSnap => {
+        listNotices.push({
           id: docSnap.id,
           ...docSnap.data()
         } as Announcement);
       });
-      setAnnouncements(list);
-    });
-    return () => unsub();
-  }, []);
+      setAnnouncements(listNotices);
 
-  // Caricamento richieste maternità approvate del dipendente corrente
-  useEffect(() => {
-    if (!myAssociatedName) {
-      setMyMaternityLeaves([]);
-      return;
-    }
-    const q = query(
-      collection(db, 'richieste_ferie'),
-      where('dipendenteName', '==', myAssociatedName),
-      where('tipo', '==', 'maternita'),
-      where('stato', '==', 'Approvato')
-    );
-    const unsub = onSnapshot(q, (snapshot) => {
-      const list: any[] = [];
-      snapshot.forEach(docSnap => {
-        const data = docSnap.data();
-        list.push({
-          id: docSnap.id,
-          dataInizio: data.dataInizio || data.data || '',
-          dataFine: data.dataFine || data.data || '',
+      // 4. Maternità approvate
+      if (myAssociatedName) {
+        const qMaternity = query(
+          collection(db, 'richieste_ferie'),
+          where('dipendenteName', '==', myAssociatedName),
+          where('tipo', '==', 'maternita'),
+          where('stato', '==', 'Approvato')
+        );
+        const maternitySnap = await getDocs(qMaternity);
+        const listMat: any[] = [];
+        maternitySnap.forEach(docSnap => {
+          const data = docSnap.data();
+          listMat.push({
+            id: docSnap.id,
+            dataInizio: data.dataInizio || data.data || '',
+            dataFine: data.dataFine || data.data || '',
+          });
         });
-      });
-      setMyMaternityLeaves(list);
-    });
-    return () => unsub();
-  }, [myAssociatedName]);
+        setMyMaternityLeaves(listMat);
+      } else {
+        setMyMaternityLeaves([]);
+      }
 
-  // Listeners per i badge di notifica HR
-  useEffect(() => {
-    if (!isHR) {
-      setPendingFerieCount(0);
-      setPendingPresenzeCount(0);
-      setPendingSuggerimentiCount(0);
-      return;
+      // 5. Notifiche HR
+      if (isHR) {
+        const [ferieSnap, presenzeSnap, weekendSnap, sugSnap] = await Promise.all([
+          getDocs(query(collection(db, 'richieste_ferie'), where('stato', '==', 'In attesa'))),
+          getDocs(query(collection(db, 'presenze'), where('stato', '==', 'Inviato'))),
+          getDocs(query(collection(db, 'richieste_weekend'), where('stato', '==', 'In attesa'))),
+          getDocs(collection(db, 'suggerimenti'))
+        ]);
+
+        const todayStr = new Date().toLocaleDateString('sv-SE');
+        let pendingFerie = 0;
+        ferieSnap.forEach(docSnap => {
+          const data = docSnap.data();
+          const dateLimit = data.dataFine || data.dataInizio || data.data || '';
+          if (!dateLimit || dateLimit >= todayStr) {
+            pendingFerie++;
+          }
+        });
+        setPendingFerieCount(pendingFerie);
+        setPendingPresenzeCount(presenzeSnap.size + weekendSnap.size);
+        setPendingSuggerimentiCount(sugSnap.size);
+      } else {
+        setPendingFerieCount(0);
+        setPendingPresenzeCount(0);
+        setPendingSuggerimentiCount(0);
+      }
+    } catch (err) {
+      console.error("Errore caricamento dati Dashboard:", err);
     }
+  };
 
-    // 1. Ferie in attesa (non scadute)
-    const qFerie = query(
-      collection(db, 'richieste_ferie'),
-      where('stato', '==', 'In attesa')
-    );
-    const unsubFerie = onSnapshot(qFerie, (snapshot) => {
-      const todayStr = new Date().toLocaleDateString('sv-SE');
-      let count = 0;
-      snapshot.forEach(docSnap => {
-        const data = docSnap.data();
-        const dateLimit = data.dataFine || data.dataInizio || data.data || '';
-        if (!dateLimit || dateLimit >= todayStr) {
-          count++;
-        }
-      });
-      setPendingFerieCount(count);
-    });
+  useEffect(() => {
+    loadDashboardData();
 
-    // 2. Presenze (Rapportini Inviati)
-    const qPresenze = query(
-      collection(db, 'presenze'),
-      where('stato', '==', 'Inviato')
-    );
-    let inviatiCount = 0;
-    let weekendCount = 0;
-
-    const updatePresenzeCount = (inv: number, wk: number) => {
-      setPendingPresenzeCount(inv + wk);
+    const handleRefresh = () => {
+      loadDashboardData();
     };
-
-    const unsubPresenze = onSnapshot(qPresenze, (snapshot) => {
-      inviatiCount = snapshot.size;
-      updatePresenzeCount(inviatiCount, weekendCount);
-    });
-
-    // 3. Richieste Weekend in attesa
-    const qWeekend = query(
-      collection(db, 'richieste_weekend'),
-      where('stato', '==', 'In attesa')
-    );
-    const unsubWeekend = onSnapshot(qWeekend, (snapshot) => {
-      weekendCount = snapshot.size;
-      updatePresenzeCount(inviatiCount, weekendCount);
-    });
-
-    // 4. Suggerimenti
-    const qSuggerimenti = query(collection(db, 'suggerimenti'));
-    const unsubSuggerimenti = onSnapshot(qSuggerimenti, (snapshot) => {
-      setPendingSuggerimentiCount(snapshot.size);
-    });
-
+    window.addEventListener('app-refresh-dashboard', handleRefresh);
     return () => {
-      unsubFerie();
-      unsubPresenze();
-      unsubWeekend();
-      unsubSuggerimenti();
+      window.removeEventListener('app-refresh-dashboard', handleRefresh);
     };
-  }, [isHR, isAdmin]);
+  }, [myAssociatedName, isHR, isAdmin, user?.uid]);
 
   const handleCreateNotice = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -267,6 +218,7 @@ export default function Dashboard() {
         data: dateStr,
         createdAt: new Date().toISOString()
       });
+      loadDashboardData();
 
       setNewTitle('');
       setNewContent('');
@@ -288,6 +240,7 @@ export default function Dashboard() {
       async () => {
         try {
           await deleteDoc(doc(db, 'comunicazioni', id));
+          loadDashboardData();
         } catch (err) {
           console.error("Errore nell'eliminazione della comunicazione:", err);
         }
@@ -377,10 +330,11 @@ export default function Dashboard() {
       
       {/* Intestazione di benvenuto */}
       <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-sm p-6 sm:p-8 border border-white/50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
+        <div className="flex items-center gap-4">
           <h1 className="text-2xl font-extrabold text-indigo-600 tracking-tight">
             Ciao, {welcomeName}! Benvenuto nel tuo portale di lavoro.
           </h1>
+
         </div>
       </div>
 
@@ -691,13 +645,19 @@ export default function Dashboard() {
 
       <ClimaModal 
         isOpen={isClimaModalOpen}
-        onClose={() => setIsClimaModalOpen(false)}
+        onClose={() => {
+          setIsClimaModalOpen(false);
+          loadDashboardData();
+        }}
       />
 
       {activeQuestionnaire && (
         <QuestionnaireModal
           isOpen={isQuestionnaireOpen}
-          onClose={() => setHasSkippedSurvey(true)}
+          onClose={() => {
+            setHasSkippedSurvey(true);
+            loadDashboardData();
+          }}
           activeQuestionnaire={activeQuestionnaire}
           userId={user?.uid || ''}
         />

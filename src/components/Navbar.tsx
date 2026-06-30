@@ -1,4 +1,4 @@
-import { LogOut, Home, KeyRound, X, Shield } from 'lucide-react';
+import { LogOut, Home, KeyRound, X, Shield, RefreshCw } from 'lucide-react';
 import { signOut, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from 'firebase/auth';
 import { auth } from '../services/firebase';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -65,14 +65,28 @@ export default function Navbar() {
   return (
     <>
       <header className="bg-white shadow-sm sticky top-0 z-50 h-16 flex items-center justify-between px-6 no-print border-b">
-        <div 
-          onClick={() => navigate('/')} 
-          className="flex items-center gap-3 cursor-pointer select-none group"
-        >
-          <img src="/Logo.png" alt="Ingegno06" className="h-12 object-contain drop-shadow-sm group-hover:opacity-85 transition-opacity" onError={(e) => {
-            (e.target as HTMLImageElement).style.display = 'none';
-          }} />
-          <h1 className="text-2xl font-black text-gray-800 hidden sm:block tracking-tight group-hover:text-blue-600 transition-colors">Pianificazione Aziendale</h1>
+        <div className="flex items-center gap-3">
+          <div 
+            onClick={() => navigate('/')} 
+            className="flex items-center gap-3 cursor-pointer select-none group"
+          >
+            <img src="/Logo.png" alt="Ingegno06" className="h-12 object-contain drop-shadow-sm group-hover:opacity-85 transition-opacity" onError={(e) => {
+              (e.target as HTMLImageElement).style.display = 'none';
+            }} />
+            <h1 className="text-2xl font-black text-gray-800 hidden sm:block tracking-tight group-hover:text-blue-600 transition-colors">Pianificazione Aziendale</h1>
+          </div>
+          {location.pathname === '/' && (isHR || isAdmin) && (
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                window.dispatchEvent(new CustomEvent('app-refresh-dashboard'));
+              }}
+              title="Aggiorna Dashboard"
+              className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 border border-transparent hover:border-blue-100 rounded-xl transition-all cursor-pointer hover:rotate-180 duration-500"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+          )}
         </div>
         <div className="flex items-center gap-4">
           <button 

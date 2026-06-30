@@ -1,9 +1,6 @@
 import { useState } from 'react';
 import { type Commessa, type Dipendente } from '../contexts/AuthContext';
 import { X, Plus, Trash2 } from 'lucide-react';
-import { doc, setDoc, deleteDoc } from 'firebase/firestore';
-import { db } from '../services/firebase';
-import { addPendingNotification } from '../utils/pendingNotifications';
 import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
 
 interface Assegnazione {
@@ -24,10 +21,10 @@ interface AssegnazioneModalProps {
   commesseCatalog: Commessa[];
   currentAssignments: Assegnazione[];
   dipendentiList: Dipendente[];
-  onAssignmentsChanged?: () => void;
+  onSave?: (updatedList: Assegnazione[], addedNotification?: string, removedNotification?: string) => void;
 }
 
-export default function AssegnazioneModal({ isOpen, onClose, dipendente, weekId, weekLabel, weekSub, commesseCatalog, currentAssignments, dipendentiList, onAssignmentsChanged }: AssegnazioneModalProps) {
+export default function AssegnazioneModal({ isOpen, onClose, dipendente, weekId: _weekId, weekLabel, weekSub, commesseCatalog, currentAssignments, dipendentiList: _dipendentiList, onSave }: AssegnazioneModalProps) {
   const [selectedCommessa, setSelectedCommessa] = useState('');
   const [selectedPercent, setSelectedPercent] = useState<string>('100');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
@@ -63,17 +60,8 @@ export default function AssegnazioneModal({ isOpen, onClose, dipendente, weekId,
 
     try {
       const updatedList = [...currentAssignments, newAss];
-      await setDoc(doc(db, 'assegnazioni', `${dipendente}-${weekId}`), { lista: updatedList });
-      
-      const targetDip = dipendentiList.find(d => d.nome === dipendente);
-      if (targetDip && targetDip.email) {
-        addPendingNotification(
-          dipendente,
-          targetDip.email,
-          `Settimana ${weekLabel.split('Sett. ')[1] || weekLabel}`,
-          `Assegnata commessa: ${comm.nome} (${selectedPercent}%)`
-        );
-        onAssignmentsChanged?.();
+      if (onSave) {
+        onSave(updatedList, `Assegnata commessa: ${comm.nome} (${selectedPercent}%)`, undefined);
       }
       
       setSelectedCommessa('');
@@ -91,21 +79,8 @@ export default function AssegnazioneModal({ isOpen, onClose, dipendente, weekId,
       const removedAss = currentAssignments[index];
       updatedList.splice(index, 1);
       
-      if (updatedList.length === 0) {
-        await deleteDoc(doc(db, 'assegnazioni', `${dipendente}-${weekId}`));
-      } else {
-        await setDoc(doc(db, 'assegnazioni', `${dipendente}-${weekId}`), { lista: updatedList });
-      }
-      
-      const targetDip = dipendentiList.find(d => d.nome === dipendente);
-      if (targetDip && targetDip.email) {
-        addPendingNotification(
-          dipendente,
-          targetDip.email,
-          `Settimana ${weekLabel.split('Sett. ')[1] || weekLabel}`,
-          `Rimossa commessa: ${removedAss.commessaName}`
-        );
-        onAssignmentsChanged?.();
+      if (onSave) {
+        onSave(updatedList, undefined, `Rimossa commessa: ${removedAss.commessaName}`);
       }
       
       showToast("Assegnazione rimossa con successo!", "success");
