@@ -116,6 +116,13 @@ const MESI = [
 export default function Presenze() {
   const { user, isAdmin, isHR, myAssociatedName, dipendenti, refreshData } = useAuth();
 
+  const profile = useMemo(() => {
+    if (!myAssociatedName) return null;
+    return dipendenti.find(d => d.nome.trim().toLowerCase() === myAssociatedName.trim().toLowerCase()) || null;
+  }, [myAssociatedName, dipendenti]);
+
+  const contractHours = profile?.oreContratto ?? 8;
+
   // queueEmailNotification rimossa a favore di queueMail centralizzata
   
   // Date Selection
@@ -223,6 +230,9 @@ export default function Presenze() {
   const createPrefilledRapportino = async () => {
     if (!myAssociatedName || !user?.email) return;
 
+    const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === myAssociatedName.trim().toLowerCase());
+    const contractHours = profile?.oreContratto ?? 8;
+
     try {
       // 1. Fetch approved requests from 'richieste_ferie'
       const qRichieste = query(
@@ -286,7 +296,7 @@ export default function Presenze() {
         const dayOfWeek = dateObj.getDay();
         const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
 
-        let ore = isWknd ? 0 : 8;
+        let ore = isWknd ? 0 : contractHours;
         let straordinari = 0;
         let ferie = 0;
         let permessi = 0;
@@ -298,24 +308,24 @@ export default function Presenze() {
           const abs = approvedAbsences[dateStr];
           if (abs.tipo === 'ferie') {
             ore = 0;
-            ferie = 8;
+            ferie = contractHours;
           } else if (abs.tipo === 'malattia' || abs.tipo === 'maternita') {
             ore = 0;
             malattia = true;
           } else if (abs.tipo === 'mattina' || abs.tipo === 'pomeriggio') {
-            ore = 4;
-            permessi = 4;
+            ore = contractHours / 2;
+            permessi = contractHours / 2;
           } else if (abs.tipo === 'smart') {
-            ore = 8;
+            ore = contractHours;
           } else if (abs.tipo === 'permesso') {
-            let hrs = 4;
+            let hrs = contractHours / 2;
             if (abs.oraInizio && abs.oraFine) {
               const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
               const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
               const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
               hrs = Math.round(diffMs / 3600000);
             }
-            ore = Math.max(0, 8 - hrs);
+            ore = Math.max(0, contractHours - hrs);
             permessi = hrs;
           }
         }
@@ -634,6 +644,8 @@ export default function Presenze() {
           let finalData = { ...data, id: docSnap.id } as RapportinoPresenze;
           if (finalData.stato === 'Bozza' || finalData.stato === 'Richiede Modifica') {
             try {
+              const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === myAssociatedName.trim().toLowerCase());
+              const contractHours = profile?.oreContratto ?? 8;
               const updatedGiorni = { ...finalData.giorni };
               let hasChanges = false;
               const numDays = new Date(selectedYear, selectedMonth, 0).getDate();
@@ -651,7 +663,7 @@ export default function Presenze() {
 
                 const abs = leaves[dateStr];
                 if (abs) {
-                  let targetOre = isWeekend ? 0 : 8;
+                  let targetOre = isWeekend ? 0 : contractHours;
                   let targetFerie = 0;
                   let targetPermessi = 0;
                   let targetMalattia = false;
@@ -665,24 +677,24 @@ export default function Presenze() {
                   if (!isWeekend) {
                     if (abs.tipo === 'ferie') {
                       targetOre = 0;
-                      targetFerie = 8;
+                      targetFerie = contractHours;
                     } else if (abs.tipo === 'malattia' || abs.tipo === 'maternita') {
                       targetOre = 0;
                       targetMalattia = true;
                     } else if (abs.tipo === 'mattina' || abs.tipo === 'pomeriggio') {
-                      targetOre = 4;
-                      targetPermessi = 4;
+                      targetOre = contractHours / 2;
+                      targetPermessi = contractHours / 2;
                     } else if (abs.tipo === 'smart') {
-                      targetOre = 8;
+                      targetOre = contractHours;
                     } else if (abs.tipo === 'permesso') {
-                      let hrs = 4;
+                      let hrs = contractHours / 2;
                       if (abs.oraInizio && abs.oraFine) {
                         const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
                         const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
                         const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
                         hrs = Math.round(diffMs / 3600000);
                       }
-                      targetOre = Math.max(0, 8 - hrs);
+                      targetOre = Math.max(0, contractHours - hrs);
                       targetPermessi = hrs;
                     }
                   }
@@ -727,7 +739,7 @@ export default function Presenze() {
                 } else {
                   const isCleanFerie = 
                     currentDay.ore === 0 &&
-                    currentDay.ferie === 8 &&
+                    currentDay.ferie === contractHours &&
                     currentDay.straordinari === 0 &&
                     currentDay.permessi === 0 &&
                     !currentDay.malattia &&
@@ -742,8 +754,8 @@ export default function Presenze() {
                     !currentDay.trasferta;
 
                   const isCleanPermesso = 
-                    currentDay.ore === 4 &&
-                    currentDay.permessi === 4 &&
+                    currentDay.ore === contractHours / 2 &&
+                    currentDay.permessi === contractHours / 2 &&
                     currentDay.straordinari === 0 &&
                     currentDay.ferie === 0 &&
                     !currentDay.malattia &&
@@ -754,7 +766,7 @@ export default function Presenze() {
                   if (wasModifiedDueToAbsence) {
                     updatedGiorni[String(day)] = {
                       ...currentDay,
-                      ore: isWeekend ? 0 : 8,
+                      ore: isWeekend ? 0 : contractHours,
                       ferie: 0,
                       permessi: 0,
                       malattia: false
@@ -801,6 +813,8 @@ export default function Presenze() {
 
     const updatedGiorni = { ...rapportino.giorni };
     const currentDay = { ...updatedGiorni[day] };
+    const profile = myAssociatedName ? dipendenti.find(d => d.nome.trim().toLowerCase() === myAssociatedName.trim().toLowerCase()) : null;
+    const contractHours = profile?.oreContratto ?? 8;
 
     if (field === 'malattia') {
       currentDay.malattia = value;
@@ -810,7 +824,7 @@ export default function Presenze() {
         currentDay.permessi = 0;
         currentDay.straordinari = 0;
       } else {
-        currentDay.ore = 8;
+        currentDay.ore = contractHours;
       }
     } else if (field === 'trasferta') {
       currentDay.trasferta = value;
@@ -819,16 +833,16 @@ export default function Presenze() {
       }
     } else if (field === 'ferie') {
       const isChecked = !!value;
-      currentDay.ferie = isChecked ? 8 : 0;
-      currentDay.ore = isChecked ? 0 : Math.max(0, 8 - (currentDay.permessi || 0));
+      currentDay.ferie = isChecked ? contractHours : 0;
+      currentDay.ore = isChecked ? 0 : Math.max(0, contractHours - (currentDay.permessi || 0));
     } else if (field === 'permessi') {
       const numVal = Number(value || 0);
       currentDay.permessi = numVal;
-      currentDay.ore = Math.max(0, 8 - (currentDay.ferie || 0) - numVal);
+      currentDay.ore = Math.max(0, contractHours - (currentDay.ferie || 0) - numVal);
     } else if (field === 'ore') {
       const numVal = Number(value || 0);
       currentDay.ore = numVal;
-      if (numVal === 8) {
+      if (numVal === contractHours) {
         currentDay.ferie = 0;
         currentDay.permessi = 0;
       }
@@ -1100,6 +1114,8 @@ export default function Presenze() {
 
     const updatedGiorni = { ...reviewingRapportino.giorni };
     const currentDay = { ...updatedGiorni[day] };
+    const targetProfile = dipendenti.find(d => d.nome.trim().toLowerCase() === reviewingRapportino.dipendenteNome.trim().toLowerCase());
+    const contractHours = targetProfile?.oreContratto ?? 8;
 
     if (field === 'malattia') {
       currentDay.malattia = value;
@@ -1109,7 +1125,7 @@ export default function Presenze() {
         currentDay.permessi = 0;
         currentDay.straordinari = 0;
       } else {
-        currentDay.ore = 8;
+        currentDay.ore = contractHours;
       }
     } else if (field === 'trasferta') {
       currentDay.trasferta = value;
@@ -1118,16 +1134,16 @@ export default function Presenze() {
       }
     } else if (field === 'ferie') {
       const isChecked = !!value;
-      currentDay.ferie = isChecked ? 8 : 0;
-      currentDay.ore = isChecked ? 0 : Math.max(0, 8 - (currentDay.permessi || 0));
+      currentDay.ferie = isChecked ? contractHours : 0;
+      currentDay.ore = isChecked ? 0 : Math.max(0, contractHours - (currentDay.permessi || 0));
     } else if (field === 'permessi') {
       const numVal = Number(value || 0);
       currentDay.permessi = numVal;
-      currentDay.ore = Math.max(0, 8 - (currentDay.ferie || 0) - numVal);
+      currentDay.ore = Math.max(0, contractHours - (currentDay.ferie || 0) - numVal);
     } else if (field === 'ore') {
       const numVal = Number(value || 0);
       currentDay.ore = numVal;
-      if (numVal === 8) {
+      if (numVal === contractHours) {
         currentDay.ferie = 0;
         currentDay.permessi = 0;
       }
@@ -2324,6 +2340,43 @@ export default function Presenze() {
             <div className="bg-white p-10 rounded-[2rem] border text-center text-gray-500 font-bold">Inizializzazione modulo in corso...</div>
           ) : (
             <div className="flex flex-col gap-6">
+              {/* Box Ore Contratto (solo per Dipendenti Standard, no P.IVA/Collaboratori) */}
+              {!isCollaboratore(myAssociatedName, dipendenti) && (
+                <div className="bg-white/90 backdrop-blur-md p-6 rounded-[2rem] border border-gray-200 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm no-print">
+                  <div className="space-y-1">
+                    <h4 className="font-extrabold text-gray-900 flex items-center gap-2">
+                      <Clock className="w-5 h-5 text-indigo-600" />
+                      Ore Giornaliere da Contratto (Part-time / Full-time)
+                    </h4>
+                    <p className="text-xs text-gray-500 font-semibold leading-relaxed">
+                      Imposta le tue ore giornaliere da contratto. Influiscono sulla precompilazione iniziale e sul calcolo automatico di ferie e permessi.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <input 
+                      type="number"
+                      min={1}
+                      max={24}
+                      value={profile?.oreContratto ?? 8}
+                      onChange={async (e) => {
+                        const val = e.target.value === '' ? 8 : Number(e.target.value);
+                        if (profile) {
+                          try {
+                            await updateDoc(doc(db, 'dipendenti', profile.id), {
+                              oreContratto: val
+                            });
+                            await refreshData();
+                          } catch (err) {
+                            console.error("Errore aggiornamento ore contratto:", err);
+                          }
+                        }
+                      }}
+                      className="w-20 text-center border border-gray-300 rounded-xl p-2 font-bold outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900 bg-gray-50"
+                    />
+                    <span className="text-xs font-bold text-gray-700">ore / giorno</span>
+                  </div>
+                </div>
+              )}
               
               {/* Box Stato */}
               <div className="bg-white/90 backdrop-blur-md p-6 rounded-[2rem] border flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shadow-sm no-print">
@@ -2862,7 +2915,7 @@ export default function Presenze() {
                                       type="number"
                                       min={0}
                                       max={24}
-                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || giorno.ferie === 8 || isDayLockedForUser(d)}
+                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || giorno.ferie === contractHours || isDayLockedForUser(d)}
                                       value={giorno.permessi === 0 ? '' : giorno.permessi}
                                       onChange={e => handleCellChange(dayStr(d), 'permessi', e.target.value === '' ? 0 : Number(e.target.value))}
                                       className="w-full text-center border-none p-1 rounded font-bold outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-transparent disabled:opacity-70 text-indigo-600"
@@ -3314,8 +3367,11 @@ export default function Presenze() {
       {/* ======================================================== */}
       {/* 3. MODAL DETTAGLIO / APPROVAZIONE RAPPORTINO (PER HR/ADMIN) */}
       {/* ======================================================== */}
-      {reviewingRapportino && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 no-print overflow-y-auto">
+      {reviewingRapportino && (() => {
+        const reviewProfile = dipendenti.find(d => d.nome.trim().toLowerCase() === reviewingRapportino.dipendenteNome.trim().toLowerCase());
+        const reviewContractHours = reviewProfile?.oreContratto ?? 8;
+        return (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 no-print overflow-y-auto">
           <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-6xl xl:max-w-7xl overflow-hidden flex flex-col my-4 max-h-[92vh]">
             
             {/* Header Modal */}
@@ -3735,7 +3791,7 @@ export default function Presenze() {
                                   {!out && g && (
                                     <input 
                                       type="number"
-                                      disabled={g.malattia || g.ferie === 8}
+                                      disabled={g.malattia || g.ferie === reviewContractHours}
                                       value={g.permessi === 0 ? '' : g.permessi}
                                       onChange={e => handleReviewCellChange(dayStr(d), 'permessi', e.target.value === '' ? 0 : Number(e.target.value))}
                                       className="w-full text-center bg-transparent border-none p-0.5 rounded font-bold text-indigo-600 outline-none focus:bg-gray-50"
@@ -4049,7 +4105,8 @@ export default function Presenze() {
 
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* ======================================================== */}
       {/* 4. MODAL DI RICHIESTA CORREZIONE/FEEDBACK (DA HR A UTENTE)  */}
