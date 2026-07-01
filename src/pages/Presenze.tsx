@@ -4112,7 +4112,7 @@ export default function Presenze() {
                   <div className="flex items-center gap-2 pb-0.5">
                     <img src="/Logo.png" alt="Logo Ingegno" className="h-6 w-auto object-contain" />
                     <div className="border-l border-gray-300 pl-2 py-0.5">
-                      <div className="text-[7.5px] text-gray-500 font-bold leading-none">Pianificazione Presenze ed Ore Lavorate</div>
+                      <div className="text-[7.5px] text-gray-500 font-bold leading-none">Presenze ed Ore Lavorate</div>
                     </div>
                   </div>
                   <div className="text-right">
@@ -4220,9 +4220,15 @@ export default function Presenze() {
 
                     <div className="mt-2 max-w-xl mx-auto border border-gray-400 p-2 rounded bg-gray-50 text-left text-[7px]">
                       <div className="font-extrabold text-[7.5px] border-b pb-1 text-gray-800 uppercase">Note Collaboratore:</div>
-                      <p className="font-bold mt-1 text-gray-900 whitespace-pre-line italic">
-                        {sheetToPrint.noteDipendente ? `"${sheetToPrint.noteDipendente}"` : 'nessuna nota.'}
-                      </p>
+                      {sheetToPrint.noteDipendente ? (
+                        <p className="mt-1 text-gray-800 whitespace-pre-line italic leading-normal">
+                          "{sheetToPrint.noteDipendente}"
+                        </p>
+                      ) : (
+                        <p className="mt-1 italic text-gray-500">
+                          Nessuna nota inserita.
+                        </p>
+                      )}
                     </div>
                   </>
                 ) : (
@@ -4330,9 +4336,15 @@ export default function Presenze() {
                       {/* Note */}
                       <div className="border border-gray-400 p-2 rounded bg-gray-50">
                         <div className="font-extrabold text-[7.5px] border-b pb-1 text-gray-800 uppercase">Note Mensili:</div>
-                        <p className="font-bold mt-1 text-gray-900 whitespace-pre-line italic">
-                          Note inserite: {sheetToPrint.noteDipendente ? `"${sheetToPrint.noteDipendente}"` : 'nessuna nota.'}
-                        </p>
+                        {sheetToPrint.noteDipendente ? (
+                          <p className="mt-1 text-gray-800 whitespace-pre-line italic leading-normal">
+                            "{sheetToPrint.noteDipendente}"
+                          </p>
+                        ) : (
+                          <p className="mt-1 italic text-gray-500">
+                            Nessuna nota mensile inserita.
+                          </p>
+                        )}
                       </div>
 
                       {/* Elenco Trasferte */}
