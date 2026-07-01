@@ -32,6 +32,14 @@
   .overflow-auto, .overflow-y-auto, .max-h-\[75vh\], .max-h-96, .max-h-\[750px\] { overflow: visible !important; max-height: none !important; }
   table { border-collapse: collapse !important; width: 100% !important; }
   th, td { border-color: #374151 !important; position: static !important; }
+  .sheet-break {
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+  .sheet-break:last-child {
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
 }
 
 /* Nascondi freccette degli input di tipo number */
