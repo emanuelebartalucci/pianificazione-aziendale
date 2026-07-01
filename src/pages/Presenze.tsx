@@ -2905,7 +2905,7 @@ export default function Presenze() {
                               );
                             })}
                             <td className="p-3 font-bold text-green-700 bg-gray-50 border-l-2 border-gray-300 text-sm">
-                              {calculateTotals(rapportino.giorni, daysInMonth).oreFerie / 8} gg
+                              {calculateTotals(rapportino.giorni, daysInMonth).oreFerie} ore
                             </td>
                           </tr>
 
@@ -3776,7 +3776,7 @@ export default function Presenze() {
                               );
                             })}
                             <td className="p-2 font-bold text-green-700 bg-gray-50 border-l">
-                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).oreFerie / 8} gg
+                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).oreFerie} ore
                             </td>
                           </tr>
 
@@ -4334,7 +4334,7 @@ export default function Presenze() {
                               </td>
                             );
                           })}
-                          <td className="p-1 font-extrabold bg-gray-100">{totals.oreFerie / 8} gg</td>
+                          <td className="p-1 font-extrabold bg-gray-100">{totals.oreFerie} ore</td>
                         </tr>
                         <tr>
                           <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">MALATTIA (M)</td>
