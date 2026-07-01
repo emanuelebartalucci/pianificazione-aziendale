@@ -4329,10 +4329,7 @@ export default function Presenze() {
                     <div className="grid grid-cols-3 gap-3 pt-1.5 text-left text-[7px]">
                       {/* Note */}
                       <div className="border border-gray-400 p-2 rounded bg-gray-50">
-                        <div className="font-extrabold text-[7.5px] border-b pb-1 text-gray-800 uppercase">Avvertenze e Note:</div>
-                        <p className="text-[6.5px] mt-1 leading-normal text-gray-700">
-                          * NEL CASO DI MALATTIA O MATERNITÀ SEGNARE (M) E INDICARE NELLE NOTE IL N° DI PROTOCOLLO DEL CERTIFICATO.
-                        </p>
+                        <div className="font-extrabold text-[7.5px] border-b pb-1 text-gray-800 uppercase">Note Mensili:</div>
                         <p className="font-bold mt-1 text-gray-900 whitespace-pre-line italic">
                           Note inserite: {sheetToPrint.noteDipendente ? `"${sheetToPrint.noteDipendente}"` : 'nessuna nota.'}
                         </p>
