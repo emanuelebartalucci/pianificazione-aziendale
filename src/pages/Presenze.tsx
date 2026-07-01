@@ -464,9 +464,7 @@ export default function Presenze() {
         const [leavesSnap, docSnap, wkAppSnap, wkAllSnap] = await Promise.all([
           getDocs(query(
             collection(db, 'richieste_ferie'),
-            where('dipendenteName', '==', myAssociatedName),
-            where('stato', '==', 'Approvato'),
-            where('dataInizio', '<=', endOfYear)
+            where('dipendenteName', '==', myAssociatedName)
           )).catch(err => {
             console.error("Errore query ferie:", err);
             return null;
@@ -486,7 +484,9 @@ export default function Presenze() {
         if (leavesSnap) {
           leavesSnap.forEach(docSnap => {
             const d = docSnap.data();
+            if (d.stato !== 'Approvato') return;
             const start = d.dataInizio || d.data;
+            if (start && start > endOfYear) return;
             const end = d.dataFine || d.data;
             if (start && end && end >= startOfYear) {
               const [startY, startM, startD] = start.split('-').map(Number);

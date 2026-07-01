@@ -261,13 +261,14 @@ export default function Commesse() {
       const limitDate = sixtyDaysAgo.toLocaleDateString('sv-SE');
       const q = query(
         collection(db, 'richieste_ferie'),
-        where('stato', '==', 'Approvato'),
         where('dataFine', '>=', limitDate)
       );
       const leavesSnap = await getDocs(q);
       const list: any[] = [];
       leavesSnap.forEach(docSnap => {
-        list.push({ id: docSnap.id, ...docSnap.data() });
+        const data = docSnap.data();
+        if (data.stato !== 'Approvato') return;
+        list.push({ id: docSnap.id, ...data });
       });
       setApprovedLeaves(list);
     } catch (err) {

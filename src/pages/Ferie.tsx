@@ -133,13 +133,13 @@ export default function Ferie() {
 
         const qOthers = query(
           collection(db, 'richieste_ferie'),
-          where('stato', '==', 'Approvato'),
           where('dataFine', '>=', startLimitOthers)
         );
         const othersSnap = await getDocs(qOthers);
         const listOthers: RichiestaFerie[] = [];
         othersSnap.forEach(docSnap => {
           const data = docSnap.data();
+          if (data.stato !== 'Approvato') return;
           if (data.dipendenteName === myAssociatedName) return;
           listOthers.push({
             id: docSnap.id,

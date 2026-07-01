@@ -329,13 +329,14 @@ export default function PianificazionePersonale() {
 
     const q = query(
       collection(db, 'richieste_ferie'),
-      where('stato', '==', 'Approvato'),
       where('dataFine', '>=', limitDate)
     );
     const unsub = onSnapshot(q, (snapshot) => {
       const list: any[] = [];
       snapshot.forEach(docSnap => {
-        list.push({ id: docSnap.id, ...docSnap.data() });
+        const data = docSnap.data();
+        if (data.stato !== 'Approvato') return;
+        list.push({ id: docSnap.id, ...data });
       });
       setApprovedLeaves(list);
     });
