@@ -3972,7 +3972,7 @@ export default function Presenze() {
                   onClick={handleHRSaveModifications}
                   className="px-4 py-2.5 bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold rounded-xl text-xs transition active:scale-95"
                 >
-                  Salva Modifiche Ore
+                  Salva Modifiche
                 </button>
               </div>
 
@@ -4091,11 +4091,7 @@ export default function Presenze() {
 
       </div> {/* fine no-print wrapper */}
 
-      {/* ========================================== */}
-      {/* 5. SEZIONE SEGRETA DI STAMPA PDF           */}
-      {/* ========================================== */}
-      {/* Questa sezione viene formattata specificamente per la stampa in A4 orizzontale */}
-      <div className="hidden print:block print-container w-full h-full text-[9px] font-sans p-4">
+      <div className="hidden print:block print-container w-full h-full text-[8px] font-sans p-2">
         {(() => {
           const sheets = getSheetsToPrint();
           if (sheets.length === 0) {
@@ -4109,27 +4105,27 @@ export default function Presenze() {
             const dailyNotes = getDailyNotes(sheetToPrint.giorni, daysInMonth);
 
             return (
-              <div key={sheetToPrint.id} className="sheet-break space-y-6">
+              <div key={sheetToPrint.id} className="sheet-break space-y-3">
                 
                 {/* Intestazione Documento */}
-                <div className="flex justify-between items-end border-b-2 border-gray-900 pb-2">
+                <div className="flex justify-between items-end border-b border-gray-900 pb-1">
                   <div>
-                    <div className="text-sm font-extrabold text-gray-900">INGEGNO P & C SRL</div>
-                    <div className="text-[9px] text-gray-500">Pianificazione Presenze ed Ore Lavorate</div>
+                    <div className="text-xs font-extrabold text-gray-900">INGEGNO P & C SRL</div>
+                    <div className="text-[8px] text-gray-500 font-bold">Pianificazione Presenze ed Ore Lavorate</div>
                   </div>
                   <div className="text-right">
-                    <div className="text-sm font-extrabold text-gray-900">SCHEMA PRESENZE</div>
-                    <div className="text-[10px] font-bold text-gray-800">
+                    <div className="text-xs font-extrabold text-gray-900">SCHEMA PRESENZE</div>
+                    <div className="text-[8.5px] font-bold text-gray-800">
                       Mese: {MESI[selectedMonth - 1].toUpperCase()} {selectedYear}
                     </div>
                   </div>
                 </div>
 
                 {/* Dettagli Anagrafici */}
-                <div className="grid grid-cols-2 gap-4 border border-gray-300 p-3 bg-gray-50 rounded">
+                <div className="grid grid-cols-2 gap-2 border border-gray-300 p-2 bg-gray-50 rounded text-[8px]">
                   <div>
                     <span className="font-extrabold text-gray-600">DIPENDENTE:</span>{' '}
-                    <span className="font-extrabold text-gray-900 text-[10px] uppercase">{sheetToPrint.dipendenteNome}</span>
+                    <span className="font-extrabold text-gray-900 uppercase">{sheetToPrint.dipendenteNome}</span>
                   </div>
                   <div className="text-right">
                     <span className="font-extrabold text-gray-600">EMAIL:</span>{' '}
@@ -4141,212 +4137,212 @@ export default function Presenze() {
                 {isCollab ? (
                   <>
                     {/* Print collaborator invoice layout */}
-                    <div className="border border-gray-900 rounded-lg overflow-hidden max-w-xl mx-auto my-4 text-[9px] text-left bg-white">
+                    <div className="border border-gray-900 rounded-lg overflow-hidden max-w-xl mx-auto my-2 text-[7.5px] text-left bg-white">
                       <table className="w-full text-left border-collapse">
                         <thead>
                           <tr className="bg-gray-100 border-b border-gray-900 font-extrabold text-gray-900">
-                            <th className="p-2 border-r border-gray-900">VOCE / DESCRIZIONE</th>
-                            <th className="p-2 border-r border-gray-900 text-right">VALORE / PARAMETRO</th>
-                            <th className="p-2 text-right">IMPORTO (€)</th>
+                            <th className="p-1 border-r border-gray-900">VOCE / DESCRIZIONE</th>
+                            <th className="p-1 border-r border-gray-900 text-right">VALORE / PARAMETRO</th>
+                            <th className="p-1 text-right">IMPORTO (€)</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-900 font-semibold text-gray-900">
                           <tr>
-                            <td className="p-2 border-r border-gray-900">Mese di Riferimento</td>
-                            <td className="p-2 border-r border-gray-900 text-right capitalize">{MESI[selectedMonth - 1]} {selectedYear}</td>
-                            <td className="p-2 text-right">-</td>
+                            <td className="p-1 border-r border-gray-900">Mese di Riferimento</td>
+                            <td className="p-1 border-r border-gray-900 text-right capitalize">{MESI[selectedMonth - 1]} {selectedYear}</td>
+                            <td className="p-1 text-right">-</td>
                           </tr>
                           <tr>
-                            <td className="p-2 border-r border-gray-900">Giornate Lavorate</td>
-                            <td className="p-2 border-r border-gray-900 text-right">{sheetToPrint.collaboratoreData?.giornate ?? 0} gg</td>
-                            <td className="p-2 text-right">-</td>
+                            <td className="p-1 border-r border-gray-900">Giornate Lavorate</td>
+                            <td className="p-1 border-r border-gray-900 text-right">{sheetToPrint.collaboratoreData?.giornate ?? 0} gg</td>
+                            <td className="p-1 text-right">-</td>
                           </tr>
                           <tr>
-                            <td className="p-2 border-r border-gray-900">Tariffa Giornaliera Contratto</td>
-                            <td className="p-2 border-r border-gray-900 text-right">{sheetToPrint.collaboratoreData?.dailyRate ?? 0} €/gg</td>
-                            <td className="p-2 text-right">-</td>
+                            <td className="p-1 border-r border-gray-900">Tariffa Giornaliera Contratto</td>
+                            <td className="p-1 border-r border-gray-900 text-right">{sheetToPrint.collaboratoreData?.dailyRate ?? 0} €/gg</td>
+                            <td className="p-1 text-right">-</td>
                           </tr>
                           <tr className="bg-gray-50 font-bold">
-                            <td className="p-2 border-r border-gray-900">Compenso Mensile (Giornate × Tariffa)</td>
-                            <td className="p-2 border-r border-gray-900 text-right">-</td>
-                            <td className="p-2 text-right">{(sheetToPrint.collaboratoreData?.compensoMensile ?? 0).toFixed(2)} €</td>
+                            <td className="p-1 border-r border-gray-900">Compenso Mensile (Giornate × Tariffa)</td>
+                            <td className="p-1 border-r border-gray-900 text-right">-</td>
+                            <td className="p-1 text-right">{(sheetToPrint.collaboratoreData?.compensoMensile ?? 0).toFixed(2)} €</td>
                           </tr>
                           <tr>
-                            <td className="p-2 border-r border-gray-900">Spese e Altri Rimborsi</td>
-                            <td className="p-2 border-r border-gray-900 text-right">-</td>
-                            <td className="p-2 text-right">{(sheetToPrint.collaboratoreData?.spese ?? 0).toFixed(2)} €</td>
+                            <td className="p-1 border-r border-gray-900">Spese e Altri Rimborsi</td>
+                            <td className="p-1 border-r border-gray-900 text-right">-</td>
+                            <td className="p-1 text-right">{(sheetToPrint.collaboratoreData?.spese ?? 0).toFixed(2)} €</td>
                           </tr>
                           <tr>
-                            <td className="p-2 border-r border-gray-900">Chilometri Percorsi</td>
-                            <td className="p-2 border-r border-gray-900 text-right">{sheetToPrint.collaboratoreData?.km ?? 0} km</td>
-                            <td className="p-2 text-right">-</td>
+                            <td className="p-1 border-r border-gray-900">Chilometri Percorsi</td>
+                            <td className="p-1 border-r border-gray-900 text-right">{sheetToPrint.collaboratoreData?.km ?? 0} km</td>
+                            <td className="p-1 text-right">-</td>
                           </tr>
                           <tr>
-                            <td className="p-2 border-r border-gray-900">Tariffa Chilometrica (€/km)</td>
-                            <td className="p-2 border-r border-gray-900 text-right">{sheetToPrint.collaboratoreData?.kmRate ?? 0} €/km</td>
-                            <td className="p-2 text-right">-</td>
+                            <td className="p-1 border-r border-gray-900">Tariffa Chilometrica (€/km)</td>
+                            <td className="p-1 border-r border-gray-900 text-right">{sheetToPrint.collaboratoreData?.kmRate ?? 0} €/km</td>
+                            <td className="p-1 text-right">-</td>
                           </tr>
                           <tr className="bg-gray-50 font-bold">
-                            <td className="p-2 border-r border-gray-900">Rimborso Chilometrico (Km × Tariffa)</td>
-                            <td className="p-2 border-r border-gray-900 text-right">-</td>
-                            <td className="p-2 text-right">{(sheetToPrint.collaboratoreData?.rimborsoKm ?? 0).toFixed(2)} €</td>
+                            <td className="p-1 border-r border-gray-900">Rimborso Chilometrico (Km × Tariffa)</td>
+                            <td className="p-1 border-r border-gray-900 text-right">-</td>
+                            <td className="p-1 text-right">{(sheetToPrint.collaboratoreData?.rimborsoKm ?? 0).toFixed(2)} €</td>
                           </tr>
-                          <tr className="bg-gray-100 font-extrabold border-y border-gray-900 text-[10px]">
-                            <td className="p-2 border-r border-gray-900 uppercase">Totale Compenso (Imponibile)</td>
-                            <td className="p-2 border-r border-gray-900 text-right">-</td>
-                            <td className="p-2 text-right">{(sheetToPrint.collaboratoreData?.totaleCompenso ?? 0).toFixed(2)} €</td>
-                          </tr>
-                          <tr>
-                            <td className="p-2 border-r border-gray-900">Contributo Cassa INPS ({sheetToPrint.collaboratoreData?.inpsRate ?? 0}%)</td>
-                            <td className="p-2 border-r border-gray-900 text-right">-</td>
-                            <td className="p-2 text-right">{(sheetToPrint.collaboratoreData?.inps ?? 0).toFixed(2)} €</td>
+                          <tr className="bg-gray-100 font-extrabold border-y border-gray-900 text-[8px]">
+                            <td className="p-1 border-r border-gray-900 uppercase">Totale Compenso (Imponibile)</td>
+                            <td className="p-1 border-r border-gray-900 text-right">-</td>
+                            <td className="p-1 text-right">{(sheetToPrint.collaboratoreData?.totaleCompenso ?? 0).toFixed(2)} €</td>
                           </tr>
                           <tr>
-                            <td className="p-2 border-r border-gray-900">IVA ({sheetToPrint.collaboratoreData?.ivaRate ?? 0}%)</td>
-                            <td className="p-2 border-r border-gray-950 text-right">-</td>
-                            <td className="p-2 text-right">{(sheetToPrint.collaboratoreData?.iva ?? 0).toFixed(2)} €</td>
+                            <td className="p-1 border-r border-gray-900">Contributo Cassa INPS ({sheetToPrint.collaboratoreData?.inpsRate ?? 0}%)</td>
+                            <td className="p-1 border-r border-gray-900 text-right">-</td>
+                            <td className="p-1 text-right">{(sheetToPrint.collaboratoreData?.inps ?? 0).toFixed(2)} €</td>
                           </tr>
                           <tr>
-                            <td className="p-2 border-r border-gray-900">Ritenuta d'Acconto ({sheetToPrint.collaboratoreData?.raRate ?? 0}%)</td>
-                            <td className="p-2 border-r border-gray-900 text-right">-</td>
-                            <td className="p-2 text-right text-red-655">- {(sheetToPrint.collaboratoreData?.ra ?? 0).toFixed(2)} €</td>
+                            <td className="p-1 border-r border-gray-900">IVA ({sheetToPrint.collaboratoreData?.ivaRate ?? 0}%)</td>
+                            <td className="p-1 border-r border-gray-950 text-right">-</td>
+                            <td className="p-1 text-right">{(sheetToPrint.collaboratoreData?.iva ?? 0).toFixed(2)} €</td>
                           </tr>
-                          <tr className="bg-gray-200 font-extrabold text-[10px] border-t-2 border-gray-900">
-                            <td className="p-2 border-r border-gray-900 uppercase">TOTALE DOVUTO (A PAGARE)</td>
-                            <td className="p-2 border-r border-gray-900 text-right">-</td>
-                            <td className="p-2 text-right">{(sheetToPrint.collaboratoreData?.totaleDovuto ?? 0).toFixed(2)} €</td>
+                          <tr>
+                            <td className="p-1 border-r border-gray-900">Ritenuta d'Acconto ({sheetToPrint.collaboratoreData?.raRate ?? 0}%)</td>
+                            <td className="p-1 border-r border-gray-900 text-right">-</td>
+                            <td className="p-1 text-right text-red-655">- {(sheetToPrint.collaboratoreData?.ra ?? 0).toFixed(2)} €</td>
+                          </tr>
+                          <tr className="bg-gray-200 font-extrabold text-[8px] border-t-2 border-gray-900">
+                            <td className="p-1 border-r border-gray-900 uppercase">TOTALE DOVUTO (A PAGARE)</td>
+                            <td className="p-1 border-r border-gray-900 text-right">-</td>
+                            <td className="p-1 text-right">{(sheetToPrint.collaboratoreData?.totaleDovuto ?? 0).toFixed(2)} €</td>
                           </tr>
                         </tbody>
                       </table>
                     </div>
 
-                    <div className="mt-4 max-w-xl mx-auto border border-gray-400 p-2.5 rounded bg-gray-50 text-left">
-                      <div className="font-extrabold text-[8px] border-b pb-1 text-gray-800 uppercase">Note Collaboratore:</div>
-                      <p className="text-[8px] font-bold mt-2 text-gray-900 whitespace-pre-line italic">
+                    <div className="mt-2 max-w-xl mx-auto border border-gray-400 p-2 rounded bg-gray-50 text-left text-[7px]">
+                      <div className="font-extrabold text-[7.5px] border-b pb-1 text-gray-800 uppercase">Note Collaboratore:</div>
+                      <p className="font-bold mt-1 text-gray-900 whitespace-pre-line italic">
                         {sheetToPrint.noteDipendente ? `"${sheetToPrint.noteDipendente}"` : 'nessuna nota.'}
                       </p>
                     </div>
                   </>
                 ) : (
                   <>
-                    <table className="w-full text-center border border-gray-955 table-fixed">
+                    <table className="w-full text-center border border-gray-955 table-fixed text-[7px]">
                       <thead>
-                        <tr className="bg-gray-150 border-b border-gray-955 font-bold text-gray-900 text-[8px]">
-                          <th className="p-1.5 border-r border-gray-950 text-left w-[12%] font-extrabold">RIGA/GIORNO</th>
+                        <tr className="bg-gray-150 border-b border-gray-955 font-bold text-gray-900 text-[7px]">
+                          <th className="p-1 border-r border-gray-905 text-left w-[12%] font-extrabold">RIGA/GIORNO</th>
                           {Array.from({ length: 31 }).map((_, i) => (
-                            <th key={i} className="p-1 border-r border-gray-950 w-[2.6%] font-extrabold">{i + 1}</th>
+                            <th key={i} className="p-0.5 border-r border-gray-905 w-[2.6%] font-extrabold">{i + 1}</th>
                           ))}
-                          <th className="p-1.5 border-l border-gray-950 w-[6%] font-extrabold">TOT</th>
+                          <th className="p-1 border-l border-gray-905 w-[6%] font-extrabold">TOT</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-955 font-semibold text-gray-900">
                         <tr>
-                          <td className="p-1.5 text-left bg-gray-50 border-r border-gray-955 font-extrabold">ORE</td>
+                          <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">ORE</td>
                           {Array.from({ length: 31 }).map((_, i) => {
                             const d = i + 1;
                             const val = sheetToPrint.giorni[dayStr(d)]?.ore;
                             const out = d > daysInMonth;
                             return (
-                              <td key={i} className={`p-1 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
+                              <td key={i} className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
                                 {!out ? (val || 0) : ''}
                               </td>
                             );
                           })}
-                          <td className="p-1.5 font-extrabold bg-gray-100">{totals.oreOrd}</td>
+                          <td className="p-1 font-extrabold bg-gray-100">{totals.oreOrd}</td>
                         </tr>
                         <tr>
-                          <td className="p-1.5 text-left bg-gray-50 border-r border-gray-955 font-extrabold">STRAORDINARI</td>
+                          <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">STRAORDINARI</td>
                           {Array.from({ length: 31 }).map((_, i) => {
                             const d = i + 1;
                             const val = sheetToPrint.giorni[dayStr(d)]?.straordinari;
                             const out = d > daysInMonth;
                             return (
-                              <td key={i} className={`p-1 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
+                              <td key={i} className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
                                 {!out ? (val || 0) : ''}
                               </td>
                             );
                           })}
-                          <td className="p-1.5 font-extrabold bg-gray-100">{totals.oreStra}</td>
+                          <td className="p-1 font-extrabold bg-gray-100">{totals.oreStra}</td>
                         </tr>
                         <tr>
-                          <td className="p-1.5 text-left bg-gray-50 border-r border-gray-955 font-extrabold">FERIE</td>
+                          <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">FERIE</td>
                           {Array.from({ length: 31 }).map((_, i) => {
                             const d = i + 1;
                             const val = sheetToPrint.giorni[dayStr(d)]?.ferie;
                             const out = d > daysInMonth;
                             return (
-                              <td key={i} className={`p-1 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
+                              <td key={i} className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
                                 {!out ? (val || 0) : ''}
                               </td>
                             );
                           })}
-                          <td className="p-1.5 font-extrabold bg-gray-100">{totals.oreFerie}</td>
+                          <td className="p-1 font-extrabold bg-gray-100">{totals.oreFerie}</td>
                         </tr>
                         <tr>
-                          <td className="p-1.5 text-left bg-gray-50 border-r border-gray-955 font-extrabold">PERMESSI</td>
+                          <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">PERMESSI</td>
                           {Array.from({ length: 31 }).map((_, i) => {
                             const d = i + 1;
                             const val = sheetToPrint.giorni[dayStr(d)]?.permessi;
                             const out = d > daysInMonth;
                             return (
-                              <td key={i} className={`p-1 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
+                              <td key={i} className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
                                 {!out ? (val || 0) : ''}
                               </td>
                             );
                           })}
-                          <td className="p-1.5 font-extrabold bg-gray-100">{totals.orePerm}</td>
+                          <td className="p-1 font-extrabold bg-gray-100">{totals.orePerm}</td>
                         </tr>
                         <tr>
-                          <td className="p-1.5 text-left bg-gray-50 border-r border-gray-955 font-extrabold">MALATTIA (M)</td>
+                          <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">MALATTIA (M)</td>
                           {Array.from({ length: 31 }).map((_, i) => {
                             const d = i + 1;
                             const val = sheetToPrint.giorni[dayStr(d)]?.malattia;
                             const out = d > daysInMonth;
                             return (
-                              <td key={i} className={`p-1 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
+                              <td key={i} className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
                                 {!out && val ? 'M' : ''}
                               </td>
                             );
                           })}
-                          <td className="p-1.5 font-extrabold bg-gray-100">{totals.ggMalattia} gg</td>
+                          <td className="p-1 font-extrabold bg-gray-100">{totals.ggMalattia} gg</td>
                         </tr>
                         <tr>
-                          <td className="p-1.5 text-left bg-gray-50 border-r border-gray-955 font-extrabold">TRASFERTA (T)</td>
+                          <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">TRASFERTA (T)</td>
                           {Array.from({ length: 31 }).map((_, i) => {
                             const d = i + 1;
                             const val = sheetToPrint.giorni[dayStr(d)]?.trasferta;
                             const out = d > daysInMonth;
                             return (
-                              <td key={i} className={`p-1 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
+                              <td key={i} className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
                                 {!out && val ? 'T' : ''}
                               </td>
                             );
                           })}
-                          <td className="p-1.5 font-extrabold bg-gray-100">{totals.ggTrasferta} gg</td>
+                          <td className="p-1 font-extrabold bg-gray-100">{totals.ggTrasferta} gg</td>
                         </tr>
                       </tbody>
                     </table>
 
                     {/* Dettagli in basso per Stampa */}
-                    <div className="grid grid-cols-3 gap-6 pt-2 text-left">
+                    <div className="grid grid-cols-3 gap-3 pt-1.5 text-left text-[7px]">
                       {/* Note */}
-                      <div className="border border-gray-400 p-2.5 rounded bg-gray-50">
-                        <div className="font-extrabold text-[8px] border-b pb-1 text-gray-800 uppercase">Avvertenze e Note:</div>
-                        <p className="text-[7.5px] mt-1 leading-normal text-gray-700">
+                      <div className="border border-gray-400 p-2 rounded bg-gray-50">
+                        <div className="font-extrabold text-[7.5px] border-b pb-1 text-gray-800 uppercase">Avvertenze e Note:</div>
+                        <p className="text-[6.5px] mt-1 leading-normal text-gray-700">
                           * NEL CASO DI MALATTIA O MATERNITÀ SEGNARE (M) E INDICARE NELLE NOTE IL N° DI PROTOCOLLO DEL CERTIFICATO.
                         </p>
-                        <p className="text-[8px] font-bold mt-2 text-gray-900 whitespace-pre-line italic">
+                        <p className="font-bold mt-1 text-gray-900 whitespace-pre-line italic">
                           Note inserite: {sheetToPrint.noteDipendente ? `"${sheetToPrint.noteDipendente}"` : 'nessuna nota.'}
                         </p>
                       </div>
 
                       {/* Elenco Trasferte */}
-                      <div className="border border-gray-400 p-2.5 rounded bg-gray-50">
-                        <div className="font-extrabold text-[8px] border-b pb-1 text-gray-800 uppercase">Dettaglio Località Trasferte (T):</div>
+                      <div className="border border-gray-400 p-2 rounded bg-gray-50">
+                        <div className="font-extrabold text-[7.5px] border-b pb-1 text-gray-800 uppercase">Dettaglio Località Trasferte (T):</div>
                         {trasferte.length === 0 ? (
-                          <p className="text-[7.5px] mt-1 italic text-gray-500">Nessuna trasferta effettuata nel mese.</p>
+                          <p className="text-[6.5px] mt-1 italic text-gray-500">Nessuna trasferta effettuata nel mese.</p>
                         ) : (
-                          <div className="grid grid-cols-1 gap-1 mt-1 text-[7.5px]">
+                          <div className="grid grid-cols-1 gap-0.5 mt-1 text-[6.5px]">
                             {trasferte.map(tr => (
                               <div key={tr.giorno}>
                                 <span className="font-bold">Giorno {tr.giorno}:</span> {tr.luogo || 'Località non specificata'}
@@ -4357,12 +4353,12 @@ export default function Presenze() {
                       </div>
 
                       {/* Giustificativi e Note Giornaliere */}
-                      <div className="border border-gray-400 p-2.5 rounded bg-gray-50">
-                        <div className="font-extrabold text-[8px] border-b pb-1 text-gray-800 uppercase">Giustificativi e Note Giornaliere:</div>
+                      <div className="border border-gray-400 p-2 rounded bg-gray-50">
+                        <div className="font-extrabold text-[7.5px] border-b pb-1 text-gray-800 uppercase">Giustificativi e Note Giornaliere:</div>
                         {dailyNotes.length === 0 ? (
-                          <p className="text-[7.5px] mt-1 italic text-gray-500">Nessuna nota giornaliera inserita.</p>
+                          <p className="text-[6.5px] mt-1 italic text-gray-500">Nessuna nota giornaliera inserita.</p>
                         ) : (
-                          <div className="space-y-1 mt-1 text-[7.5px]">
+                          <div className="space-y-0.5 mt-1 text-[6.5px]">
                             {dailyNotes.map(n => (
                               <div key={n.giorno}>
                                 <span className="font-bold">Giorno {n.giorno}:</span> {n.note}
@@ -4375,90 +4371,78 @@ export default function Presenze() {
                   </>
                 )}
 
-                {/* Se dipendente standard, stampiamo la seconda pagina della Nota Spese */}
+                {/* Se dipendente standard, stampiamo la Nota Spese sotto la tabella nella stessa pagina */}
                 {!isCollab && (
-                  <div className="break-before-page pt-8 space-y-6">
-                    {/* Intestazione Nota Spese */}
-                    <div className="flex justify-between items-end border-b-2 border-gray-900 pb-2">
-                      <div>
-                        <div className="text-sm font-extrabold text-gray-900">INGEGNO P & C SRL</div>
-                        <div className="text-[9px] text-gray-500">Pianificazione Presenze ed Ore Lavorate</div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-sm font-extrabold text-gray-955">DICHIARAZIONE SPESE TRASFERTA</div>
-                        <div className="text-[10px] font-bold text-gray-800">
-                          Mese: {MESI[selectedMonth - 1].toUpperCase()} {selectedYear}
-                        </div>
-                      </div>
-                    </div>
+                  <div className="border-t border-dashed border-gray-400 pt-3 mt-3 space-y-2">
+                    <div className="text-[10px] font-extrabold uppercase border-b border-gray-900 pb-1 text-left">DICHIARAZIONE SPESE TRASFERTA E RIMBORSI</div>
 
-                    <div className="text-xs font-semibold text-gray-955 leading-normal text-left">
+                    <div className="text-[7.5px] font-semibold text-gray-955 leading-tight text-left">
                       DICHIARO di aver sostenuto le seguenti spese per trasferta nel periodo dal 01/{String(selectedMonth).padStart(2, '0')}/{selectedYear} al {daysInMonth}/{String(selectedMonth).padStart(2, '0')}/{selectedYear} per conto della società INGEGNO P&C S.R.L.
                     </div>
 
                     {/* Tabella Riepilogo Spese */}
-                    <table className="w-full text-left border border-gray-900 border-collapse text-[10px]">
+                    <table className="w-full text-left border border-gray-900 border-collapse text-[7.5px]">
                       <thead>
                         <tr className="bg-gray-100 border-b border-gray-900 font-bold text-gray-900 uppercase">
-                          <th className="p-2 border-r border-gray-900">Tipologia di spesa</th>
-                          <th className="p-2 border-r border-gray-900 text-right w-36">Importo Euro</th>
-                          <th className="p-2">Note</th>
+                          <th className="p-1 border-r border-gray-900">Tipologia di spesa</th>
+                          <th className="p-1 border-r border-gray-900 text-right w-36">Importo Euro</th>
+                          <th className="p-1">Note</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-900 font-semibold text-gray-800">
                         <tr>
-                          <td className="p-2 border-r border-gray-900">Spese di viaggio (aereo, nave, treno)</td>
-                          <td className="p-2 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseViaggio || 0).toFixed(2)} €</td>
-                          <td className="p-2">-</td>
+                          <td className="p-1 border-r border-gray-900">Spese di viaggio (aereo, nave, treno)</td>
+                          <td className="p-1 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseViaggio || 0).toFixed(2)} €</td>
+                          <td className="p-1">-</td>
                         </tr>
                         <tr>
-                          <td className="p-2 border-r border-gray-900">Taxi / autobus / noleggio auto</td>
-                          <td className="p-2 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseTaxiBus || 0).toFixed(2)} €</td>
-                          <td className="p-2">-</td>
+                          <td className="p-1 border-r border-gray-900">Taxi / autobus / noleggio auto</td>
+                          <td className="p-1 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseTaxiBus || 0).toFixed(2)} €</td>
+                          <td className="p-1">-</td>
                         </tr>
                         <tr>
-                          <td className="p-2 border-r border-gray-900">Parcheggi</td>
-                          <td className="p-2 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseParcheggi || 0).toFixed(2)} €</td>
-                          <td className="p-2">-</td>
+                          <td className="p-1 border-r border-gray-900">Parcheggi</td>
+                          <td className="p-1 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseParcheggi || 0).toFixed(2)} €</td>
+                          <td className="p-1">-</td>
                         </tr>
                         <tr>
-                          <td className="p-2 border-r border-gray-900">Vitto</td>
-                          <td className="p-2 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseVitto || 0).toFixed(2)} €</td>
-                          <td className="p-2">-</td>
+                          <td className="p-1 border-r border-gray-900">Vitto</td>
+                          <td className="p-1 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseVitto || 0).toFixed(2)} €</td>
+                          <td className="p-1">-</td>
                         </tr>
                         <tr>
-                          <td className="p-2 border-r border-gray-900">Alloggio</td>
-                          <td className="p-2 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseAlloggio || 0).toFixed(2)} €</td>
-                          <td className="p-2">-</td>
+                          <td className="p-1 border-r border-gray-900">Alloggio</td>
+                          <td className="p-1 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseAlloggio || 0).toFixed(2)} €</td>
+                          <td className="p-1">-</td>
                         </tr>
                         <tr>
-                          <td className="p-2 border-r border-gray-900">Pedaggi autostradali</td>
-                          <td className="p-2 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.spesePedaggi || 0).toFixed(2)} €</td>
-                          <td className="p-2">-</td>
+                          <td className="p-1 border-r border-gray-900">Pedaggi autostradali</td>
+                          <td className="p-1 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.spesePedaggi || 0).toFixed(2)} €</td>
+                          <td className="p-1">-</td>
                         </tr>
                         <tr>
-                          <td className="p-2 border-r border-gray-900">Altro (specificare)</td>
-                          <td className="p-2 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseAltro || 0).toFixed(2)} €</td>
-                          <td className="p-2">{sheetToPrint.rimborsoSpeseData?.altroSpecificare || '-'}</td>
+                          <td className="p-1 border-r border-gray-900">Altro (specificare)</td>
+                          <td className="p-1 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseAltro || 0).toFixed(2)} €</td>
+                          <td className="p-1">{sheetToPrint.rimborsoSpeseData?.altroSpecificare || '-'}</td>
                         </tr>
                         <tr className="bg-gray-50 border-t-2 border-gray-900">
-                          <td className="p-2 border-r border-gray-900">
+                          <td className="p-1 border-r border-gray-900">
                             Rimborso chilometrico per l'utilizzo del proprio automezzo
-                            <div className="text-[9px] text-gray-500 font-bold mt-0.5">
+                            <div className="text-[7.5px] text-gray-500 font-bold mt-0.5">
                               Marca: {sheetToPrint.rimborsoSpeseData?.marcaAutomezzo || '_________________'} | 
                               Modello: {sheetToPrint.rimborsoSpeseData?.modelloAutomezzo || '_________________'}
                             </div>
                           </td>
-                          <td className="p-2 border-r border-gray-900 text-right bg-gray-150 font-bold">
+                          <td className="p-1 border-r border-gray-900 text-right bg-gray-150 font-bold">
                             {Object.values(sheetToPrint.giorni).reduce((sum, g) => sum + (g.kmTrasferta || 0), 0)} Km totali
                           </td>
-                          <td className="p-2 text-gray-500 italic text-[9px] align-middle">
+                          <td className="p-1 text-gray-500 italic text-[7.5px] align-middle">
                             (Il rimborso km viene calcolato esternamente dalla consulente del lavoro)
                           </td>
                         </tr>
-                        <tr className="bg-gray-100 font-bold border-t-2 border-gray-900 text-xs">
-                          <td className="p-2 border-r border-gray-900 uppercase">Totale altre spese sostenute (esclusi Km)</td>
-                          <td className="p-2 border-r border-gray-900 text-right">
+                        <tr className="bg-gray-100 font-bold border-t-2 border-gray-900 text-[8px]">
+                          <td className="p-1 border-r border-gray-900 uppercase">Totale altre spese sostenute (esclusi Km)</td>
+                          <td className="p-1 border-r border-gray-900 text-right">
                             {((sheetToPrint.rimborsoSpeseData?.speseViaggio || 0) +
                               (sheetToPrint.rimborsoSpeseData?.speseTaxiBus || 0) +
                               (sheetToPrint.rimborsoSpeseData?.speseParcheggi || 0) +
@@ -4467,24 +4451,24 @@ export default function Presenze() {
                               (sheetToPrint.rimborsoSpeseData?.spesePedaggi || 0) +
                               (sheetToPrint.rimborsoSpeseData?.speseAltro || 0)).toFixed(2)} €
                           </td>
-                          <td className="p-2 text-[9px] font-medium text-gray-500 italic">Si allegano i relativi documenti di spesa.</td>
+                          <td className="p-1 text-[7.5px] font-medium text-gray-500 italic">Si allegano i relativi documenti di spesa.</td>
                         </tr>
                       </tbody>
                     </table>
 
                     {/* DETTAGLIO DELLE TRASFERTE EFFETTUATE */}
-                    <div className="space-y-2 text-left">
-                      <div className="text-[10px] font-extrabold uppercase border-b border-gray-300 pb-1">DETTAGLIO DELLE TRASFERTE EFFETTUATE</div>
+                    <div className="space-y-1.5 text-left">
+                      <div className="text-[8px] font-extrabold uppercase border-b border-gray-300 pb-0.5">DETTAGLIO DELLE TRASFERTE EFFETTUATE</div>
                       {trasferte.length === 0 ? (
-                        <p className="text-xs text-gray-400 italic">Nessun giorno di trasferta segnato.</p>
+                        <p className="text-[7px] text-gray-400 italic">Nessun giorno di trasferta segnato.</p>
                       ) : (
-                        <table className="w-full text-left border border-gray-900 border-collapse text-[9px]">
+                        <table className="w-full text-left border border-gray-900 border-collapse text-[7px]">
                           <thead>
                             <tr className="bg-gray-100 border-b border-gray-900 font-bold text-gray-900 uppercase">
-                              <th className="p-2 border-r border-gray-900 w-24">Data</th>
-                              <th className="p-2 border-r border-gray-900">Destinazione</th>
-                              <th className="p-2 border-r border-gray-900">Itinerario della trasferta TRATTA A/R</th>
-                              <th className="p-2 text-right w-24">Km Percorsi</th>
+                              <th className="p-1 border-r border-gray-900 w-24">Data</th>
+                              <th className="p-1 border-r border-gray-900">Destinazione</th>
+                              <th className="p-1 border-r border-gray-900">Itinerario della trasferta TRATTA A/R</th>
+                              <th className="p-1 text-right w-24">Km Percorsi</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-900 font-semibold">
@@ -4492,10 +4476,10 @@ export default function Presenze() {
                               const gPresenza = sheetToPrint.giorni[dayStr(tr.giorno)];
                               return (
                                 <tr key={tr.giorno}>
-                                  <td className="p-2 border-r border-gray-900">{String(tr.giorno).padStart(2, '0')}/{String(selectedMonth).padStart(2, '0')}/{selectedYear}</td>
-                                  <td className="p-2 border-r border-gray-900">{tr.luogo || '-'}</td>
-                                  <td className="p-2 border-r border-gray-900">{gPresenza?.itinerarioTrasferta || '-'}</td>
-                                  <td className="p-2 text-right">{gPresenza?.kmTrasferta || 0} km</td>
+                                  <td className="p-1 border-r border-gray-900">{String(tr.giorno).padStart(2, '0')}/{String(selectedMonth).padStart(2, '0')}/{selectedYear}</td>
+                                  <td className="p-1 border-r border-gray-900">{tr.luogo || '-'}</td>
+                                  <td className="p-1 border-r border-gray-900">{gPresenza?.itinerarioTrasferta || '-'}</td>
+                                  <td className="p-1 text-right">{gPresenza?.kmTrasferta || 0} km</td>
                                 </tr>
                               );
                             })}
