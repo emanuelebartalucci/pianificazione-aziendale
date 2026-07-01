@@ -2362,9 +2362,60 @@ export default function Presenze() {
                         const val = e.target.value === '' ? 8 : Number(e.target.value);
                         if (profile) {
                           try {
+                            const oldContractHours = profile.oreContratto ?? 8;
+                            
+                            // 1. Aggiorna anagrafica dipendente
                             await updateDoc(doc(db, 'dipendenti', profile.id), {
                               oreContratto: val
                             });
+
+                            // 2. Se c'è un rapportino correntemente caricato ed è modificabile, aggiorna le ore della tabella
+                            if (rapportino && (rapportino.stato === 'Bozza' || rapportino.stato === 'Richiede Modifica')) {
+                              const updatedGiorni = { ...rapportino.giorni };
+                              let changed = false;
+
+                              for (let d = 1; d <= 31; d++) {
+                                const dayKey = String(d);
+                                const g = updatedGiorni[dayKey];
+                                if (g) {
+                                  let dayChanged = false;
+
+                                  // Aggiorna giornate intere di ferie
+                                  if (g.ferie === oldContractHours) {
+                                    g.ferie = val;
+                                    dayChanged = true;
+                                  }
+
+                                  // Aggiorna giornate intere lavorate
+                                  if (g.ore === oldContractHours) {
+                                    g.ore = val;
+                                    dayChanged = true;
+                                  } else if (g.permessi > 0 || g.ferie > 0) {
+                                    // Ricalcola bilanciamento per giornate parziali
+                                    const oldOre = g.ore;
+                                    g.ore = Math.max(0, val - (g.ferie || 0) - (g.permessi || 0));
+                                    if (g.ore !== oldOre) {
+                                      dayChanged = true;
+                                    }
+                                  }
+
+                                  if (dayChanged) {
+                                    changed = true;
+                                  }
+                                }
+                              }
+
+                              if (changed) {
+                                const updatedRapportino = {
+                                  ...rapportino,
+                                  giorni: updatedGiorni,
+                                  timestamp: new Date().toISOString()
+                                };
+                                await setDoc(doc(db, 'presenze', rapportino.id), updatedRapportino);
+                                setRapportino(updatedRapportino);
+                              }
+                            }
+
                             await refreshData();
                           } catch (err) {
                             console.error("Errore aggiornamento ore contratto:", err);
