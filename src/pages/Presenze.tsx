@@ -4436,7 +4436,7 @@ export default function Presenze() {
                             {Object.values(sheetToPrint.giorni).reduce((sum, g) => sum + (g.kmTrasferta || 0), 0)} Km totali
                           </td>
                           <td className="p-1 text-gray-500 italic text-[7.5px] align-middle">
-                            (Il rimborso km viene calcolato esternamente dalla consulente del lavoro)
+                            -
                           </td>
                         </tr>
                         <tr className="bg-gray-100 font-bold border-t-2 border-gray-900 text-[8px]">
