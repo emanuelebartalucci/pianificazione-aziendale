@@ -61,6 +61,7 @@ interface GiornoPresenza {
   noteGiorno?: string;
   itinerarioTrasferta?: string; // NEW
   kmTrasferta?: number; // NEW
+  oreContratto?: number;
 }
 
 interface RapportinoPresenze {
@@ -139,6 +140,7 @@ export default function Presenze() {
   const [loadingSheet, setLoadingSheet] = useState(false);
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [decorrenzaGiorno, setDecorrenzaGiorno] = useState<number>(1);
   const [activeTab, setActiveTab] = useState<'ore' | 'spese' | 'weekend'>('ore');
 
   // State for HR Mode
@@ -336,7 +338,8 @@ export default function Presenze() {
           ferie,
           permessi,
           malattia,
-          trasferta
+          trasferta,
+          oreContratto: contractHours
         };
       }
 
@@ -661,9 +664,18 @@ export default function Presenze() {
                 const currentDay = updatedGiorni[String(day)];
                 if (!currentDay) continue;
 
+                // Ricava le ore di contratto specifiche di questa giornata (con fallback alle ore del profilo)
+                const dayContractHours = currentDay.oreContratto ?? contractHours;
+
+                // Auto-migrazione per fogli esistenti creati precedentemente
+                if (!currentDay.oreContratto) {
+                  currentDay.oreContratto = dayContractHours;
+                  hasChanges = true;
+                }
+
                 const abs = leaves[dateStr];
                 if (abs) {
-                  let targetOre = isWeekend ? 0 : contractHours;
+                  let targetOre = isWeekend ? 0 : dayContractHours;
                   let targetFerie = 0;
                   let targetPermessi = 0;
                   let targetMalattia = false;
@@ -677,24 +689,24 @@ export default function Presenze() {
                   if (!isWeekend) {
                     if (abs.tipo === 'ferie') {
                       targetOre = 0;
-                      targetFerie = contractHours;
+                      targetFerie = dayContractHours;
                     } else if (abs.tipo === 'malattia' || abs.tipo === 'maternita') {
                       targetOre = 0;
                       targetMalattia = true;
                     } else if (abs.tipo === 'mattina' || abs.tipo === 'pomeriggio') {
-                      targetOre = contractHours / 2;
-                      targetPermessi = contractHours / 2;
+                      targetOre = dayContractHours / 2;
+                      targetPermessi = dayContractHours / 2;
                     } else if (abs.tipo === 'smart') {
-                      targetOre = contractHours;
+                      targetOre = dayContractHours;
                     } else if (abs.tipo === 'permesso') {
-                      let hrs = contractHours / 2;
+                      let hrs = dayContractHours / 2;
                       if (abs.oraInizio && abs.oraFine) {
                         const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
                         const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
                         const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
                         hrs = Math.round(diffMs / 3600000);
                       }
-                      targetOre = Math.max(0, contractHours - hrs);
+                      targetOre = Math.max(0, dayContractHours - hrs);
                       targetPermessi = hrs;
                     }
                   }
@@ -739,7 +751,7 @@ export default function Presenze() {
                 } else {
                   const isCleanFerie = 
                     currentDay.ore === 0 &&
-                    currentDay.ferie === contractHours &&
+                    currentDay.ferie === dayContractHours &&
                     currentDay.straordinari === 0 &&
                     currentDay.permessi === 0 &&
                     !currentDay.malattia &&
@@ -754,8 +766,8 @@ export default function Presenze() {
                     !currentDay.trasferta;
 
                   const isCleanPermesso = 
-                    currentDay.ore === contractHours / 2 &&
-                    currentDay.permessi === contractHours / 2 &&
+                    currentDay.ore === dayContractHours / 2 &&
+                    currentDay.permessi === dayContractHours / 2 &&
                     currentDay.straordinari === 0 &&
                     currentDay.ferie === 0 &&
                     !currentDay.malattia &&
@@ -766,7 +778,7 @@ export default function Presenze() {
                   if (wasModifiedDueToAbsence) {
                     updatedGiorni[String(day)] = {
                       ...currentDay,
-                      ore: isWeekend ? 0 : contractHours,
+                      ore: isWeekend ? 0 : dayContractHours,
                       ferie: 0,
                       permessi: 0,
                       malattia: false
@@ -814,7 +826,11 @@ export default function Presenze() {
     const updatedGiorni = { ...rapportino.giorni };
     const currentDay = { ...updatedGiorni[day] };
     const profile = myAssociatedName ? dipendenti.find(d => d.nome.trim().toLowerCase() === myAssociatedName.trim().toLowerCase()) : null;
-    const contractHours = profile?.oreContratto ?? 8;
+    const defaultContractHours = profile?.oreContratto ?? 8;
+    const dayContractHours = currentDay.oreContratto ?? defaultContractHours;
+
+    // Assicura che la giornata abbia il suo valore oreContratto salvato
+    currentDay.oreContratto = dayContractHours;
 
     if (field === 'malattia') {
       currentDay.malattia = value;
@@ -824,7 +840,7 @@ export default function Presenze() {
         currentDay.permessi = 0;
         currentDay.straordinari = 0;
       } else {
-        currentDay.ore = contractHours;
+        currentDay.ore = dayContractHours;
       }
     } else if (field === 'trasferta') {
       currentDay.trasferta = value;
@@ -833,16 +849,16 @@ export default function Presenze() {
       }
     } else if (field === 'ferie') {
       const isChecked = !!value;
-      currentDay.ferie = isChecked ? contractHours : 0;
-      currentDay.ore = isChecked ? 0 : Math.max(0, contractHours - (currentDay.permessi || 0));
+      currentDay.ferie = isChecked ? dayContractHours : 0;
+      currentDay.ore = isChecked ? 0 : Math.max(0, dayContractHours - (currentDay.permessi || 0));
     } else if (field === 'permessi') {
       const numVal = Number(value || 0);
       currentDay.permessi = numVal;
-      currentDay.ore = Math.max(0, contractHours - (currentDay.ferie || 0) - numVal);
+      currentDay.ore = Math.max(0, dayContractHours - (currentDay.ferie || 0) - numVal);
     } else if (field === 'ore') {
       const numVal = Number(value || 0);
       currentDay.ore = numVal;
-      if (numVal === contractHours) {
+      if (numVal === dayContractHours) {
         currentDay.ferie = 0;
         currentDay.permessi = 0;
       }
@@ -1115,7 +1131,11 @@ export default function Presenze() {
     const updatedGiorni = { ...reviewingRapportino.giorni };
     const currentDay = { ...updatedGiorni[day] };
     const targetProfile = dipendenti.find(d => d.nome.trim().toLowerCase() === reviewingRapportino.dipendenteNome.trim().toLowerCase());
-    const contractHours = targetProfile?.oreContratto ?? 8;
+    const defaultContractHours = targetProfile?.oreContratto ?? 8;
+    const dayContractHours = currentDay.oreContratto ?? defaultContractHours;
+
+    // Assicura che la giornata abbia il suo valore oreContratto salvato
+    currentDay.oreContratto = dayContractHours;
 
     if (field === 'malattia') {
       currentDay.malattia = value;
@@ -1125,7 +1145,7 @@ export default function Presenze() {
         currentDay.permessi = 0;
         currentDay.straordinari = 0;
       } else {
-        currentDay.ore = contractHours;
+        currentDay.ore = dayContractHours;
       }
     } else if (field === 'trasferta') {
       currentDay.trasferta = value;
@@ -1134,16 +1154,16 @@ export default function Presenze() {
       }
     } else if (field === 'ferie') {
       const isChecked = !!value;
-      currentDay.ferie = isChecked ? contractHours : 0;
-      currentDay.ore = isChecked ? 0 : Math.max(0, contractHours - (currentDay.permessi || 0));
+      currentDay.ferie = isChecked ? dayContractHours : 0;
+      currentDay.ore = isChecked ? 0 : Math.max(0, dayContractHours - (currentDay.permessi || 0));
     } else if (field === 'permessi') {
       const numVal = Number(value || 0);
       currentDay.permessi = numVal;
-      currentDay.ore = Math.max(0, contractHours - (currentDay.ferie || 0) - numVal);
+      currentDay.ore = Math.max(0, dayContractHours - (currentDay.ferie || 0) - numVal);
     } else if (field === 'ore') {
       const numVal = Number(value || 0);
       currentDay.ore = numVal;
-      if (numVal === contractHours) {
+      if (numVal === dayContractHours) {
         currentDay.ferie = 0;
         currentDay.permessi = 0;
       }
@@ -2342,89 +2362,116 @@ export default function Presenze() {
             <div className="flex flex-col gap-6">
               {/* Box Ore Contratto (solo per Dipendenti Standard, no P.IVA/Collaboratori) */}
               {!isCollaboratore(myAssociatedName, dipendenti) && (
-                <div className="bg-white/90 backdrop-blur-md p-6 rounded-[2rem] border border-gray-200 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm no-print">
+                <div className="bg-white/90 backdrop-blur-md p-6 rounded-[2rem] border border-gray-200 flex flex-col lg:flex-row lg:items-center justify-between gap-6 shadow-sm no-print">
                   <div className="space-y-1">
                     <h4 className="font-extrabold text-gray-900 flex items-center gap-2">
                       <Clock className="w-5 h-5 text-indigo-600" />
                       Ore Giornaliere da Contratto (Part-time / Full-time)
                     </h4>
                     <p className="text-xs text-gray-500 font-semibold leading-relaxed">
-                      Imposta le tue ore giornaliere da contratto. Influiscono sulla precompilazione iniziale e sul calcolo automatico di ferie e permessi.
+                      Imposta le tue ore giornaliere da contratto. Puoi indicare una decorrenza per i cambi contratto a metà mese.
                     </p>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <input 
-                      type="number"
-                      min={1}
-                      max={24}
-                      value={profile?.oreContratto ?? 8}
-                      onChange={async (e) => {
-                        const val = e.target.value === '' ? 8 : Number(e.target.value);
-                        if (profile) {
-                          try {
-                            const oldContractHours = profile.oreContratto ?? 8;
-                            
-                            // 1. Aggiorna anagrafica dipendente
-                            await updateDoc(doc(db, 'dipendenti', profile.id), {
-                              oreContratto: val
-                            });
+                  <div className="flex flex-wrap items-center gap-4 bg-gray-50 p-3 rounded-2xl border border-gray-100">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Ore:</span>
+                      <input 
+                        type="number"
+                        min={1}
+                        max={24}
+                        value={profile?.oreContratto ?? 8}
+                        onChange={async (e) => {
+                          const val = e.target.value === '' ? 8 : Number(e.target.value);
+                          if (profile) {
+                            try {
+                              const oldContractHours = profile.oreContratto ?? 8;
+                              
+                              // 1. Aggiorna anagrafica dipendente
+                              await updateDoc(doc(db, 'dipendenti', profile.id), {
+                                oreContratto: val
+                              });
 
-                            // 2. Se c'è un rapportino correntemente caricato ed è modificabile, aggiorna le ore della tabella
-                            if (rapportino && (rapportino.stato === 'Bozza' || rapportino.stato === 'Richiede Modifica')) {
-                              const updatedGiorni = { ...rapportino.giorni };
-                              let changed = false;
+                              // 2. Se c'è un rapportino correntemente caricato ed è modificabile, aggiorna le ore della tabella a partire dalla data di decorrenza
+                              if (rapportino && (rapportino.stato === 'Bozza' || rapportino.stato === 'Richiede Modifica')) {
+                                const updatedGiorni = { ...rapportino.giorni };
+                                let changed = false;
 
-                              for (let d = 1; d <= 31; d++) {
-                                const dayKey = String(d);
-                                const g = updatedGiorni[dayKey];
-                                if (g) {
-                                  let dayChanged = false;
+                                for (let d = 1; d <= 31; d++) {
+                                  const dayKey = String(d);
+                                  const g = updatedGiorni[dayKey];
+                                  if (g) {
+                                    // Gestione decorrenza: aggiorna la giornata solo se è il giorno di decorrenza o successivo!
+                                    const appliesToThisDay = d >= decorrenzaGiorno;
 
-                                  // Aggiorna giornate intere di ferie
-                                  if (g.ferie === oldContractHours) {
-                                    g.ferie = val;
-                                    dayChanged = true;
-                                  }
+                                    if (appliesToThisDay) {
+                                      let dayChanged = false;
+                                      
+                                      // Memorizziamo il nuovo valore di oreContratto specifico per questo giorno
+                                      const oldDayContractHours = g.oreContratto ?? oldContractHours;
+                                      g.oreContratto = val;
 
-                                  // Aggiorna giornate intere lavorate
-                                  if (g.ore === oldContractHours) {
-                                    g.ore = val;
-                                    dayChanged = true;
-                                  } else if (g.permessi > 0 || g.ferie > 0) {
-                                    // Ricalcola bilanciamento per giornate parziali
-                                    const oldOre = g.ore;
-                                    g.ore = Math.max(0, val - (g.ferie || 0) - (g.permessi || 0));
-                                    if (g.ore !== oldOre) {
-                                      dayChanged = true;
+                                      // Aggiorna giornate intere di ferie
+                                      if (g.ferie === oldDayContractHours) {
+                                        g.ferie = val;
+                                        dayChanged = true;
+                                      }
+
+                                      // Aggiorna giornate intere lavorate
+                                      if (g.ore === oldDayContractHours) {
+                                        g.ore = val;
+                                        dayChanged = true;
+                                      } else if (g.permessi > 0 || g.ferie > 0) {
+                                        // Ricalcola bilanciamento per giornate parziali
+                                        const oldOre = g.ore;
+                                        g.ore = Math.max(0, val - (g.ferie || 0) - (g.permessi || 0));
+                                        if (g.ore !== oldOre) {
+                                          dayChanged = true;
+                                        }
+                                      }
+
+                                      if (dayChanged || g.oreContratto !== oldDayContractHours) {
+                                        changed = true;
+                                      }
                                     }
                                   }
+                                }
 
-                                  if (dayChanged) {
-                                    changed = true;
-                                  }
+                                if (changed) {
+                                  const updatedRapportino = {
+                                    ...rapportino,
+                                    giorni: updatedGiorni,
+                                    timestamp: new Date().toISOString()
+                                  };
+                                  await setDoc(doc(db, 'presenze', rapportino.id), updatedRapportino);
+                                  setRapportino(updatedRapportino);
                                 }
                               }
 
-                              if (changed) {
-                                const updatedRapportino = {
-                                  ...rapportino,
-                                  giorni: updatedGiorni,
-                                  timestamp: new Date().toISOString()
-                                };
-                                await setDoc(doc(db, 'presenze', rapportino.id), updatedRapportino);
-                                setRapportino(updatedRapportino);
-                              }
+                              await refreshData();
+                            } catch (err) {
+                              console.error("Errore aggiornamento ore contratto:", err);
                             }
-
-                            await refreshData();
-                          } catch (err) {
-                            console.error("Errore aggiornamento ore contratto:", err);
                           }
-                        }
-                      }}
-                      className="w-20 text-center border border-gray-300 rounded-xl p-2 font-bold outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900 bg-gray-50"
-                    />
-                    <span className="text-xs font-bold text-gray-700">ore / giorno</span>
+                        }}
+                        className="w-16 text-center border border-gray-300 rounded-xl p-1.5 font-bold outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900 bg-white"
+                      />
+                      <span className="text-[11px] font-bold text-gray-700">ore/g</span>
+                    </div>
+
+                    <div className="w-[1px] h-6 bg-gray-200" />
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Decorrenza dal giorno:</span>
+                      <select 
+                        value={decorrenzaGiorno}
+                        onChange={(e) => setDecorrenzaGiorno(Number(e.target.value))}
+                        className="border border-gray-300 rounded-xl p-1.5 font-bold outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900 bg-white text-xs"
+                      >
+                        {Array.from({ length: 31 }).map((_, idx) => (
+                          <option key={idx + 1} value={idx + 1}>{idx + 1}</option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                 </div>
               )}
@@ -2966,7 +3013,7 @@ export default function Presenze() {
                                       type="number"
                                       min={0}
                                       max={24}
-                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || giorno.ferie === contractHours || isDayLockedForUser(d)}
+                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || giorno.ferie === (giorno.oreContratto ?? contractHours) || isDayLockedForUser(d)}
                                       value={giorno.permessi === 0 ? '' : giorno.permessi}
                                       onChange={e => handleCellChange(dayStr(d), 'permessi', e.target.value === '' ? 0 : Number(e.target.value))}
                                       className="w-full text-center border-none p-1 rounded font-bold outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-transparent disabled:opacity-70 text-indigo-600"
@@ -3842,7 +3889,7 @@ export default function Presenze() {
                                   {!out && g && (
                                     <input 
                                       type="number"
-                                      disabled={g.malattia || g.ferie === reviewContractHours}
+                                      disabled={g.malattia || g.ferie === (g.oreContratto ?? reviewContractHours)}
                                       value={g.permessi === 0 ? '' : g.permessi}
                                       onChange={e => handleReviewCellChange(dayStr(d), 'permessi', e.target.value === '' ? 0 : Number(e.target.value))}
                                       className="w-full text-center bg-transparent border-none p-0.5 rounded font-bold text-indigo-600 outline-none focus:bg-gray-50"
