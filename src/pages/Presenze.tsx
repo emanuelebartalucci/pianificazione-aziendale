@@ -818,9 +818,9 @@ export default function Presenze() {
         currentDay.luogoTrasferta = '';
       }
     } else if (field === 'ferie') {
-      const numVal = Number(value || 0);
-      currentDay.ferie = numVal;
-      currentDay.ore = Math.max(0, 8 - numVal - (currentDay.permessi || 0));
+      const isChecked = !!value;
+      currentDay.ferie = isChecked ? 8 : 0;
+      currentDay.ore = isChecked ? 0 : Math.max(0, 8 - (currentDay.permessi || 0));
     } else if (field === 'permessi') {
       const numVal = Number(value || 0);
       currentDay.permessi = numVal;
@@ -1117,9 +1117,9 @@ export default function Presenze() {
         currentDay.luogoTrasferta = '';
       }
     } else if (field === 'ferie') {
-      const numVal = Number(value || 0);
-      currentDay.ferie = numVal;
-      currentDay.ore = Math.max(0, 8 - numVal - (currentDay.permessi || 0));
+      const isChecked = !!value;
+      currentDay.ferie = isChecked ? 8 : 0;
+      currentDay.ore = isChecked ? 0 : Math.max(0, 8 - (currentDay.permessi || 0));
     } else if (field === 'permessi') {
       const numVal = Number(value || 0);
       currentDay.permessi = numVal;
@@ -2847,37 +2847,7 @@ export default function Presenze() {
                             </td>
                           </tr>
 
-                          {/* DIPENDENTI STANDARD RIGA 3: FERIE */}
-                          <tr className="hover:bg-gray-50/50 transition-colors">
-                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10">Ferie</td>
-                            {Array.from({ length: 31 }).map((_, i) => {
-                              const d = i + 1;
-                              const outOfMonth = d > daysInMonth;
-                              const giorno = rapportino.giorni[dayStr(d)];
-
-                              return (
-                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''}`}>
-                                  {!outOfMonth && giorno && (
-                                    <input 
-                                      type="number"
-                                      min={0}
-                                      max={24}
-                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isDayLockedForUser(d)}
-                                      value={giorno.ferie === 0 ? '' : giorno.ferie}
-                                      onChange={e => handleCellChange(dayStr(d), 'ferie', e.target.value === '' ? 0 : Number(e.target.value))}
-                                      className="w-full text-center border-none p-1 rounded font-bold outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-transparent disabled:opacity-70 text-green-700"
-                                    />
-                                  )}
-                                  {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
-                                </td>
-                              );
-                            })}
-                            <td className="p-3 font-bold text-green-700 bg-gray-50 border-l-2 border-gray-300 text-sm">
-                              {calculateTotals(rapportino.giorni, daysInMonth).oreFerie}
-                            </td>
-                          </tr>
-
-                          {/* DIPENDENTI STANDARD RIGA 4: PERMESSI */}
+                          {/* DIPENDENTI STANDARD RIGA 3: PERMESSI */}
                           <tr className="hover:bg-gray-50/50 transition-colors">
                             <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10">Permessi</td>
                             {Array.from({ length: 31 }).map((_, i) => {
@@ -2892,7 +2862,7 @@ export default function Presenze() {
                                       type="number"
                                       min={0}
                                       max={24}
-                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isDayLockedForUser(d)}
+                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || giorno.ferie === 8 || isDayLockedForUser(d)}
                                       value={giorno.permessi === 0 ? '' : giorno.permessi}
                                       onChange={e => handleCellChange(dayStr(d), 'permessi', e.target.value === '' ? 0 : Number(e.target.value))}
                                       className="w-full text-center border-none p-1 rounded font-bold outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-transparent disabled:opacity-70 text-indigo-600"
@@ -2904,6 +2874,38 @@ export default function Presenze() {
                             })}
                             <td className="p-3 font-bold text-indigo-600 bg-gray-50 border-l-2 border-gray-300 text-sm">
                               {calculateTotals(rapportino.giorni, daysInMonth).orePerm}
+                            </td>
+                          </tr>
+
+                          {/* DIPENDENTI STANDARD RIGA 4: FERIE */}
+                          <tr className="hover:bg-gray-50/50 transition-colors">
+                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 flex items-center gap-1.5">
+                              Ferie <span className="text-[9px] font-bold bg-green-100 text-green-700 px-1 py-0.5 rounded font-mono">F</span>
+                            </td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const outOfMonth = d > daysInMonth;
+                              const giorno = rapportino.giorni[dayStr(d)];
+
+                              return (
+                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''} align-middle`}>
+                                  {!outOfMonth && giorno && (
+                                    <div className="flex justify-center items-center">
+                                      <input 
+                                        type="checkbox"
+                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isDayLockedForUser(d)}
+                                        checked={!!giorno.ferie}
+                                        onChange={e => handleCellChange(dayStr(d), 'ferie', e.target.checked)}
+                                        className="w-4 h-4 rounded text-green-600 focus:ring-green-400 cursor-pointer"
+                                      />
+                                    </div>
+                                  )}
+                                  {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                                </td>
+                              );
+                            })}
+                            <td className="p-3 font-bold text-green-700 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                              {calculateTotals(rapportino.giorni, daysInMonth).oreFerie / 8} gg
                             </td>
                           </tr>
 
@@ -3720,35 +3722,7 @@ export default function Presenze() {
                             </td>
                           </tr>
 
-                          {/* DIPENDENTI STANDARD RIGA 3: FERIE */}
-                          <tr>
-                            <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Ferie</td>
-                            {Array.from({ length: 31 }).map((_, i) => {
-                              const d = i + 1;
-                              const out = d > daysInMonth;
-                              const g = reviewingRapportino.giorni[dayStr(d)];
-
-                              return (
-                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''}`}>
-                                  {!out && g && (
-                                    <input 
-                                      type="number"
-                                      disabled={g.malattia}
-                                      value={g.ferie === 0 ? '' : g.ferie}
-                                      onChange={e => handleReviewCellChange(dayStr(d), 'ferie', e.target.value === '' ? 0 : Number(e.target.value))}
-                                      className="w-full text-center bg-transparent border-none p-0.5 rounded font-bold text-green-700 outline-none focus:bg-gray-50"
-                                    />
-                                  )}
-                                  {out && '-'}
-                                </td>
-                              );
-                            })}
-                            <td className="p-2 font-bold text-green-700 bg-gray-50 border-l">
-                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).oreFerie}
-                            </td>
-                          </tr>
-
-                          {/* DIPENDENTI STANDARD RIGA 4: PERMESSI */}
+                          {/* DIPENDENTI STANDARD RIGA 3: PERMESSI */}
                           <tr>
                             <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Permessi</td>
                             {Array.from({ length: 31 }).map((_, i) => {
@@ -3761,7 +3735,7 @@ export default function Presenze() {
                                   {!out && g && (
                                     <input 
                                       type="number"
-                                      disabled={g.malattia}
+                                      disabled={g.malattia || g.ferie === 8}
                                       value={g.permessi === 0 ? '' : g.permessi}
                                       onChange={e => handleReviewCellChange(dayStr(d), 'permessi', e.target.value === '' ? 0 : Number(e.target.value))}
                                       className="w-full text-center bg-transparent border-none p-0.5 rounded font-bold text-indigo-600 outline-none focus:bg-gray-50"
@@ -3773,6 +3747,36 @@ export default function Presenze() {
                             })}
                             <td className="p-2 font-bold text-indigo-600 bg-gray-50 border-l">
                               {calculateTotals(reviewingRapportino.giorni, daysInMonth).orePerm}
+                            </td>
+                          </tr>
+
+                          {/* DIPENDENTI STANDARD RIGA 4: FERIE */}
+                          <tr>
+                            <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Ferie</td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const out = d > daysInMonth;
+                              const g = reviewingRapportino.giorni[dayStr(d)];
+
+                              return (
+                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''} align-middle`}>
+                                  {!out && g && (
+                                    <div className="flex justify-center items-center">
+                                      <input 
+                                        type="checkbox"
+                                        disabled={g.malattia}
+                                        checked={!!g.ferie}
+                                        onChange={e => handleReviewCellChange(dayStr(d), 'ferie', e.target.checked)}
+                                        className="w-3.5 h-3.5 rounded text-green-500 cursor-pointer"
+                                      />
+                                    </div>
+                                  )}
+                                  {out && '-'}
+                                </td>
+                              );
+                            })}
+                            <td className="p-2 font-bold text-green-700 bg-gray-50 border-l">
+                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).oreFerie / 8} gg
                             </td>
                           </tr>
 
@@ -4305,20 +4309,6 @@ export default function Presenze() {
                           <td className="p-1 font-extrabold bg-gray-100">{totals.oreStra}</td>
                         </tr>
                         <tr>
-                          <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">FERIE</td>
-                          {Array.from({ length: 31 }).map((_, i) => {
-                            const d = i + 1;
-                            const val = sheetToPrint.giorni[dayStr(d)]?.ferie;
-                            const out = d > daysInMonth;
-                            return (
-                              <td key={i} className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
-                                {!out ? (val || 0) : ''}
-                              </td>
-                            );
-                          })}
-                          <td className="p-1 font-extrabold bg-gray-100">{totals.oreFerie}</td>
-                        </tr>
-                        <tr>
                           <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">PERMESSI</td>
                           {Array.from({ length: 31 }).map((_, i) => {
                             const d = i + 1;
@@ -4331,6 +4321,20 @@ export default function Presenze() {
                             );
                           })}
                           <td className="p-1 font-extrabold bg-gray-100">{totals.orePerm}</td>
+                        </tr>
+                        <tr>
+                          <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">FERIE (F)</td>
+                          {Array.from({ length: 31 }).map((_, i) => {
+                            const d = i + 1;
+                            const val = sheetToPrint.giorni[dayStr(d)]?.ferie;
+                            const out = d > daysInMonth;
+                            return (
+                              <td key={i} className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
+                                {!out && val ? 'F' : ''}
+                              </td>
+                            );
+                          })}
+                          <td className="p-1 font-extrabold bg-gray-100">{totals.oreFerie / 8} gg</td>
                         </tr>
                         <tr>
                           <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">MALATTIA (M)</td>
