@@ -4109,9 +4109,11 @@ export default function Presenze() {
                 
                 {/* Intestazione Documento */}
                 <div className="flex justify-between items-end border-b border-gray-900 pb-1">
-                  <div>
-                    <div className="text-xs font-extrabold text-gray-900">INGEGNO P & C SRL</div>
-                    <div className="text-[8px] text-gray-500 font-bold">Pianificazione Presenze ed Ore Lavorate</div>
+                  <div className="flex items-center gap-2 pb-0.5">
+                    <img src="/Logo.png" alt="Logo Ingegno" className="h-6 w-auto object-contain" />
+                    <div className="border-l border-gray-300 pl-2 py-0.5">
+                      <div className="text-[7.5px] text-gray-500 font-bold leading-none">Pianificazione Presenze ed Ore Lavorate</div>
+                    </div>
                   </div>
                   <div className="text-right">
                     <div className="text-xs font-extrabold text-gray-900">SCHEMA PRESENZE</div>
