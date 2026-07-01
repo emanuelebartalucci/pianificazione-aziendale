@@ -817,6 +817,21 @@ export default function Presenze() {
       if (!value) {
         currentDay.luogoTrasferta = '';
       }
+    } else if (field === 'ferie') {
+      const numVal = Number(value || 0);
+      currentDay.ferie = numVal;
+      currentDay.ore = Math.max(0, 8 - numVal - (currentDay.permessi || 0));
+    } else if (field === 'permessi') {
+      const numVal = Number(value || 0);
+      currentDay.permessi = numVal;
+      currentDay.ore = Math.max(0, 8 - (currentDay.ferie || 0) - numVal);
+    } else if (field === 'ore') {
+      const numVal = Number(value || 0);
+      currentDay.ore = numVal;
+      if (numVal === 8) {
+        currentDay.ferie = 0;
+        currentDay.permessi = 0;
+      }
     } else {
       (currentDay as any)[field] = value;
     }
@@ -1090,14 +1105,31 @@ export default function Presenze() {
       currentDay.malattia = value;
       if (value) {
         currentDay.ore = 0;
-        currentDay.ferie = 8;
+        currentDay.ferie = 0;
         currentDay.permessi = 0;
         currentDay.straordinari = 0;
+      } else {
+        currentDay.ore = 8;
       }
     } else if (field === 'trasferta') {
       currentDay.trasferta = value;
       if (!value) {
         currentDay.luogoTrasferta = '';
+      }
+    } else if (field === 'ferie') {
+      const numVal = Number(value || 0);
+      currentDay.ferie = numVal;
+      currentDay.ore = Math.max(0, 8 - numVal - (currentDay.permessi || 0));
+    } else if (field === 'permessi') {
+      const numVal = Number(value || 0);
+      currentDay.permessi = numVal;
+      currentDay.ore = Math.max(0, 8 - (currentDay.ferie || 0) - numVal);
+    } else if (field === 'ore') {
+      const numVal = Number(value || 0);
+      currentDay.ore = numVal;
+      if (numVal === 8) {
+        currentDay.ferie = 0;
+        currentDay.permessi = 0;
       }
     } else {
       (currentDay as any)[field] = value;
