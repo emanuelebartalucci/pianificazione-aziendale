@@ -3087,7 +3087,7 @@ export default function Presenze() {
                               const giorno = rapportino.giorni[dayStr(d)];
 
                               return (
-                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''}`}>
+                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : giorno && giorno.permessi > 0 ? 'bg-indigo-50/70' : ''}`}>
                                   {!outOfMonth && giorno && (
                                     <input 
                                       type="number"
@@ -3965,7 +3965,7 @@ export default function Presenze() {
                               const g = reviewingRapportino.giorni[dayStr(d)];
 
                               return (
-                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''}`}>
+                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : g && g.permessi > 0 ? 'bg-indigo-50/70' : ''}`}>
                                   {!out && g && (
                                     <input 
                                       type="number"
@@ -4554,8 +4554,13 @@ export default function Presenze() {
                             const d = i + 1;
                             const val = sheetToPrint.giorni[dayStr(d)]?.permessi;
                             const out = d > daysInMonth;
+                            const hasVal = !out && val && val > 0;
                             return (
-                              <td key={i} className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
+                              <td 
+                                key={i} 
+                                className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}
+                                style={hasVal ? { backgroundColor: '#e0e7ff' } : undefined}
+                              >
                                 {!out ? (val || 0) : ''}
                               </td>
                             );
