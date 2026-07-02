@@ -843,7 +843,6 @@ export default function Dashboard() {
                           }`}>
                             {ann.autore}
                           </span>
-                          <span className="text-[10px] font-bold text-gray-400">{ann.data}</span>
                         </div>
                         <h4 className="text-base font-extrabold text-gray-900 mt-2 pr-16">{ann.titolo}</h4>
                         <p className="text-sm text-gray-600 leading-relaxed font-medium whitespace-pre-wrap mt-1.5">{ann.contenuto}</p>
@@ -866,6 +865,17 @@ export default function Dashboard() {
                             <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
+                      )}
+
+                      {!isReminder && ann.tipo !== 'chiusure' && (
+                        <span className={`absolute text-[10px] font-bold text-gray-400 right-5 ${canPublish ? 'top-[2.75rem]' : 'top-5'}`}>
+                          {ann.data}
+                        </span>
+                      )}
+                      {isReminder && (
+                        <span className="absolute text-[10px] font-bold text-gray-400 right-5 top-5">
+                          {ann.data}
+                        </span>
                       )}
 
                     </div>
