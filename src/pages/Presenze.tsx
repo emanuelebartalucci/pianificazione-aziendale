@@ -34,12 +34,54 @@ export function isCollaboratore(nome?: string | null, dipendentiList?: any[]): b
   return COLLABORATORI.some(c => c.toLowerCase() === clean);
 }
 
-const CHIUSURE_AZIENDALI = [
-  { dataInizio: '2026-08-10', dataFine: '2026-08-14', label: 'Chiusura Estiva' }
-];
+export function isItalianHoliday(dateStr: string): boolean {
+  const parts = dateStr.split('-');
+  if (parts.length !== 3) return false;
+  const year = Number(parts[0]);
+  const month = Number(parts[1]);
+  const day = Number(parts[2]);
 
-export function isInChiusuraAziendale(dateStr: string): boolean {
-  return CHIUSURE_AZIENDALI.some(c => dateStr >= c.dataInizio && dateStr <= c.dataFine);
+  // Festività fisse
+  if (month === 1 && day === 1) return true; // Capodanno
+  if (month === 1 && day === 6) return true; // Epifania
+  if (month === 4 && day === 25) return true; // Liberazione
+  if (month === 5 && day === 1) return true; // Festa del Lavoro
+  if (month === 6 && day === 2) return true; // Festa della Repubblica
+  if (month === 8 && day === 15) return true; // Ferragosto
+  if (month === 11 && day === 1) return true; // Tutti i Santi
+  if (month === 12 && day === 8) return true; // Immacolata
+  if (month === 12 && day === 25) return true; // Natale
+  if (month === 12 && day === 26) return true; // Santo Stefano
+
+  // Pasquetta (Meeus/Jones/Butcher algorithm)
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const easterMonth = Math.floor((h + l - 7 * m + 114) / 31);
+  const easterDay = ((h + l - 7 * m + 114) % 31) + 1;
+
+  const easterDate = new Date(year, easterMonth - 1, easterDay);
+  const easterMonday = new Date(easterDate);
+  easterMonday.setDate(easterDate.getDate() + 1);
+
+  if (month === (easterMonday.getMonth() + 1) && day === easterMonday.getDate()) {
+    return true;
+  }
+
+  return false;
+}
+
+export function isInChiusuraAziendale(_dateStr: string): boolean {
+  return false;
 }
 
 const formatDate = (dateStr: string) => {
@@ -149,6 +191,11 @@ export default function Presenze() {
     }
   }, [profile?.oreContratto]);
   const [activeTab, setActiveTab] = useState<'ore' | 'spese' | 'weekend'>('ore');
+  const [chiusureAziendali, setChiusureAziendali] = useState<Array<{ dataInizio: string; dataFine: string }>>([]);
+
+  const isInChiusuraAziendaleLocal = (dateStr: string) => {
+    return chiusureAziendali.some(c => dateStr >= c.dataInizio && dateStr <= c.dataFine);
+  };
 
   // State for HR Mode
   const [allRapportini, setAllRapportini] = useState<Record<string, RapportinoPresenze>>({});
@@ -229,8 +276,9 @@ export default function Presenze() {
       return true;
     }
     const isWk = isWeekend(dNum);
-    const isChiusura = isInChiusuraAziendale(dateStr);
-    return (isWk || isChiusura) && !approvedWeekends[dateStr];
+    const isChiusura = isInChiusuraAziendaleLocal(dateStr);
+    const isHoliday = isItalianHoliday(dateStr);
+    return (isWk || isChiusura || isHoliday) && !approvedWeekends[dateStr];
   };
 
   // Convert 1-31 number to padded string
@@ -304,8 +352,9 @@ export default function Presenze() {
         const dateObj = new Date(selectedYear, selectedMonth - 1, day);
         const dayOfWeek = dateObj.getDay();
         const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
+        const isHoliday = isItalianHoliday(dateStr);
 
-        let ore = isWknd ? 0 : contractHours;
+        let ore = (isWknd || isHoliday) ? 0 : contractHours;
         let straordinari = 0;
         let ferie = 0;
         let permessi = 0;
@@ -313,7 +362,7 @@ export default function Presenze() {
         let trasferta = false;
 
         // Apply approved absences (only on working days)
-        if (approvedAbsences[dateStr] && !isWknd) {
+        if (approvedAbsences[dateStr] && !isWknd && !isHoliday) {
           const abs = approvedAbsences[dateStr];
           if (abs.tipo === 'ferie') {
             ore = 0;
@@ -435,6 +484,19 @@ export default function Presenze() {
 
   const loadPresenzeData = async () => {
     try {
+      // Carica le chiusure aziendali dinamiche da Firestore
+      const closuresSnap = await getDocs(collection(db, 'chiusure_aziendali')).catch(err => {
+        console.error("Errore query chiusure:", err);
+        return null;
+      });
+      const listClosures: any[] = [];
+      if (closuresSnap) {
+        closuresSnap.forEach(d => {
+          listClosures.push(d.data());
+        });
+      }
+      setChiusureAziendali(listClosures);
+
       if (viewMode === 'hr') {
         setLoadingHR(true);
         const [presSnap, wkSnap] = await Promise.all([
@@ -667,6 +729,7 @@ export default function Presenze() {
                 const dateObj = new Date(selectedYear, selectedMonth - 1, day);
                 const dayOfWeek = dateObj.getDay();
                 const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+                const isHoliday = isItalianHoliday(dateStr);
 
                 const currentDay = updatedGiorni[String(day)];
                 if (!currentDay) continue;
@@ -682,7 +745,7 @@ export default function Presenze() {
 
                 const abs = leaves[dateStr];
                 if (abs) {
-                  let targetOre = isWeekend ? 0 : dayContractHours;
+                  let targetOre = (isWeekend || isHoliday) ? 0 : dayContractHours;
                   let targetFerie = 0;
                   let targetPermessi = 0;
                   let targetMalattia = false;
@@ -693,7 +756,7 @@ export default function Presenze() {
                   let targetStraordinari = currentDay.straordinari;
                   let targetNoteGiorno = currentDay.noteGiorno || '';
 
-                  if (!isWeekend) {
+                  if (!isWeekend && !isHoliday) {
                     if (abs.tipo === 'ferie') {
                       targetOre = 0;
                       targetFerie = dayContractHours;
@@ -785,7 +848,7 @@ export default function Presenze() {
                   if (wasModifiedDueToAbsence) {
                     updatedGiorni[String(day)] = {
                       ...currentDay,
-                      ore: isWeekend ? 0 : dayContractHours,
+                      ore: (isWeekend || isHoliday) ? 0 : dayContractHours,
                       ferie: 0,
                       permessi: 0,
                       malattia: false
@@ -2964,7 +3027,7 @@ export default function Presenze() {
                               const giorno = rapportino.giorni[dayStr(d)];
 
                               return (
-                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''}`}>
+                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : giorno && giorno.ore > 0 ? 'bg-emerald-50/70 font-semibold' : ''}`}>
                                   {!outOfMonth && giorno && (
                                     <input 
                                       type="number"
@@ -3056,7 +3119,7 @@ export default function Presenze() {
                               const giorno = rapportino.giorni[dayStr(d)];
 
                               return (
-                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''} align-middle`}>
+                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : giorno && giorno.ferie ? 'bg-amber-50/70' : ''} align-middle`}>
                                   {!outOfMonth && giorno && (
                                     <div className="flex justify-center items-center">
                                       <input 
@@ -3088,7 +3151,7 @@ export default function Presenze() {
                               const giorno = rapportino.giorni[dayStr(d)];
 
                               return (
-                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''} align-middle`}>
+                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : giorno && giorno.malattia ? 'bg-rose-50/70' : ''} align-middle`}>
                                   {!outOfMonth && giorno && (
                                     <div className="flex justify-center items-center">
                                       <input 
@@ -3846,7 +3909,7 @@ export default function Presenze() {
                               const g = reviewingRapportino.giorni[dayStr(d)];
 
                               return (
-                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''}`}>
+                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : g && g.ore > 0 ? 'bg-emerald-50/70' : ''}`}>
                                   {!out && g && (
                                     <input 
                                       type="number"
@@ -3930,7 +3993,7 @@ export default function Presenze() {
                               const g = reviewingRapportino.giorni[dayStr(d)];
 
                               return (
-                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''} align-middle`}>
+                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : g && g.ferie ? 'bg-amber-50/70' : ''} align-middle`}>
                                   {!out && g && (
                                     <div className="flex justify-center items-center">
                                       <input 
@@ -3960,7 +4023,7 @@ export default function Presenze() {
                               const g = reviewingRapportino.giorni[dayStr(d)];
 
                               return (
-                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''} align-middle`}>
+                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : g && g.malattia ? 'bg-rose-50/70' : ''} align-middle`}>
                                   {!out && g && (
                                     <div className="flex justify-center items-center">
                                       <input 
@@ -4458,8 +4521,13 @@ export default function Presenze() {
                             const d = i + 1;
                             const val = sheetToPrint.giorni[dayStr(d)]?.ore;
                             const out = d > daysInMonth;
+                            const hasVal = !out && val && val > 0;
                             return (
-                              <td key={i} className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
+                              <td 
+                                key={i} 
+                                className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}
+                                style={hasVal ? { backgroundColor: '#e6f9f0' } : undefined}
+                              >
                                 {!out ? (val || 0) : ''}
                               </td>
                             );
@@ -4500,8 +4568,13 @@ export default function Presenze() {
                             const d = i + 1;
                             const val = sheetToPrint.giorni[dayStr(d)]?.ferie;
                             const out = d > daysInMonth;
+                            const hasVal = !out && val;
                             return (
-                              <td key={i} className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
+                              <td 
+                                key={i} 
+                                className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}
+                                style={hasVal ? { backgroundColor: '#fef3c7' } : undefined}
+                              >
                                 {!out && val ? 'F' : ''}
                               </td>
                             );
@@ -4514,8 +4587,13 @@ export default function Presenze() {
                             const d = i + 1;
                             const val = sheetToPrint.giorni[dayStr(d)]?.malattia;
                             const out = d > daysInMonth;
+                            const hasVal = !out && val;
                             return (
-                              <td key={i} className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
+                              <td 
+                                key={i} 
+                                className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}
+                                style={hasVal ? { backgroundColor: '#ffe4e6' } : undefined}
+                              >
                                 {!out && val ? 'M' : ''}
                               </td>
                             );
