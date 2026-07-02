@@ -833,7 +833,7 @@ export default function Dashboard() {
                       }`}
                     >
                       <div>
-                        <div className="flex justify-between items-center gap-2 pr-8">
+                        <div className="flex justify-between items-center gap-2 pr-16">
                           <span className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full ${
                             isReminder 
                               ? 'bg-amber-100 text-amber-700 border border-amber-200' 
@@ -845,7 +845,7 @@ export default function Dashboard() {
                           </span>
                           <span className="text-[10px] font-bold text-gray-400">{ann.data}</span>
                         </div>
-                        <h4 className="text-base font-extrabold text-gray-900 mt-2 pr-8">{ann.titolo}</h4>
+                        <h4 className="text-base font-extrabold text-gray-900 mt-2 pr-16">{ann.titolo}</h4>
                         <p className="text-sm text-gray-600 leading-relaxed font-medium whitespace-pre-wrap mt-1.5">{ann.contenuto}</p>
                       </div>
 
