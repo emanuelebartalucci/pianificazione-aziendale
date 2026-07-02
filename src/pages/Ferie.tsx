@@ -24,6 +24,8 @@ interface RichiestaFerie {
   oraInizio?: string;
   oraFine?: string;
   timestamp?: string;
+  note?: string;
+  comunicazioneId?: string;
 }
 
 export default function Ferie() {
@@ -97,7 +99,9 @@ export default function Ferie() {
             dataFine: data.dataFine,
             oraInizio: data.oraInizio,
             oraFine: data.oraFine,
-            timestamp: data.timestamp
+            timestamp: data.timestamp,
+            note: data.note || '',
+            comunicazioneId: data.comunicazioneId || ''
           });
         });
         setHrRichieste(list);
@@ -122,7 +126,9 @@ export default function Ferie() {
             dataFine: data.dataFine,
             oraInizio: data.oraInizio,
             oraFine: data.oraFine,
-            timestamp: data.timestamp
+            timestamp: data.timestamp,
+            note: data.note || '',
+            comunicazioneId: data.comunicazioneId || ''
           });
         });
         setMyRichieste(listMy);
@@ -151,7 +157,9 @@ export default function Ferie() {
             dataFine: data.dataFine,
             oraInizio: data.oraInizio,
             oraFine: data.oraFine,
-            timestamp: data.timestamp
+            timestamp: data.timestamp,
+            note: data.note || '',
+            comunicazioneId: data.comunicazioneId || ''
           });
         });
         setOthersApprovedRichieste(listOthers);
@@ -190,11 +198,11 @@ export default function Ferie() {
       const todayStr = new Date().toLocaleDateString('sv-SE'); // Formato YYYY-MM-DD
       return richieste.filter(r => {
         const dateLimit = r.dataFine || r.dataInizio || r.data || '';
-        return !dateLimit || dateLimit >= todayStr;
+        return (!dateLimit || dateLimit >= todayStr) && r.note !== 'Chiusure Aziendali';
       });
     }
     // For regular users, show only their own requests in the list (approved of others are calendar-only)
-    return richieste.filter(r => r.dipendenteName === myAssociatedName);
+    return richieste.filter(r => r.dipendenteName === myAssociatedName && r.note !== 'Chiusure Aziendali');
   }, [richieste, isHR, myAssociatedName]);
 
   const pendingCount = useMemo(() => {
@@ -437,11 +445,30 @@ export default function Ferie() {
       return dateStr >= start && dateStr <= end;
     });
 
+    // Dividiamo le chiusure aziendali dalle altre richieste
+    const closureReqs = dayRequests.filter(r => r.note === 'Chiusure Aziendali' && r.stato === 'Approvato');
+    const otherReqs = dayRequests.filter(r => r.note !== 'Chiusure Aziendali' || r.stato !== 'Approvato');
+
+    // Ordiniamo le altre richieste in ordine alfabetico per dipendente
+    const sortedOthers = [...otherReqs].sort((a, b) => a.dipendenteName.localeCompare(b.dipendenteName));
+
     calendarCells.push(
       <div key={day} className="min-h-[100px] bg-white rounded-xl border border-gray-200 p-2 shadow-sm hover:shadow-md transition-shadow flex flex-col">
         <div className="font-bold text-gray-700 mb-1 text-right">{day}</div>
         <div className="flex-1 flex flex-col gap-1 overflow-y-auto custom-scrollbar pr-1">
-          {dayRequests.map(req => {
+          {/* Badge riepilogativo per le chiusure aziendali */}
+          {closureReqs.length > 0 && (
+            <div 
+              className="bg-indigo-50 border border-indigo-200 text-indigo-800 text-[10px] p-1.5 rounded-lg font-extrabold text-center flex items-center justify-center gap-1.5 shadow-sm cursor-help select-none mb-0.5 shrink-0"
+              title={`Dipendenti in ferie per chiusura:\n${[...closureReqs].map(r => r.dipendenteName).sort((a, b) => a.localeCompare(b)).join('\n')}`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0"></span>
+              <span className="truncate">🏢 Chiusura ({closureReqs.length} dip.)</span>
+            </div>
+          )}
+
+          {/* Mappa delle altre richieste ordinate alfabeticamente */}
+          {sortedOthers.map(req => {
             const t = getTipoData(req.tipo);
             let bg = 'bg-gray-100 border-gray-200 text-gray-800';
             let dotBg = 'bg-gray-400';

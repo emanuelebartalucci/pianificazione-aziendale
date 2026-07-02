@@ -1,13 +1,14 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Briefcase, Calendar, Settings, FileText, MessageSquare, Plus, Trash2, Megaphone, X, Users, CalendarDays } from 'lucide-react';
+import { Briefcase, Calendar, Settings, FileText, MessageSquare, Plus, Trash2, Megaphone, X, Users, CalendarDays, Edit } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, addDoc, doc, deleteDoc, query, orderBy, where, getDoc, getDocs } from 'firebase/firestore';
+import { collection, addDoc, doc, deleteDoc, query, orderBy, where, getDoc, getDocs, updateDoc } from 'firebase/firestore';
 import ConfirmModal from '../components/ConfirmModal';
 import ClimaModal from '../components/ClimaModal';
 import QuestionnaireModal from '../components/QuestionnaireModal';
 import { isSoci, isCollaboratore } from './Impostazioni';
+import { isItalianHoliday } from './Presenze';
 
 interface Announcement {
   id: string;
@@ -15,6 +16,9 @@ interface Announcement {
   contenuto: string;
   autore: 'HR' | 'Direzione';
   data: string;
+  tipo?: 'standard' | 'chiusure';
+  anno?: number;
+  periods?: Array<{ tipo: 'singolo' | 'intervallo'; inizio: string; fine: string }>;
 }
 
 export default function Dashboard() {
@@ -27,6 +31,15 @@ export default function Dashboard() {
   const [newTitle, setNewTitle] = useState('');
   const [newContent, setNewContent] = useState('');
   const [newAuthor, setNewAuthor] = useState<'HR' | 'Direzione'>('Direzione');
+  const [noticeType, setNoticeType] = useState<'standard' | 'chiusure'>('standard');
+  const [closureYear, setClosureYear] = useState<number>(() => new Date().getFullYear());
+  const [closurePeriods, setClosurePeriods] = useState<Array<{ tipo: 'singolo' | 'intervallo'; inizio: string; fine: string }>>([
+    { tipo: 'singolo', inizio: '2026-06-01', fine: '2026-06-01' },
+    { tipo: 'intervallo', inizio: '2026-08-10', fine: '2026-08-14' },
+    { tipo: 'singolo', inizio: '2026-12-07', fine: '2026-12-07' },
+    { tipo: 'intervallo', inizio: '2026-12-28', fine: '2026-12-31' }
+  ]);
+  const [editingNoticeId, setEditingNoticeId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [isClimaModalOpen, setIsClimaModalOpen] = useState(false);
   const [activeQuestionnaire, setActiveQuestionnaire] = useState<any | null>(null);
@@ -74,6 +87,51 @@ export default function Dashboard() {
       }
     });
   };
+
+  const formatClosureDate = (dateStr: string) => {
+    if (!dateStr) return '';
+    const parts = dateStr.split('-');
+    if (parts.length !== 3) return dateStr;
+    const year = Number(parts[0]);
+    const month = Number(parts[1]) - 1;
+    const day = Number(parts[2]);
+    
+    const dateObj = new Date(year, month, day);
+    if (isNaN(dateObj.getTime())) return dateStr;
+    
+    const giorniSettimana = ['Domenica', 'Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato'];
+    const mesi = [
+      'Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno',
+      'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre'
+    ];
+    
+    const dayName = giorniSettimana[dateObj.getDay()];
+    const monthName = mesi[dateObj.getMonth()];
+    
+    return `${dayName} ${day} ${monthName} ${year}`;
+  };
+
+  const generateNoticeContent = (year: number, periods: Array<{ tipo: 'singolo' | 'intervallo'; inizio: string; fine: string }>) => {
+    let text = `Chiusure Aziendali ${year}\n`;
+    periods.forEach((p, idx) => {
+      const isLast = idx === periods.length - 1;
+      const endChar = isLast ? '' : ';';
+      if (p.tipo === 'singolo') {
+        text += `• ${formatClosureDate(p.inizio)}${endChar}\n`;
+      } else {
+        text += `• da ${formatClosureDate(p.inizio)} a ${formatClosureDate(p.fine)}${endChar}\n`;
+      }
+    });
+    return text;
+  };
+
+  // Autogenerazione titolo e contenuto quando si cambia il formato chiusure
+  useEffect(() => {
+    if (noticeType === 'chiusure') {
+      setNewTitle(`Chiusure Aziendali ${closureYear}`);
+      setNewContent(generateNoticeContent(closureYear, closurePeriods));
+    }
+  }, [noticeType, closureYear, closurePeriods]);
 
   // Controllo per la comparsa randomica del questionario sul clima (esclusi i soci)
   useEffect(() => {
@@ -128,10 +186,15 @@ export default function Dashboard() {
       // 3. Comunicazioni
       const noticesSnap = await getDocs(query(collection(db, 'comunicazioni'), orderBy('createdAt', 'desc')));
       const listNotices: Announcement[] = [];
+      const currentYear = new Date().getFullYear();
       noticesSnap.forEach(docSnap => {
+        const data = docSnap.data();
+        if (data.tipo === 'chiusure' && data.anno && data.anno < currentYear) {
+          return;
+        }
         listNotices.push({
           id: docSnap.id,
-          ...docSnap.data()
+          ...data
         } as Announcement);
       });
       setAnnouncements(listNotices);
@@ -202,6 +265,150 @@ export default function Dashboard() {
     };
   }, [myAssociatedName, isHR, isAdmin, user?.uid]);
 
+  const applyCorporateClosuresToEmployees = async (noticeId: string, periods: Array<{ tipo: 'singolo' | 'intervallo'; inizio: string; fine: string }>) => {
+    // 1. Filtra dipendenti standard (esclude collaboratori)
+    const standardEmployees = dipendenti.filter(d => {
+      const isCollab = isCollaboratore(d.nome, dipendenti);
+      return !isCollab;
+    });
+
+    // 2. Crea richieste ferie approvate in richieste_ferie per ciascun dipendente standard
+    for (const emp of standardEmployees) {
+      for (const p of periods) {
+        if (!p.inizio) continue;
+        const payload = {
+          dipendenteName: emp.nome,
+          tipo: 'ferie',
+          stato: 'Approvato',
+          timestamp: new Date().toISOString(),
+          dataInizio: p.inizio,
+          dataFine: p.tipo === 'singolo' ? p.inizio : p.fine,
+          data: p.inizio, // fallback
+          note: 'Chiusure Aziendali',
+          comunicazioneId: noticeId
+        };
+        await addDoc(collection(db, 'richieste_ferie'), payload);
+      }
+    }
+
+    // 3. Aggiorna i rapportini correnti in stato Bozza o Richiede Modifica
+    const presenzeSnap = await getDocs(collection(db, 'presenze'));
+    for (const presDoc of presenzeSnap.docs) {
+      const sheet = presDoc.data();
+      const isCollab = isCollaboratore(sheet.dipendenteNome, dipendenti);
+      if (!isCollab && (sheet.stato === 'Bozza' || sheet.stato === 'Richiede Modifica')) {
+        const updatedGiorni = { ...sheet.giorni };
+        let changed = false;
+        const sheetMonth = sheet.mese;
+        const sheetYear = sheet.anno;
+
+        for (const p of periods) {
+          if (!p.inizio) continue;
+          const start = new Date(p.inizio);
+          const end = new Date(p.tipo === 'singolo' ? p.inizio : p.fine);
+          const curr = new Date(start);
+
+          while (curr <= end) {
+            const y = curr.getFullYear();
+            const m = curr.getMonth() + 1;
+            const d = curr.getDate();
+
+            if (y === sheetYear && m === sheetMonth) {
+              const dayKey = String(d);
+              const g = updatedGiorni[dayKey];
+              if (g) {
+                const dayContractHours = g.oreContratto ?? 8;
+                if (g.ferie !== dayContractHours || g.ore !== 0) {
+                  g.ferie = dayContractHours;
+                  g.ore = 0;
+                  g.permessi = 0;
+                  g.malattia = false;
+                  changed = true;
+                }
+              }
+            }
+            curr.setDate(curr.getDate() + 1);
+          }
+        }
+
+        if (changed) {
+          await updateDoc(doc(db, 'presenze', presDoc.id), {
+            giorni: updatedGiorni,
+            timestamp: new Date().toISOString()
+          });
+        }
+      }
+    }
+  };
+
+  const removeCorporateClosuresForNotice = async (noticeId: string) => {
+    // 1. Trova i periodi di chiusura associati a questo avviso in chiusure_aziendali
+    const closuresSnap = await getDocs(query(collection(db, 'chiusure_aziendali'), where('comunicazioneId', '==', noticeId)));
+    const periods: Array<{ inizio: string; fine: string }> = [];
+    
+    for (const d of closuresSnap.docs) {
+      const data = d.data();
+      periods.push({ inizio: data.dataInizio, fine: data.dataFine });
+      await deleteDoc(doc(db, 'chiusure_aziendali', d.id));
+    }
+
+    // 2. Rimuove le ferie create in richieste_ferie per questo avviso
+    const ferieSnap = await getDocs(query(collection(db, 'richieste_ferie'), where('comunicazioneId', '==', noticeId)));
+    for (const d of ferieSnap.docs) {
+      await deleteDoc(doc(db, 'richieste_ferie', d.id));
+    }
+
+    // 3. Ripristina i giorni nei rapportini in Bozza o Richiede Modifica
+    const presenzeSnap = await getDocs(collection(db, 'presenze'));
+    for (const presDoc of presenzeSnap.docs) {
+      const sheet = presDoc.data();
+      const isCollab = isCollaboratore(sheet.dipendenteNome, dipendenti);
+      if (!isCollab && (sheet.stato === 'Bozza' || sheet.stato === 'Richiede Modifica')) {
+        const updatedGiorni = { ...sheet.giorni };
+        let changed = false;
+        const sheetMonth = sheet.mese;
+        const sheetYear = sheet.anno;
+
+        for (const p of periods) {
+          const start = new Date(p.inizio);
+          const end = new Date(p.fine);
+          const curr = new Date(start);
+
+          while (curr <= end) {
+            const y = curr.getFullYear();
+            const m = curr.getMonth() + 1;
+            const d = curr.getDate();
+
+            if (y === sheetYear && m === sheetMonth) {
+              const dayKey = String(d);
+              const g = updatedGiorni[dayKey];
+              if (g) {
+                const dayContractHours = g.oreContratto ?? 8;
+                if (g.ferie === dayContractHours && g.ore === 0 && !g.malattia && g.permessi === 0) {
+                  g.ferie = 0;
+                  const dateStr = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+                  const dayOfWeek = curr.getDay();
+                  const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
+                  const isHoliday = isItalianHoliday(dateStr);
+                  g.ore = (isWknd || isHoliday) ? 0 : dayContractHours;
+                  changed = true;
+                }
+              }
+            }
+            curr.setDate(curr.getDate() + 1);
+          }
+        }
+
+        if (changed) {
+          await updateDoc(doc(db, 'presenze', presDoc.id), {
+            giorni: updatedGiorni,
+            timestamp: new Date().toISOString()
+          });
+        }
+      }
+    }
+  };
+
   const handleCreateNotice = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTitle.trim() || !newContent.trim()) return;
@@ -211,26 +418,123 @@ export default function Dashboard() {
       const today = new Date();
       const dateStr = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${today.getFullYear()}`;
       
-      await addDoc(collection(db, 'comunicazioni'), {
+      const payload: any = {
         titolo: newTitle.trim(),
         contenuto: newContent.trim(),
         autore: newAuthor,
-        data: dateStr,
-        createdAt: new Date().toISOString()
-      });
-      loadDashboardData();
+        tipo: noticeType
+      };
 
+      if (noticeType === 'chiusure') {
+        payload.anno = closureYear;
+        payload.periods = closurePeriods;
+      }
+
+      if (editingNoticeId) {
+        // Mode: Edit
+        const oldAnn = announcements.find(a => a.id === editingNoticeId);
+        if (oldAnn && oldAnn.tipo === 'chiusure') {
+          // Revert previous configuration
+          await removeCorporateClosuresForNotice(editingNoticeId);
+        }
+
+        await updateDoc(doc(db, 'comunicazioni', editingNoticeId), payload);
+
+        if (noticeType === 'chiusure') {
+          // Save new periods in chiusure_aziendali
+          for (const p of closurePeriods) {
+            if (!p.inizio) continue;
+            await addDoc(collection(db, 'chiusure_aziendali'), {
+              dataInizio: p.inizio,
+              dataFine: p.tipo === 'singolo' ? p.inizio : p.fine,
+              label: p.tipo === 'singolo' ? 'Chiusura Aziendale' : 'Chiusura Estiva/Natale',
+              anno: closureYear,
+              comunicazioneId: editingNoticeId,
+              createdAt: new Date().toISOString()
+            });
+          }
+          // Propagate to standard employees and timesheets
+          await applyCorporateClosuresToEmployees(editingNoticeId, closurePeriods);
+        }
+
+        showToast("Avviso aggiornato con successo!");
+      } else {
+        // Mode: Create
+        payload.data = dateStr;
+        payload.createdAt = new Date().toISOString();
+
+        const docRef = await addDoc(collection(db, 'comunicazioni'), payload);
+
+        if (noticeType === 'chiusure') {
+          // Save periods in chiusure_aziendali
+          for (const p of closurePeriods) {
+            if (!p.inizio) continue;
+            await addDoc(collection(db, 'chiusure_aziendali'), {
+              dataInizio: p.inizio,
+              dataFine: p.tipo === 'singolo' ? p.inizio : p.fine,
+              label: p.tipo === 'singolo' ? 'Chiusura Aziendale' : 'Chiusura Estiva/Natale',
+              anno: closureYear,
+              comunicazioneId: docRef.id,
+              createdAt: new Date().toISOString()
+            });
+          }
+          // Propagate to standard employees and timesheets
+          await applyCorporateClosuresToEmployees(docRef.id, closurePeriods);
+        }
+
+        showToast("Avviso pubblicato con successo!");
+      }
+
+      // Reset form states
       setNewTitle('');
       setNewContent('');
       setNewAuthor('Direzione');
+      setNoticeType('standard');
+      setClosureYear(new Date().getFullYear());
+      setClosurePeriods([
+        { tipo: 'singolo', inizio: '2026-06-01', fine: '2026-06-01' },
+        { tipo: 'intervallo', inizio: '2026-08-10', fine: '2026-08-14' },
+        { tipo: 'singolo', inizio: '2026-12-07', fine: '2026-12-07' },
+        { tipo: 'intervallo', inizio: '2026-12-28', fine: '2026-12-31' }
+      ]);
+      setEditingNoticeId(null);
       setIsModalOpen(false);
-      showToast("Avviso pubblicato con successo!");
+      loadDashboardData();
     } catch (err) {
-      console.error("Errore nella pubblicazione dell'avviso:", err);
-      showToast("Errore durante la pubblicazione.", "error");
+      console.error("Errore nella pubblicazione/modifica dell'avviso:", err);
+      showToast("Errore durante l'operazione.", "error");
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    setNewTitle('');
+    setNewContent('');
+    setNewAuthor('Direzione');
+    setNoticeType('standard');
+    setClosureYear(new Date().getFullYear());
+    setClosurePeriods([
+      { tipo: 'singolo', inizio: '2026-06-01', fine: '2026-06-01' },
+      { tipo: 'intervallo', inizio: '2026-08-10', fine: '2026-08-14' },
+      { tipo: 'singolo', inizio: '2026-12-07', fine: '2026-12-07' },
+      { tipo: 'intervallo', inizio: '2026-12-28', fine: '2026-12-31' }
+    ]);
+    setEditingNoticeId(null);
+  };
+
+  const handleEditNotice = (ann: Announcement) => {
+    setEditingNoticeId(ann.id);
+    setNewTitle(ann.titolo);
+    setNewContent(ann.contenuto);
+    setNewAuthor(ann.autore);
+    setNoticeType(ann.tipo || 'standard');
+    if (ann.tipo === 'chiusure') {
+      setClosureYear(ann.anno || new Date().getFullYear());
+      setClosurePeriods(ann.periods || []);
+    }
+    setIsModalOpen(true);
   };
 
   const handleDeleteNotice = (id: string, titolo: string) => {
@@ -239,10 +543,16 @@ export default function Dashboard() {
       `Sei sicuro di voler eliminare la comunicazione "${titolo}"?`,
       async () => {
         try {
+          const oldAnn = announcements.find(a => a.id === id);
+          if (oldAnn && oldAnn.tipo === 'chiusure') {
+            await removeCorporateClosuresForNotice(id);
+          }
           await deleteDoc(doc(db, 'comunicazioni', id));
           loadDashboardData();
+          showToast("Avviso eliminato con successo!");
         } catch (err) {
           console.error("Errore nell'eliminazione della comunicazione:", err);
+          showToast("Errore durante l'eliminazione.", "error");
         }
       }
     );
@@ -523,7 +833,7 @@ export default function Dashboard() {
                       }`}
                     >
                       <div>
-                        <div className="flex justify-between items-center gap-2 pr-8">
+                        <div className="flex justify-between items-center gap-2 pr-16">
                           <span className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full ${
                             isReminder 
                               ? 'bg-amber-100 text-amber-700 border border-amber-200' 
@@ -533,20 +843,39 @@ export default function Dashboard() {
                           }`}>
                             {ann.autore}
                           </span>
-                          <span className="text-[10px] font-bold text-gray-400">{ann.data}</span>
                         </div>
-                        <h4 className="text-base font-extrabold text-gray-900 mt-2 pr-8">{ann.titolo}</h4>
+                        <h4 className="text-base font-extrabold text-gray-900 mt-2 pr-16">{ann.titolo}</h4>
                         <p className="text-sm text-gray-600 leading-relaxed font-medium whitespace-pre-wrap mt-1.5">{ann.contenuto}</p>
                       </div>
 
                       {canPublish && !isReminder && (
-                        <button
-                          onClick={() => handleDeleteNotice(ann.id, ann.titolo)}
-                          className="absolute top-4 right-4 text-gray-400 hover:text-red-600 hover:bg-red-50 p-1.5 rounded-xl transition-all"
-                          title="Elimina avviso"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        <div className="absolute top-4 right-4 flex gap-1">
+                          <button
+                            onClick={() => handleEditNotice(ann)}
+                            className="text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 p-1.5 rounded-xl transition-all"
+                            title="Modifica avviso"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteNotice(ann.id, ann.titolo)}
+                            className="text-gray-400 hover:text-red-600 hover:bg-red-50 p-1.5 rounded-xl transition-all"
+                            title="Elimina avviso"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
+
+                      {!isReminder && ann.tipo !== 'chiusure' && (
+                        <span className={`absolute text-[10px] font-bold text-gray-400 right-5 ${canPublish ? 'top-[2.75rem]' : 'top-5'}`}>
+                          {ann.data}
+                        </span>
+                      )}
+                      {isReminder && (
+                        <span className="absolute text-[10px] font-bold text-gray-400 right-5 top-5">
+                          {ann.data}
+                        </span>
                       )}
 
                     </div>
@@ -562,21 +891,125 @@ export default function Dashboard() {
       {/* MODALE DI CREAZIONE NEWS */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2rem] shadow-2xl max-w-lg w-full border border-gray-100 p-8 flex flex-col gap-6 animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-white rounded-[2rem] shadow-2xl max-w-lg w-full border border-gray-100 p-8 flex flex-col gap-5 animate-in fade-in zoom-in-95 duration-200">
             <div className="flex justify-between items-center">
               <h3 className="text-2xl font-black text-gray-900 flex items-center gap-2">
                 <Megaphone className="w-6 h-6 text-indigo-600" />
-                <span>Nuova Comunicazione</span>
+                <span>{editingNoticeId ? 'Modifica Comunicazione' : 'Nuova Comunicazione'}</span>
               </h3>
               <button 
-                onClick={() => setIsModalOpen(false)}
+                onClick={handleCloseModal}
                 className="text-gray-400 hover:text-gray-600 p-1.5 rounded-xl hover:bg-gray-100 transition"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleCreateNotice} className="space-y-4">
+            <form onSubmit={handleCreateNotice} className="space-y-3.5 overflow-y-auto max-h-[70vh] pr-1">
+              <div>
+                <label className="block text-sm font-extrabold text-gray-700 mb-1.5 ml-1">Formato Comunicazione</label>
+                <select
+                  value={noticeType}
+                  onChange={e => {
+                    const type = e.target.value as 'standard' | 'chiusure';
+                    setNoticeType(type);
+                    if (type === 'chiusure') {
+                      setNewTitle(`Chiusure Aziendali ${closureYear}`);
+                      setNewContent(generateNoticeContent(closureYear, closurePeriods));
+                    } else {
+                      setNewTitle('');
+                      setNewContent('');
+                    }
+                  }}
+                  className="w-full p-3.5 border-none rounded-xl bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner font-bold text-gray-700"
+                >
+                  <option value="standard">Standard (Testo libero)</option>
+                  <option value="chiusure">Chiusure Aziendali (Format preimpostato)</option>
+                </select>
+              </div>
+
+              {noticeType === 'chiusure' && (
+                <>
+                  <div>
+                    <label className="block text-sm font-extrabold text-gray-700 mb-1.5 ml-1">Anno Chiusure</label>
+                    <input
+                      type="number"
+                      value={closureYear}
+                      onChange={e => setClosureYear(Number(e.target.value))}
+                      className="w-full p-3.5 border-none rounded-xl bg-gray-50 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-500 transition shadow-inner font-bold text-gray-700"
+                    />
+                  </div>
+
+                  <div className="space-y-3">
+                    <label className="block text-sm font-extrabold text-gray-700 ml-1">Periodi di Chiusura</label>
+                    <div className="max-h-44 overflow-y-auto space-y-2 pr-1">
+                      {closurePeriods.map((p, idx) => (
+                        <div key={idx} className="flex gap-2 items-center bg-gray-50 p-2.5 rounded-xl border border-gray-100">
+                          <select
+                            value={p.tipo}
+                            onChange={e => {
+                              const updated = [...closurePeriods];
+                              updated[idx].tipo = e.target.value as 'singolo' | 'intervallo';
+                              setClosurePeriods(updated);
+                            }}
+                            className="p-1.5 bg-white border border-gray-200 rounded-lg text-xs font-bold text-gray-700 focus:outline-none"
+                          >
+                            <option value="singolo">Singolo Giorno</option>
+                            <option value="intervallo">Intervallo</option>
+                          </select>
+                          <input
+                            type="date"
+                            value={p.inizio}
+                            onChange={e => {
+                              const updated = [...closurePeriods];
+                              updated[idx].inizio = e.target.value;
+                              if (updated[idx].tipo === 'singolo') {
+                                updated[idx].fine = e.target.value;
+                              }
+                              setClosurePeriods(updated);
+                            }}
+                            className="p-1.5 bg-white border border-gray-200 rounded-lg text-xs font-bold text-gray-700 focus:outline-none flex-1"
+                          />
+                          {p.tipo === 'intervallo' && (
+                            <>
+                              <span className="text-xs font-extrabold text-gray-400">al</span>
+                              <input
+                                type="date"
+                                value={p.fine}
+                                onChange={e => {
+                                  const updated = [...closurePeriods];
+                                  updated[idx].fine = e.target.value;
+                                  setClosurePeriods(updated);
+                                }}
+                                className="p-1.5 bg-white border border-gray-200 rounded-lg text-xs font-bold text-gray-700 focus:outline-none flex-1"
+                              />
+                            </>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setClosurePeriods(closurePeriods.filter((_, i) => i !== idx));
+                            }}
+                            className="text-gray-400 hover:text-red-600 p-1 hover:bg-white rounded transition"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setClosurePeriods([...closurePeriods, { tipo: 'singolo', inizio: '', fine: '' }]);
+                      }}
+                      className="w-full py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5 active:scale-95"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Aggiungi Periodo
+                    </button>
+                  </div>
+                </>
+              )}
+
               <div>
                 <label className="block text-sm font-extrabold text-gray-700 mb-1.5 ml-1">Titolo dell'Avviso</label>
                 <input
@@ -585,7 +1018,8 @@ export default function Dashboard() {
                   placeholder="Es. Chiusura Estiva Uffici"
                   value={newTitle}
                   onChange={e => setNewTitle(e.target.value)}
-                  className="w-full p-3.5 border-none rounded-xl bg-gray-50 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-500 transition shadow-inner font-bold text-gray-700"
+                  disabled={noticeType === 'chiusure'}
+                  className="w-full p-3.5 border-none rounded-xl bg-gray-50 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-500 transition shadow-inner font-bold text-gray-700 disabled:opacity-75"
                 />
               </div>
 
@@ -605,18 +1039,19 @@ export default function Dashboard() {
                 <label className="block text-sm font-extrabold text-gray-700 mb-1.5 ml-1">Testo della Comunicazione</label>
                 <textarea
                   required
-                  rows={5}
+                  rows={noticeType === 'chiusure' ? 4 : 5}
                   placeholder="Scrivi qui l'avviso ufficiale..."
                   value={newContent}
                   onChange={e => setNewContent(e.target.value)}
-                  className="w-full p-4 border-none rounded-xl bg-gray-50 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner font-medium text-gray-800 transition placeholder-gray-400"
+                  disabled={noticeType === 'chiusure'}
+                  className="w-full p-4 border-none rounded-xl bg-gray-50 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner font-medium text-gray-800 transition placeholder-gray-400 disabled:opacity-75"
                 />
               </div>
 
               <div className="flex gap-3 pt-2">
                 <button
                   type="button"
-                  onClick={() => setIsModalOpen(false)}
+                  onClick={handleCloseModal}
                   className="flex-1 py-3.5 px-4 rounded-xl border border-gray-200 text-sm font-bold text-gray-700 hover:bg-gray-50 transition"
                 >
                   Annulla
@@ -626,7 +1061,7 @@ export default function Dashboard() {
                   disabled={loading}
                   className="flex-1 py-3.5 px-4 rounded-xl bg-indigo-600 text-white text-sm font-bold hover:bg-indigo-700 transition active:scale-95 disabled:opacity-50"
                 >
-                  {loading ? 'Pubblicazione...' : 'Pubblica Avviso'}
+                  {loading ? 'Elaborazione in corso...' : (editingNoticeId ? 'Salva Modifiche' : 'Pubblica Avviso')}
                 </button>
               </div>
             </form>

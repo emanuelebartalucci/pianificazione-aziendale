@@ -34,12 +34,54 @@ export function isCollaboratore(nome?: string | null, dipendentiList?: any[]): b
   return COLLABORATORI.some(c => c.toLowerCase() === clean);
 }
 
-const CHIUSURE_AZIENDALI = [
-  { dataInizio: '2026-08-10', dataFine: '2026-08-14', label: 'Chiusura Estiva' }
-];
+export function isItalianHoliday(dateStr: string): boolean {
+  const parts = dateStr.split('-');
+  if (parts.length !== 3) return false;
+  const year = Number(parts[0]);
+  const month = Number(parts[1]);
+  const day = Number(parts[2]);
 
-export function isInChiusuraAziendale(dateStr: string): boolean {
-  return CHIUSURE_AZIENDALI.some(c => dateStr >= c.dataInizio && dateStr <= c.dataFine);
+  // Festività fisse
+  if (month === 1 && day === 1) return true; // Capodanno
+  if (month === 1 && day === 6) return true; // Epifania
+  if (month === 4 && day === 25) return true; // Liberazione
+  if (month === 5 && day === 1) return true; // Festa del Lavoro
+  if (month === 6 && day === 2) return true; // Festa della Repubblica
+  if (month === 8 && day === 15) return true; // Ferragosto
+  if (month === 11 && day === 1) return true; // Tutti i Santi
+  if (month === 12 && day === 8) return true; // Immacolata
+  if (month === 12 && day === 25) return true; // Natale
+  if (month === 12 && day === 26) return true; // Santo Stefano
+
+  // Pasquetta (Meeus/Jones/Butcher algorithm)
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const easterMonth = Math.floor((h + l - 7 * m + 114) / 31);
+  const easterDay = ((h + l - 7 * m + 114) % 31) + 1;
+
+  const easterDate = new Date(year, easterMonth - 1, easterDay);
+  const easterMonday = new Date(easterDate);
+  easterMonday.setDate(easterDate.getDate() + 1);
+
+  if (month === (easterMonday.getMonth() + 1) && day === easterMonday.getDate()) {
+    return true;
+  }
+
+  return false;
+}
+
+export function isInChiusuraAziendale(_dateStr: string): boolean {
+  return false;
 }
 
 const formatDate = (dateStr: string) => {
@@ -61,6 +103,7 @@ interface GiornoPresenza {
   noteGiorno?: string;
   itinerarioTrasferta?: string; // NEW
   kmTrasferta?: number; // NEW
+  oreContratto?: number;
 }
 
 interface RapportinoPresenze {
@@ -116,6 +159,13 @@ const MESI = [
 export default function Presenze() {
   const { user, isAdmin, isHR, myAssociatedName, dipendenti, refreshData } = useAuth();
 
+  const profile = useMemo(() => {
+    if (!myAssociatedName) return null;
+    return dipendenti.find(d => d.nome.trim().toLowerCase() === myAssociatedName.trim().toLowerCase()) || null;
+  }, [myAssociatedName, dipendenti]);
+
+  const contractHours = profile?.oreContratto ?? 8;
+
   // queueEmailNotification rimossa a favore di queueMail centralizzata
   
   // Date Selection
@@ -132,7 +182,20 @@ export default function Presenze() {
   const [loadingSheet, setLoadingSheet] = useState(false);
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [decorrenzaGiorno, setDecorrenzaGiorno] = useState<number>(1);
+  const [localOreContratto, setLocalOreContratto] = useState<number>(8);
+
+  useEffect(() => {
+    if (profile?.oreContratto !== undefined) {
+      setLocalOreContratto(profile.oreContratto);
+    }
+  }, [profile?.oreContratto]);
   const [activeTab, setActiveTab] = useState<'ore' | 'spese' | 'weekend'>('ore');
+  const [chiusureAziendali, setChiusureAziendali] = useState<Array<{ dataInizio: string; dataFine: string }>>([]);
+
+  const isInChiusuraAziendaleLocal = (dateStr: string) => {
+    return chiusureAziendali.some(c => dateStr >= c.dataInizio && dateStr <= c.dataFine);
+  };
 
   // State for HR Mode
   const [allRapportini, setAllRapportini] = useState<Record<string, RapportinoPresenze>>({});
@@ -213,8 +276,9 @@ export default function Presenze() {
       return true;
     }
     const isWk = isWeekend(dNum);
-    const isChiusura = isInChiusuraAziendale(dateStr);
-    return (isWk || isChiusura) && !approvedWeekends[dateStr];
+    const isChiusura = isInChiusuraAziendaleLocal(dateStr);
+    const isHoliday = isItalianHoliday(dateStr);
+    return (isWk || isChiusura || isHoliday) && !approvedWeekends[dateStr];
   };
 
   // Convert 1-31 number to padded string
@@ -222,6 +286,9 @@ export default function Presenze() {
   // --- PREFILL LOGIC ---
   const createPrefilledRapportino = async () => {
     if (!myAssociatedName || !user?.email) return;
+
+    const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === myAssociatedName.trim().toLowerCase());
+    const contractHours = profile?.oreContratto ?? 8;
 
     try {
       // 1. Fetch approved requests from 'richieste_ferie'
@@ -285,8 +352,9 @@ export default function Presenze() {
         const dateObj = new Date(selectedYear, selectedMonth - 1, day);
         const dayOfWeek = dateObj.getDay();
         const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
+        const isHoliday = isItalianHoliday(dateStr);
 
-        let ore = isWknd ? 0 : 8;
+        let ore = (isWknd || isHoliday) ? 0 : contractHours;
         let straordinari = 0;
         let ferie = 0;
         let permessi = 0;
@@ -294,28 +362,28 @@ export default function Presenze() {
         let trasferta = false;
 
         // Apply approved absences (only on working days)
-        if (approvedAbsences[dateStr] && !isWknd) {
+        if (approvedAbsences[dateStr] && !isWknd && !isHoliday) {
           const abs = approvedAbsences[dateStr];
           if (abs.tipo === 'ferie') {
             ore = 0;
-            ferie = 8;
+            ferie = contractHours;
           } else if (abs.tipo === 'malattia' || abs.tipo === 'maternita') {
             ore = 0;
             malattia = true;
           } else if (abs.tipo === 'mattina' || abs.tipo === 'pomeriggio') {
-            ore = 4;
-            permessi = 4;
+            ore = contractHours / 2;
+            permessi = contractHours / 2;
           } else if (abs.tipo === 'smart') {
-            ore = 8;
+            ore = contractHours;
           } else if (abs.tipo === 'permesso') {
-            let hrs = 4;
+            let hrs = contractHours / 2;
             if (abs.oraInizio && abs.oraFine) {
               const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
               const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
               const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
               hrs = Math.round(diffMs / 3600000);
             }
-            ore = Math.max(0, 8 - hrs);
+            ore = Math.max(0, contractHours - hrs);
             permessi = hrs;
           }
         }
@@ -326,7 +394,8 @@ export default function Presenze() {
           ferie,
           permessi,
           malattia,
-          trasferta
+          trasferta,
+          oreContratto: contractHours
         };
       }
 
@@ -415,6 +484,19 @@ export default function Presenze() {
 
   const loadPresenzeData = async () => {
     try {
+      // Carica le chiusure aziendali dinamiche da Firestore
+      const closuresSnap = await getDocs(collection(db, 'chiusure_aziendali')).catch(err => {
+        console.error("Errore query chiusure:", err);
+        return null;
+      });
+      const listClosures: any[] = [];
+      if (closuresSnap) {
+        closuresSnap.forEach(d => {
+          listClosures.push(d.data());
+        });
+      }
+      setChiusureAziendali(listClosures);
+
       if (viewMode === 'hr') {
         setLoadingHR(true);
         const [presSnap, wkSnap] = await Promise.all([
@@ -634,6 +716,8 @@ export default function Presenze() {
           let finalData = { ...data, id: docSnap.id } as RapportinoPresenze;
           if (finalData.stato === 'Bozza' || finalData.stato === 'Richiede Modifica') {
             try {
+              const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === myAssociatedName.trim().toLowerCase());
+              const contractHours = profile?.oreContratto ?? 8;
               const updatedGiorni = { ...finalData.giorni };
               let hasChanges = false;
               const numDays = new Date(selectedYear, selectedMonth, 0).getDate();
@@ -645,13 +729,23 @@ export default function Presenze() {
                 const dateObj = new Date(selectedYear, selectedMonth - 1, day);
                 const dayOfWeek = dateObj.getDay();
                 const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+                const isHoliday = isItalianHoliday(dateStr);
 
                 const currentDay = updatedGiorni[String(day)];
                 if (!currentDay) continue;
 
+                // Ricava le ore di contratto specifiche di questa giornata (con fallback alle ore del profilo)
+                const dayContractHours = currentDay.oreContratto ?? contractHours;
+
+                // Auto-migrazione per fogli esistenti creati precedentemente
+                if (!currentDay.oreContratto) {
+                  currentDay.oreContratto = dayContractHours;
+                  hasChanges = true;
+                }
+
                 const abs = leaves[dateStr];
                 if (abs) {
-                  let targetOre = isWeekend ? 0 : 8;
+                  let targetOre = (isWeekend || isHoliday) ? 0 : dayContractHours;
                   let targetFerie = 0;
                   let targetPermessi = 0;
                   let targetMalattia = false;
@@ -662,27 +756,27 @@ export default function Presenze() {
                   let targetStraordinari = currentDay.straordinari;
                   let targetNoteGiorno = currentDay.noteGiorno || '';
 
-                  if (!isWeekend) {
+                  if (!isWeekend && !isHoliday) {
                     if (abs.tipo === 'ferie') {
                       targetOre = 0;
-                      targetFerie = 8;
+                      targetFerie = dayContractHours;
                     } else if (abs.tipo === 'malattia' || abs.tipo === 'maternita') {
                       targetOre = 0;
                       targetMalattia = true;
                     } else if (abs.tipo === 'mattina' || abs.tipo === 'pomeriggio') {
-                      targetOre = 4;
-                      targetPermessi = 4;
+                      targetOre = dayContractHours / 2;
+                      targetPermessi = dayContractHours / 2;
                     } else if (abs.tipo === 'smart') {
-                      targetOre = 8;
+                      targetOre = dayContractHours;
                     } else if (abs.tipo === 'permesso') {
-                      let hrs = 4;
+                      let hrs = dayContractHours / 2;
                       if (abs.oraInizio && abs.oraFine) {
                         const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
                         const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
                         const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
                         hrs = Math.round(diffMs / 3600000);
                       }
-                      targetOre = Math.max(0, 8 - hrs);
+                      targetOre = Math.max(0, dayContractHours - hrs);
                       targetPermessi = hrs;
                     }
                   }
@@ -727,7 +821,7 @@ export default function Presenze() {
                 } else {
                   const isCleanFerie = 
                     currentDay.ore === 0 &&
-                    currentDay.ferie === 8 &&
+                    currentDay.ferie === dayContractHours &&
                     currentDay.straordinari === 0 &&
                     currentDay.permessi === 0 &&
                     !currentDay.malattia &&
@@ -742,8 +836,8 @@ export default function Presenze() {
                     !currentDay.trasferta;
 
                   const isCleanPermesso = 
-                    currentDay.ore === 4 &&
-                    currentDay.permessi === 4 &&
+                    currentDay.ore === dayContractHours / 2 &&
+                    currentDay.permessi === dayContractHours / 2 &&
                     currentDay.straordinari === 0 &&
                     currentDay.ferie === 0 &&
                     !currentDay.malattia &&
@@ -754,7 +848,7 @@ export default function Presenze() {
                   if (wasModifiedDueToAbsence) {
                     updatedGiorni[String(day)] = {
                       ...currentDay,
-                      ore: isWeekend ? 0 : 8,
+                      ore: (isWeekend || isHoliday) ? 0 : dayContractHours,
                       ferie: 0,
                       permessi: 0,
                       malattia: false
@@ -801,6 +895,12 @@ export default function Presenze() {
 
     const updatedGiorni = { ...rapportino.giorni };
     const currentDay = { ...updatedGiorni[day] };
+    const profile = myAssociatedName ? dipendenti.find(d => d.nome.trim().toLowerCase() === myAssociatedName.trim().toLowerCase()) : null;
+    const defaultContractHours = profile?.oreContratto ?? 8;
+    const dayContractHours = currentDay.oreContratto ?? defaultContractHours;
+
+    // Assicura che la giornata abbia il suo valore oreContratto salvato
+    currentDay.oreContratto = dayContractHours;
 
     if (field === 'malattia') {
       currentDay.malattia = value;
@@ -810,12 +910,27 @@ export default function Presenze() {
         currentDay.permessi = 0;
         currentDay.straordinari = 0;
       } else {
-        currentDay.ore = 8;
+        currentDay.ore = dayContractHours;
       }
     } else if (field === 'trasferta') {
       currentDay.trasferta = value;
       if (!value) {
         currentDay.luogoTrasferta = '';
+      }
+    } else if (field === 'ferie') {
+      const isChecked = !!value;
+      currentDay.ferie = isChecked ? dayContractHours : 0;
+      currentDay.ore = isChecked ? 0 : Math.max(0, dayContractHours - (currentDay.permessi || 0));
+    } else if (field === 'permessi') {
+      const numVal = Number(value || 0);
+      currentDay.permessi = numVal;
+      currentDay.ore = Math.max(0, dayContractHours - (currentDay.ferie || 0) - numVal);
+    } else if (field === 'ore') {
+      const numVal = Number(value || 0);
+      currentDay.ore = numVal;
+      if (numVal === dayContractHours) {
+        currentDay.ferie = 0;
+        currentDay.permessi = 0;
       }
     } else {
       (currentDay as any)[field] = value;
@@ -1085,19 +1200,42 @@ export default function Presenze() {
 
     const updatedGiorni = { ...reviewingRapportino.giorni };
     const currentDay = { ...updatedGiorni[day] };
+    const targetProfile = dipendenti.find(d => d.nome.trim().toLowerCase() === reviewingRapportino.dipendenteNome.trim().toLowerCase());
+    const defaultContractHours = targetProfile?.oreContratto ?? 8;
+    const dayContractHours = currentDay.oreContratto ?? defaultContractHours;
+
+    // Assicura che la giornata abbia il suo valore oreContratto salvato
+    currentDay.oreContratto = dayContractHours;
 
     if (field === 'malattia') {
       currentDay.malattia = value;
       if (value) {
         currentDay.ore = 0;
-        currentDay.ferie = 8;
+        currentDay.ferie = 0;
         currentDay.permessi = 0;
         currentDay.straordinari = 0;
+      } else {
+        currentDay.ore = dayContractHours;
       }
     } else if (field === 'trasferta') {
       currentDay.trasferta = value;
       if (!value) {
         currentDay.luogoTrasferta = '';
+      }
+    } else if (field === 'ferie') {
+      const isChecked = !!value;
+      currentDay.ferie = isChecked ? dayContractHours : 0;
+      currentDay.ore = isChecked ? 0 : Math.max(0, dayContractHours - (currentDay.permessi || 0));
+    } else if (field === 'permessi') {
+      const numVal = Number(value || 0);
+      currentDay.permessi = numVal;
+      currentDay.ore = Math.max(0, dayContractHours - (currentDay.ferie || 0) - numVal);
+    } else if (field === 'ore') {
+      const numVal = Number(value || 0);
+      currentDay.ore = numVal;
+      if (numVal === dayContractHours) {
+        currentDay.ferie = 0;
+        currentDay.permessi = 0;
       }
     } else {
       (currentDay as any)[field] = value;
@@ -1791,7 +1929,53 @@ export default function Presenze() {
     }
   };
 
+  const getDailyNotes = (giorni: { [giorno: string]: GiornoPresenza }, numDays: number) => {
+    const notesList: { giorno: number; note: string }[] = [];
+    for (let d = 1; d <= numDays; d++) {
+      const g = giorni[String(d)];
+      if (g && g.noteGiorno && g.noteGiorno.trim() !== '') {
+        notesList.push({ giorno: d, note: g.noteGiorno.trim() });
+      }
+    }
+    return notesList;
+  };
+
+  const getSheetsToPrint = (): RapportinoPresenze[] => {
+    if (printTargetSheet) return [printTargetSheet];
+    if (reviewingRapportino) return [reviewingRapportino];
+    if (viewMode === 'compila') {
+      return rapportino ? [rapportino] : [];
+    }
+    if (viewMode === 'hr' && selectedDipFilter) {
+      const docId = `${selectedDipFilter}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+      const sheet = allRapportini[docId];
+      return sheet ? [sheet] : [];
+    }
+    if (viewMode === 'hr') {
+      const filtered = dipendenti.filter(dip => {
+        const isCollab = isCollaboratore(dip.nome, dipendenti);
+        const matchesTab = hrTab === 'collaboratori' ? isCollab : !isCollab;
+        return matchesTab;
+      });
+      const sheets: RapportinoPresenze[] = [];
+      filtered.forEach(dip => {
+        const docId = `${dip.nome}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+        const sheet = allRapportini[docId];
+        if (sheet) {
+          sheets.push(sheet);
+        }
+      });
+      return sheets;
+    }
+    return [];
+  };
+
   const handlePrint = () => {
+    const sheets = getSheetsToPrint();
+    if (sheets.length === 0) {
+      showToast("Nessun foglio presenze registrato da stampare per questo mese.", "warning");
+      return;
+    }
     if (selectedDipFilter) {
       const docId = `${selectedDipFilter}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
       const sheet = allRapportini[docId];
@@ -1860,8 +2044,10 @@ export default function Presenze() {
 
   return (
     <div className="flex flex-col gap-6">
-      
-      {/* HEADER DELLA PAGINA */}
+      {/* Contenitore schermate UI - Nascosto in Stampa */}
+      <div className="no-print flex flex-col gap-6">
+        
+        {/* HEADER DELLA PAGINA */}
       <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-sm p-4 sm:p-6 border border-white/50 no-print flex flex-col md:flex-row justify-between items-center gap-4">
         <div className="flex items-center gap-3">
           <div className="p-3 bg-indigo-100 rounded-2xl"><FileText className="text-indigo-600 w-8 h-8" /></div>
@@ -1989,7 +2175,7 @@ export default function Presenze() {
               onClick={handlePrint} 
               className="flex items-center gap-2 bg-gray-950 hover:bg-gray-900 text-white font-bold px-4 py-2.5 rounded-xl text-sm transition shadow-md active:scale-95"
             >
-              <Printer className="w-4 h-4" /> {selectedDipFilter ? "Stampa Foglio Ore" : "Stampa Tabella"}
+              <Printer className="w-4 h-4" /> {selectedDipFilter ? "Stampa Foglio Ore" : "Stampa Tutti i Fogli"}
             </button>
             <button 
               onClick={handleExportMonthlyClick} 
@@ -2244,6 +2430,131 @@ export default function Presenze() {
             <div className="bg-white p-10 rounded-[2rem] border text-center text-gray-500 font-bold">Inizializzazione modulo in corso...</div>
           ) : (
             <div className="flex flex-col gap-6">
+              {/* Box Ore Contratto (solo per Dipendenti Standard, no P.IVA/Collaboratori) */}
+              {!isCollaboratore(myAssociatedName, dipendenti) && (
+                <div className="bg-white/90 backdrop-blur-md p-6 rounded-[2rem] border border-gray-200 flex flex-col lg:flex-row lg:items-center justify-between gap-6 shadow-sm no-print">
+                  <div className="space-y-1">
+                    <h4 className="font-extrabold text-gray-900 flex items-center gap-2">
+                      <Clock className="w-5 h-5 text-indigo-600" />
+                      Ore Giornaliere da Contratto (Part-time / Full-time)
+                    </h4>
+                    <p className="text-xs text-gray-500 font-semibold leading-relaxed">
+                      Imposta le tue ore giornaliere da contratto. Puoi indicare una decorrenza per i cambi contratto a metà mese.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-4 bg-gray-50 p-3 rounded-2xl border border-gray-100">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Ore:</span>
+                      <input 
+                        type="number"
+                        min={1}
+                        max={24}
+                        value={localOreContratto}
+                        onChange={(e) => setLocalOreContratto(e.target.value === '' ? 8 : Number(e.target.value))}
+                        className="w-16 text-center border border-gray-300 rounded-xl p-1.5 font-bold outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900 bg-white"
+                      />
+                      <span className="text-[11px] font-bold text-gray-700">ore/g</span>
+                    </div>
+
+                    <div className="w-[1px] h-6 bg-gray-200" />
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Decorrenza dal giorno:</span>
+                      <select 
+                        value={decorrenzaGiorno}
+                        onChange={(e) => setDecorrenzaGiorno(Number(e.target.value))}
+                        className="border border-gray-300 rounded-xl p-1.5 font-bold outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900 bg-white text-xs"
+                      >
+                        {Array.from({ length: 31 }).map((_, idx) => (
+                          <option key={idx + 1} value={idx + 1}>{idx + 1}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="w-[1px] h-6 bg-gray-200" />
+
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (profile) {
+                          try {
+                            const val = localOreContratto;
+                            const oldContractHours = profile.oreContratto ?? 8;
+                            
+                            // 1. Aggiorna anagrafica dipendente
+                            await updateDoc(doc(db, 'dipendenti', profile.id), {
+                              oreContratto: val
+                            });
+
+                            // 2. Se c'è un rapportino correntemente caricato ed è modificabile, aggiorna le ore della tabella a partire dalla data di decorrenza
+                            if (rapportino && (rapportino.stato === 'Bozza' || rapportino.stato === 'Richiede Modifica')) {
+                              const updatedGiorni = { ...rapportino.giorni };
+                              let changed = false;
+
+                              for (let d = 1; d <= 31; d++) {
+                                const dayKey = String(d);
+                                const g = updatedGiorni[dayKey];
+                                if (g) {
+                                  const appliesToThisDay = d >= decorrenzaGiorno;
+
+                                  if (appliesToThisDay) {
+                                    let dayChanged = false;
+                                    
+                                    const oldDayContractHours = g.oreContratto ?? oldContractHours;
+                                    g.oreContratto = val;
+
+                                    // Aggiorna giornate intere di ferie
+                                    if (g.ferie === oldDayContractHours) {
+                                      g.ferie = val;
+                                      dayChanged = true;
+                                    }
+
+                                    // Aggiorna giornate intere lavorate
+                                    if (g.ore === oldDayContractHours) {
+                                      g.ore = val;
+                                      dayChanged = true;
+                                    } else if (g.permessi > 0 || g.ferie > 0) {
+                                      // Ricalcola bilanciamento per giornate parziali
+                                      const oldOre = g.ore;
+                                      g.ore = Math.max(0, val - (g.ferie || 0) - (g.permessi || 0));
+                                      if (g.ore !== oldOre) {
+                                        dayChanged = true;
+                                      }
+                                    }
+
+                                    if (dayChanged || g.oreContratto !== oldDayContractHours) {
+                                      changed = true;
+                                    }
+                                  }
+                                }
+                              }
+
+                              if (changed) {
+                                const updatedRapportino = {
+                                  ...rapportino,
+                                  giorni: updatedGiorni,
+                                  timestamp: new Date().toISOString()
+                                };
+                                await setDoc(doc(db, 'presenze', rapportino.id), updatedRapportino);
+                                setRapportino(updatedRapportino);
+                              }
+                            }
+
+                            await refreshData();
+                            showToast("Ore da contratto aggiornate con successo!", "success");
+                          } catch (err) {
+                            console.error("Errore aggiornamento ore contratto:", err);
+                            showToast("Errore durante il salvataggio.", "error");
+                          }
+                        }
+                      }}
+                      className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-sm hover:shadow active:scale-95 transition-all"
+                    >
+                      Applica
+                    </button>
+                  </div>
+                </div>
+              )}
               
               {/* Box Stato */}
               <div className="bg-white/90 backdrop-blur-md p-6 rounded-[2rem] border flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shadow-sm no-print">
@@ -2716,7 +3027,7 @@ export default function Presenze() {
                               const giorno = rapportino.giorni[dayStr(d)];
 
                               return (
-                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''}`}>
+                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : giorno && giorno.ore > 0 ? 'bg-emerald-50/70 font-semibold' : ''}`}>
                                   {!outOfMonth && giorno && (
                                     <input 
                                       type="number"
@@ -2767,37 +3078,7 @@ export default function Presenze() {
                             </td>
                           </tr>
 
-                          {/* DIPENDENTI STANDARD RIGA 3: FERIE */}
-                          <tr className="hover:bg-gray-50/50 transition-colors">
-                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10">Ferie</td>
-                            {Array.from({ length: 31 }).map((_, i) => {
-                              const d = i + 1;
-                              const outOfMonth = d > daysInMonth;
-                              const giorno = rapportino.giorni[dayStr(d)];
-
-                              return (
-                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''}`}>
-                                  {!outOfMonth && giorno && (
-                                    <input 
-                                      type="number"
-                                      min={0}
-                                      max={24}
-                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isDayLockedForUser(d)}
-                                      value={giorno.ferie === 0 ? '' : giorno.ferie}
-                                      onChange={e => handleCellChange(dayStr(d), 'ferie', e.target.value === '' ? 0 : Number(e.target.value))}
-                                      className="w-full text-center border-none p-1 rounded font-bold outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-transparent disabled:opacity-70 text-green-700"
-                                    />
-                                  )}
-                                  {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
-                                </td>
-                              );
-                            })}
-                            <td className="p-3 font-bold text-green-700 bg-gray-50 border-l-2 border-gray-300 text-sm">
-                              {calculateTotals(rapportino.giorni, daysInMonth).oreFerie}
-                            </td>
-                          </tr>
-
-                          {/* DIPENDENTI STANDARD RIGA 4: PERMESSI */}
+                          {/* DIPENDENTI STANDARD RIGA 3: PERMESSI */}
                           <tr className="hover:bg-gray-50/50 transition-colors">
                             <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10">Permessi</td>
                             {Array.from({ length: 31 }).map((_, i) => {
@@ -2806,13 +3087,13 @@ export default function Presenze() {
                               const giorno = rapportino.giorni[dayStr(d)];
 
                               return (
-                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''}`}>
+                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : giorno && giorno.permessi > 0 ? 'bg-indigo-50/70' : ''}`}>
                                   {!outOfMonth && giorno && (
                                     <input 
                                       type="number"
                                       min={0}
                                       max={24}
-                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isDayLockedForUser(d)}
+                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || giorno.ferie === (giorno.oreContratto ?? contractHours) || isDayLockedForUser(d)}
                                       value={giorno.permessi === 0 ? '' : giorno.permessi}
                                       onChange={e => handleCellChange(dayStr(d), 'permessi', e.target.value === '' ? 0 : Number(e.target.value))}
                                       className="w-full text-center border-none p-1 rounded font-bold outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-transparent disabled:opacity-70 text-indigo-600"
@@ -2827,6 +3108,38 @@ export default function Presenze() {
                             </td>
                           </tr>
 
+                          {/* DIPENDENTI STANDARD RIGA 4: FERIE */}
+                          <tr className="hover:bg-gray-50/50 transition-colors">
+                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 flex items-center gap-1.5">
+                              Ferie <span className="text-[9px] font-bold bg-green-100 text-green-700 px-1 py-0.5 rounded font-mono">F</span>
+                            </td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const outOfMonth = d > daysInMonth;
+                              const giorno = rapportino.giorni[dayStr(d)];
+
+                              return (
+                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : giorno && giorno.ferie ? 'bg-amber-50/70' : ''} align-middle`}>
+                                  {!outOfMonth && giorno && (
+                                    <div className="flex justify-center items-center">
+                                      <input 
+                                        type="checkbox"
+                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isDayLockedForUser(d)}
+                                        checked={!!giorno.ferie}
+                                        onChange={e => handleCellChange(dayStr(d), 'ferie', e.target.checked)}
+                                        className="w-4 h-4 rounded text-green-600 focus:ring-green-400 cursor-pointer"
+                                      />
+                                    </div>
+                                  )}
+                                  {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                                </td>
+                              );
+                            })}
+                            <td className="p-3 font-bold text-green-700 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                              {calculateTotals(rapportino.giorni, daysInMonth).oreFerie} ore
+                            </td>
+                          </tr>
+
                           {/* DIPENDENTI STANDARD RIGA 5: CONTRASSEGNO MALATTIA */}
                           <tr className="hover:bg-gray-50/50 transition-colors">
                             <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 flex items-center gap-1.5">
@@ -2838,7 +3151,7 @@ export default function Presenze() {
                               const giorno = rapportino.giorni[dayStr(d)];
 
                               return (
-                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''} align-middle`}>
+                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : giorno && giorno.malattia ? 'bg-rose-50/70' : ''} align-middle`}>
                                   {!outOfMonth && giorno && (
                                     <div className="flex justify-center items-center">
                                       <input 
@@ -3232,8 +3545,11 @@ export default function Presenze() {
       {/* ======================================================== */}
       {/* 3. MODAL DETTAGLIO / APPROVAZIONE RAPPORTINO (PER HR/ADMIN) */}
       {/* ======================================================== */}
-      {reviewingRapportino && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 no-print overflow-y-auto">
+      {reviewingRapportino && (() => {
+        const reviewProfile = dipendenti.find(d => d.nome.trim().toLowerCase() === reviewingRapportino.dipendenteNome.trim().toLowerCase());
+        const reviewContractHours = reviewProfile?.oreContratto ?? 8;
+        return (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 no-print overflow-y-auto">
           <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-6xl xl:max-w-7xl overflow-hidden flex flex-col my-4 max-h-[92vh]">
             
             {/* Header Modal */}
@@ -3593,7 +3909,7 @@ export default function Presenze() {
                               const g = reviewingRapportino.giorni[dayStr(d)];
 
                               return (
-                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''}`}>
+                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : g && g.ore > 0 ? 'bg-emerald-50/70' : ''}`}>
                                   {!out && g && (
                                     <input 
                                       type="number"
@@ -3640,35 +3956,7 @@ export default function Presenze() {
                             </td>
                           </tr>
 
-                          {/* DIPENDENTI STANDARD RIGA 3: FERIE */}
-                          <tr>
-                            <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Ferie</td>
-                            {Array.from({ length: 31 }).map((_, i) => {
-                              const d = i + 1;
-                              const out = d > daysInMonth;
-                              const g = reviewingRapportino.giorni[dayStr(d)];
-
-                              return (
-                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''}`}>
-                                  {!out && g && (
-                                    <input 
-                                      type="number"
-                                      disabled={g.malattia}
-                                      value={g.ferie === 0 ? '' : g.ferie}
-                                      onChange={e => handleReviewCellChange(dayStr(d), 'ferie', e.target.value === '' ? 0 : Number(e.target.value))}
-                                      className="w-full text-center bg-transparent border-none p-0.5 rounded font-bold text-green-700 outline-none focus:bg-gray-50"
-                                    />
-                                  )}
-                                  {out && '-'}
-                                </td>
-                              );
-                            })}
-                            <td className="p-2 font-bold text-green-700 bg-gray-50 border-l">
-                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).oreFerie}
-                            </td>
-                          </tr>
-
-                          {/* DIPENDENTI STANDARD RIGA 4: PERMESSI */}
+                          {/* DIPENDENTI STANDARD RIGA 3: PERMESSI */}
                           <tr>
                             <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Permessi</td>
                             {Array.from({ length: 31 }).map((_, i) => {
@@ -3677,11 +3965,11 @@ export default function Presenze() {
                               const g = reviewingRapportino.giorni[dayStr(d)];
 
                               return (
-                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''}`}>
+                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : g && g.permessi > 0 ? 'bg-indigo-50/70' : ''}`}>
                                   {!out && g && (
                                     <input 
                                       type="number"
-                                      disabled={g.malattia}
+                                      disabled={g.malattia || g.ferie === (g.oreContratto ?? reviewContractHours)}
                                       value={g.permessi === 0 ? '' : g.permessi}
                                       onChange={e => handleReviewCellChange(dayStr(d), 'permessi', e.target.value === '' ? 0 : Number(e.target.value))}
                                       className="w-full text-center bg-transparent border-none p-0.5 rounded font-bold text-indigo-600 outline-none focus:bg-gray-50"
@@ -3696,6 +3984,36 @@ export default function Presenze() {
                             </td>
                           </tr>
 
+                          {/* DIPENDENTI STANDARD RIGA 4: FERIE */}
+                          <tr>
+                            <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Ferie</td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const out = d > daysInMonth;
+                              const g = reviewingRapportino.giorni[dayStr(d)];
+
+                              return (
+                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : g && g.ferie ? 'bg-amber-50/70' : ''} align-middle`}>
+                                  {!out && g && (
+                                    <div className="flex justify-center items-center">
+                                      <input 
+                                        type="checkbox"
+                                        disabled={g.malattia}
+                                        checked={!!g.ferie}
+                                        onChange={e => handleReviewCellChange(dayStr(d), 'ferie', e.target.checked)}
+                                        className="w-3.5 h-3.5 rounded text-green-500 cursor-pointer"
+                                      />
+                                    </div>
+                                  )}
+                                  {out && '-'}
+                                </td>
+                              );
+                            })}
+                            <td className="p-2 font-bold text-green-700 bg-gray-50 border-l">
+                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).oreFerie} ore
+                            </td>
+                          </tr>
+
                           {/* DIPENDENTI STANDARD RIGA 5: CONTRASSEGNO MALATTIA */}
                           <tr>
                             <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Malattia/Maternità</td>
@@ -3705,7 +4023,7 @@ export default function Presenze() {
                               const g = reviewingRapportino.giorni[dayStr(d)];
 
                               return (
-                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''} align-middle`}>
+                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : g && g.malattia ? 'bg-rose-50/70' : ''} align-middle`}>
                                   {!out && g && (
                                     <div className="flex justify-center items-center">
                                       <input 
@@ -3924,7 +4242,7 @@ export default function Presenze() {
                   onClick={handleHRSaveModifications}
                   className="px-4 py-2.5 bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold rounded-xl text-xs transition active:scale-95"
                 >
-                  Salva Modifiche Ore
+                  Salva Modifiche
                 </button>
               </div>
 
@@ -3965,7 +4283,8 @@ export default function Presenze() {
 
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* ======================================================== */}
       {/* 4. MODAL DI RICHIESTA CORREZIONE/FEEDBACK (DA HR A UTENTE)  */}
@@ -4011,438 +4330,6 @@ export default function Presenze() {
         </div>
       )}
 
-      {/* ========================================== */}
-      {/* 5. SEZIONE SEGRETA DI STAMPA PDF           */}
-      {/* ========================================== */}
-      {/* Questa sezione viene formattata specificamente per la stampa in A4 orizzontale */}
-      <div className="hidden print:block print-container w-full h-full text-[9px] font-sans p-4">
-        
-        {/* Intestazione per la stampa di un singolo dipendente (modal recensito o dipendente stesso) */}
-        {(() => {
-          // Determina quale rapportino stampare: se HR sta recensendo qualcuno stampa quello, altrimenti il proprio
-          const sheetToPrint = printTargetSheet || reviewingRapportino || (viewMode === 'compila' ? rapportino : null);
-          if (!sheetToPrint) return <div className="text-center p-8 text-gray-400">Nessun foglio ore selezionato per la stampa.</div>;
-          
-          const totals = calculateTotals(sheetToPrint.giorni, daysInMonth);
-          const trasferte = getTrasferteList(sheetToPrint.giorni, daysInMonth);
-          const isCollab = isCollaboratore(sheetToPrint.dipendenteNome, dipendenti);
-
-          return (
-            <>
-              <div className="space-y-6">
-                
-                {/* Intestazione Documento */}
-                <div className="flex justify-between items-end border-b-2 border-gray-900 pb-2">
-                  <div>
-                    <div className="text-sm font-extrabold text-gray-900">INGEGNO P & C SRL</div>
-                    <div className="text-[9px] text-gray-500">Pianificazione Presenze ed Ore Lavorate</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-sm font-extrabold text-gray-900">SCHEMA PRESENZE</div>
-                    <div className="text-[10px] font-bold text-gray-800">
-                      Mese: {MESI[selectedMonth - 1].toUpperCase()} {selectedYear}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Dettagli Anagrafici */}
-                <div className="grid grid-cols-2 gap-4 border border-gray-300 p-3 bg-gray-50 rounded">
-                  <div>
-                    <span className="font-extrabold text-gray-600">DIPENDENTE:</span>{' '}
-                    <span className="font-extrabold text-gray-900 text-[10px] uppercase">{sheetToPrint.dipendenteNome}</span>
-                  </div>
-                  <div className="text-right">
-                    <span className="font-extrabold text-gray-600">EMAIL:</span>{' '}
-                    <span className="font-semibold text-gray-900">{sheetToPrint.dipendenteEmail}</span>
-                  </div>
-                </div>
-
-                {/* Tabellone Griglia 1-31 */}
-                {isCollab ? (
-                  // Print collaborator invoice layout
-                  <div className="border border-gray-900 rounded-lg overflow-hidden max-w-xl mx-auto my-4 text-[9px] text-left bg-white">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="bg-gray-100 border-b border-gray-900 font-extrabold text-gray-900">
-                          <th className="p-2 border-r border-gray-900">VOCE / DESCRIZIONE</th>
-                          <th className="p-2 border-r border-gray-900 text-right">VALORE / PARAMETRO</th>
-                          <th className="p-2 text-right">IMPORTO (€)</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-900 font-semibold text-gray-900">
-                        <tr>
-                          <td className="p-2 border-r border-gray-900">Mese di Riferimento</td>
-                          <td className="p-2 border-r border-gray-900 text-right capitalize">{MESI[selectedMonth - 1]} {selectedYear}</td>
-                          <td className="p-2 text-right">-</td>
-                        </tr>
-                        <tr>
-                          <td className="p-2 border-r border-gray-900">Giornate Lavorate</td>
-                          <td className="p-2 border-r border-gray-900 text-right">{sheetToPrint.collaboratoreData?.giornate ?? 0} gg</td>
-                          <td className="p-2 text-right">-</td>
-                        </tr>
-                        <tr>
-                          <td className="p-2 border-r border-gray-900">Tariffa Giornaliera Contratto</td>
-                          <td className="p-2 border-r border-gray-900 text-right">{sheetToPrint.collaboratoreData?.dailyRate ?? 0} €/gg</td>
-                          <td className="p-2 text-right">-</td>
-                        </tr>
-                        <tr className="bg-gray-50 font-bold">
-                          <td className="p-2 border-r border-gray-900">Compenso Mensile (Giornate × Tariffa)</td>
-                          <td className="p-2 border-r border-gray-900 text-right">-</td>
-                          <td className="p-2 text-right">{(sheetToPrint.collaboratoreData?.compensoMensile ?? 0).toFixed(2)} €</td>
-                        </tr>
-                        <tr>
-                          <td className="p-2 border-r border-gray-900">Spese e Altri Rimborsi</td>
-                          <td className="p-2 border-r border-gray-900 text-right">-</td>
-                          <td className="p-2 text-right">{(sheetToPrint.collaboratoreData?.spese ?? 0).toFixed(2)} €</td>
-                        </tr>
-                        <tr>
-                          <td className="p-2 border-r border-gray-900">Chilometri Percorsi</td>
-                          <td className="p-2 border-r border-gray-900 text-right">{sheetToPrint.collaboratoreData?.km ?? 0} km</td>
-                          <td className="p-2 text-right">-</td>
-                        </tr>
-                        <tr>
-                          <td className="p-2 border-r border-gray-900">Tariffa Chilometrica (€/km)</td>
-                          <td className="p-2 border-r border-gray-900 text-right">{sheetToPrint.collaboratoreData?.kmRate ?? 0} €/km</td>
-                          <td className="p-2 text-right">-</td>
-                        </tr>
-                        <tr className="bg-gray-50 font-bold">
-                          <td className="p-2 border-r border-gray-900">Rimborso Chilometrico (Km × Tariffa)</td>
-                          <td className="p-2 border-r border-gray-900 text-right">-</td>
-                          <td className="p-2 text-right">{(sheetToPrint.collaboratoreData?.rimborsoKm ?? 0).toFixed(2)} €</td>
-                        </tr>
-                        <tr className="bg-gray-100 font-extrabold border-y border-gray-900 text-[10px]">
-                          <td className="p-2 border-r border-gray-900 uppercase">Totale Compenso (Imponibile)</td>
-                          <td className="p-2 border-r border-gray-900 text-right">-</td>
-                          <td className="p-2 text-right">{(sheetToPrint.collaboratoreData?.totaleCompenso ?? 0).toFixed(2)} €</td>
-                        </tr>
-                        <tr>
-                          <td className="p-2 border-r border-gray-900">Contributo Cassa INPS ({sheetToPrint.collaboratoreData?.inpsRate ?? 0}%)</td>
-                          <td className="p-2 border-r border-gray-900 text-right">-</td>
-                          <td className="p-2 text-right">{(sheetToPrint.collaboratoreData?.inps ?? 0).toFixed(2)} €</td>
-                        </tr>
-                        <tr>
-                          <td className="p-2 border-r border-gray-900">IVA ({sheetToPrint.collaboratoreData?.ivaRate ?? 0}%)</td>
-                          <td className="p-2 border-r border-gray-950 text-right">-</td>
-                          <td className="p-2 text-right">{(sheetToPrint.collaboratoreData?.iva ?? 0).toFixed(2)} €</td>
-                        </tr>
-                        <tr>
-                          <td className="p-2 border-r border-gray-900">Ritenuta d'Acconto ({sheetToPrint.collaboratoreData?.raRate ?? 0}%)</td>
-                          <td className="p-2 border-r border-gray-900 text-right">-</td>
-                          <td className="p-2 text-right text-red-655">- {(sheetToPrint.collaboratoreData?.ra ?? 0).toFixed(2)} €</td>
-                        </tr>
-                        <tr className="bg-gray-200 font-extrabold text-[10px] border-t-2 border-gray-900">
-                          <td className="p-2 border-r border-gray-900 uppercase">TOTALE DOVUTO (A PAGARE)</td>
-                          <td className="p-2 border-r border-gray-900 text-right">-</td>
-                          <td className="p-2 text-right">{(sheetToPrint.collaboratoreData?.totaleDovuto ?? 0).toFixed(2)} €</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                <table className="w-full text-center border border-gray-950 table-fixed">
-                  <thead>
-                    <tr className="bg-gray-150 border-b border-gray-955 font-bold text-gray-900 text-[8px]">
-                      <th className="p-1.5 border-r border-gray-950 text-left w-[12%] font-extrabold">RIGA/GIORNO</th>
-                      {Array.from({ length: 31 }).map((_, i) => (
-                        <th key={i} className="p-1 border-r border-gray-950 w-[2.6%] font-extrabold">{i + 1}</th>
-                      ))}
-                      <th className="p-1.5 border-l border-gray-950 w-[6%] font-extrabold">TOT</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-955 font-semibold text-gray-900">
-                    <>
-                      {/* DIPENDENTI STANDARD RIGA 1: ORE */}
-                      <tr>
-                        <td className="p-1.5 text-left bg-gray-50 border-r border-gray-955 font-extrabold">ORE</td>
-                        {Array.from({ length: 31 }).map((_, i) => {
-                          const d = i + 1;
-                          const val = sheetToPrint.giorni[dayStr(d)]?.ore;
-                          const out = d > daysInMonth;
-                          return (
-                            <td key={i} className={`p-1 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
-                              {!out ? (val || 0) : ''}
-                            </td>
-                          );
-                        })}
-                        <td className="p-1.5 font-extrabold bg-gray-100">{totals.oreOrd}</td>
-                      </tr>
-
-                      {/* DIPENDENTI STANDARD RIGA 2: STRAORDINARI */}
-                      <tr>
-                        <td className="p-1.5 text-left bg-gray-50 border-r border-gray-955 font-extrabold">STRAORDINARI</td>
-                        {Array.from({ length: 31 }).map((_, i) => {
-                          const d = i + 1;
-                          const val = sheetToPrint.giorni[dayStr(d)]?.straordinari;
-                          const out = d > daysInMonth;
-                          return (
-                            <td key={i} className={`p-1 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
-                              {!out ? (val || 0) : ''}
-                            </td>
-                          );
-                        })}
-                        <td className="p-1.5 font-extrabold bg-gray-100">{totals.oreStra}</td>
-                      </tr>
-
-                      {/* DIPENDENTI STANDARD RIGA 3: FERIE */}
-                      <tr>
-                        <td className="p-1.5 text-left bg-gray-50 border-r border-gray-955 font-extrabold">FERIE</td>
-                        {Array.from({ length: 31 }).map((_, i) => {
-                          const d = i + 1;
-                          const val = sheetToPrint.giorni[dayStr(d)]?.ferie;
-                          const out = d > daysInMonth;
-                          return (
-                            <td key={i} className={`p-1 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
-                              {!out ? (val || 0) : ''}
-                            </td>
-                          );
-                        })}
-                        <td className="p-1.5 font-extrabold bg-gray-100">{totals.oreFerie}</td>
-                      </tr>
-
-                      {/* DIPENDENTI STANDARD RIGA 4: PERMESSI */}
-                      <tr>
-                        <td className="p-1.5 text-left bg-gray-50 border-r border-gray-955 font-extrabold">PERMESSI</td>
-                        {Array.from({ length: 31 }).map((_, i) => {
-                          const d = i + 1;
-                          const val = sheetToPrint.giorni[dayStr(d)]?.permessi;
-                          const out = d > daysInMonth;
-                          return (
-                            <td key={i} className={`p-1 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
-                              {!out ? (val || 0) : ''}
-                            </td>
-                          );
-                        })}
-                        <td className="p-1.5 font-extrabold bg-gray-100">{totals.orePerm}</td>
-                      </tr>
-
-                      {/* DIPENDENTI STANDARD RIGA 5: MALATTIA */}
-                      <tr>
-                        <td className="p-1.5 text-left bg-gray-50 border-r border-gray-955 font-extrabold">MALATTIA (M)</td>
-                        {Array.from({ length: 31 }).map((_, i) => {
-                          const d = i + 1;
-                          const val = sheetToPrint.giorni[dayStr(d)]?.malattia;
-                          const out = d > daysInMonth;
-                          return (
-                            <td key={i} className={`p-1 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
-                              {!out && val ? 'M' : ''}
-                            </td>
-                          );
-                        })}
-                        <td className="p-1.5 font-extrabold bg-gray-100">{totals.ggMalattia} gg</td>
-                      </tr>
-
-                      {/* DIPENDENTI STANDARD RIGA 6: TRASFERTA */}
-                      <tr>
-                        <td className="p-1.5 text-left bg-gray-50 border-r border-gray-955 font-extrabold">TRASFERTA (T)</td>
-                        {Array.from({ length: 31 }).map((_, i) => {
-                          const d = i + 1;
-                          const val = sheetToPrint.giorni[dayStr(d)]?.trasferta;
-                          const out = d > daysInMonth;
-                          return (
-                            <td key={i} className={`p-1 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
-                              {!out && val ? 'T' : ''}
-                            </td>
-                          );
-                        })}
-                        <td className="p-1.5 font-extrabold bg-gray-100">{totals.ggTrasferta} gg</td>
-                      </tr>
-                    </>
-                  </tbody>
-                </table>
-                )}
-
-                {/* Dettagli in basso per Stampa */}
-                <div className="grid grid-cols-2 gap-6 pt-2">
-                  {/* Note */}
-                  <div className="border border-gray-400 p-2.5 rounded bg-gray-50">
-                    <div className="font-extrabold text-[8px] border-b pb-1 text-gray-800 uppercase">Avvertenze e Note:</div>
-                    <p className="text-[7.5px] mt-1 leading-normal text-gray-700">
-                      * NEL CASO DI MALATTIA O MATERNITÀ SEGNARE (M) E INDICARE NELLE NOTE IL N° DI PROTOCOLLO DEL CERTIFICATO.
-                    </p>
-                    <p className="text-[8px] font-bold mt-2 text-gray-900 whitespace-pre-line italic">
-                      Note inserite: {sheetToPrint.noteDipendente ? `"${sheetToPrint.noteDipendente}"` : 'nessuna nota.'}
-                    </p>
-                  </div>
-
-                  {/* Elenco Trasferte */}
-                  <div className="border border-gray-400 p-2.5 rounded bg-gray-50">
-                    <div className="font-extrabold text-[8px] border-b pb-1 text-gray-800 uppercase">Dettaglio Località Trasferte (T):</div>
-                    {trasferte.length === 0 ? (
-                      <p className="text-[7.5px] mt-1 italic text-gray-500">Nessuna trasferta effettuata nel mese.</p>
-                    ) : (
-                      <div className="grid grid-cols-2 gap-x-3 gap-y-1 mt-1 text-[7.5px]">
-                        {trasferte.map(tr => (
-                          <div key={tr.giorno}>
-                            <span className="font-bold">Giorno {tr.giorno}:</span> {tr.luogo || 'Località non specificata'}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Firme per Accettazione */}
-                <div className="grid grid-cols-2 gap-12 pt-12 text-[10px]">
-                  <div className="text-center border-t border-gray-900 pt-1.5 max-w-[200px] mx-auto">
-                    <div className="font-bold">Firma del Dipendente</div>
-                    <div className="text-[8px] text-gray-400 mt-0.5">({sheetToPrint.dipendenteNome})</div>
-                  </div>
-                  <div className="text-center border-t border-gray-900 pt-1.5 max-w-[200px] mx-auto">
-                    <div className="font-bold">Firma Direzione / HR</div>
-                    <div className="text-[8px] text-gray-400 mt-0.5">
-                      {sheetToPrint.stato === 'Approvato' ? `Approvato da: ${sheetToPrint.approvedBy}` : '(firma per approvazione)'}
-                    </div>
-                  </div>
-                </div>
-
-              </div>
-
-              {/* Se dipendente standard, stampiamo la seconda pagina della Nota Spese */}
-              {!isCollab && (
-                <div className="break-before-page pt-8 space-y-6">
-                  {/* Intestazione Nota Spese */}
-                  <div className="flex justify-between items-end border-b-2 border-gray-900 pb-2">
-                    <div>
-                      <div className="text-sm font-extrabold text-gray-900">INGEGNO P & C SRL</div>
-                      <div className="text-[9px] text-gray-500">Pianificazione Presenze ed Ore Lavorate</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-sm font-extrabold text-gray-950">DICHIARAZIONE SPESE TRASFERTA</div>
-                      <div className="text-[10px] font-bold text-gray-800">
-                        Mese: {MESI[selectedMonth - 1].toUpperCase()} {selectedYear}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="text-xs font-semibold text-gray-950 leading-normal">
-                    DICHIARO di aver sostenuto le seguenti spese per trasferta nel periodo dal 01/{String(selectedMonth).padStart(2, '0')}/{selectedYear} al {daysInMonth}/{String(selectedMonth).padStart(2, '0')}/{selectedYear} per conto della società INGEGNO P&C S.R.L.
-                  </div>
-
-                  {/* Tabella Riepilogo Spese */}
-                  <table className="w-full text-left border border-gray-900 border-collapse text-[10px]">
-                    <thead>
-                      <tr className="bg-gray-100 border-b border-gray-900 font-bold text-gray-900 uppercase">
-                        <th className="p-2 border-r border-gray-900">Tipologia di spesa</th>
-                        <th className="p-2 border-r border-gray-900 text-right w-36">Importo Euro</th>
-                        <th className="p-2">Note</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-900 font-semibold text-gray-800">
-                      <tr>
-                        <td className="p-2 border-r border-gray-900">Spese di viaggio (aereo, nave, treno)</td>
-                        <td className="p-2 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseViaggio || 0).toFixed(2)} €</td>
-                        <td className="p-2">-</td>
-                      </tr>
-                      <tr>
-                        <td className="p-2 border-r border-gray-900">Taxi / autobus / noleggio auto</td>
-                        <td className="p-2 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseTaxiBus || 0).toFixed(2)} €</td>
-                        <td className="p-2">-</td>
-                      </tr>
-                      <tr>
-                        <td className="p-2 border-r border-gray-900">Parcheggi</td>
-                        <td className="p-2 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseParcheggi || 0).toFixed(2)} €</td>
-                        <td className="p-2">-</td>
-                      </tr>
-                      <tr>
-                        <td className="p-2 border-r border-gray-900">Vitto</td>
-                        <td className="p-2 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseVitto || 0).toFixed(2)} €</td>
-                        <td className="p-2">-</td>
-                      </tr>
-                      <tr>
-                        <td className="p-2 border-r border-gray-900">Alloggio</td>
-                        <td className="p-2 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseAlloggio || 0).toFixed(2)} €</td>
-                        <td className="p-2">-</td>
-                      </tr>
-                      <tr>
-                        <td className="p-2 border-r border-gray-900">Pedaggi autostradali</td>
-                        <td className="p-2 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.spesePedaggi || 0).toFixed(2)} €</td>
-                        <td className="p-2">-</td>
-                      </tr>
-                      <tr>
-                        <td className="p-2 border-r border-gray-900">Altro (specificare)</td>
-                        <td className="p-2 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseAltro || 0).toFixed(2)} €</td>
-                        <td className="p-2">{sheetToPrint.rimborsoSpeseData?.altroSpecificare || '-'}</td>
-                      </tr>
-                      <tr className="bg-gray-50 border-t-2 border-gray-900">
-                        <td className="p-2 border-r border-gray-900">
-                          Rimborso chilometrico per l'utilizzo del proprio automezzo
-                          <div className="text-[9px] text-gray-500 font-bold mt-0.5">
-                            Marca: {sheetToPrint.rimborsoSpeseData?.marcaAutomezzo || '_________________'} | 
-                            Modello: {sheetToPrint.rimborsoSpeseData?.modelloAutomezzo || '_________________'}
-                          </div>
-                        </td>
-                        <td className="p-2 border-r border-gray-900 text-right bg-gray-150 font-bold">
-                          {Object.values(sheetToPrint.giorni).reduce((sum, g) => sum + (g.kmTrasferta || 0), 0)} Km totali
-                        </td>
-                        <td className="p-2 text-gray-500 italic text-[9px] align-middle">
-                          (Il rimborso km viene calcolato esternamente dalla consulente del lavoro)
-                        </td>
-                      </tr>
-                      <tr className="bg-gray-100 font-bold border-t-2 border-gray-900 text-xs">
-                        <td className="p-2 border-r border-gray-900 uppercase">Totale altre spese sostenute (esclusi Km)</td>
-                        <td className="p-2 border-r border-gray-900 text-right">
-                          {((sheetToPrint.rimborsoSpeseData?.speseViaggio || 0) +
-                            (sheetToPrint.rimborsoSpeseData?.speseTaxiBus || 0) +
-                            (sheetToPrint.rimborsoSpeseData?.speseParcheggi || 0) +
-                            (sheetToPrint.rimborsoSpeseData?.speseVitto || 0) +
-                            (sheetToPrint.rimborsoSpeseData?.speseAlloggio || 0) +
-                            (sheetToPrint.rimborsoSpeseData?.spesePedaggi || 0) +
-                            (sheetToPrint.rimborsoSpeseData?.speseAltro || 0)).toFixed(2)} €
-                        </td>
-                        <td className="p-2 text-[9px] font-medium text-gray-500 italic">Si allegano i relativi documenti di spesa.</td>
-                      </tr>
-                    </tbody>
-                  </table>
-
-                  {/* DETTAGLIO DELLE TRASFERTE EFFETTUATE */}
-                  <div className="space-y-2">
-                    <div className="text-[10px] font-extrabold uppercase border-b border-gray-300 pb-1">DETTAGLIO DELLE TRASFERTE EFFETTUATE</div>
-                    {trasferte.length === 0 ? (
-                      <p className="text-xs text-gray-400 italic">Nessun giorno di trasferta segnato.</p>
-                    ) : (
-                      <table className="w-full text-left border border-gray-900 border-collapse text-[9px]">
-                        <thead>
-                          <tr className="bg-gray-100 border-b border-gray-900 font-bold text-gray-900 uppercase">
-                            <th className="p-2 border-r border-gray-900 w-24">Data</th>
-                            <th className="p-2 border-r border-gray-900">Destinazione</th>
-                            <th className="p-2 border-r border-gray-900">Itinerario della trasferta TRATTA A/R</th>
-                            <th className="p-2 text-right w-24">Km Percorsi</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-900 font-semibold">
-                          {trasferte.map(tr => {
-                            const gPresenza = sheetToPrint.giorni[dayStr(tr.giorno)];
-                            return (
-                              <tr key={tr.giorno}>
-                                <td className="p-2 border-r border-gray-900">{String(tr.giorno).padStart(2, '0')}/{String(selectedMonth).padStart(2, '0')}/{selectedYear}</td>
-                                <td className="p-2 border-r border-gray-900">{tr.luogo || '-'}</td>
-                                <td className="p-2 border-r border-gray-900">{gPresenza?.itinerarioTrasferta || '-'}</td>
-                                <td className="p-2 text-right">{gPresenza?.kmTrasferta || 0} km</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    )}
-                  </div>
-
-                  <div className="flex justify-between pt-10 text-[10px]">
-                    <div className="text-center max-w-[220px]">
-                      <div className="border-t border-gray-950 pt-2 font-bold px-8">Firma del dichiarante</div>
-                      <div className="text-[8px] text-gray-500 mt-1">({sheetToPrint.dipendenteNome})</div>
-                    </div>
-                    <div className="text-center max-w-[220px]">
-                      <div className="border-t border-gray-950 pt-2 font-bold px-8">Verificato da (HR/Direzione)</div>
-                      <div className="text-[8px] text-gray-500 mt-1">{sheetToPrint.stato === 'Approvato' ? `Approvato da: ${sheetToPrint.approvedBy}` : '______________________'}</div>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </>
-          );
-        })()}
-      </div>
-      
       {toast && (
         <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[99999] animate-in fade-in slide-in-from-top-4 duration-300">
           <div className={`flex items-center gap-3 px-6 py-3.5 rounded-2xl shadow-2xl border font-bold text-sm ${
@@ -4472,6 +4359,443 @@ export default function Presenze() {
         onConfirm={confirmConfig.onConfirm}
         onCancel={() => setConfirmConfig(prev => ({ ...prev, isOpen: false }))}
       />
+
+      </div> {/* fine no-print wrapper */}
+
+      <div className="hidden print:block print-container w-full h-full text-[8px] font-sans p-2">
+        {(() => {
+          const sheets = getSheetsToPrint();
+          if (sheets.length === 0) {
+            return <div className="text-center p-8 text-gray-400">Nessun foglio presenze da stampare per questo mese.</div>;
+          }
+
+          return sheets.map((sheetToPrint) => {
+            const totals = calculateTotals(sheetToPrint.giorni, daysInMonth);
+            const trasferte = getTrasferteList(sheetToPrint.giorni, daysInMonth);
+            const isCollab = isCollaboratore(sheetToPrint.dipendenteNome, dipendenti);
+            const dailyNotes = getDailyNotes(sheetToPrint.giorni, daysInMonth);
+
+            return (
+              <div key={sheetToPrint.id} className="sheet-break space-y-3">
+                
+                {/* Intestazione Documento */}
+                <div className="flex justify-between items-end border-b border-gray-900 pb-1">
+                  <div className="flex items-center gap-2 pb-0.5">
+                    <img src="/Logo.png" alt="Logo Ingegno" className="h-6 w-auto object-contain" />
+                    <div className="border-l border-gray-300 pl-2 py-0.5">
+                      <div className="text-[7.5px] text-gray-500 font-bold leading-none">Presenze ed Ore Lavorate</div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs font-extrabold text-gray-900">SCHEMA PRESENZE</div>
+                    <div className="text-[8.5px] font-bold text-gray-800">
+                      Mese: {MESI[selectedMonth - 1].toUpperCase()} {selectedYear}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Dettagli Anagrafici */}
+                <div className="grid grid-cols-2 gap-2 border border-gray-300 p-2 bg-gray-50 rounded text-[8px]">
+                  <div>
+                    <span className="font-extrabold text-gray-600">DIPENDENTE:</span>{' '}
+                    <span className="font-extrabold text-gray-900 uppercase">{sheetToPrint.dipendenteNome}</span>
+                  </div>
+                  <div className="text-right">
+                    <span className="font-extrabold text-gray-600">EMAIL:</span>{' '}
+                    <span className="font-semibold text-gray-900">{sheetToPrint.dipendenteEmail}</span>
+                  </div>
+                </div>
+
+                {/* Tabellone Griglia 1-31 */}
+                {isCollab ? (
+                  <>
+                    {/* Print collaborator invoice layout */}
+                    <div className="border border-gray-900 rounded-lg overflow-hidden max-w-xl mx-auto my-2 text-[7.5px] text-left bg-white">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-gray-100 border-b border-gray-900 font-extrabold text-gray-900">
+                            <th className="p-1 border-r border-gray-900">VOCE / DESCRIZIONE</th>
+                            <th className="p-1 border-r border-gray-900 text-right">VALORE / PARAMETRO</th>
+                            <th className="p-1 text-right">IMPORTO (€)</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-900 font-semibold text-gray-900">
+                          <tr>
+                            <td className="p-1 border-r border-gray-900">Mese di Riferimento</td>
+                            <td className="p-1 border-r border-gray-900 text-right capitalize">{MESI[selectedMonth - 1]} {selectedYear}</td>
+                            <td className="p-1 text-right">-</td>
+                          </tr>
+                          <tr>
+                            <td className="p-1 border-r border-gray-900">Giornate Lavorate</td>
+                            <td className="p-1 border-r border-gray-900 text-right">{sheetToPrint.collaboratoreData?.giornate ?? 0} gg</td>
+                            <td className="p-1 text-right">-</td>
+                          </tr>
+                          <tr>
+                            <td className="p-1 border-r border-gray-900">Tariffa Giornaliera Contratto</td>
+                            <td className="p-1 border-r border-gray-900 text-right">{sheetToPrint.collaboratoreData?.dailyRate ?? 0} €/gg</td>
+                            <td className="p-1 text-right">-</td>
+                          </tr>
+                          <tr className="bg-gray-50 font-bold">
+                            <td className="p-1 border-r border-gray-900">Compenso Mensile (Giornate × Tariffa)</td>
+                            <td className="p-1 border-r border-gray-900 text-right">-</td>
+                            <td className="p-1 text-right">{(sheetToPrint.collaboratoreData?.compensoMensile ?? 0).toFixed(2)} €</td>
+                          </tr>
+                          <tr>
+                            <td className="p-1 border-r border-gray-900">Spese e Altri Rimborsi</td>
+                            <td className="p-1 border-r border-gray-900 text-right">-</td>
+                            <td className="p-1 text-right">{(sheetToPrint.collaboratoreData?.spese ?? 0).toFixed(2)} €</td>
+                          </tr>
+                          <tr>
+                            <td className="p-1 border-r border-gray-900">Chilometri Percorsi</td>
+                            <td className="p-1 border-r border-gray-900 text-right">{sheetToPrint.collaboratoreData?.km ?? 0} km</td>
+                            <td className="p-1 text-right">-</td>
+                          </tr>
+                          <tr>
+                            <td className="p-1 border-r border-gray-900">Tariffa Chilometrica (€/km)</td>
+                            <td className="p-1 border-r border-gray-900 text-right">{sheetToPrint.collaboratoreData?.kmRate ?? 0} €/km</td>
+                            <td className="p-1 text-right">-</td>
+                          </tr>
+                          <tr className="bg-gray-50 font-bold">
+                            <td className="p-1 border-r border-gray-900">Rimborso Chilometrico (Km × Tariffa)</td>
+                            <td className="p-1 border-r border-gray-900 text-right">-</td>
+                            <td className="p-1 text-right">{(sheetToPrint.collaboratoreData?.rimborsoKm ?? 0).toFixed(2)} €</td>
+                          </tr>
+                          <tr className="bg-gray-100 font-extrabold border-y border-gray-900 text-[8px]">
+                            <td className="p-1 border-r border-gray-900 uppercase">Totale Compenso (Imponibile)</td>
+                            <td className="p-1 border-r border-gray-900 text-right">-</td>
+                            <td className="p-1 text-right">{(sheetToPrint.collaboratoreData?.totaleCompenso ?? 0).toFixed(2)} €</td>
+                          </tr>
+                          <tr>
+                            <td className="p-1 border-r border-gray-900">Contributo Cassa INPS ({sheetToPrint.collaboratoreData?.inpsRate ?? 0}%)</td>
+                            <td className="p-1 border-r border-gray-900 text-right">-</td>
+                            <td className="p-1 text-right">{(sheetToPrint.collaboratoreData?.inps ?? 0).toFixed(2)} €</td>
+                          </tr>
+                          <tr>
+                            <td className="p-1 border-r border-gray-900">IVA ({sheetToPrint.collaboratoreData?.ivaRate ?? 0}%)</td>
+                            <td className="p-1 border-r border-gray-950 text-right">-</td>
+                            <td className="p-1 text-right">{(sheetToPrint.collaboratoreData?.iva ?? 0).toFixed(2)} €</td>
+                          </tr>
+                          <tr>
+                            <td className="p-1 border-r border-gray-900">Ritenuta d'Acconto ({sheetToPrint.collaboratoreData?.raRate ?? 0}%)</td>
+                            <td className="p-1 border-r border-gray-900 text-right">-</td>
+                            <td className="p-1 text-right text-red-655">- {(sheetToPrint.collaboratoreData?.ra ?? 0).toFixed(2)} €</td>
+                          </tr>
+                          <tr className="bg-gray-200 font-extrabold text-[8px] border-t-2 border-gray-900">
+                            <td className="p-1 border-r border-gray-900 uppercase">TOTALE DOVUTO (A PAGARE)</td>
+                            <td className="p-1 border-r border-gray-900 text-right">-</td>
+                            <td className="p-1 text-right">{(sheetToPrint.collaboratoreData?.totaleDovuto ?? 0).toFixed(2)} €</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="mt-2 max-w-xl mx-auto border border-gray-400 p-2 rounded bg-gray-50 text-left text-[7px]">
+                      <div className="font-extrabold text-[7.5px] border-b pb-1 text-gray-800 uppercase">Note Collaboratore:</div>
+                      {sheetToPrint.noteDipendente ? (
+                        <p className="mt-1 text-gray-800 whitespace-pre-line italic leading-normal">
+                          "{sheetToPrint.noteDipendente}"
+                        </p>
+                      ) : (
+                        <p className="mt-1 italic text-gray-500">
+                          Nessuna nota inserita.
+                        </p>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <table className="w-full text-center border border-gray-955 table-fixed text-[7px]">
+                      <thead>
+                        <tr className="bg-gray-150 border-b border-gray-955 font-bold text-gray-900 text-[7px]">
+                          <th className="p-1 border-r border-gray-905 text-left w-[12%] font-extrabold">RIGA/GIORNO</th>
+                          {Array.from({ length: 31 }).map((_, i) => (
+                            <th key={i} className="p-0.5 border-r border-gray-905 w-[2.6%] font-extrabold">{i + 1}</th>
+                          ))}
+                          <th className="p-1 border-l border-gray-905 w-[6%] font-extrabold">TOT</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-955 font-semibold text-gray-900">
+                        <tr>
+                          <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">ORE</td>
+                          {Array.from({ length: 31 }).map((_, i) => {
+                            const d = i + 1;
+                            const val = sheetToPrint.giorni[dayStr(d)]?.ore;
+                            const out = d > daysInMonth;
+                            const hasVal = !out && val && val > 0;
+                            return (
+                              <td 
+                                key={i} 
+                                className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}
+                                style={hasVal ? { backgroundColor: '#e6f9f0' } : undefined}
+                              >
+                                {!out ? (val || 0) : ''}
+                              </td>
+                            );
+                          })}
+                          <td className="p-1 font-extrabold bg-gray-100">{totals.oreOrd}</td>
+                        </tr>
+                        <tr>
+                          <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">STRAORDINARI</td>
+                          {Array.from({ length: 31 }).map((_, i) => {
+                            const d = i + 1;
+                            const val = sheetToPrint.giorni[dayStr(d)]?.straordinari;
+                            const out = d > daysInMonth;
+                            return (
+                              <td key={i} className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
+                                {!out ? (val || 0) : ''}
+                              </td>
+                            );
+                          })}
+                          <td className="p-1 font-extrabold bg-gray-100">{totals.oreStra}</td>
+                        </tr>
+                        <tr>
+                          <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">PERMESSI</td>
+                          {Array.from({ length: 31 }).map((_, i) => {
+                            const d = i + 1;
+                            const val = sheetToPrint.giorni[dayStr(d)]?.permessi;
+                            const out = d > daysInMonth;
+                            const hasVal = !out && val && val > 0;
+                            return (
+                              <td 
+                                key={i} 
+                                className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}
+                                style={hasVal ? { backgroundColor: '#e0e7ff' } : undefined}
+                              >
+                                {!out ? (val || 0) : ''}
+                              </td>
+                            );
+                          })}
+                          <td className="p-1 font-extrabold bg-gray-100">{totals.orePerm}</td>
+                        </tr>
+                        <tr>
+                          <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">FERIE (F)</td>
+                          {Array.from({ length: 31 }).map((_, i) => {
+                            const d = i + 1;
+                            const val = sheetToPrint.giorni[dayStr(d)]?.ferie;
+                            const out = d > daysInMonth;
+                            const hasVal = !out && val;
+                            return (
+                              <td 
+                                key={i} 
+                                className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}
+                                style={hasVal ? { backgroundColor: '#fef3c7' } : undefined}
+                              >
+                                {!out && val ? 'F' : ''}
+                              </td>
+                            );
+                          })}
+                          <td className="p-1 font-extrabold bg-gray-100">{totals.oreFerie} ore</td>
+                        </tr>
+                        <tr>
+                          <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">MALATTIA (M)</td>
+                          {Array.from({ length: 31 }).map((_, i) => {
+                            const d = i + 1;
+                            const val = sheetToPrint.giorni[dayStr(d)]?.malattia;
+                            const out = d > daysInMonth;
+                            const hasVal = !out && val;
+                            return (
+                              <td 
+                                key={i} 
+                                className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}
+                                style={hasVal ? { backgroundColor: '#ffe4e6' } : undefined}
+                              >
+                                {!out && val ? 'M' : ''}
+                              </td>
+                            );
+                          })}
+                          <td className="p-1 font-extrabold bg-gray-100">{totals.ggMalattia} gg</td>
+                        </tr>
+                        <tr>
+                          <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">TRASFERTA (T)</td>
+                          {Array.from({ length: 31 }).map((_, i) => {
+                            const d = i + 1;
+                            const val = sheetToPrint.giorni[dayStr(d)]?.trasferta;
+                            const out = d > daysInMonth;
+                            return (
+                              <td key={i} className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
+                                {!out && val ? 'T' : ''}
+                              </td>
+                            );
+                          })}
+                          <td className="p-1 font-extrabold bg-gray-100">{totals.ggTrasferta} gg</td>
+                        </tr>
+                      </tbody>
+                    </table>
+
+                    {/* Dettagli in basso per Stampa */}
+                    <div className="grid grid-cols-3 gap-3 pt-1.5 text-left text-[7px]">
+                      {/* Note */}
+                      <div className="border border-gray-400 p-2 rounded bg-gray-50">
+                        <div className="font-extrabold text-[7.5px] border-b pb-1 text-gray-800 uppercase">Note Mensili:</div>
+                        {sheetToPrint.noteDipendente ? (
+                          <p className="mt-1 text-gray-800 whitespace-pre-line italic leading-normal">
+                            "{sheetToPrint.noteDipendente}"
+                          </p>
+                        ) : (
+                          <p className="mt-1 italic text-gray-500">
+                            Nessuna nota mensile inserita.
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Elenco Trasferte */}
+                      <div className="border border-gray-400 p-2 rounded bg-gray-50">
+                        <div className="font-extrabold text-[7.5px] border-b pb-1 text-gray-800 uppercase">Dettaglio Località Trasferte (T):</div>
+                        {trasferte.length === 0 ? (
+                          <p className="text-[6.5px] mt-1 italic text-gray-500">Nessuna trasferta effettuata nel mese.</p>
+                        ) : (
+                          <div className="grid grid-cols-1 gap-0.5 mt-1 text-[6.5px]">
+                            {trasferte.map(tr => (
+                              <div key={tr.giorno}>
+                                <span className="font-bold">Giorno {tr.giorno}:</span> {tr.luogo || 'Località non specificata'}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Giustificativi e Note Giornaliere */}
+                      <div className="border border-gray-400 p-2 rounded bg-gray-50">
+                        <div className="font-extrabold text-[7.5px] border-b pb-1 text-gray-800 uppercase">Giustificativi e Note Giornaliere:</div>
+                        {dailyNotes.length === 0 ? (
+                          <p className="text-[6.5px] mt-1 italic text-gray-500">Nessuna nota giornaliera inserita.</p>
+                        ) : (
+                          <div className="space-y-0.5 mt-1 text-[6.5px]">
+                            {dailyNotes.map(n => (
+                              <div key={n.giorno}>
+                                <span className="font-bold">Giorno {n.giorno}:</span> {n.note}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* Se dipendente standard, stampiamo la Nota Spese sotto la tabella nella stessa pagina */}
+                {!isCollab && (
+                  <div className="border-t border-dashed border-gray-400 pt-3 mt-3 space-y-2">
+                    <div className="text-[10px] font-extrabold uppercase border-b border-gray-900 pb-1 text-left">DICHIARAZIONE SPESE TRASFERTA E RIMBORSI</div>
+
+                    <div className="text-[7.5px] font-semibold text-gray-955 leading-tight text-left">
+                      DICHIARO di aver sostenuto le seguenti spese per trasferta nel periodo dal 01/{String(selectedMonth).padStart(2, '0')}/{selectedYear} al {daysInMonth}/{String(selectedMonth).padStart(2, '0')}/{selectedYear} per conto della società INGEGNO P&C S.R.L.
+                    </div>
+
+                    {/* Tabella Riepilogo Spese */}
+                    <table className="w-full text-left border border-gray-900 border-collapse text-[7.5px]">
+                      <thead>
+                        <tr className="bg-gray-100 border-b border-gray-900 font-bold text-gray-900 uppercase">
+                          <th className="p-1 border-r border-gray-900">Tipologia di spesa</th>
+                          <th className="p-1 border-r border-gray-900 text-right w-36">Importo Euro</th>
+                          <th className="p-1">Note</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-900 font-semibold text-gray-800">
+                        <tr>
+                          <td className="p-1 border-r border-gray-900">Spese di viaggio (aereo, nave, treno)</td>
+                          <td className="p-1 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseViaggio || 0).toFixed(2)} €</td>
+                          <td className="p-1">-</td>
+                        </tr>
+                        <tr>
+                          <td className="p-1 border-r border-gray-900">Taxi / autobus / noleggio auto</td>
+                          <td className="p-1 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseTaxiBus || 0).toFixed(2)} €</td>
+                          <td className="p-1">-</td>
+                        </tr>
+                        <tr>
+                          <td className="p-1 border-r border-gray-900">Parcheggi</td>
+                          <td className="p-1 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseParcheggi || 0).toFixed(2)} €</td>
+                          <td className="p-1">-</td>
+                        </tr>
+                        <tr>
+                          <td className="p-1 border-r border-gray-900">Vitto</td>
+                          <td className="p-1 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseVitto || 0).toFixed(2)} €</td>
+                          <td className="p-1">-</td>
+                        </tr>
+                        <tr>
+                          <td className="p-1 border-r border-gray-900">Alloggio</td>
+                          <td className="p-1 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseAlloggio || 0).toFixed(2)} €</td>
+                          <td className="p-1">-</td>
+                        </tr>
+                        <tr>
+                          <td className="p-1 border-r border-gray-900">Pedaggi autostradali</td>
+                          <td className="p-1 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.spesePedaggi || 0).toFixed(2)} €</td>
+                          <td className="p-1">-</td>
+                        </tr>
+                        <tr>
+                          <td className="p-1 border-r border-gray-900">Altro (specificare)</td>
+                          <td className="p-1 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseAltro || 0).toFixed(2)} €</td>
+                          <td className="p-1">{sheetToPrint.rimborsoSpeseData?.altroSpecificare || '-'}</td>
+                        </tr>
+                        <tr className="bg-gray-50 border-t-2 border-gray-900">
+                          <td className="p-1 border-r border-gray-900">
+                            Rimborso chilometrico per l'utilizzo del proprio automezzo
+                            <div className="text-[7.5px] text-gray-500 font-bold mt-0.5">
+                              Marca: {sheetToPrint.rimborsoSpeseData?.marcaAutomezzo || '_________________'} | 
+                              Modello: {sheetToPrint.rimborsoSpeseData?.modelloAutomezzo || '_________________'}
+                            </div>
+                          </td>
+                          <td className="p-1 border-r border-gray-900 text-right bg-gray-150 font-bold">
+                            {Object.values(sheetToPrint.giorni).reduce((sum, g) => sum + (g.kmTrasferta || 0), 0)} Km totali
+                          </td>
+                          <td className="p-1 text-gray-500 italic text-[7.5px] align-middle">
+                            -
+                          </td>
+                        </tr>
+                        <tr className="bg-gray-100 font-bold border-t-2 border-gray-900 text-[8px]">
+                          <td className="p-1 border-r border-gray-900 uppercase">Totale altre spese sostenute (esclusi Km)</td>
+                          <td className="p-1 border-r border-gray-900 text-right">
+                            {((sheetToPrint.rimborsoSpeseData?.speseViaggio || 0) +
+                              (sheetToPrint.rimborsoSpeseData?.speseTaxiBus || 0) +
+                              (sheetToPrint.rimborsoSpeseData?.speseParcheggi || 0) +
+                              (sheetToPrint.rimborsoSpeseData?.speseVitto || 0) +
+                              (sheetToPrint.rimborsoSpeseData?.speseAlloggio || 0) +
+                              (sheetToPrint.rimborsoSpeseData?.spesePedaggi || 0) +
+                              (sheetToPrint.rimborsoSpeseData?.speseAltro || 0)).toFixed(2)} €
+                          </td>
+                          <td className="p-1 text-[7.5px] font-medium text-gray-500 italic">Si allegano i relativi documenti di spesa.</td>
+                        </tr>
+                      </tbody>
+                    </table>
+
+                    {/* DETTAGLIO DELLE TRASFERTE EFFETTUATE */}
+                    <div className="space-y-1.5 text-left">
+                      <div className="text-[8px] font-extrabold uppercase border-b border-gray-300 pb-0.5">DETTAGLIO DELLE TRASFERTE EFFETTUATE</div>
+                      {trasferte.length === 0 ? (
+                        <p className="text-[7px] text-gray-400 italic">Nessun giorno di trasferta segnato.</p>
+                      ) : (
+                        <table className="w-full text-left border border-gray-900 border-collapse text-[7px]">
+                          <thead>
+                            <tr className="bg-gray-100 border-b border-gray-900 font-bold text-gray-900 uppercase">
+                              <th className="p-1 border-r border-gray-900 w-24">Data</th>
+                              <th className="p-1 border-r border-gray-900">Destinazione</th>
+                              <th className="p-1 border-r border-gray-900">Itinerario della trasferta TRATTA A/R</th>
+                              <th className="p-1 text-right w-24">Km Percorsi</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-900 font-semibold">
+                            {trasferte.map(tr => {
+                              const gPresenza = sheetToPrint.giorni[dayStr(tr.giorno)];
+                              return (
+                                <tr key={tr.giorno}>
+                                  <td className="p-1 border-r border-gray-900">{String(tr.giorno).padStart(2, '0')}/{String(selectedMonth).padStart(2, '0')}/{selectedYear}</td>
+                                  <td className="p-1 border-r border-gray-900">{tr.luogo || '-'}</td>
+                                  <td className="p-1 border-r border-gray-900">{gPresenza?.itinerarioTrasferta || '-'}</td>
+                                  <td className="p-1 text-right">{gPresenza?.kmTrasferta || 0} km</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          });
+        })()}
+      </div>
     </div>
   );
 }

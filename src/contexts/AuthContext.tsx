@@ -14,6 +14,7 @@ export interface Dipendente {
   inpsRate?: number;
   ivaRate?: number;
   raRate?: number;
+  oreContratto?: number;
 }
 
 export interface Commessa {
@@ -106,6 +107,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         inpsRate: doc.data().inpsRate,
         ivaRate: doc.data().ivaRate,
         raRate: doc.data().raRate,
+        oreContratto: doc.data().oreContratto,
       }));
       setDipendenti(deps.sort((a, b) => a.nome.localeCompare(b.nome)));
 
