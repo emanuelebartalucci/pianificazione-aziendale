@@ -46,3 +46,6 @@ dist-ssr
 .parcel-cache/
 .eslintcache
 
+# Cloudflare Wrangler
+.wrangler/
+.wrangler
