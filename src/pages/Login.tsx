@@ -29,17 +29,33 @@ export default function Login() {
           setLoading(false);
           return;
         }
-        // Verifica se l'email esiste nell'anagrafica
-        const q = query(collection(db, "dipendenti"), where("email", "==", email.toLowerCase()));
-        const querySnapshot = await getDocs(q);
+        // 1. Registra l'utente su Firebase Auth per autenticarlo temporaneamente
+        const userCredential = await createUserWithEmailAndPassword(auth, email.trim(), password);
         
-        if (querySnapshot.empty) {
-          setError("La tua email non risulta nell'anagrafica aziendale. Chiedi a un amministratore di inserirla.");
+        try {
+          // 2. Ora che è autenticato, ha i permessi per leggere la collezione "dipendenti"
+          const q = query(collection(db, "dipendenti"), where("email", "==", email.trim().toLowerCase()));
+          const querySnapshot = await getDocs(q);
+          
+          if (querySnapshot.empty) {
+            // 3. Se non è presente nell'anagrafica, elimina l'account appena creato
+            await userCredential.user.delete();
+            setError("La tua email non risulta nell'anagrafica aziendale. Chiedi a un amministratore di inserirla.");
+            setLoading(false);
+            return;
+          }
+        } catch (dbErr) {
+          // In caso di errore durante la query, cancella comunque l'account per sicurezza
+          console.error("Errore verifica anagrafica:", dbErr);
+          try {
+            await userCredential.user.delete();
+          } catch (deleteErr) {
+            console.error("Errore cancellazione account temporaneo:", deleteErr);
+          }
+          setError("Errore durante la verifica dei permessi. Contatta l'amministratore.");
           setLoading(false);
           return;
         }
-        
-        await createUserWithEmailAndPassword(auth, email, password);
       }
     } catch (err: any) {
       if (isLoginMode) {
