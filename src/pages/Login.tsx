@@ -45,7 +45,16 @@ export default function Login() {
       if (isLoginMode) {
         setError("Credenziali non valide. Riprova.");
       } else {
-        setError("Errore durante la registrazione. Forse l'email è già in uso?");
+        console.error("Errore di registrazione:", err);
+        if (err.code === 'auth/weak-password') {
+          setError("La password è troppo corta. Deve essere di almeno 6 caratteri.");
+        } else if (err.code === 'auth/email-already-in-use') {
+          setError("Questo indirizzo email è già registrato.");
+        } else if (err.code === 'auth/invalid-email') {
+          setError("L'indirizzo email inserito non è valido.");
+        } else {
+          setError(`Errore durante la registrazione: ${err.message || err}`);
+        }
       }
     } finally {
       setLoading(false);
