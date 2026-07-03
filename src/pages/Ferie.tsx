@@ -31,7 +31,36 @@ interface RichiestaFerie {
 export default function Ferie() {
   const { isHR, isAdmin, myAssociatedName, dipendenti } = useAuth();
   
+  const [viewMode, setViewMode] = useState<'calendario' | 'tabella'>('calendario');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
+
+  const isItalianHoliday = (dateStr: string) => {
+    const h = [
+      '-01-01', // Capodanno
+      '-01-06', // Epifania
+      '-04-25', // Liberazione
+      '-05-01', // Lavoro
+      '-06-02', // Repubblica
+      '-08-15', // Ferragosto
+      '-11-01', // Tutti i santi
+      '-12-08', // Immacolata
+      '-12-25', // Natale
+      '-12-26', // S. Stefano
+    ];
+    const monthDay = dateStr.substring(5);
+    if (h.includes('-' + monthDay)) return true;
+
+    const pasquettaDates = [
+      '2024-04-01',
+      '2025-04-21',
+      '2026-04-06',
+      '2027-03-29',
+      '2028-04-17',
+      '2029-04-02',
+      '2030-04-22'
+    ];
+    return pasquettaDates.includes(dateStr);
+  };
 
   const showToast = (message: string, type: 'success' | 'warning' | 'error' = 'success') => {
     setToast({ message, type });
@@ -198,7 +227,7 @@ export default function Ferie() {
       const todayStr = new Date().toLocaleDateString('sv-SE'); // Formato YYYY-MM-DD
       return richieste.filter(r => {
         const dateLimit = r.dataFine || r.dataInizio || r.data || '';
-        return (!dateLimit || dateLimit >= todayStr) && r.note !== 'Chiusure Aziendali';
+        return (!dateLimit || dateLimit >= todayStr) && r.note !== 'Chiusure Aziendali' && r.stato === 'In attesa';
       });
     }
     // For regular users, show only their own requests in the list (approved of others are calendar-only)
@@ -249,9 +278,81 @@ export default function Ferie() {
         return;
       }
     }
-    
+
+    // Genera l'elenco delle date da controllare nel range richiesto
+    const datesToCheck: string[] = [];
+    if (requestMode === 'singolo') {
+      datesToCheck.push(dataRichiesta);
+    } else {
+      const [sY, sM, sD] = dataInizio.split('-').map(Number);
+      const [eY, eM, eD] = dataFine.split('-').map(Number);
+      const curr = new Date(sY, sM - 1, sD);
+      const last = new Date(eY, eM - 1, eD);
+      while (curr <= last) {
+        const y = curr.getFullYear();
+        const m = String(curr.getMonth() + 1).padStart(2, '0');
+        const d = String(curr.getDate()).padStart(2, '0');
+        datesToCheck.push(`${y}-${m}-${d}`);
+        curr.setDate(curr.getDate() + 1);
+      }
+    }
+
     setLoading(true);
     try {
+      // 1. Recupera le richieste esistenti per questo dipendente con stato 'Approvato' o 'In attesa'
+      const qAbsences = query(
+        collection(db, 'richieste_ferie'),
+        where('dipendenteName', '==', targetDipName)
+      );
+      const absencesSnap = await getDocs(qAbsences);
+      const existingReqs = absencesSnap.docs
+        .map(d => ({ id: d.id, ...d.data() } as any))
+        .filter(r => r.stato === 'Approvato' || r.stato === 'In attesa');
+
+      // 2. Controlla se ci sono conflitti per ciascun giorno richiesto
+      for (const dStr of datesToCheck) {
+        const coveringReqs = existingReqs.filter(r => {
+          const start = r.dataInizio || r.data;
+          const end = r.dataFine || r.data;
+          return start && end && dStr >= start && dStr <= end;
+        });
+
+        for (const exist of coveringReqs) {
+          let hasConflict = false;
+          let conflictReason = '';
+
+          const isExistFullDay = ['ferie', 'malattia', 'maternita', 'smart'].includes(exist.tipo);
+          const isNewFullDay = ['ferie', 'malattia', 'maternita', 'smart'].includes(tipoRichiesta);
+
+          if (isExistFullDay || isNewFullDay) {
+            hasConflict = true;
+            conflictReason = `La risorsa risulta già assente/impegnata il ${formatDate(dStr)} (tipo: "${exist.tipo}", stato: "${exist.stato}").`;
+          } else if (exist.tipo === tipoRichiesta) {
+            hasConflict = true;
+            conflictReason = `La risorsa risulta già assente/impegnata il ${formatDate(dStr)} (tipo: "${exist.tipo}", stato: "${exist.stato}").`;
+          } else if (exist.tipo === 'permesso' && tipoRichiesta === 'permesso') {
+            const existStart = exist.oraInizio || '00:00';
+            const existEnd = exist.oraFine || '23:59';
+            if (oraInizio < existEnd && oraFine > existStart) {
+              hasConflict = true;
+              conflictReason = `La risorsa ha già un permesso sovrapposto dalle ${existStart} alle ${existEnd} il ${formatDate(dStr)}.`;
+            }
+          } else if ((exist.tipo === 'mattina' || exist.tipo === 'pomeriggio') && tipoRichiesta === 'permesso') {
+            hasConflict = true;
+            conflictReason = `La risorsa risulta già assente il ${formatDate(dStr)} (tipo: "${exist.tipo}", stato: "${exist.stato}").`;
+          } else if (exist.tipo === 'permesso' && (tipoRichiesta === 'mattina' || tipoRichiesta === 'pomeriggio')) {
+            hasConflict = true;
+            conflictReason = `La risorsa ha già un permesso di tipo "${exist.tipo}" il ${formatDate(dStr)}.`;
+          }
+
+          if (hasConflict) {
+            showToast(conflictReason, "error");
+            setLoading(false);
+            return;
+          }
+        }
+      }
+
       const payload: any = {
         dipendenteName: targetDipName,
         tipo: tipoRichiesta,
@@ -404,7 +505,10 @@ export default function Ferie() {
       permesso: {label: 'Permesso', color: 'bg-amber-500'},
       smart: {label: 'Lavora da Casa', color: 'bg-blue-500'},
       mattina: {label: 'Assenza Mattina', color: 'bg-yellow-400'},
-      pomeriggio: {label: 'Assenza Pomeriggio', color: 'bg-orange-400'}
+      pomeriggio: {label: 'Assenza Pomeriggio', color: 'bg-orange-400'},
+      studio: {label: 'Permesso Studio', color: 'bg-violet-600'},
+      donazione: {label: 'Permesso Donazione', color: 'bg-teal-500'},
+      elettorale: {label: 'Permesso Elettorale', color: 'bg-indigo-500'}
     };
     return tipi[tipo] || {label: tipo, color: 'bg-gray-500'};
   };
@@ -416,6 +520,313 @@ export default function Ferie() {
         {t.label}
       </span>
     );
+  };
+
+  const handlePrintFeriePlan = () => {
+    const year = currentMonth.getFullYear();
+    const month = currentMonth.getMonth(); // 0-indexed
+    const monthLabel = currentMonth.toLocaleString('it-IT', { month: 'long' }).toUpperCase();
+    const numDays = new Date(year, month + 1, 0).getDate();
+
+    const sortedDipendenti = [...dipendenti].sort((a, b) => a.nome.trim().localeCompare(b.nome.trim()));
+
+    const statusMap: Record<string, Record<number, string>> = {};
+    sortedDipendenti.forEach(dip => {
+      statusMap[dip.nome] = {};
+    });
+
+    richieste.forEach(req => {
+      if (req.stato !== 'Approvato') return;
+      const start = req.dataInizio || req.data;
+      const end = req.dataFine || req.data;
+      if (!start || !end) return;
+
+      const [sY, sM, sD] = start.split('-').map(Number);
+      const [eY, eM, eD] = end.split('-').map(Number);
+      const curr = new Date(sY, sM - 1, sD);
+      const last = new Date(eY, eM - 1, eD);
+
+      while (curr <= last) {
+        const y = curr.getFullYear();
+        const m = curr.getMonth();
+        const d = curr.getDate();
+
+        if (y === year && m === month) {
+          const dipName = req.dipendenteName;
+          if (statusMap[dipName]) {
+            statusMap[dipName][d] = req.tipo;
+          }
+        }
+        curr.setDate(curr.getDate() + 1);
+      }
+    });
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      showToast("Consenti i pop-up per stampare il piano ferie.", "warning");
+      return;
+    }
+
+    const rowsHtml = sortedDipendenti.map(dip => {
+      const daysCells = Array.from({ length: 31 }).map((_, i) => {
+        const day = i + 1;
+        if (day > numDays) {
+          return `<td class="empty-cell"></td>`;
+        }
+
+        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const dateObj = new Date(year, month, day);
+        const dayOfWeek = dateObj.getDay();
+        const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
+        const isHoliday = isItalianHoliday(dateStr);
+
+        const tipo = statusMap[dip.nome]?.[day];
+        let cellBg = '';
+        let cellText = '';
+        let textColor = '#000000';
+
+        if (tipo) {
+          if (tipo === 'ferie') {
+            cellBg = '#38bdf8'; // Sky Blue (Ferie)
+            textColor = '#ffffff';
+          } else if (['malattia', 'maternita'].includes(tipo)) {
+            cellBg = '#ef4444'; // Rosso (Malattia)
+            cellText = 'M';
+            textColor = '#ffffff';
+          } else if (tipo === 'smart') {
+            cellBg = '#84cc16'; // Verde (Smart Working)
+            textColor = '#ffffff';
+          } else if (['mattina', 'pomeriggio', 'permesso'].includes(tipo)) {
+            cellBg = '#facc15'; // Giallo
+            cellText = tipo === 'mattina' ? 'AM' : tipo === 'pomeriggio' ? 'PM' : 'P';
+            textColor = '#713f12';
+          } else if (tipo === 'studio') {
+            cellBg = '#c084fc'; // Purple
+            cellText = 'S';
+            textColor = '#581c87';
+          } else if (tipo === 'donazione') {
+            cellBg = '#2dd4bf'; // Teal
+            cellText = 'D';
+            textColor = '#115e59';
+          } else if (tipo === 'elettorale') {
+            cellBg = '#818cf8'; // Indigo
+            cellText = 'E';
+            textColor = '#312e81';
+          }
+        } else if (isWknd || isHoliday) {
+          cellBg = '#f3f4f6'; // Grigio weekend
+          textColor = '#9ca3af';
+        }
+
+        const styleAttr = cellBg ? ` style="background-color: ${cellBg} !important; color: ${textColor} !important;"` : '';
+        return `<td${styleAttr}>${cellText}</td>`;
+      }).join('');
+
+      return `
+        <tr>
+          <td class="name-cell">${dip.nome}</td>
+          ${daysCells}
+        </tr>
+      `;
+    }).join('');
+
+    const headerDaysHtml = Array.from({ length: 31 }).map((_, i) => {
+      const day = i + 1;
+      if (day > numDays) return '<th></th>';
+      const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const dateObj = new Date(year, month, day);
+      const dayOfWeek = dateObj.getDay();
+      const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
+      const isHoliday = isItalianHoliday(dateStr);
+      const classAttr = (isWknd || isHoliday) ? ' class="wknd-hdr"' : '';
+      return `<th${classAttr}>${day}</th>`;
+    }).join('');
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Stampa Piano Ferie - ${monthLabel} ${year}</title>
+          <style>
+            * {
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+              color-adjust: exact !important;
+              box-sizing: border-box;
+            }
+            @page {
+              size: A4 portrait;
+              margin: 0.6cm;
+            }
+            html, body {
+              height: 99%;
+              margin: 0;
+              padding: 0;
+              font-family: 'Inter', -apple-system, sans-serif;
+              color: #1f2937;
+              font-size: 7px;
+            }
+            .container {
+              display: flex;
+              flex-direction: column;
+              height: 100%;
+              justify-content: space-between;
+            }
+            .title-box {
+              font-weight: 800;
+              font-size: 13px;
+              text-align: left;
+              padding-bottom: 6px;
+              border-bottom: 1.5px solid #111827;
+              margin-bottom: 8px;
+              text-transform: uppercase;
+              letter-spacing: 0.05em;
+              color: #111827;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              table-layout: fixed;
+              border: 0.5px solid #e5e7eb;
+            }
+            th, td {
+              border: 0.5px solid #e5e7eb;
+              padding: 3px 0;
+              text-align: center;
+              font-size: 6px;
+              height: 13px;
+            }
+            th {
+              background-color: #f9fafb !important;
+              color: #4b5563;
+              font-weight: 700;
+            }
+            .name-cell {
+              text-align: left;
+              padding-left: 5px;
+              font-weight: 700;
+              font-size: 6.5px;
+              color: #111827;
+              border-right: 1px solid #d1d5db;
+              white-space: nowrap;
+              overflow: hidden;
+              text-overflow: ellipsis;
+            }
+            .wknd-hdr {
+              background-color: #f3f4f6 !important;
+              color: #4b5563;
+            }
+            .empty-cell {
+              background-color: #f9fafb !important;
+            }
+            .legend-box {
+              margin-top: 15px;
+              border-top: 1px solid #e5e7eb;
+              padding-top: 8px;
+            }
+            .legend-title {
+              font-weight: 800;
+              text-transform: uppercase;
+              letter-spacing: 0.05em;
+              margin-bottom: 6px;
+              font-size: 7.5px;
+              color: #374151;
+            }
+            .legend-items {
+              display: flex;
+              flex-wrap: wrap;
+              gap: 6px 14px;
+            }
+            .legend-item {
+              display: flex;
+              align-items: center;
+              gap: 5px;
+              font-size: 7px;
+              font-weight: 600;
+              color: #4b5563;
+            }
+            .color-block {
+              width: 22px;
+              height: 10px;
+              border-radius: 2px;
+              border: 0.5px solid #d1d5db;
+              display: inline-flex;
+              align-items: center;
+              justify-content: center;
+              font-size: 6px;
+              font-weight: bold;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div>
+              <div class="title-box">${monthLabel} ${year}</div>
+              <table>
+                <colgroup>
+                  <col style="width: 18%;" />
+                  ${Array.from({ length: 31 }).map(() => '<col style="width: 2.64%;" />').join('')}
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th>ELENCO PERSONALE</th>
+                    ${headerDaysHtml}
+                  </tr>
+                </thead>
+                <tbody>
+                  ${rowsHtml}
+                </tbody>
+              </table>
+            </div>
+
+            <div class="legend-box">
+              <div class="legend-title">Legenda:</div>
+              <div class="legend-items">
+                <div class="legend-item">
+                  <div class="color-block" style="background-color: #38bdf8 !important;"></div>
+                  <span>FERIE</span>
+                </div>
+                <div class="legend-item">
+                  <div class="color-block" style="background-color: #ef4444 !important; color: #ffffff !important;">M</div>
+                  <span>MALATTIA/MATERNITÀ</span>
+                </div>
+                <div class="legend-item">
+                  <div class="color-block" style="background-color: #facc15 !important; color: #713f12 !important;">AM/PM</div>
+                  <span>ASSENZA MATTINA/ASSENZA POMERIGGIO</span>
+                </div>
+                <div class="legend-item">
+                  <div class="color-block" style="background-color: #84cc16 !important;"></div>
+                  <span>LAVORA DA CASA</span>
+                </div>
+                <div class="legend-item">
+                  <div class="color-block" style="background-color: #c084fc !important; color: #581c87 !important;">S</div>
+                  <span>PERMESSO STUDIO</span>
+                </div>
+                <div class="legend-item">
+                  <div class="color-block" style="background-color: #2dd4bf !important; color: #115e59 !important;">D</div>
+                  <span>PERMESSO DONAZIONE</span>
+                </div>
+                <div class="legend-item">
+                  <div class="color-block" style="background-color: #818cf8 !important; color: #312e81 !important;">E</div>
+                  <span>PERMESSO ELETTORALE</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <script>
+            window.onload = function() {
+              window.print();
+              window.onafterprint = function() {
+                window.close();
+              };
+            };
+          </script>
+        </body>
+      </html>
+    `;
+
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
   };
 
   // --- LOGICA CALENDARIO ---
@@ -531,9 +942,33 @@ export default function Ferie() {
               </button>
             </div>
           </h2>
-          <button onClick={() => window.print()} className="hidden md:flex items-center gap-2 bg-gray-900 text-white hover:bg-gray-800 px-5 py-2.5 rounded-xl font-bold transition shadow-lg active:scale-95">
-            Stampa
-          </button>
+          <div className="flex items-center gap-3">
+            <div className="bg-gray-150 p-1.5 rounded-2xl flex gap-1.5 border border-gray-200 shadow-inner">
+              <button 
+                onClick={() => setViewMode('calendario')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
+                  viewMode === 'calendario' 
+                    ? 'bg-white text-gray-900 shadow-sm border border-gray-200/50' 
+                    : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                Calendario
+              </button>
+              <button 
+                onClick={() => setViewMode('tabella')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
+                  viewMode === 'tabella' 
+                    ? 'bg-white text-gray-900 shadow-sm border border-gray-200/50' 
+                    : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                Griglia Risorse
+              </button>
+            </div>
+            <button onClick={handlePrintFeriePlan} className="hidden md:flex items-center gap-2 bg-gray-900 text-white hover:bg-gray-800 px-5 py-2.5 rounded-xl font-bold transition shadow-lg active:scale-95 cursor-pointer">
+              Stampa
+            </button>
+          </div>
         </div>
         
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
@@ -673,6 +1108,9 @@ export default function Ferie() {
                     <option value="malattia">Malattia</option>
                     <option value="maternita">Maternità</option>
                     <option value="smart">Lavora da Casa</option>
+                    <option value="studio">Permesso Studio</option>
+                    <option value="donazione">Permesso Donazione</option>
+                    <option value="elettorale">Permesso Elettorale</option>
                     {requestMode === 'singolo' && (
                       <>
                         <option value="permesso">Permesso (Frazione di giornata)</option>
@@ -764,22 +1202,190 @@ export default function Ferie() {
           </div>
         </div>
 
-        <div className="grid grid-cols-7 gap-2 mb-2">
-          {['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'].map(d => (
-            <div key={d} className="text-center font-bold text-gray-400 text-sm py-2">{d}</div>
-          ))}
-        </div>
-        
-        <div className="grid grid-cols-7 gap-2">
-          {calendarCells}
-        </div>
+        {viewMode === 'calendario' ? (
+          <>
+            <div className="grid grid-cols-7 gap-2 mb-2">
+              {['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'].map(d => (
+                <div key={d} className="text-center font-bold text-gray-400 text-sm py-2">{d}</div>
+              ))}
+            </div>
+            
+            <div className="grid grid-cols-7 gap-2">
+              {calendarCells}
+            </div>
 
-        <div className="mt-8 flex flex-wrap gap-4 p-4 bg-gray-50 rounded-2xl border border-gray-100 justify-center">
-          <div className="text-sm font-bold text-gray-500 mr-2">Legenda Colori:</div>
-          <div className="flex items-center gap-2 text-xs font-bold text-gray-700"><span className="w-3 h-3 rounded-full bg-yellow-300 shadow-sm"></span> In attesa</div>
-          <div className="flex items-center gap-2 text-xs font-bold text-gray-700"><span className="w-3 h-3 rounded-full bg-green-400 shadow-sm"></span> Approvato</div>
-          <div className="flex items-center gap-2 text-xs font-bold text-gray-700"><span className="w-3 h-3 rounded-full bg-red-400 shadow-sm"></span> Rifiutato</div>
-        </div>
+            <div className="mt-8 flex flex-wrap gap-4 p-4 bg-gray-50 rounded-2xl border border-gray-100 justify-center">
+              <div className="text-sm font-bold text-gray-500 mr-2">Legenda Colori:</div>
+              <div className="flex items-center gap-2 text-xs font-bold text-gray-700"><span className="w-3 h-3 rounded-full bg-yellow-300 shadow-sm"></span> In attesa</div>
+              <div className="flex items-center gap-2 text-xs font-bold text-gray-700"><span className="w-3 h-3 rounded-full bg-green-400 shadow-sm"></span> Approvato</div>
+              <div className="flex items-center gap-2 text-xs font-bold text-gray-700"><span className="w-3 h-3 rounded-full bg-red-400 shadow-sm"></span> Rifiutato</div>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="overflow-x-auto rounded-2xl border border-gray-200 bg-white shadow-sm mt-4">
+              <table className="w-full text-left border-collapse min-w-[900px] table-fixed">
+                <colgroup>
+                  <col className="w-[180px]" />
+                  {Array.from({ length: 31 }).map((_, idx) => (
+                    <col key={idx} className="w-[30px]" />
+                  ))}
+                </colgroup>
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-200">
+                    <th className="p-3 text-xs font-bold text-gray-550 uppercase sticky left-0 bg-gray-50 z-10 border-r border-gray-200">ELENCO PERSONALE</th>
+                    {Array.from({ length: 31 }).map((_, i) => {
+                      const day = i + 1;
+                      if (day > daysInMonth) return <th key={i} className="bg-gray-100"></th>;
+                      const dateStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                      const dObj = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), day);
+                      const dayOfWeek = dObj.getDay();
+                      const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
+                      const isHoliday = isItalianHoliday(dateStr);
+                      const isGray = isWknd || isHoliday;
+                      return (
+                        <th key={i} className={`p-2 text-center text-xs font-bold ${isGray ? 'bg-gray-200/60 text-gray-650' : 'text-gray-500'} border-r border-gray-200`}>
+                          {day}
+                        </th>
+                      );
+                    })}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 font-medium text-gray-900 text-xs">
+                  {(() => {
+                    const sortedDipendenti = [...dipendenti].sort((a, b) => a.nome.trim().localeCompare(b.nome.trim()));
+                    return sortedDipendenti.map(dip => {
+                      return (
+                        <tr key={dip.id} className="hover:bg-gray-50/40 transition-colors">
+                          <td className="p-3 font-bold text-gray-800 sticky left-0 bg-white border-r border-gray-200 shadow-[2px_0_5px_rgba(0,0,0,0.03)] truncate z-10">
+                            {dip.nome}
+                          </td>
+                          {Array.from({ length: 31 }).map((_, i) => {
+                            const day = i + 1;
+                            if (day > daysInMonth) return <td key={i} className="bg-gray-50 border-r border-gray-150"></td>;
+
+                            const dateStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                            const dObj = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), day);
+                            const dayOfWeek = dObj.getDay();
+                            const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
+                            const isHoliday = isItalianHoliday(dateStr);
+
+                            const req = richieste.find(r => {
+                              const start = r.dataInizio || r.data;
+                              const end = r.dataFine || r.data;
+                              return start && end && dateStr >= start && dateStr <= end && r.dipendenteName === dip.nome;
+                            });
+
+                            let cellBg = '';
+                            let cellText = '';
+                            let titleStr = `${dip.nome} - ${day}/${currentMonth.getMonth() + 1}`;
+
+                            if (req) {
+                              const isApproved = req.stato === 'Approvato';
+                              const isRejected = req.stato === 'Rifiutato';
+
+                              titleStr += `\nStato: ${req.stato}\nTipo: ${getTipoData(req.tipo).label}`;
+                              if (req.note) titleStr += `\nNote: ${req.note}`;
+
+                              if (isRejected) {
+                                cellBg = 'bg-red-50 border-red-200 text-red-800/60 line-through opacity-50';
+                              } else if (req.tipo === 'ferie') {
+                                cellBg = isApproved 
+                                  ? 'bg-sky-500 hover:bg-sky-600 border-sky-600 text-white font-extrabold shadow-sm' 
+                                  : 'bg-yellow-50 border-yellow-250 text-yellow-750 opacity-60';
+                              } else if (['malattia', 'maternita'].includes(req.tipo)) {
+                                cellBg = isApproved 
+                                  ? 'bg-red-500 hover:bg-red-600 border-red-600 text-white font-extrabold shadow-sm' 
+                                  : 'bg-yellow-50 border-yellow-250 text-yellow-750 opacity-60';
+                                cellText = 'M';
+                              } else if (req.tipo === 'smart') {
+                                cellBg = isApproved 
+                                  ? 'bg-emerald-500 hover:bg-emerald-600 border-emerald-600 text-white font-extrabold shadow-sm' 
+                                  : 'bg-yellow-50 border-yellow-250 text-yellow-750 opacity-60';
+                              } else if (['mattina', 'pomeriggio', 'permesso'].includes(req.tipo)) {
+                                cellBg = isApproved 
+                                  ? 'bg-amber-400 hover:bg-amber-500 border-amber-500 text-amber-950 font-extrabold shadow-sm' 
+                                  : 'bg-yellow-50 border-yellow-250 text-yellow-750 opacity-60';
+                                cellText = req.tipo === 'mattina' ? 'AM' : req.tipo === 'pomeriggio' ? 'PM' : 'P';
+                              } else if (req.tipo === 'studio') {
+                                cellBg = isApproved 
+                                  ? 'bg-purple-500 hover:bg-purple-600 border-purple-600 text-white font-extrabold shadow-sm' 
+                                  : 'bg-yellow-50 border-yellow-250 text-yellow-750 opacity-60';
+                                cellText = 'S';
+                              } else if (req.tipo === 'donazione') {
+                                cellBg = isApproved 
+                                  ? 'bg-teal-500 hover:bg-teal-600 border-teal-600 text-white font-extrabold shadow-sm' 
+                                  : 'bg-yellow-50 border-yellow-250 text-yellow-750 opacity-60';
+                                cellText = 'D';
+                              } else if (req.tipo === 'elettorale') {
+                                cellBg = isApproved 
+                                  ? 'bg-indigo-500 hover:bg-indigo-600 border-indigo-600 text-white font-extrabold shadow-sm' 
+                                  : 'bg-yellow-50 border-yellow-250 text-yellow-750 opacity-60';
+                                cellText = 'E';
+                              }
+                            } else if (isWknd || isHoliday) {
+                              cellBg = 'bg-gray-100/70 text-gray-400';
+                            }
+
+                            const isClickable = !!req && (isHR || isAdmin);
+
+                            return (
+                              <td 
+                                key={i} 
+                                onClick={() => {
+                                  if (isClickable) {
+                                    setCancellationRequest(req);
+                                    setCancellationReason('');
+                                  }
+                                }}
+                                title={titleStr}
+                                className={`p-1.5 text-center border-r border-gray-200 transition-all ${cellBg} ${isClickable ? 'cursor-pointer select-none font-extrabold' : ''}`}
+                              >
+                                {cellText}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    });
+                  })()}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Legend for resources grid */}
+            <div className="mt-6 flex flex-wrap gap-4 p-5 bg-gray-50 rounded-2xl border border-gray-100 justify-center">
+              <div className="text-xs font-bold text-gray-500 mr-2 self-center">Legenda Colori (Approvati):</div>
+              <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
+                <span className="w-6 h-4 rounded border border-sky-600 bg-sky-500"></span> Ferie
+              </div>
+              <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
+                <span className="w-6 h-4 rounded border border-red-600 bg-red-500 flex items-center justify-center text-[10px] font-black text-white">M</span> Malattia/Maternità
+              </div>
+              <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
+                <span className="w-6 h-4 rounded border border-amber-500 bg-amber-400 flex items-center justify-center text-[9px] font-black text-amber-955">AM/PM</span> Assenza M/P
+              </div>
+              <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
+                <span className="w-6 h-4 rounded border border-emerald-600 bg-emerald-500"></span> Smart Working
+              </div>
+              <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
+                <span className="w-6 h-4 rounded border border-purple-600 bg-purple-500 flex items-center justify-center text-[10px] font-black text-white">S</span> Permesso Studio
+              </div>
+              <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
+                <span className="w-6 h-4 rounded border border-teal-600 bg-teal-500 flex items-center justify-center text-[10px] font-black text-white">D</span> Permesso Donazione
+              </div>
+              <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
+                <span className="w-6 h-4 rounded border border-indigo-600 bg-indigo-500 flex items-center justify-center text-[10px] font-black text-white">E</span> Permesso Elettorale
+              </div>
+              <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
+                <span className="w-6 h-4 rounded border border-yellow-250 bg-yellow-50 opacity-60"></span> In attesa (trasparente)
+              </div>
+              <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
+                <span className="w-6 h-4 rounded border border-red-200 bg-red-50 text-red-800 line-through opacity-50"></span> Rifiutati
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       {cancellationRequest && (

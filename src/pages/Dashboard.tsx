@@ -151,6 +151,88 @@ export default function Dashboard() {
     }
   }, [myAssociatedName]);
 
+  // Effetto temporaneo di pulizia dello storico chiusure aziendali
+  useEffect(() => {
+    const runCleanup = async () => {
+      try {
+        console.log("Inizio pulizia dello storico ferie inserite automaticamente...");
+        
+        // 1. Rimuove tutte le richieste in 'richieste_ferie' con nota === 'Chiusure Aziendali'
+        const qFerie = query(collection(db, 'richieste_ferie'), where('note', '==', 'Chiusure Aziendali'));
+        const ferieSnap = await getDocs(qFerie);
+        let ferieDeleted = 0;
+        for (const docSnap of ferieSnap.docs) {
+          await deleteDoc(doc(db, 'richieste_ferie', docSnap.id));
+          ferieDeleted++;
+        }
+        console.log(`Eliminate ${ferieDeleted} richieste ferie automatiche.`);
+
+        // 2. Carica le chiusure aziendali
+        const closuresSnap = await getDocs(collection(db, 'chiusure_aziendali'));
+        const closuresList: Array<{ dataInizio: string; dataFine: string }> = [];
+        closuresSnap.forEach(docSnap => {
+          closuresList.push(docSnap.data() as { dataInizio: string; dataFine: string });
+        });
+
+        // Verificatore se una data ricade nelle chiusure aziendali
+        const isClosureDate = (dateStr: string) => {
+          return closuresList.some(c => dateStr >= c.dataInizio && dateStr <= c.dataFine);
+        };
+
+        // 3. Ripristina i giorni nei rapportini in Bozza o Richiede Modifica
+        const presenzeSnap = await getDocs(collection(db, 'presenze'));
+        let sheetsUpdated = 0;
+        for (const presDoc of presenzeSnap.docs) {
+          const sheet = presDoc.data();
+          const isCollab = isCollaboratore(sheet.dipendenteNome, dipendenti);
+          if (!isCollab && (sheet.stato === 'Bozza' || sheet.stato === 'Richiede Modifica')) {
+            const updatedGiorni = { ...sheet.giorni };
+            let changed = false;
+            const sheetMonth = sheet.mese;
+            const sheetYear = sheet.anno;
+
+            for (const dayStr of Object.keys(updatedGiorni)) {
+              const dNum = Number(dayStr);
+              const dateStr = `${sheetYear}-${String(sheetMonth).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`;
+              
+              if (isClosureDate(dateStr)) {
+                const g = updatedGiorni[dayStr];
+                const dayContractHours = g.oreContratto ?? 8;
+                if (g.ferie === dayContractHours && g.ore === 0 && !g.malattia && g.permessi === 0) {
+                  g.ferie = 0;
+                  const dObj = new Date(sheetYear, sheetMonth - 1, dNum);
+                  const dayOfWeek = dObj.getDay();
+                  const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
+                  const isHoliday = isItalianHoliday(dateStr);
+                  g.ore = (isWknd || isHoliday) ? 0 : dayContractHours;
+                  changed = true;
+                }
+              }
+            }
+
+            if (changed) {
+              await updateDoc(doc(db, 'presenze', presDoc.id), {
+                giorni: updatedGiorni,
+                timestamp: new Date().toISOString()
+              });
+              sheetsUpdated++;
+            }
+          }
+        }
+        console.log(`Ripristinati i giorni nei rapportini per ${sheetsUpdated} schede.`);
+        if (ferieDeleted > 0 || sheetsUpdated > 0) {
+          showToast(`Pulizia storico chiusure: eliminate ${ferieDeleted} ferie e ripristinate ${sheetsUpdated} schede presenze!`);
+        }
+      } catch (err) {
+        console.error("Errore durante la pulizia dello storico:", err);
+      }
+    };
+
+    if (dipendenti && dipendenti.length > 0) {
+      runCleanup();
+    }
+  }, [dipendenti]);
+
   const loadDashboardData = async () => {
     try {
       // 1. Questionario
@@ -265,147 +347,16 @@ export default function Dashboard() {
     };
   }, [myAssociatedName, isHR, isAdmin, user?.uid]);
 
-  const applyCorporateClosuresToEmployees = async (noticeId: string, periods: Array<{ tipo: 'singolo' | 'intervallo'; inizio: string; fine: string }>) => {
-    // 1. Filtra dipendenti standard (esclude collaboratori)
-    const standardEmployees = dipendenti.filter(d => {
-      const isCollab = isCollaboratore(d.nome, dipendenti);
-      return !isCollab;
-    });
-
-    // 2. Crea richieste ferie approvate in richieste_ferie per ciascun dipendente standard
-    for (const emp of standardEmployees) {
-      for (const p of periods) {
-        if (!p.inizio) continue;
-        const payload = {
-          dipendenteName: emp.nome,
-          tipo: 'ferie',
-          stato: 'Approvato',
-          timestamp: new Date().toISOString(),
-          dataInizio: p.inizio,
-          dataFine: p.tipo === 'singolo' ? p.inizio : p.fine,
-          data: p.inizio, // fallback
-          note: 'Chiusure Aziendali',
-          comunicazioneId: noticeId
-        };
-        await addDoc(collection(db, 'richieste_ferie'), payload);
-      }
-    }
-
-    // 3. Aggiorna i rapportini correnti in stato Bozza o Richiede Modifica
-    const presenzeSnap = await getDocs(collection(db, 'presenze'));
-    for (const presDoc of presenzeSnap.docs) {
-      const sheet = presDoc.data();
-      const isCollab = isCollaboratore(sheet.dipendenteNome, dipendenti);
-      if (!isCollab && (sheet.stato === 'Bozza' || sheet.stato === 'Richiede Modifica')) {
-        const updatedGiorni = { ...sheet.giorni };
-        let changed = false;
-        const sheetMonth = sheet.mese;
-        const sheetYear = sheet.anno;
-
-        for (const p of periods) {
-          if (!p.inizio) continue;
-          const start = new Date(p.inizio);
-          const end = new Date(p.tipo === 'singolo' ? p.inizio : p.fine);
-          const curr = new Date(start);
-
-          while (curr <= end) {
-            const y = curr.getFullYear();
-            const m = curr.getMonth() + 1;
-            const d = curr.getDate();
-
-            if (y === sheetYear && m === sheetMonth) {
-              const dayKey = String(d);
-              const g = updatedGiorni[dayKey];
-              if (g) {
-                const dayContractHours = g.oreContratto ?? 8;
-                if (g.ferie !== dayContractHours || g.ore !== 0) {
-                  g.ferie = dayContractHours;
-                  g.ore = 0;
-                  g.permessi = 0;
-                  g.malattia = false;
-                  changed = true;
-                }
-              }
-            }
-            curr.setDate(curr.getDate() + 1);
-          }
-        }
-
-        if (changed) {
-          await updateDoc(doc(db, 'presenze', presDoc.id), {
-            giorni: updatedGiorni,
-            timestamp: new Date().toISOString()
-          });
-        }
-      }
-    }
+  const applyCorporateClosuresToEmployees = async (_noticeId: string, _periods: Array<{ tipo: 'singolo' | 'intervallo'; inizio: string; fine: string }>) => {
+    // Rimossa la propagazione automatica delle ferie per le chiusure aziendali
+    return;
   };
 
   const removeCorporateClosuresForNotice = async (noticeId: string) => {
-    // 1. Trova i periodi di chiusura associati a questo avviso in chiusure_aziendali
+    // Rimuove solo i periodi di chiusura associati a questo avviso in chiusure_aziendali
     const closuresSnap = await getDocs(query(collection(db, 'chiusure_aziendali'), where('comunicazioneId', '==', noticeId)));
-    const periods: Array<{ inizio: string; fine: string }> = [];
-    
     for (const d of closuresSnap.docs) {
-      const data = d.data();
-      periods.push({ inizio: data.dataInizio, fine: data.dataFine });
       await deleteDoc(doc(db, 'chiusure_aziendali', d.id));
-    }
-
-    // 2. Rimuove le ferie create in richieste_ferie per questo avviso
-    const ferieSnap = await getDocs(query(collection(db, 'richieste_ferie'), where('comunicazioneId', '==', noticeId)));
-    for (const d of ferieSnap.docs) {
-      await deleteDoc(doc(db, 'richieste_ferie', d.id));
-    }
-
-    // 3. Ripristina i giorni nei rapportini in Bozza o Richiede Modifica
-    const presenzeSnap = await getDocs(collection(db, 'presenze'));
-    for (const presDoc of presenzeSnap.docs) {
-      const sheet = presDoc.data();
-      const isCollab = isCollaboratore(sheet.dipendenteNome, dipendenti);
-      if (!isCollab && (sheet.stato === 'Bozza' || sheet.stato === 'Richiede Modifica')) {
-        const updatedGiorni = { ...sheet.giorni };
-        let changed = false;
-        const sheetMonth = sheet.mese;
-        const sheetYear = sheet.anno;
-
-        for (const p of periods) {
-          const start = new Date(p.inizio);
-          const end = new Date(p.fine);
-          const curr = new Date(start);
-
-          while (curr <= end) {
-            const y = curr.getFullYear();
-            const m = curr.getMonth() + 1;
-            const d = curr.getDate();
-
-            if (y === sheetYear && m === sheetMonth) {
-              const dayKey = String(d);
-              const g = updatedGiorni[dayKey];
-              if (g) {
-                const dayContractHours = g.oreContratto ?? 8;
-                if (g.ferie === dayContractHours && g.ore === 0 && !g.malattia && g.permessi === 0) {
-                  g.ferie = 0;
-                  const dateStr = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-                  const dayOfWeek = curr.getDay();
-                  const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
-                  const isHoliday = isItalianHoliday(dateStr);
-                  g.ore = (isWknd || isHoliday) ? 0 : dayContractHours;
-                  changed = true;
-                }
-              }
-            }
-            curr.setDate(curr.getDate() + 1);
-          }
-        }
-
-        if (changed) {
-          await updateDoc(doc(db, 'presenze', presDoc.id), {
-            giorni: updatedGiorni,
-            timestamp: new Date().toISOString()
-          });
-        }
-      }
     }
   };
 
@@ -632,7 +583,7 @@ export default function Dashboard() {
     const parts = myAssociatedName.trim().split(/\s+/);
     return parts.length > 1 ? parts[parts.length - 1] : myAssociatedName;
   })();
-  const showAdminSettings = isAdmin;
+  const showAdminSettings = isAdmin || isHR;
   const canPublish = isAdmin || isHR;
 
   return (
@@ -784,8 +735,8 @@ export default function Dashboard() {
                   <Settings className="w-6 h-6 sm:w-7 sm:h-7 xl:w-8 xl:h-8" />
                 </div>
                 <div>
-                  <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-800 mt-2">Impostazioni Admin</h2>
-                  <p className="hidden xl:block text-xs font-semibold text-gray-500 mt-1.5 leading-tight">Gestisci ruoli, anagrafica dipendenti e catalogo commesse.</p>
+                  <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-800 mt-2">Impostazioni</h2>
+                  <p className="hidden xl:block text-xs font-semibold text-gray-500 mt-1.5 leading-tight">Gestisci anagrafica risorse, clienti, ruoli e sistema.</p>
                 </div>
               </div>
             )}

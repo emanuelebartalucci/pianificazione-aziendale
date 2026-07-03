@@ -64,7 +64,8 @@ export const isSoci = (nome?: string | null): boolean => {
 };
 
 export default function Impostazioni() {
-  const { isAdmin, dipendenti, refreshData } = useAuth();
+  const { isAdmin, isHR, dipendenti, refreshData } = useAuth();
+  const isAuthorized = isAdmin || isHR;
   
   // Stato per la modale di conferma personalizzata
   const [confirmConfig, setConfirmConfig] = useState<{
@@ -102,7 +103,7 @@ export default function Impostazioni() {
   };
   
   // States per i form
-  const [activeTab, setActiveTab] = useState<'clienti' | 'risorse' | 'ruoli' | 'sistema'>('clienti');
+  const [activeTab, setActiveTab] = useState<'clienti' | 'risorse' | 'ruoli' | 'sistema'>(isAdmin ? 'clienti' : 'risorse');
   const [newAdminEmail, setNewAdminEmail] = useState('');
   const [newHrEmail, setNewHrEmail] = useState('');
   const [hrList, setHrList] = useState<{id: string, email: string}[]>([]);
@@ -150,8 +151,8 @@ export default function Impostazioni() {
     return () => { unsubA(); unsubS(); unsubH(); unsubEmail(); unsubC(); unsubP(); };
   }, [isAdmin]);
 
-  if (!isAdmin) {
-    return <div className="p-8 text-center text-gray-500">Accesso negato. Solo gli amministratori possono vedere questa pagina.</div>;
+  if (!isAuthorized) {
+    return <div className="p-8 text-center text-gray-500">Accesso negato. Solo gli amministratori o gli HR possono vedere questa pagina.</div>;
   }
 
   // Handlers
@@ -555,17 +556,19 @@ export default function Impostazioni() {
       
       {/* Menu a schede (Tabs) */}
       <div className="flex flex-wrap gap-2 mb-8 border-b border-gray-150 pb-4">
-        <button
-          onClick={() => setActiveTab('clienti')}
-          className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm transition-all active:scale-95 cursor-pointer ${
-            activeTab === 'clienti'
-              ? 'bg-blue-600 text-white shadow-md shadow-blue-250'
-              : 'bg-gray-50 text-gray-650 hover:bg-gray-100'
-          }`}
-        >
-          <Building2 className="w-4 h-4" />
-          <span>Anagrafica Clienti</span>
-        </button>
+        {isAdmin && (
+          <button
+            onClick={() => setActiveTab('clienti')}
+            className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm transition-all active:scale-95 cursor-pointer ${
+              activeTab === 'clienti'
+                ? 'bg-blue-600 text-white shadow-md shadow-blue-250'
+                : 'bg-gray-50 text-gray-650 hover:bg-gray-100'
+            }`}
+          >
+            <Building2 className="w-4 h-4" />
+            <span>Anagrafica Clienti</span>
+          </button>
+        )}
 
         <button
           onClick={() => setActiveTab('risorse')}
@@ -579,36 +582,40 @@ export default function Impostazioni() {
           <span>Anagrafica Risorse</span>
         </button>
 
-        <button
-          onClick={() => setActiveTab('ruoli')}
-          className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm transition-all active:scale-95 cursor-pointer ${
-            activeTab === 'ruoli'
-              ? 'bg-purple-600 text-white shadow-md shadow-purple-250'
-              : 'bg-gray-50 text-gray-650 hover:bg-gray-100'
-          }`}
-        >
-          <Star className="w-4 h-4" />
-          <span>Ruoli & Permessi</span>
-        </button>
+        {isAdmin && (
+          <>
+            <button
+              onClick={() => setActiveTab('ruoli')}
+              className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm transition-all active:scale-95 cursor-pointer ${
+                activeTab === 'ruoli'
+                  ? 'bg-purple-600 text-white shadow-md shadow-purple-250'
+                  : 'bg-gray-50 text-gray-650 hover:bg-gray-100'
+              }`}
+            >
+              <Star className="w-4 h-4" />
+              <span>Ruoli & Permessi</span>
+            </button>
 
-        <button
-          onClick={() => setActiveTab('sistema')}
-          className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm transition-all active:scale-95 cursor-pointer ${
-            activeTab === 'sistema'
-              ? 'bg-slate-700 text-white shadow-md shadow-slate-250'
-              : 'bg-gray-50 text-gray-650 hover:bg-gray-100'
-          }`}
-        >
-          <Settings className="w-4 h-4" />
-          <span>Sistema</span>
-        </button>
+            <button
+              onClick={() => setActiveTab('sistema')}
+              className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm transition-all active:scale-95 cursor-pointer ${
+                activeTab === 'sistema'
+                  ? 'bg-slate-700 text-white shadow-md shadow-slate-250'
+                  : 'bg-gray-50 text-gray-650 hover:bg-gray-100'
+              }`}
+            >
+              <Settings className="w-4 h-4" />
+              <span>Sistema</span>
+            </button>
+          </>
+        )}
       </div>
 
       {/* CONTENUTO SCHEDE */}
       <div>
         
         {/* TAB 2: CLIENTI */}
-        {activeTab === 'clienti' && (
+        {activeTab === 'clienti' && isAdmin && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             
             {/* Form Aggiunta */}
@@ -834,7 +841,7 @@ export default function Impostazioni() {
         )}
 
         {/* TAB 4: RUOLI & PERMESSI */}
-        {activeTab === 'ruoli' && (
+        {activeTab === 'ruoli' && isAdmin && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             
             {/* Amministratori */}
@@ -965,7 +972,7 @@ export default function Impostazioni() {
         )}
 
         {/* TAB 5: SISTEMA */}
-        {activeTab === 'sistema' && (
+        {activeTab === 'sistema' && isAdmin && (
           <div className="space-y-8 max-w-xl">
             {/* Configurazione Email */}
             <section className="bg-gradient-to-br from-slate-50 to-zinc-100 p-6 rounded-3xl border border-slate-200 shadow-sm">

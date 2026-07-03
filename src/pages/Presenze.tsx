@@ -104,6 +104,9 @@ interface GiornoPresenza {
   itinerarioTrasferta?: string; // NEW
   kmTrasferta?: number; // NEW
   oreContratto?: number;
+  permessoStudio?: number;
+  permessoDonazione?: number;
+  permessoElettorale?: number;
 }
 
 interface RapportinoPresenze {
@@ -347,7 +350,10 @@ export default function Presenze() {
             ferie: 0,
             permessi: 0,
             malattia: false,
-            trasferta: false
+            trasferta: false,
+            permessoStudio: 0,
+            permessoDonazione: 0,
+            permessoElettorale: 0
           };
           continue;
         }
@@ -364,6 +370,9 @@ export default function Presenze() {
         let permessi = 0;
         let malattia = false;
         let trasferta = false;
+        let permessoStudio = 0;
+        let permessoDonazione = 0;
+        let permessoElettorale = 0;
 
         // Apply approved absences (only on working days)
         if (approvedAbsences[dateStr] && !isWknd && !isHoliday) {
@@ -379,6 +388,15 @@ export default function Presenze() {
             permessi = contractHours / 2;
           } else if (abs.tipo === 'smart') {
             ore = contractHours;
+          } else if (abs.tipo === 'studio') {
+            ore = 0;
+            permessoStudio = contractHours;
+          } else if (abs.tipo === 'donazione') {
+            ore = 0;
+            permessoDonazione = contractHours;
+          } else if (abs.tipo === 'elettorale') {
+            ore = 0;
+            permessoElettorale = contractHours;
           } else if (abs.tipo === 'permesso') {
             let hrs = contractHours / 2;
             if (abs.oraInizio && abs.oraFine) {
@@ -399,7 +417,10 @@ export default function Presenze() {
           permessi,
           malattia,
           trasferta,
-          oreContratto: contractHours
+          oreContratto: contractHours,
+          permessoStudio,
+          permessoDonazione,
+          permessoElettorale
         };
       }
 
@@ -925,16 +946,68 @@ export default function Presenze() {
       const isChecked = !!value;
       currentDay.ferie = isChecked ? dayContractHours : 0;
       currentDay.ore = isChecked ? 0 : Math.max(0, dayContractHours - (currentDay.permessi || 0));
+      if (isChecked) {
+        currentDay.permessoStudio = 0;
+        currentDay.permessoDonazione = 0;
+        currentDay.permessoElettorale = 0;
+      }
+    } else if (field === 'permessoStudio') {
+      const isChecked = !!value;
+      currentDay.permessoStudio = isChecked ? dayContractHours : 0;
+      if (isChecked) {
+        currentDay.ore = 0;
+        currentDay.ferie = 0;
+        currentDay.permessi = 0;
+        currentDay.permessoDonazione = 0;
+        currentDay.permessoElettorale = 0;
+        currentDay.malattia = false;
+      } else {
+        currentDay.ore = dayContractHours;
+      }
+    } else if (field === 'permessoDonazione') {
+      const isChecked = !!value;
+      currentDay.permessoDonazione = isChecked ? dayContractHours : 0;
+      if (isChecked) {
+        currentDay.ore = 0;
+        currentDay.ferie = 0;
+        currentDay.permessi = 0;
+        currentDay.permessoStudio = 0;
+        currentDay.permessoElettorale = 0;
+        currentDay.malattia = false;
+      } else {
+        currentDay.ore = dayContractHours;
+      }
+    } else if (field === 'permessoElettorale') {
+      const isChecked = !!value;
+      currentDay.permessoElettorale = isChecked ? dayContractHours : 0;
+      if (isChecked) {
+        currentDay.ore = 0;
+        currentDay.ferie = 0;
+        currentDay.permessi = 0;
+        currentDay.permessoStudio = 0;
+        currentDay.permessoDonazione = 0;
+        currentDay.malattia = false;
+      } else {
+        currentDay.ore = dayContractHours;
+      }
     } else if (field === 'permessi') {
       const numVal = Number(value || 0);
       currentDay.permessi = numVal;
       currentDay.ore = Math.max(0, dayContractHours - (currentDay.ferie || 0) - numVal);
+      if (numVal > 0) {
+        currentDay.permessoStudio = 0;
+        currentDay.permessoDonazione = 0;
+        currentDay.permessoElettorale = 0;
+      }
     } else if (field === 'ore') {
       const numVal = Number(value || 0);
       currentDay.ore = numVal;
       if (numVal === dayContractHours) {
         currentDay.ferie = 0;
         currentDay.permessi = 0;
+        currentDay.permessoStudio = 0;
+        currentDay.permessoDonazione = 0;
+        currentDay.permessoElettorale = 0;
       }
     } else {
       (currentDay as any)[field] = value;
@@ -1267,16 +1340,68 @@ export default function Presenze() {
       const isChecked = !!value;
       currentDay.ferie = isChecked ? dayContractHours : 0;
       currentDay.ore = isChecked ? 0 : Math.max(0, dayContractHours - (currentDay.permessi || 0));
+      if (isChecked) {
+        currentDay.permessoStudio = 0;
+        currentDay.permessoDonazione = 0;
+        currentDay.permessoElettorale = 0;
+      }
+    } else if (field === 'permessoStudio') {
+      const isChecked = !!value;
+      currentDay.permessoStudio = isChecked ? dayContractHours : 0;
+      if (isChecked) {
+        currentDay.ore = 0;
+        currentDay.ferie = 0;
+        currentDay.permessi = 0;
+        currentDay.permessoDonazione = 0;
+        currentDay.permessoElettorale = 0;
+        currentDay.malattia = false;
+      } else {
+        currentDay.ore = dayContractHours;
+      }
+    } else if (field === 'permessoDonazione') {
+      const isChecked = !!value;
+      currentDay.permessoDonazione = isChecked ? dayContractHours : 0;
+      if (isChecked) {
+        currentDay.ore = 0;
+        currentDay.ferie = 0;
+        currentDay.permessi = 0;
+        currentDay.permessoStudio = 0;
+        currentDay.permessoElettorale = 0;
+        currentDay.malattia = false;
+      } else {
+        currentDay.ore = dayContractHours;
+      }
+    } else if (field === 'permessoElettorale') {
+      const isChecked = !!value;
+      currentDay.permessoElettorale = isChecked ? dayContractHours : 0;
+      if (isChecked) {
+        currentDay.ore = 0;
+        currentDay.ferie = 0;
+        currentDay.permessi = 0;
+        currentDay.permessoStudio = 0;
+        currentDay.permessoDonazione = 0;
+        currentDay.malattia = false;
+      } else {
+        currentDay.ore = dayContractHours;
+      }
     } else if (field === 'permessi') {
       const numVal = Number(value || 0);
       currentDay.permessi = numVal;
       currentDay.ore = Math.max(0, dayContractHours - (currentDay.ferie || 0) - numVal);
+      if (numVal > 0) {
+        currentDay.permessoStudio = 0;
+        currentDay.permessoDonazione = 0;
+        currentDay.permessoElettorale = 0;
+      }
     } else if (field === 'ore') {
       const numVal = Number(value || 0);
       currentDay.ore = numVal;
       if (numVal === dayContractHours) {
         currentDay.ferie = 0;
         currentDay.permessi = 0;
+        currentDay.permessoStudio = 0;
+        currentDay.permessoDonazione = 0;
+        currentDay.permessoElettorale = 0;
       }
     } else {
       (currentDay as any)[field] = value;
@@ -1407,6 +1532,9 @@ export default function Presenze() {
     let ggTrasferta = 0;
     let ggIntere = 0;
     let ggMezze = 0;
+    let oreStudio = 0;
+    let oreDonazione = 0;
+    let oreElettorale = 0;
 
     for (let d = 1; d <= numDays; d++) {
       const g = giorni[String(d)];
@@ -1418,12 +1546,16 @@ export default function Presenze() {
         if (g.malattia) ggMalattia++;
         if (g.trasferta) ggTrasferta++;
 
+        oreStudio += Number(g.permessoStudio || 0);
+        oreDonazione += Number(g.permessoDonazione || 0);
+        oreElettorale += Number(g.permessoElettorale || 0);
+
         if (g.ore === 8) ggIntere++;
         if (g.ore === 4) ggMezze++;
       }
     }
 
-    return { oreOrd, oreStra, oreFerie, orePerm, ggMalattia, ggTrasferta, ggIntere, ggMezze };
+    return { oreOrd, oreStra, oreFerie, orePerm, ggMalattia, ggTrasferta, ggIntere, ggMezze, oreStudio, oreDonazione, oreElettorale };
   };
 
   // --- EXPORT TO EXCEL (CSV COMPATIBLE) ---
@@ -3170,7 +3302,7 @@ export default function Presenze() {
                               );
                             })}
                             <td className="p-3 font-bold text-amber-600 bg-gray-50 border-l-2 border-gray-300 text-sm">
-                              {calculateTotals(rapportino.giorni, daysInMonth).oreStra}
+                              {calculateTotals(rapportino.giorni, daysInMonth).oreStra} ore
                             </td>
                           </tr>
 
@@ -3183,7 +3315,7 @@ export default function Presenze() {
                               const giorno = rapportino.giorni[dayStr(d)];
 
                               return (
-                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : giorno && giorno.permessi > 0 ? 'bg-indigo-50/70' : ''}`}>
+                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : giorno && giorno.permessi > 0 ? 'bg-indigo-100' : ''}`}>
                                   {!outOfMonth && giorno && (
                                     <input 
                                       type="number"
@@ -3215,7 +3347,7 @@ export default function Presenze() {
                               const giorno = rapportino.giorni[dayStr(d)];
 
                               return (
-                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : giorno && giorno.ferie ? 'bg-amber-50/70' : ''} align-middle`}>
+                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : giorno && giorno.ferie ? 'bg-amber-100' : ''} align-middle`}>
                                   {!outOfMonth && giorno && (
                                     <div className="flex justify-center items-center">
                                       <input 
@@ -3247,7 +3379,7 @@ export default function Presenze() {
                               const giorno = rapportino.giorni[dayStr(d)];
 
                               return (
-                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : giorno && giorno.malattia ? 'bg-rose-50/70' : ''} align-middle`}>
+                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : giorno && giorno.malattia ? 'bg-red-100' : ''} align-middle`}>
                                   {!outOfMonth && giorno && (
                                     <div className="flex justify-center items-center">
                                       <input 
@@ -3265,6 +3397,102 @@ export default function Presenze() {
                             })}
                             <td className="p-3 font-bold text-red-600 bg-gray-50 border-l-2 border-gray-300 text-sm">
                               {calculateTotals(rapportino.giorni, daysInMonth).ggMalattia} gg
+                            </td>
+                          </tr>
+
+                          {/* DIPENDENTI STANDARD RIGA 5b: PERMESSO STUDIO */}
+                          <tr className="hover:bg-gray-50/50 transition-colors">
+                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 flex items-center gap-1.5">
+                              Permesso Studio <span className="text-[9px] font-bold bg-purple-100 text-purple-700 px-1 py-0.5 rounded font-mono">S</span>
+                            </td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const outOfMonth = d > daysInMonth;
+                              const giorno = rapportino.giorni[dayStr(d)];
+
+                              return (
+                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : giorno && giorno.permessoStudio ? 'bg-purple-100' : ''} align-middle`}>
+                                  {!outOfMonth && giorno && (
+                                    <div className="flex justify-center items-center">
+                                      <input 
+                                        type="checkbox"
+                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isDayLockedForUser(d)}
+                                        checked={!!giorno.permessoStudio}
+                                        onChange={e => handleCellChange(dayStr(d), 'permessoStudio', e.target.checked)}
+                                        className="w-4 h-4 rounded text-purple-600 focus:ring-purple-400 cursor-pointer"
+                                      />
+                                    </div>
+                                  )}
+                                  {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                                </td>
+                              );
+                            })}
+                            <td className="p-3 font-bold text-purple-700 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                              {calculateTotals(rapportino.giorni, daysInMonth).oreStudio} ore
+                            </td>
+                          </tr>
+
+                          {/* DIPENDENTI STANDARD RIGA 5c: PERMESSO DONAZIONE */}
+                          <tr className="hover:bg-gray-50/50 transition-colors">
+                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 flex items-center gap-1.5">
+                              Permesso Donazione <span className="text-[9px] font-bold bg-teal-100 text-teal-700 px-1 py-0.5 rounded font-mono">D</span>
+                            </td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const outOfMonth = d > daysInMonth;
+                              const giorno = rapportino.giorni[dayStr(d)];
+
+                              return (
+                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : giorno && giorno.permessoDonazione ? 'bg-teal-100' : ''} align-middle`}>
+                                  {!outOfMonth && giorno && (
+                                    <div className="flex justify-center items-center">
+                                      <input 
+                                        type="checkbox"
+                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isDayLockedForUser(d)}
+                                        checked={!!giorno.permessoDonazione}
+                                        onChange={e => handleCellChange(dayStr(d), 'permessoDonazione', e.target.checked)}
+                                        className="w-4 h-4 rounded text-teal-600 focus:ring-teal-400 cursor-pointer"
+                                      />
+                                    </div>
+                                  )}
+                                  {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                                </td>
+                              );
+                            })}
+                            <td className="p-3 font-bold text-teal-700 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                              {calculateTotals(rapportino.giorni, daysInMonth).oreDonazione} ore
+                            </td>
+                          </tr>
+
+                          {/* DIPENDENTI STANDARD RIGA 5d: PERMESSO ELETTORALE */}
+                          <tr className="hover:bg-gray-50/50 transition-colors">
+                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 flex items-center gap-1.5">
+                              Permesso Elettorale <span className="text-[9px] font-bold bg-indigo-100 text-indigo-700 px-1 py-0.5 rounded font-mono">E</span>
+                            </td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const outOfMonth = d > daysInMonth;
+                              const giorno = rapportino.giorni[dayStr(d)];
+
+                              return (
+                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : giorno && giorno.permessoElettorale ? 'bg-indigo-100' : ''} align-middle`}>
+                                  {!outOfMonth && giorno && (
+                                    <div className="flex justify-center items-center">
+                                      <input 
+                                        type="checkbox"
+                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isDayLockedForUser(d)}
+                                        checked={!!giorno.permessoElettorale}
+                                        onChange={e => handleCellChange(dayStr(d), 'permessoElettorale', e.target.checked)}
+                                        className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-400 cursor-pointer"
+                                      />
+                                    </div>
+                                  )}
+                                  {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                                </td>
+                              );
+                            })}
+                            <td className="p-3 font-bold text-indigo-700 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                              {calculateTotals(rapportino.giorni, daysInMonth).oreElettorale} ore
                             </td>
                           </tr>
 
@@ -3343,7 +3571,7 @@ export default function Presenze() {
                         Note Dipendente
                       </label>
                       <p className="text-[10px] text-gray-500 leading-relaxed font-bold">
-                        * NEL CASO DI MALATTIA O MATERNITÀ INDICARE NELLE NOTE IL N° DELL'ATTESTATO RILASCIATO DAL MEDICO.
+                        * NEL CASO DI MALATTIA, MATERNITÀ O ALTRI TIPI DI PERMESSI PARTICOLARI INDICARE NELLE NOTE IL N° DEL CERTIFICATO
                       </p>
                       <textarea
                         rows={3}
@@ -4061,7 +4289,7 @@ export default function Presenze() {
                               const g = reviewingRapportino.giorni[dayStr(d)];
 
                               return (
-                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : g && g.permessi > 0 ? 'bg-indigo-50/70' : ''}`}>
+                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : g && g.permessi > 0 ? 'bg-indigo-100' : ''}`}>
                                   {!out && g && (
                                     <input 
                                       type="number"
@@ -4089,7 +4317,7 @@ export default function Presenze() {
                               const g = reviewingRapportino.giorni[dayStr(d)];
 
                               return (
-                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : g && g.ferie ? 'bg-amber-50/70' : ''} align-middle`}>
+                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : g && g.ferie ? 'bg-amber-100' : ''} align-middle`}>
                                   {!out && g && (
                                     <div className="flex justify-center items-center">
                                       <input 
@@ -4119,7 +4347,7 @@ export default function Presenze() {
                               const g = reviewingRapportino.giorni[dayStr(d)];
 
                               return (
-                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : g && g.malattia ? 'bg-rose-50/70' : ''} align-middle`}>
+                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : g && g.malattia ? 'bg-red-100' : ''} align-middle`}>
                                   {!out && g && (
                                     <div className="flex justify-center items-center">
                                       <input 
@@ -4136,6 +4364,96 @@ export default function Presenze() {
                             })}
                             <td className="p-2 font-bold text-red-600 bg-gray-50 border-l">
                               {calculateTotals(reviewingRapportino.giorni, daysInMonth).ggMalattia} gg
+                            </td>
+                          </tr>
+
+                          {/* DIPENDENTI STANDARD RIGA 5b: PERMESSO STUDIO */}
+                          <tr>
+                            <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Permesso Studio</td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const out = d > daysInMonth;
+                              const g = reviewingRapportino.giorni[dayStr(d)];
+
+                              return (
+                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : g && g.permessoStudio ? 'bg-purple-100' : ''} align-middle`}>
+                                  {!out && g && (
+                                    <div className="flex justify-center items-center">
+                                      <input 
+                                        type="checkbox"
+                                        disabled={g.malattia}
+                                        checked={!!g.permessoStudio}
+                                        onChange={e => handleReviewCellChange(dayStr(d), 'permessoStudio', e.target.checked)}
+                                        className="w-3.5 h-3.5 rounded text-purple-600 cursor-pointer"
+                                      />
+                                    </div>
+                                  )}
+                                  {out && '-'}
+                                </td>
+                              );
+                            })}
+                            <td className="p-2 font-bold text-purple-700 bg-gray-50 border-l">
+                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).oreStudio} ore
+                            </td>
+                          </tr>
+
+                          {/* DIPENDENTI STANDARD RIGA 5c: PERMESSO DONAZIONE */}
+                          <tr>
+                            <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Permesso Donazione</td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const out = d > daysInMonth;
+                              const g = reviewingRapportino.giorni[dayStr(d)];
+
+                              return (
+                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : g && g.permessoDonazione ? 'bg-teal-100' : ''} align-middle`}>
+                                  {!out && g && (
+                                    <div className="flex justify-center items-center">
+                                      <input 
+                                        type="checkbox"
+                                        disabled={g.malattia}
+                                        checked={!!g.permessoDonazione}
+                                        onChange={e => handleReviewCellChange(dayStr(d), 'permessoDonazione', e.target.checked)}
+                                        className="w-3.5 h-3.5 rounded text-teal-600 cursor-pointer"
+                                      />
+                                    </div>
+                                  )}
+                                  {out && '-'}
+                                </td>
+                              );
+                            })}
+                            <td className="p-2 font-bold text-teal-700 bg-gray-50 border-l">
+                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).oreDonazione} ore
+                            </td>
+                          </tr>
+
+                          {/* DIPENDENTI STANDARD RIGA 5d: PERMESSO ELETTORALE */}
+                          <tr>
+                            <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Permesso Elettorale</td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const out = d > daysInMonth;
+                              const g = reviewingRapportino.giorni[dayStr(d)];
+
+                              return (
+                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : g && g.permessoElettorale ? 'bg-indigo-100' : ''} align-middle`}>
+                                  {!out && g && (
+                                    <div className="flex justify-center items-center">
+                                      <input 
+                                        type="checkbox"
+                                        disabled={g.malattia}
+                                        checked={!!g.permessoElettorale}
+                                        onChange={e => handleReviewCellChange(dayStr(d), 'permessoElettorale', e.target.checked)}
+                                        className="w-3.5 h-3.5 rounded text-indigo-600 cursor-pointer"
+                                      />
+                                    </div>
+                                  )}
+                                  {out && '-'}
+                                </td>
+                              );
+                            })}
+                            <td className="p-2 font-bold text-indigo-700 bg-gray-50 border-l">
+                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).oreElettorale} ore
                             </td>
                           </tr>
 
@@ -4622,7 +4940,7 @@ export default function Presenze() {
                               <td 
                                 key={i} 
                                 className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}
-                                style={hasVal ? { backgroundColor: '#e6f9f0' } : undefined}
+                                style={hasVal ? { backgroundColor: '#bbf7d0' } : undefined}
                               >
                                 {!out ? (val || 0) : ''}
                               </td>
@@ -4655,7 +4973,7 @@ export default function Presenze() {
                               <td 
                                 key={i} 
                                 className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}
-                                style={hasVal ? { backgroundColor: '#e0e7ff' } : undefined}
+                                style={hasVal ? { backgroundColor: '#c7d2fe' } : undefined}
                               >
                                 {!out ? (val || 0) : ''}
                               </td>
@@ -4674,7 +4992,7 @@ export default function Presenze() {
                               <td 
                                 key={i} 
                                 className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}
-                                style={hasVal ? { backgroundColor: '#fef3c7' } : undefined}
+                                style={hasVal ? { backgroundColor: '#fef08a' } : undefined}
                               >
                                 {!out && val ? 'F' : ''}
                               </td>
@@ -4693,13 +5011,70 @@ export default function Presenze() {
                               <td 
                                 key={i} 
                                 className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}
-                                style={hasVal ? { backgroundColor: '#ffe4e6' } : undefined}
+                                style={hasVal ? { backgroundColor: '#fca5a5' } : undefined}
                               >
                                 {!out && val ? 'M' : ''}
                               </td>
                             );
                           })}
                           <td className="p-1 font-extrabold bg-gray-100">{totals.ggMalattia} gg</td>
+                        </tr>
+                        <tr>
+                          <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">STUDIO (S)</td>
+                          {Array.from({ length: 31 }).map((_, i) => {
+                            const d = i + 1;
+                            const val = sheetToPrint.giorni[dayStr(d)]?.permessoStudio;
+                            const out = d > daysInMonth;
+                            const hasVal = !out && val;
+                            return (
+                              <td 
+                                key={i} 
+                                className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}
+                                style={hasVal ? { backgroundColor: '#e9d5ff' } : undefined}
+                              >
+                                {!out && val ? 'S' : ''}
+                              </td>
+                            );
+                          })}
+                          <td className="p-1 font-extrabold bg-gray-100">{totals.oreStudio} ore</td>
+                        </tr>
+                        <tr>
+                          <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">DONAZIONE (D)</td>
+                          {Array.from({ length: 31 }).map((_, i) => {
+                            const d = i + 1;
+                            const val = sheetToPrint.giorni[dayStr(d)]?.permessoDonazione;
+                            const out = d > daysInMonth;
+                            const hasVal = !out && val;
+                            return (
+                              <td 
+                                key={i} 
+                                className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}
+                                style={hasVal ? { backgroundColor: '#99f6e4' } : undefined}
+                              >
+                                {!out && val ? 'D' : ''}
+                              </td>
+                            );
+                          })}
+                          <td className="p-1 font-extrabold bg-gray-100">{totals.oreDonazione} ore</td>
+                        </tr>
+                        <tr>
+                          <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">ELETTORALE (E)</td>
+                          {Array.from({ length: 31 }).map((_, i) => {
+                            const d = i + 1;
+                            const val = sheetToPrint.giorni[dayStr(d)]?.permessoElettorale;
+                            const out = d > daysInMonth;
+                            const hasVal = !out && val;
+                            return (
+                              <td 
+                                key={i} 
+                                className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}
+                                style={hasVal ? { backgroundColor: '#c7d2fe' } : undefined}
+                              >
+                                {!out && val ? 'E' : ''}
+                              </td>
+                            );
+                          })}
+                          <td className="p-1 font-extrabold bg-gray-100">{totals.oreElettorale} ore</td>
                         </tr>
                         <tr>
                           <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">TRASFERTA (T)</td>
