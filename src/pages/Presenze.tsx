@@ -218,6 +218,10 @@ export default function Presenze() {
   const [reqWeekendLoading, setReqWeekendLoading] = useState(false);
   const [myWeekendRequests, setMyWeekendRequests] = useState<any[]>([]);
   const [allWeekendRequests, setAllWeekendRequests] = useState<any[]>([]);
+  const [directAuthDipNome, setDirectAuthDipNome] = useState('');
+  const [directAuthData, setDirectAuthData] = useState('');
+  const [directAuthMotivo, setDirectAuthMotivo] = useState('');
+  const [directAuthLoading, setDirectAuthLoading] = useState(false);
 
   // Stati per badge notifica globali (solo per HR e non Admin)
   const [globalPendingInviatiCount, setGlobalPendingInviatiCount] = useState(0);
@@ -1191,6 +1195,43 @@ export default function Presenze() {
       showToast(`Richiesta ${newStatus.toLowerCase()} con successo!`);
     } catch (e) {
       console.error("Errore decisione weekend:", e);
+    }
+  };
+
+  const handleDirectWeekendAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!directAuthDipNome) {
+      showToast("Seleziona una risorsa!", "warning");
+      return;
+    }
+    if (!directAuthData) {
+      showToast("Seleziona una data!", "warning");
+      return;
+    }
+
+    const selectedDip = dipendenti.find(d => d.nome === directAuthDipNome);
+    const email = selectedDip?.email || '';
+
+    setDirectAuthLoading(true);
+    try {
+      await addDoc(collection(db, 'richieste_weekend'), {
+        dipendenteName: directAuthDipNome,
+        dipendenteEmail: email.toLowerCase(),
+        data: directAuthData,
+        motivo: directAuthMotivo || 'Autorizzazione d\'ufficio dall\'HR',
+        stato: 'Approvato',
+        timestamp: new Date().toISOString()
+      });
+      setDirectAuthDipNome('');
+      setDirectAuthData('');
+      setDirectAuthMotivo('');
+      showToast("Autorizzazione registrata ed approvata con successo!");
+      loadPresenzeData();
+    } catch (err) {
+      console.error("Errore invio autorizzazione diretta:", err);
+      showToast("Errore durante la registrazione dell'autorizzazione.", "error");
+    } finally {
+      setDirectAuthLoading(false);
     }
   };
 
@@ -2260,6 +2301,61 @@ export default function Presenze() {
                   </tbody>
                 </table>
               )}
+            </div>
+
+            {/* Form per l'autorizzazione diretta da parte dell'HR */}
+            <div className="mt-8 pt-6 border-t border-gray-100 no-print">
+              <h4 className="font-bold text-sm text-gray-900 mb-2 flex items-center gap-1.5">
+                <CheckCircle className="w-4 h-4 text-emerald-500" />
+                <span>Autorizza Direttamente un Dipendente / Collaboratore</span>
+              </h4>
+              <p className="text-[11px] text-gray-500 mb-4">
+                Sblocca direttamente una specifica data di weekend o chiusura aziendale per una risorsa, senza che questa debba inviare una richiesta preventiva.
+              </p>
+              
+              <form onSubmit={handleDirectWeekendAuthSubmit} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end bg-gray-50/50 p-4 rounded-2xl border border-gray-100">
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 mb-1 ml-1">Risorsa</label>
+                  <select
+                    required
+                    value={directAuthDipNome}
+                    onChange={e => setDirectAuthDipNome(e.target.value)}
+                    className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-indigo-400 outline-none text-xs text-gray-750 font-semibold"
+                  >
+                    <option value="">Seleziona una risorsa...</option>
+                    {dipendenti.filter(d => d.nome).map(d => (
+                      <option key={d.id} value={d.nome}>{d.nome}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 mb-1 ml-1">Data da Sbloccare</label>
+                  <input
+                    required
+                    type="date"
+                    value={directAuthData}
+                    onChange={e => setDirectAuthData(e.target.value)}
+                    className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-indigo-400 outline-none text-xs text-gray-750 font-semibold"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 mb-1 ml-1">Motivazione (Opzionale)</label>
+                  <input
+                    type="text"
+                    placeholder="Es. Lavoro straordinario commessa X"
+                    value={directAuthMotivo}
+                    onChange={e => setDirectAuthMotivo(e.target.value)}
+                    className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-indigo-400 outline-none text-xs text-gray-755 font-semibold"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={directAuthLoading}
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-4 rounded-xl transition shadow active:scale-95 text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  {directAuthLoading ? 'Registrazione...' : 'Concedi Autorizzazione'}
+                </button>
+              </form>
             </div>
           </div>
 

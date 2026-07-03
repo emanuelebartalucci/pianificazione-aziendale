@@ -98,6 +98,52 @@ const formatCommDate = (dateStr?: string): string => {
   return dateStr;
 };
 
+const isItalianHoliday = (dateStr: string): boolean => {
+  const parts = dateStr.split('-');
+  if (parts.length !== 3) return false;
+  const year = Number(parts[0]);
+  const month = Number(parts[1]);
+  const day = Number(parts[2]);
+
+  // Festività fisse
+  if (month === 1 && day === 1) return true; // Capodanno
+  if (month === 1 && day === 6) return true; // Epifania
+  if (month === 4 && day === 25) return true; // Liberazione
+  if (month === 5 && day === 1) return true; // Festa del Lavoro
+  if (month === 6 && day === 2) return true; // Festa della Repubblica
+  if (month === 8 && day === 15) return true; // Ferragosto
+  if (month === 11 && day === 1) return true; // Tutti i Santi
+  if (month === 12 && day === 8) return true; // Immacolata
+  if (month === 12 && day === 25) return true; // Natale
+  if (month === 12 && day === 26) return true; // Santo Stefano
+
+  // Pasquetta (Meeus/Jones/Butcher algorithm)
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const easterMonth = Math.floor((h + l - 7 * m + 114) / 31);
+  const easterDay = ((h + l - 7 * m + 114) % 31) + 1;
+
+  const easterDate = new Date(year, easterMonth - 1, easterDay);
+  const easterMonday = new Date(easterDate);
+  easterMonday.setDate(easterDate.getDate() + 1);
+
+  if (month === (easterMonday.getMonth() + 1) && day === easterMonday.getDate()) {
+    return true;
+  }
+
+  return false;
+};
+
 export default function PianificazionePersonale() {
   const { isAdmin, isSenior, dipendenti, commesse, myAssociatedName } = useAuth();
   
@@ -320,6 +366,7 @@ export default function PianificazionePersonale() {
   const [modalData, setModalData] = useState({ dipendente: '', weekId: '', weekLabel: '', weekSub: '', currentAssignments: [] as Assegnazione[] });
 
   const [approvedLeaves, setApprovedLeaves] = useState<any[]>([]);
+  const [chiusureAziendali, setChiusureAziendali] = useState<Array<{ dataInizio: string; dataFine: string }>>([]);
 
   // Load approved leaves in real-time (last 60 days to prevent infinite data load)
   useEffect(() => {
@@ -339,6 +386,18 @@ export default function PianificazionePersonale() {
         list.push({ id: docSnap.id, ...data });
       });
       setApprovedLeaves(list);
+    });
+    return () => unsub();
+  }, []);
+
+  // Carica le chiusure aziendali da Firestore in tempo reale
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'chiusure_aziendali'), (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach(docSnap => {
+        list.push(docSnap.data() as { dataInizio: string; dataFine: string });
+      });
+      setChiusureAziendali(list);
     });
     return () => unsub();
   }, []);
@@ -398,6 +457,69 @@ export default function PianificazionePersonale() {
     });
 
     return leaveDaysFound;
+  };
+
+  const getBlockedDatesForResource = (resName: string, startDateStr: string, endDateStr: string) => {
+    const blockedDates: Record<string, boolean> = {};
+
+    // 1. Aggiungi le ferie approvate
+    approvedLeaves.forEach(leave => {
+      if (leave.dipendenteName !== resName) return;
+      const start = leave.dataInizio || leave.data;
+      const end = leave.dataFine || leave.data;
+      if (start && end) {
+        const [sY, sM, sD] = start.split('-').map(Number);
+        const [eY, eM, eD] = end.split('-').map(Number);
+        const curr = new Date(sY, sM - 1, sD);
+        const last = new Date(eY, eM - 1, eD);
+        while (curr <= last) {
+          const y = curr.getFullYear();
+          const m = String(curr.getMonth() + 1).padStart(2, '0');
+          const ds = String(curr.getDate()).padStart(2, '0');
+          blockedDates[`${y}-${m}-${ds}`] = true;
+          curr.setDate(curr.getDate() + 1);
+        }
+      }
+    });
+
+    // 2. Aggiungi le chiusure aziendali
+    chiusureAziendali.forEach(closure => {
+      const start = closure.dataInizio;
+      const end = closure.dataFine;
+      if (start && end) {
+        const [sY, sM, sD] = start.split('-').map(Number);
+        const [eY, eM, eD] = end.split('-').map(Number);
+        const curr = new Date(sY, sM - 1, sD);
+        const last = new Date(eY, eM - 1, eD);
+        while (curr <= last) {
+          const y = curr.getFullYear();
+          const m = String(curr.getMonth() + 1).padStart(2, '0');
+          const ds = String(curr.getDate()).padStart(2, '0');
+          blockedDates[`${y}-${m}-${ds}`] = true;
+          curr.setDate(curr.getDate() + 1);
+        }
+      }
+    });
+
+    // 3. Aggiungi le festività nazionali italiane nel range date
+    if (startDateStr && endDateStr) {
+      const [startY, startM, startD] = startDateStr.split('-').map(Number);
+      const [endY, endM, endD] = endDateStr.split('-').map(Number);
+      const currDObj = new Date(startY, startM - 1, startD);
+      const endDObj = new Date(endY, endM - 1, endD);
+      while (currDObj <= endDObj) {
+        const y = currDObj.getFullYear();
+        const m = String(currDObj.getMonth() + 1).padStart(2, '0');
+        const ds = String(currDObj.getDate()).padStart(2, '0');
+        const dateStr = `${y}-${m}-${ds}`;
+        if (isItalianHoliday(dateStr)) {
+          blockedDates[dateStr] = true;
+        }
+        currDObj.setDate(currDObj.getDate() + 1);
+      }
+    }
+
+    return blockedDates;
   };
 
   const fetchAssignments = async () => {
@@ -549,25 +671,7 @@ export default function PianificazionePersonale() {
     try {
       const targetWeekIds = getWeeksSpannedByDates(allocDataInizio, allocDataFine);
 
-      const blockedDates: Record<string, boolean> = {};
-      approvedLeaves.forEach(leave => {
-        if (leave.dipendenteName !== resName) return;
-        const start = leave.dataInizio || leave.data;
-        const end = leave.dataFine || leave.data;
-        if (start && end) {
-          const [sY, sM, sD] = start.split('-').map(Number);
-          const [eY, eM, eD] = end.split('-').map(Number);
-          const curr = new Date(sY, sM - 1, sD);
-          const last = new Date(eY, eM - 1, eD);
-          while (curr <= last) {
-            const y = curr.getFullYear();
-            const m = String(curr.getMonth() + 1).padStart(2, '0');
-            const ds = String(curr.getDate()).padStart(2, '0');
-            blockedDates[`${y}-${m}-${ds}`] = true;
-            curr.setDate(curr.getDate() + 1);
-          }
-        }
-      });
+      const blockedDates = getBlockedDatesForResource(resName, allocDataInizio, allocDataFine);
 
       for (const wkId of targetWeekIds) {
         const docId = `${resName}-${wkId}`;
@@ -834,25 +938,7 @@ export default function PianificazionePersonale() {
         const useDateRange = true;
         for (const resName of selectedResourceNames) {
           // Fetch approved leaves locally
-          const blockedDates: Record<string, boolean> = {};
-          approvedLeaves.forEach(leave => {
-            if (leave.dipendenteName !== resName) return;
-            const start = leave.dataInizio || leave.data;
-            const end = leave.dataFine || leave.data;
-            if (start && end) {
-              const [sY, sM, sD] = start.split('-').map(Number);
-              const [eY, eM, eD] = end.split('-').map(Number);
-              const curr = new Date(sY, sM - 1, sD);
-              const last = new Date(eY, eM - 1, eD);
-              while (curr <= last) {
-                const y = curr.getFullYear();
-                const m = String(curr.getMonth() + 1).padStart(2, '0');
-                const ds = String(curr.getDate()).padStart(2, '0');
-                blockedDates[`${y}-${m}-${ds}`] = true;
-                curr.setDate(curr.getDate() + 1);
-              }
-            }
-          });
+          const blockedDates = getBlockedDatesForResource(resName, allocDataInizio, allocDataFine);
 
           for (const wkId of targetWeekIds) {
             const docId = `${resName}-${wkId}`;
@@ -1039,26 +1125,7 @@ export default function PianificazionePersonale() {
 
       } else if (allocAction === 'sostituisci') {
         if (!commObj) return;
-        // Fetch approved leaves for B locally
-        const blockedDatesB: Record<string, boolean> = {};
-        approvedLeaves.forEach(leave => {
-          if (leave.dipendenteName !== targetResource) return;
-          const start = leave.dataInizio || leave.data;
-          const end = leave.dataFine || leave.data;
-          if (start && end) {
-            const [sY, sM, sD] = start.split('-').map(Number);
-            const [eY, eM, eD] = end.split('-').map(Number);
-            const curr = new Date(sY, sM - 1, sD);
-            const last = new Date(eY, eM - 1, eD);
-            while (curr <= last) {
-              const y = curr.getFullYear();
-              const m = String(curr.getMonth() + 1).padStart(2, '0');
-              const ds = String(curr.getDate()).padStart(2, '0');
-              blockedDatesB[`${y}-${m}-${ds}`] = true;
-              curr.setDate(curr.getDate() + 1);
-            }
-          }
-        });
+        const blockedDatesB = getBlockedDatesForResource(targetResource, allocDataInizio, allocDataFine);
 
         for (const wkId of targetWeekIds) {
           const docIdA = `${sourceResource}-${wkId}`;
