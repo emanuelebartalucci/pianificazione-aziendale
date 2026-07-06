@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth, type Dipendente } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, onSnapshot, doc, query, where, getDocs, writeBatch, addDoc, updateDoc } from 'firebase/firestore';
+import { collection, doc, writeBatch, addDoc, updateDoc } from 'firebase/firestore';
 import { Users, ChevronLeft, ChevronRight, Save, Download, ZoomIn, ZoomOut, Trash2, Plus, RefreshCw } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays, isItalianHoliday } from '../utils/date';
 import AssegnazioneModal from '../components/AssegnazioneModal';
@@ -110,7 +110,20 @@ const formatCommDate = (dateStr?: string): string => {
 
 
 export default function PianificazionePersonale() {
-  const { isAdmin, isSenior, dipendenti, commesse, coordinatori, user, myAssociatedName, refreshData } = useAuth();
+  const { 
+    isAdmin, 
+    isSenior, 
+    dipendenti, 
+    commesse, 
+    coordinatori, 
+    user, 
+    myAssociatedName, 
+    refreshData,
+    assegnazioni: globalAssignments,
+    chiusureAziendali,
+    approvedLeaves,
+    richiesteDisegnatori
+  } = useAuth();
   
   const [commessaSearchText, setCommessaSearchText] = useState('');
   const [isCommessaDropdownOpen, setIsCommessaDropdownOpen] = useState(false);
@@ -343,8 +356,7 @@ export default function PianificazionePersonale() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalData, setModalData] = useState({ dipendente: '', weekId: '', weekLabel: '', weekSub: '', currentAssignments: [] as Assegnazione[] });
 
-  const [approvedLeaves, setApprovedLeaves] = useState<any[]>([]);
-  const [chiusureAziendali, setChiusureAziendali] = useState<Array<{ dataInizio: string; dataFine: string }>>([]);
+
 
   // Migrazione automatica delle macro aree per i dipendenti esistenti a database
   useEffect(() => {
@@ -387,42 +399,9 @@ export default function PianificazionePersonale() {
     runMacroAreasMigration();
   }, [dipendenti, refreshData]);
 
-  // Load approved leaves in real-time (last 60 days to prevent infinite data load)
-  useEffect(() => {
-    const sixtyDaysAgo = new Date();
-    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
-    const limitDate = sixtyDaysAgo.toLocaleDateString('sv-SE');
 
-    const q = query(
-      collection(db, 'richieste_ferie'),
-      where('dataFine', '>=', limitDate)
-    );
-    const unsub = onSnapshot(q, (snapshot) => {
-      const list: any[] = [];
-      snapshot.forEach(docSnap => {
-        const data = docSnap.data();
-        if (data.stato !== 'Approvato') return;
-        list.push({ id: docSnap.id, ...data });
-      });
-      setApprovedLeaves(list);
-    });
-    return () => unsub();
-  }, []);
-
-  // Carica le chiusure aziendali da Firestore in tempo reale
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'chiusure_aziendali'), (snapshot) => {
-      const list: any[] = [];
-      snapshot.forEach(docSnap => {
-        list.push(docSnap.data() as { dataInizio: string; dataFine: string });
-      });
-      setChiusureAziendali(list);
-    });
-    return () => unsub();
-  }, []);
 
   // Stati per richieste disegnatori
-  const [richiesteDisegnatori, setRichiesteDisegnatori] = useState<any[]>([]);
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [reqCommessaId, setReqCommessaId] = useState('');
   const [reqDataInizio, setReqDataInizio] = useState('');
@@ -431,17 +410,6 @@ export default function PianificazionePersonale() {
   const [reqNota, setReqNota] = useState('');
   const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
   const [selectedDisegnatoriPerRichiesta, setSelectedDisegnatoriPerRichiesta] = useState<Record<string, string>>({});
-
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'richieste_disegnatori'), (snapshot) => {
-      const list: any[] = [];
-      snapshot.forEach(docSnap => {
-        list.push({ id: docSnap.id, ...docSnap.data() });
-      });
-      setRichiesteDisegnatori(list);
-    });
-    return () => unsub();
-  }, []);
 
   const getWeekId = (d: Date): string => {
     const date = new Date(d.getTime());
@@ -536,7 +504,6 @@ export default function PianificazionePersonale() {
       });
       
       await batch.commit();
-      await fetchAssignments();
       showToast("Richiesta approvata e disegnatore assegnato con successo!", "success");
     } catch (err) {
       console.error("Errore approvazione richiesta:", err);
@@ -707,28 +674,15 @@ export default function PianificazionePersonale() {
     return blockedDates;
   };
 
-  const fetchAssignments = async () => {
-    setLoadingAssignments(true);
-    try {
-      const snap = await getDocs(collection(db, 'assegnazioni'));
-      const ass: Record<string, Assegnazione[]> = {};
-      snap.forEach(docSnap => {
-        ass[docSnap.id] = docSnap.data().lista || [];
-      });
-      setDbAssignments(ass);
-      setAssignments(ass);
-    } catch (err) {
-      console.error("Errore caricamento assegnazioni:", err);
-      showToast("Errore nel caricamento delle assegnazioni.", "error");
-    } finally {
-      setLoadingAssignments(false);
-    }
-  };
-
-  // Carica le assegnazioni una volta all'avvio
+  // Carica le assegnazioni e sincronizza dal contesto globale real-time
   useEffect(() => {
-    fetchAssignments();
-  }, []);
+    const isLocalModified = JSON.stringify(assignments) !== JSON.stringify(dbAssignments);
+    setDbAssignments(globalAssignments || {});
+    if (!isLocalModified) {
+      setAssignments(globalAssignments || {});
+    }
+    setLoadingAssignments(false);
+  }, [globalAssignments]);
 
   // Update timeline weeks for the grid
   useEffect(() => {
@@ -1851,7 +1805,7 @@ export default function PianificazionePersonale() {
           <div className="flex items-center gap-3">
             <span>Pianificazione del Personale e Carichi</span>
             <button 
-              onClick={fetchAssignments}
+              onClick={() => window.location.reload()}
               title="Aggiorna Dati"
               className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 border border-transparent hover:border-indigo-100 rounded-xl transition-all cursor-pointer hover:rotate-180 duration-500"
             >

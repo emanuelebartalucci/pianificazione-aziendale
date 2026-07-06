@@ -1,7 +1,7 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, query, where, doc, setDoc, addDoc, deleteDoc, getDocs } from 'firebase/firestore';
+import { collection, doc, setDoc, addDoc, deleteDoc, getDocs } from 'firebase/firestore';
 import { Briefcase, ChevronLeft, ChevronRight, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays } from '../utils/date';
 import { queueMail } from '../utils/mailSender';
@@ -40,13 +40,7 @@ const hexToRgba = (hex: string, alpha: number): string => {
 };
 
 
-interface Assegnazione {
-  commessaId: string;
-  commessaName: string;
-  percentuale: number;
-  colore: string;
-  giorni?: string[];
-}
+
 
 interface WeekInfo {
   id: string;
@@ -122,13 +116,24 @@ const generateWeeksExtended = (baseDate: Date, numWeeks: number): WeekInfo[] => 
 };
 
 export default function Commesse() {
-  const { isAdmin, isSenior, myAssociatedName, dipendenti, commesse, refreshData } = useAuth();
+  const { 
+    isAdmin, 
+    isSenior, 
+    myAssociatedName, 
+    dipendenti, 
+    commesse, 
+    clienti: clientiList, 
+    assegnazioni: assignments, 
+    approvedLeaves, 
+    coordinatori, 
+    pmsEmails, 
+    seniorsEmails 
+  } = useAuth();
   
   const [baseDate, setBaseDate] = useState<Date>(new Date());
   const [zoomWeeks, setZoomWeeks] = useState<number>(13); // Default to 3 Months (13 Weeks)
   const [selectedCommessaFilter, setSelectedCommessaFilter] = useState<string>(''); // Single commessa detail view
   const [commessaTextQuery, setCommessaTextQuery] = useState('');
-  const [assignments, setAssignments] = useState<Record<string, Assegnazione[]>>({});
 
   // Tab control
   const [activeTab, setActiveTab] = useState<'consultazione' | 'gestione'>('consultazione');
@@ -147,9 +152,6 @@ export default function Commesse() {
     onConfirm: () => {},
     type: 'danger'
   });
-
-  // Clienti & PMS & Seniors Lists
-  const [clientiList, setClientiList] = useState<{ id: string; codice: string; nome: string }[]>([]);
 
   // Commesse form states
   const [newCommessaTipologia, setNewCommessaTipologia] = useState('A');
@@ -203,9 +205,6 @@ export default function Commesse() {
   const [editStato, setEditStato] = useState('Aperta');
   const [savingEdit, setSavingEdit] = useState(false);
   
-  const [seniorsEmails, setSeniorsEmails] = useState<string[]>([]);
-  const [pmsEmails, setPmsEmails] = useState<string[]>([]);
-  const [coordinatori, setCoordinatori] = useState<{ id: string; email: string; area: string }[]>([]);
   const [isCommessaDropdownOpen, setIsCommessaDropdownOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
 
@@ -236,63 +235,7 @@ export default function Commesse() {
     }
   };
   
-  const [approvedLeaves, setApprovedLeaves] = useState<any[]>([]);
 
-  const loadCommesseData = async () => {
-    try {
-      await refreshData();
-      const [seniorsSnap, pmsSnap, clientiSnap, assegnazioniSnap, coordinatoriSnap] = await Promise.all([
-        getDocs(collection(db, 'seniors')),
-        getDocs(collection(db, 'project_managers')),
-        getDocs(collection(db, 'clienti')),
-        getDocs(collection(db, 'assegnazioni')),
-        getDocs(collection(db, 'coordinatori'))
-      ]);
-      
-      setSeniorsEmails(seniorsSnap.docs.map(d => (d.data().email || '').toLowerCase()));
-      setPmsEmails(pmsSnap.docs.map(d => (d.data().email || '').toLowerCase()));
-      setCoordinatori(coordinatoriSnap.docs.map(d => ({
-        id: d.id,
-        email: d.data().email || '',
-        area: d.data().area || ''
-      })));
-      setClientiList(clientiSnap.docs.map(d => ({
-        id: d.id,
-        codice: d.data().codice || '',
-        nome: d.data().nome || ''
-      })).sort((a, b) => Number(a.codice) - Number(b.codice)));
-
-      const ass: Record<string, Assegnazione[]> = {};
-      assegnazioniSnap.forEach(docSnap => {
-        ass[docSnap.id] = docSnap.data().lista || [];
-      });
-      setAssignments(ass);
-
-      // Fetch approved leaves
-      const sixtyDaysAgo = new Date();
-      sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
-      const limitDate = sixtyDaysAgo.toLocaleDateString('sv-SE');
-      const q = query(
-        collection(db, 'richieste_ferie'),
-        where('dataFine', '>=', limitDate)
-      );
-      const leavesSnap = await getDocs(q);
-      const list: any[] = [];
-      leavesSnap.forEach(docSnap => {
-        const data = docSnap.data();
-        if (data.stato !== 'Approvato') return;
-        list.push({ id: docSnap.id, ...data });
-      });
-      setApprovedLeaves(list);
-    } catch (err) {
-      console.error("Error loading data in Commesse page:", err);
-      showToast("Errore nel caricamento delle commesse.", "error");
-    }
-  };
-
-  useEffect(() => {
-    loadCommesseData();
-  }, []);
 
   const getLeavesForResourceInWeek = (resName: string, wkId: string) => {
     const parts = wkId.split('-W');
@@ -559,7 +502,6 @@ export default function Commesse() {
       };
 
       await setDoc(docRef, updates, { merge: true });
-      await loadCommesseData();
 
       // Invia notifiche email se sono state fatte assegnazioni
       if (editResponsabile && editResponsabile !== editingCommessa.responsabile) {
@@ -698,7 +640,6 @@ export default function Commesse() {
       };
       
       await addDoc(collection(db, 'catalogo_commesse'), payload);
-      await loadCommesseData();
       
       setSelectedClient(null);
       setClientSearchText('');
@@ -744,7 +685,7 @@ export default function Commesse() {
               }
             }
           }
-          await loadCommesseData();
+
           showToast("Commessa e relative assegnazioni rimosse con successo!", "success");
         } catch (err) {
           console.error("Errore rimozione commessa:", err);
@@ -787,7 +728,7 @@ export default function Commesse() {
           <div className="flex items-center gap-3">
             <span>Pianificazione Avanzamento Commesse</span>
             <button 
-              onClick={loadCommesseData}
+              onClick={() => window.location.reload()}
               title="Aggiorna Dati"
               className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 border border-transparent hover:border-blue-100 rounded-xl transition-all cursor-pointer hover:rotate-180 duration-500"
             >
