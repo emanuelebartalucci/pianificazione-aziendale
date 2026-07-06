@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useAuth, type Dipendente } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, onSnapshot, doc, query, where, getDocs, writeBatch, addDoc, updateDoc } from 'firebase/firestore';
-import { Users, Printer, ChevronLeft, ChevronRight, Save, Download, ZoomIn, ZoomOut, Trash2, Plus, RefreshCw } from 'lucide-react';
+import { Users, ChevronLeft, ChevronRight, Save, Download, ZoomIn, ZoomOut, Trash2, Plus, RefreshCw } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays, isItalianHoliday } from '../utils/date';
 import AssegnazioneModal from '../components/AssegnazioneModal';
 import ConfirmModal from '../components/ConfirmModal';
@@ -2682,10 +2682,6 @@ export default function PianificazionePersonale() {
             
             <button onClick={handleExportGridToExcel} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition shadow-md active:scale-95">
               <Download className="w-4 h-4" /> Esporta Excel
-            </button>
-
-            <button onClick={() => window.print()} className="flex items-center gap-2 bg-gray-900 text-white hover:bg-gray-800 px-4 py-2.5 rounded-xl text-sm font-bold transition shadow-md active:scale-95">
-              <Printer className="w-4 h-4" /> Stampa Carichi
             </button>
           </div>
         </div>

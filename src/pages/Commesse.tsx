@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, query, where, doc, setDoc, addDoc, deleteDoc, getDocs } from 'firebase/firestore';
-import { Briefcase, Printer, ChevronLeft, ChevronRight, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw } from 'lucide-react';
+import { Briefcase, ChevronLeft, ChevronRight, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays } from '../utils/date';
 import { queueMail } from '../utils/mailSender';
 import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
@@ -756,92 +756,6 @@ export default function Commesse() {
     });
   };
 
-  const handlePrintCommesse = () => {
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
-
-    const htmlContent = `
-      <html>
-        <head>
-          <title>Anagrafica Clienti / Commesse</title>
-          <style>
-            body {
-              font-family: Arial, sans-serif;
-              margin: 30px;
-              color: #333;
-            }
-            h1 {
-              text-align: center;
-              margin-bottom: 30px;
-              font-size: 24px;
-            }
-            table {
-              width: 100%;
-              border-collapse: collapse;
-              margin-top: 20px;
-            }
-            th, td {
-              border: 1px solid #ccc;
-              padding: 12px 15px;
-              text-align: left;
-            }
-            th {
-              background-color: #f3f4f6;
-              font-weight: bold;
-            }
-            .color-indicator {
-              display: inline-block;
-              width: 16px;
-              height: 16px;
-              border-radius: 50%;
-              vertical-align: middle;
-              margin-right: 10px;
-              border: 1px solid #ccc;
-              -webkit-print-color-adjust: exact !important;
-              print-color-adjust: exact !important;
-            }
-          </style>
-        </head>
-        <body>
-          <h1>Anagrafica Clienti / Commesse</h1>
-          <table>
-            <thead>
-              <tr>
-                <th style="width: 15%;">#</th>
-                <th style="width: 85%;">Nome Commessa / Cliente</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${commesse.map((c, index) => {
-                const computedTipologia = getParsedField(c, 'tipologia');
-                const computedColor = TIPOLOGIA_COLORS[computedTipologia] || c.colore || '#64748b';
-                return `
-                  <tr>
-                    <td>${index + 1}</td>
-                    <td>
-                      <span class="color-indicator" style="background-color: ${computedColor}"></span>
-                      <strong>${c.nome}</strong>
-                    </td>
-                  </tr>
-                `;
-              }).join('')}
-            </tbody>
-          </table>
-          <script>
-            window.onload = function() {
-              window.print();
-              window.onafterprint = function() {
-                window.close();
-              };
-            };
-          </script>
-        </body>
-      </html>
-    `;
-
-    printWindow.document.write(htmlContent);
-    printWindow.document.close();
-  };
 
   return (
     <div className="flex flex-col gap-6">
@@ -1125,10 +1039,6 @@ export default function Commesse() {
                     <button onClick={handleExportToExcel} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition shadow-md active:scale-95">
                       <Download className="w-4 h-4" /> Esporta Excel
                     </button>
-
-                    <button onClick={() => window.print()} className="flex items-center gap-2 bg-gray-900 text-white hover:bg-gray-800 px-4 py-2.5 rounded-xl text-sm font-bold transition shadow-md active:scale-95">
-                      <Printer className="w-4 h-4" /> Stampa
-                    </button>
                   </div>
                 )}
               </div>
@@ -1368,12 +1278,6 @@ export default function Commesse() {
               <h3 className="text-xl font-bold text-emerald-900 flex items-center gap-2">
                 <Briefcase className="w-6 h-6 text-emerald-600" /> Catalogo Commesse
               </h3>
-              <button 
-                onClick={handlePrintCommesse}
-                className="flex items-center gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 px-3.5 py-1.5 rounded-xl text-xs font-bold transition shadow-sm active:scale-95 cursor-pointer animate-in fade-in"
-              >
-                <Printer className="w-3.5 h-3.5" /> Stampa Lista
-              </button>
             </div>
             
             {(isAdmin || isSenior) && (
