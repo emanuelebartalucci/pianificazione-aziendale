@@ -1030,49 +1030,48 @@ export default function Impostazioni() {
                 Visualizza e sposta i dipendenti e collaboratori tra le diverse macro aree funzionali.
               </p>
               
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 h-[650px]">
                 {(['Disegnatori', 'Ingegneria', 'Cantieri / Ambiente', 'Amministrazione'] as const).map(areaName => {
                   const areaMembers = dipendenti.filter(d => d.macroArea === areaName && !isSoci(d.nome));
                   const areaCoordinators = coordinatori.filter(c => c.area === areaName);
                   
                   return (
-                    <div key={areaName} className="bg-white p-4 rounded-2xl border border-indigo-100 shadow-sm flex flex-col min-h-[520px]">
-                      <div>
-                        <h4 className="font-extrabold text-sm text-indigo-955 border-b pb-2 mb-3 uppercase tracking-wider flex justify-between items-center">
-                          <span>{areaName}</span>
-                          <span className="bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full text-[10px] font-bold">
-                            {areaMembers.length}
-                          </span>
-                        </h4>
-                        
-                        {/* Coordinatori di quest'area */}
-                        {areaCoordinators.length > 0 && (
-                          <div className="mb-4 space-y-1.5 border-b pb-3 no-print">
-                            <div className="text-[10px] font-black text-teal-800 uppercase tracking-wide flex items-center gap-1 select-none">
-                              👑 Coordinatori ({areaCoordinators.length})
-                            </div>
-                            {areaCoordinators.map(c => {
-                              const name = getDipNomeFromEmail(c.email);
-                              return (
-                                <div key={c.id} className="p-2 bg-gradient-to-r from-teal-50 to-emerald-50 rounded-xl border border-teal-200 flex justify-between items-center text-xs">
-                                  <div className="truncate pr-2">
-                                    <div className="font-extrabold text-teal-950 truncate" title={name}>{name}</div>
-                                    <div className="text-[9px] text-teal-700/80 truncate" title={c.email}>{c.email}</div>
-                                  </div>
-                                  <button 
-                                    onClick={() => handleRemoveCoordinatore(c.id)} 
-                                    className="text-red-400 hover:text-red-650 p-1 cursor-pointer shrink-0 transition-colors"
-                                    title="Rimuovi Coordinatore"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5"/>
-                                  </button>
-                                </div>
-                              );
-                            })}
+                    <div key={areaName} className="bg-white p-4 rounded-2xl border border-indigo-100 shadow-sm flex flex-col h-full overflow-hidden">
+                      <h4 className="font-extrabold text-sm text-indigo-955 border-b pb-2 mb-3 uppercase tracking-wider flex justify-between items-center shrink-0">
+                        <span>{areaName}</span>
+                        <span className="bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full text-[10px] font-bold">
+                          {areaMembers.length}
+                        </span>
+                      </h4>
+                      
+                      {/* Coordinatori di quest'area */}
+                      {areaCoordinators.length > 0 && (
+                        <div className="mb-4 space-y-1.5 border-b pb-3 no-print shrink-0">
+                          <div className="text-[10px] font-black text-teal-800 uppercase tracking-wide flex items-center gap-1 select-none">
+                            👑 Coordinatori ({areaCoordinators.length})
                           </div>
-                        )}
-                        
-                        <div className="space-y-2 max-h-[460px] overflow-y-auto pr-1 scrollbar-thin">
+                          {areaCoordinators.map(c => {
+                            const name = getDipNomeFromEmail(c.email);
+                            return (
+                              <div key={c.id} className="p-2 bg-gradient-to-r from-teal-50 to-emerald-50 rounded-xl border border-teal-200 flex justify-between items-center text-xs">
+                                <div className="truncate pr-2">
+                                  <div className="font-extrabold text-teal-950 truncate" title={name}>{name}</div>
+                                  <div className="text-[9px] text-teal-700/80 truncate" title={c.email}>{c.email}</div>
+                                </div>
+                                <button 
+                                  onClick={() => handleRemoveCoordinatore(c.id)} 
+                                  className="text-red-400 hover:text-red-650 p-1 cursor-pointer shrink-0 transition-colors"
+                                  title="Rimuovi Coordinatore"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5"/>
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      
+                      <div className="space-y-2 overflow-y-auto pr-1 scrollbar-thin flex-1">
                           {areaMembers.length === 0 ? (
                             <p className="text-xs text-gray-400 italic">Nessun membro assegnato.</p>
                           ) : (
@@ -1094,7 +1093,6 @@ export default function Impostazioni() {
                             ))
                           )}
                         </div>
-                      </div>
                     </div>
                   );
                 })}
