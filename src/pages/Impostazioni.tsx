@@ -107,8 +107,7 @@ export default function Impostazioni() {
   const [newAdminEmail, setNewAdminEmail] = useState('');
   const [newHrEmail, setNewHrEmail] = useState('');
   const [hrList, setHrList] = useState<{id: string, email: string}[]>([]);
-  const [newSeniorEmail, setNewSeniorEmail] = useState('');
-  const [newPmEmail, setNewPmEmail] = useState('');
+
   const [newCoordinatoreEmail, setNewCoordinatoreEmail] = useState('');
   const [newCoordinatoreArea, setNewCoordinatoreArea] = useState('');
   
@@ -125,17 +124,14 @@ export default function Impostazioni() {
   const [newClientNome, setNewClientNome] = useState('');
   const [searchClientQuery, setSearchClientQuery] = useState('');
   const [clientiList, setClientiList] = useState<{id: string, codice: string, nome: string}[]>([]);
-  const [pmsList, setPmsList] = useState<{id: string, email: string}[]>([]);
 
   // Liste dinamiche da visualizzare (caricate da context o listener locali per eliminazione)
   const [adminsList, setAdminsList] = useState<{id: string, email: string}[]>([]);
-  const [seniorsList, setSeniorsList] = useState<{id: string, email: string}[]>([]);
   const [emailNotificationsPaused, setEmailNotificationsPaused] = useState(false);
 
   useEffect(() => {
     if (!isAdmin) return;
     const unsubA = onSnapshot(collection(db, 'admins'), (snap) => setAdminsList(snap.docs.map(d => ({id: d.id, email: d.data().email}))));
-    const unsubS = onSnapshot(collection(db, 'seniors'), (snap) => setSeniorsList(snap.docs.map(d => ({id: d.id, email: d.data().email}))));
     const unsubH = onSnapshot(collection(db, 'hr'), (snap) => {
       setHrList(snap.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
     });
@@ -149,10 +145,7 @@ export default function Impostazioni() {
         nome: d.data().nome
       })).sort((a, b) => Number(a.codice) - Number(b.codice)));
     });
-    const unsubP = onSnapshot(collection(db, 'project_managers'), (snap) => {
-      setPmsList(snap.docs.map(d => ({ id: d.id, email: d.data().email })));
-    });
-    return () => { unsubA(); unsubS(); unsubH(); unsubEmail(); unsubC(); unsubP(); };
+    return () => { unsubA(); unsubH(); unsubEmail(); unsubC(); };
   }, [isAdmin]);
 
   if (!isAuthorized) {
@@ -192,29 +185,7 @@ export default function Impostazioni() {
     await refreshData();
   };
 
-  const handleAddSenior = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if(newSeniorEmail) {
-      await addDoc(collection(db, 'seniors'), { email: newSeniorEmail.toLowerCase() });
-      await refreshData();
-    }
-    setNewSeniorEmail('');
-  };
 
-  const handleRemoveSenior = async (id: string) => {
-    await deleteDoc(doc(db, 'seniors', id));
-    await refreshData();
-  };
-
-  const handleAddPM = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if(newPmEmail) await addDoc(collection(db, 'project_managers'), { email: newPmEmail.toLowerCase() });
-    setNewPmEmail('');
-  };
-
-  const handleRemovePM = async (id: string) => {
-    await deleteDoc(doc(db, 'project_managers', id));
-  };
 
   const handleAddClient = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -991,59 +962,7 @@ export default function Impostazioni() {
               </div>
             </section>
 
-            {/* Responsabili */}
-            <section className="bg-gradient-to-br from-blue-50 to-cyan-50 p-6 rounded-3xl border border-blue-100 shadow-sm">
-              <h3 className="text-xl font-bold text-blue-900 mb-2 flex items-center gap-2"><Star className="w-6 h-6 text-blue-600" /> Responsabili</h3>
-              <p className="text-sm text-blue-700/80 mb-4">Possono pianificare le risorse per tutte le commesse.</p>
-              <form onSubmit={handleAddSenior} className="flex gap-2 mb-4">
-                <select required value={newSeniorEmail} onChange={e => setNewSeniorEmail(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-blue-400 transition shadow-inner font-medium text-blue-900">
-                  <option value="">Seleziona dipendente</option>
-                  {dipendenti.filter(d => d.email).map(d => <option key={d.id} value={d.email}>{d.nome}</option>)}
-                </select>
-                <button type="submit" className="bg-blue-600 text-white px-5 rounded-xl hover:bg-blue-700 transition font-bold shadow-md active:scale-95 cursor-pointer">Nomina</button>
-              </form>
-              <div className="max-h-80 overflow-y-auto bg-white/50 rounded-xl divide-y border border-blue-100">
-                {seniorsList.map(s => {
-                  const name = getDipNomeFromEmail(s.email);
-                  return (
-                    <div key={s.id} className="p-3 flex justify-between items-center text-sm">
-                      <div>
-                        <div className="font-bold text-blue-900">{name}</div>
-                        <div className="text-xs text-blue-700/70">{s.email}</div>
-                      </div>
-                      <button onClick={() => handleRemoveSenior(s.id)} className="text-blue-400 hover:text-blue-600 p-1 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
 
-            {/* Project Manager */}
-            <section className="bg-gradient-to-br from-purple-50 to-indigo-50 p-6 rounded-3xl border border-purple-100 shadow-sm">
-              <h3 className="text-xl font-bold text-purple-900 mb-2 flex items-center gap-2"><Star className="w-6 h-6 text-purple-600" /> Project Manager (PM)</h3>
-              <p className="text-sm text-purple-700/80 mb-4">I dipendenti designati per il ruolo di PM.</p>
-              <form onSubmit={handleAddPM} className="flex gap-2 mb-4">
-                <select required value={newPmEmail} onChange={e => setNewPmEmail(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-purple-400 transition shadow-inner font-medium text-purple-900">
-                  <option value="">Seleziona dipendente</option>
-                  {dipendenti.filter(d => d.email).map(d => <option key={d.id} value={d.email}>{d.nome}</option>)}
-                </select>
-                <button type="submit" className="bg-purple-600 text-white px-5 rounded-xl hover:bg-purple-700 transition font-bold shadow-md active:scale-95 cursor-pointer">Nomina</button>
-              </form>
-              <div className="max-h-80 overflow-y-auto bg-white/50 rounded-xl divide-y border border-purple-100">
-                {pmsList.map(p => {
-                  const name = getDipNomeFromEmail(p.email);
-                  return (
-                    <div key={p.id} className="p-3 flex justify-between items-center text-sm">
-                      <div>
-                        <div className="font-bold text-purple-900">{name}</div>
-                        <div className="text-xs text-purple-700/70">{p.email}</div>
-                      </div>
-                      <button onClick={() => handleRemovePM(p.id)} className="text-purple-400 hover:text-purple-600 p-1 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
 
             {/* HR */}
             <section className="bg-gradient-to-br from-fuchsia-50 to-pink-50 p-6 rounded-3xl border border-fuchsia-100 shadow-sm h-fit">
@@ -1118,6 +1037,89 @@ export default function Impostazioni() {
                   })
                 )}
               </div>
+            </section>
+            
+            {/* Gestione Appartenenza Macro Aree */}
+            <section className="bg-gradient-to-br from-indigo-50 to-blue-50/40 p-6 rounded-3xl border border-indigo-100 shadow-sm md:col-span-2">
+              <h3 className="text-xl font-bold text-indigo-900 mb-2 flex items-center gap-2">
+                📂 Composizione Macro Aree e Assegnazione Risorse
+              </h3>
+              <p className="text-sm text-indigo-700/80 mb-4">
+                Visualizza e sposta i dipendenti e collaboratori tra le diverse macro aree funzionali.
+              </p>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {(['Disegnatori', 'Ingegneria', 'Cantieri / Ambiente', 'Amministrazione'] as const).map(areaName => {
+                  const areaMembers = dipendenti.filter(d => d.macroArea === areaName && !isSoci(d.nome));
+                  
+                  return (
+                    <div key={areaName} className="bg-white p-4 rounded-2xl border border-indigo-100 shadow-sm flex flex-col justify-between">
+                      <div>
+                        <h4 className="font-extrabold text-sm text-indigo-955 border-b pb-2 mb-3 uppercase tracking-wider flex justify-between items-center">
+                          <span>{areaName}</span>
+                          <span className="bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full text-[10px] font-bold">
+                            {areaMembers.length}
+                          </span>
+                        </h4>
+                        
+                        <div className="space-y-2 max-h-60 overflow-y-auto pr-1 scrollbar-thin">
+                          {areaMembers.length === 0 ? (
+                            <p className="text-xs text-gray-400 italic">Nessun membro assegnato.</p>
+                          ) : (
+                            areaMembers.map(m => (
+                              <div key={m.id} className="p-2 bg-slate-50 rounded-xl border border-slate-100 flex flex-col gap-1 text-xs">
+                                <div className="font-bold text-gray-800">{m.nome}</div>
+                                <select
+                                  value={m.macroArea || ''}
+                                  onChange={e => handleUpdateMacroArea(m.id, e.target.value)}
+                                  className="p-1.5 border border-gray-200 rounded-lg bg-white text-[11px] font-semibold text-gray-700 outline-none focus:border-indigo-400"
+                                >
+                                  <option value="">Nessuna Area</option>
+                                  <option value="Disegnatori">Disegnatori</option>
+                                  <option value="Ingegneria">Ingegneria</option>
+                                  <option value="Cantieri / Ambiente">Cantieri / Ambiente</option>
+                                  <option value="Amministrazione">Amministrazione</option>
+                                </select>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              
+              {/* Risorse non ancora assegnate */}
+              {(() => {
+                const unassigned = dipendenti.filter(d => !d.macroArea && !isSoci(d.nome));
+                if (unassigned.length === 0) return null;
+                return (
+                  <div className="mt-6 pt-6 border-t border-indigo-100">
+                    <h4 className="font-extrabold text-sm text-amber-900 mb-3 uppercase tracking-wider flex items-center gap-1.5">
+                      ⚠️ Risorse Non Assegnate a una Macro Area ({unassigned.length})
+                    </h4>
+                    <div className="flex flex-wrap gap-3">
+                      {unassigned.map(m => (
+                        <div key={m.id} className="p-2.5 bg-amber-50 rounded-xl border border-amber-100 flex items-center gap-3 text-xs">
+                          <span className="font-bold text-amber-950">{m.nome}</span>
+                          <select
+                            value=""
+                            onChange={e => handleUpdateMacroArea(m.id, e.target.value)}
+                            className="p-1.5 border border-amber-200 rounded-lg bg-white text-[11px] font-bold text-gray-750 outline-none focus:border-amber-400"
+                          >
+                            <option value="">Assegna a...</option>
+                            <option value="Disegnatori">Disegnatori</option>
+                            <option value="Ingegneria">Ingegneria</option>
+                            <option value="Cantieri / Ambiente">Cantieri / Ambiente</option>
+                            <option value="Amministrazione">Amministrazione</option>
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </section>
 
           </div>

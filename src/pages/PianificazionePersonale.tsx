@@ -100,7 +100,7 @@ const formatCommDate = (dateStr?: string): string => {
 
 
 export default function PianificazionePersonale() {
-  const { isAdmin, isSenior, dipendenti, commesse, coordinatori, user, myAssociatedName } = useAuth();
+  const { isAdmin, isSenior, dipendenti, commesse, coordinatori, user, myAssociatedName, refreshData } = useAuth();
   
   const [commessaSearchText, setCommessaSearchText] = useState('');
   const [isCommessaDropdownOpen, setIsCommessaDropdownOpen] = useState(false);
@@ -327,6 +327,47 @@ export default function PianificazionePersonale() {
 
   const [approvedLeaves, setApprovedLeaves] = useState<any[]>([]);
   const [chiusureAziendali, setChiusureAziendali] = useState<Array<{ dataInizio: string; dataFine: string }>>([]);
+
+  // Migrazione automatica delle macro aree per i dipendenti esistenti a database
+  useEffect(() => {
+    if (dipendenti.length === 0) return;
+    
+    const runMacroAreasMigration = async () => {
+      const disegnatoriNames = ["Gori Matteo", "Matteoli Sergio", "Ostuni Riccardo", "Pranzile Daniele", "Rocchini Carlotta", "Romanello Andrea", "Signorini Leonardo", "Stefanelli Luca", "Stefanelli Alessandro"];
+      const ingegneriaNames = ["Badalassi Federico", "Calugi Marta", "Cappelli Marco", "Critelli Federica", "Menichetti Giulia", "Menichetti Lorenzo", "Orsi Giovanni", "Rossi Niccolò", "Sabatini Thomas", "Taddei Paolo", "Turi Francesca"];
+      const cantieriNames = ["Attanasio Daniele", "Biagioni Matteo", "Boni Serena", "Mancini Marco", "Marchetti Davide", "Menciassi Simone", "Minosi Roberto", "Papi Mattia", "Panchetti Paolo", "Ulivieri Christian"];
+      const amministrazioneNames = ["Cecca Antonella", "Fasano Lara", "Parenti Enrico", "Votino Federica", "Ballerini Chiara", "Bartalucci Emanuele", "Brotini Lucrezia", "Giusti Lorenzo", "Lapi Lucia", "Lucchesi Paolo", "Mannucci Valentina", "Tempone Giulia"];
+      
+      const batch = writeBatch(db);
+      let updatedCount = 0;
+      
+      dipendenti.forEach(d => {
+        let area: string | null = null;
+        if (disegnatoriNames.includes(d.nome)) area = 'Disegnatori';
+        else if (ingegneriaNames.includes(d.nome)) area = 'Ingegneria';
+        else if (cantieriNames.includes(d.nome)) area = 'Cantieri / Ambiente';
+        else if (amministrazioneNames.includes(d.nome)) area = 'Amministrazione';
+        
+        if (area && d.macroArea !== area) {
+          const docRef = doc(db, 'dipendenti', d.id);
+          batch.update(docRef, { macroArea: area });
+          updatedCount++;
+        }
+      });
+      
+      if (updatedCount > 0) {
+        try {
+          await batch.commit();
+          await refreshData();
+          console.log(`[MIGRAZIONE] Popolate macro-aree per ${updatedCount} dipendenti.`);
+        } catch (err) {
+          console.error("Errore durante la migrazione delle macro aree:", err);
+        }
+      }
+    };
+    
+    runMacroAreasMigration();
+  }, [dipendenti, refreshData]);
 
   // Load approved leaves in real-time (last 60 days to prevent infinite data load)
   useEffect(() => {
@@ -1363,9 +1404,7 @@ export default function PianificazionePersonale() {
     return filteredGridDipendenti.filter(d => isCollaboratore(d.nome, d.tipo));
   }, [filteredGridDipendenti]);
 
-  const soci = useMemo(() => {
-    return filteredGridDipendenti.filter(d => isSoci(d.nome));
-  }, [filteredGridDipendenti]);
+
 
   const disegnatori = useMemo(() => {
     return filteredGridDipendenti.filter(d => !isSoci(d.nome) && d.macroArea === 'Disegnatori');
@@ -1464,17 +1503,35 @@ export default function PianificazionePersonale() {
   const renderEmployeeRow = (dip: Dipendente, parentAreaName: string) => {
     const isCoordinatoreArea = coordinatori.some(c => c.email.toLowerCase() === user?.email?.toLowerCase() && c.area === parentAreaName);
     const isEditable = isAdmin || isCoordinatoreArea;
+    const isResponsabileDiQuestArea = coordinatori.some(c => c.email.toLowerCase() === dip.email?.toLowerCase() && c.area === parentAreaName);
+
+    let areaColorClass = "border-l-4 border-slate-350 bg-slate-50/20 text-slate-900";
+    if (parentAreaName === 'Disegnatori') {
+      areaColorClass = "border-l-4 border-teal-500 bg-teal-50/30 text-teal-950";
+    } else if (parentAreaName === 'Ingegneria') {
+      areaColorClass = "border-l-4 border-indigo-500 bg-indigo-50/30 text-indigo-950";
+    } else if (parentAreaName === 'Cantieri / Ambiente') {
+      areaColorClass = "border-l-4 border-emerald-500 bg-emerald-50/30 text-emerald-950";
+    } else if (parentAreaName === 'Amministrazione') {
+      areaColorClass = "border-l-4 border-blue-500 bg-blue-50/30 text-blue-950";
+    }
 
     return (
       <tr key={dip.id} className="hover:bg-indigo-50/20 transition-colors bg-white">
         <td 
-          className="p-4 text-left font-bold text-gray-800 bg-white sticky left-0 z-10 shadow-[1px_0_0_0_#f3f4f6] border-b align-middle truncate pl-8"
+          className={`p-4 text-left font-bold sticky left-0 z-10 shadow-[1px_0_0_0_#f3f4f6] border-b align-middle pl-8 ${areaColorClass}`}
           style={{ width: '180px', minWidth: '180px', maxWidth: '180px' }}
-          title={dip.nome}
         >
-          <div className="flex items-center gap-1.5">
-            <span className="text-gray-400 text-[10px]">↳</span>
-            <span className="truncate">{dip.nome}</span>
+          <div className="flex flex-col gap-0.5 truncate">
+            <div className="flex items-center gap-1.5 truncate">
+              <span className="text-gray-400 text-[10px] shrink-0">↳</span>
+              <span className="truncate" title={dip.nome}>{dip.nome}</span>
+            </div>
+            {isResponsabileDiQuestArea && (
+              <span className="text-[8px] font-black text-teal-700 ml-4.5 bg-teal-50 border border-teal-150 px-1.5 py-0.5 rounded-md w-fit uppercase tracking-wider select-none shrink-0">
+                Responsabile
+              </span>
+            )}
           </div>
         </td>
         
@@ -1490,26 +1547,26 @@ export default function PianificazionePersonale() {
             return listStr !== dbListStr;
           })();
 
-          let bgClass = "bg-slate-50/50 text-slate-400";
+          let bgClass = "bg-slate-50/50 text-slate-400 font-bold";
           if (isEditable) bgClass += " hover:bg-slate-100/60";
-          let indicatorColor = "bg-gray-300";
+          let indicatorColor = "bg-slate-400"; // Grigio scuro per 0%
 
           if (totalLoad > 0) {
             if (totalLoad < 100) {
               bgClass = isEditable 
-                ? "bg-sky-50 text-sky-800 hover:bg-sky-100/80" 
-                : "bg-sky-50 text-sky-800";
-              indicatorColor = "bg-sky-400";
+                ? "bg-sky-50 text-sky-900 hover:bg-sky-100/80 font-bold" 
+                : "bg-sky-50 text-sky-900 font-bold";
+              indicatorColor = "bg-sky-500"; // Celeste acceso
             } else if (totalLoad === 100) {
               bgClass = isEditable 
-                ? "bg-emerald-50 text-emerald-800 hover:bg-emerald-100/80" 
-                : "bg-emerald-50 text-emerald-800";
-              indicatorColor = "bg-emerald-550";
+                ? "bg-emerald-50 text-emerald-900 hover:bg-emerald-100/80 font-bold" 
+                : "bg-emerald-50 text-emerald-900 font-bold";
+              indicatorColor = "bg-emerald-500"; // Verde acceso
             } else {
               bgClass = isEditable 
-                ? "bg-rose-50 text-rose-800 hover:bg-rose-100/90 font-black" 
-                : "bg-rose-50 text-rose-800 font-black";
-              indicatorColor = "bg-rose-600";
+                ? "bg-rose-50 text-rose-900 hover:bg-rose-100/90 font-black" 
+                : "bg-rose-50 text-rose-900 font-black";
+              indicatorColor = "bg-rose-600"; // Rosso acceso
             }
           }
 
@@ -1527,7 +1584,7 @@ export default function PianificazionePersonale() {
             <td 
               key={wIndex} 
               onClick={() => canDirectlyEditCell && handleCellClick(dip.nome, wk.id, wk.label, wk.sub)}
-              className={`border-l border-b border-gray-100 align-middle transition-colors ${canDirectlyEditCell ? 'cursor-pointer' : 'cursor-default'} ${bgClass} ${
+              className={`border-l border-b border-slate-900 align-middle transition-colors ${canDirectlyEditCell ? 'cursor-pointer' : 'cursor-default'} ${bgClass} ${
                 isUltraNarrow ? 'p-1' : isNarrow ? 'p-1.5' : 'p-3'
               }`}
               style={{ 
@@ -1547,7 +1604,7 @@ export default function PianificazionePersonale() {
                 <span className={`${isUltraNarrow ? 'text-[10px]' : 'text-xs'} font-black`}>{totalLoad}%</span>
                 
                 {!isUltraNarrow && (
-                  <span className={`w-1.5 h-1.5 rounded-full shadow-sm ${indicatorColor}`}></span>
+                  <span className={`w-1.5 h-1.5 rounded-full shadow-sm no-print ${indicatorColor}`}></span>
                 )}
 
                 {leaves.length > 0 && (
@@ -1633,17 +1690,32 @@ export default function PianificazionePersonale() {
       <>
         <tr 
           onClick={toggleExpand}
-          className="bg-slate-100 hover:bg-slate-150 transition-colors font-extrabold text-xs cursor-pointer select-none border-t border-b border-slate-200"
+          className="bg-slate-100 hover:bg-slate-150 transition-colors font-extrabold text-xs cursor-pointer select-none border-b border-slate-200"
         >
-          <td 
-            className="p-4 text-left font-black text-slate-800 bg-slate-100 sticky left-0 z-10 shadow-[1px_0_0_0_#e2e8f0] border-b align-middle truncate"
-            style={{ width: '180px', minWidth: '180px', maxWidth: '180px' }}
-          >
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-slate-500 w-3 text-center">{isExpanded ? '▼' : '▶'}</span>
-              <span className="uppercase tracking-wider text-slate-900">{areaName} ({members.length})</span>
-            </div>
-          </td>
+          {(() => {
+            let areaHeaderClass = "bg-slate-100 text-slate-900 border-t-2 border-slate-900";
+            if (areaName === 'Disegnatori') {
+              areaHeaderClass = "bg-teal-100 text-teal-950 border-t-2 border-teal-600";
+            } else if (areaName === 'Ingegneria') {
+              areaHeaderClass = "bg-indigo-100 text-indigo-955 border-t-2 border-indigo-600";
+            } else if (areaName === 'Cantieri / Ambiente') {
+              areaHeaderClass = "bg-emerald-100 text-emerald-955 border-t-2 border-emerald-600";
+            } else if (areaName === 'Amministrazione') {
+              areaHeaderClass = "bg-blue-100 text-blue-955 border-t-2 border-blue-600";
+            }
+
+            return (
+              <td 
+                className={`p-4 text-left font-black sticky left-0 z-10 shadow-[1px_0_0_0_#e2e8f0] border-b align-middle truncate ${areaHeaderClass}`}
+                style={{ width: '180px', minWidth: '180px', maxWidth: '180px' }}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-slate-500 w-3 text-center">{isExpanded ? '▼' : '▶'}</span>
+                  <span className="uppercase tracking-wider">{areaName} ({members.length})</span>
+                </div>
+              </td>
+            );
+          })()}
 
           {timelineWeeks.map((wk, wIndex) => {
             const avgLoad = members.length === 0 ? 0 : Math.round(
@@ -1654,26 +1726,32 @@ export default function PianificazionePersonale() {
               }, 0) / members.length
             );
 
-            let bgClass = "bg-slate-50 text-slate-400";
-            let indicatorColor = "bg-slate-350";
+            let bgClass = "bg-slate-50 text-slate-400 font-bold";
+            let indicatorColor = "bg-slate-400"; // Grigio scuro per 0%
 
             if (avgLoad > 0) {
               if (avgLoad < 80) {
-                bgClass = "bg-sky-50/70 text-sky-800";
-                indicatorColor = "bg-sky-400";
+                bgClass = "bg-sky-50/70 text-sky-900 font-bold";
+                indicatorColor = "bg-sky-500"; // Celeste acceso
               } else if (avgLoad >= 80 && avgLoad <= 100) {
-                bgClass = "bg-emerald-50/70 text-emerald-800";
-                indicatorColor = "bg-emerald-500";
+                bgClass = "bg-emerald-50/70 text-emerald-900 font-bold";
+                indicatorColor = "bg-emerald-500"; // Verde acceso
               } else {
-                bgClass = "bg-rose-50/75 text-rose-800 font-black";
-                indicatorColor = "bg-rose-600";
+                bgClass = "bg-rose-50/75 text-rose-900 font-black";
+                indicatorColor = "bg-rose-600"; // Rosso acceso
               }
             }
+
+            let areaTopBorder = "border-t-2 border-slate-900";
+            if (areaName === 'Disegnatori') areaTopBorder = "border-t-2 border-teal-600";
+            else if (areaName === 'Ingegneria') areaTopBorder = "border-t-2 border-indigo-600";
+            else if (areaName === 'Cantieri / Ambiente') areaTopBorder = "border-t-2 border-emerald-600";
+            else if (areaName === 'Amministrazione') areaTopBorder = "border-t-2 border-blue-600";
 
             return (
               <td 
                 key={wIndex} 
-                className={`border-l border-b border-slate-150 align-middle transition-colors ${bgClass} ${
+                className={`border-l border-b ${areaTopBorder} border-slate-900 align-middle transition-colors ${bgClass} ${
                   isUltraNarrow ? 'p-1' : isNarrow ? 'p-1.5' : 'p-3'
                 }`}
                 style={{ 
@@ -1690,7 +1768,7 @@ export default function PianificazionePersonale() {
                 >
                   <span className={`${isUltraNarrow ? 'text-[10px]' : 'text-xs'} font-black`}>{avgLoad}%</span>
                   {!isUltraNarrow && (
-                    <span className={`w-1.5 h-1.5 rounded-full ${indicatorColor}`}></span>
+                    <span className={`w-1.5 h-1.5 rounded-full no-print ${indicatorColor}`}></span>
                   )}
                 </div>
               </td>
@@ -1706,7 +1784,16 @@ export default function PianificazionePersonale() {
               </td>
             </tr>
           ) : (
-            members.map(dip => renderEmployeeRow(dip, areaName))
+            (() => {
+              const sortedMembers = [...members].sort((a, b) => {
+                const isACoord = coordinatori.some(c => c.email.toLowerCase() === a.email?.toLowerCase() && c.area === areaName);
+                const isBCoord = coordinatori.some(c => c.email.toLowerCase() === b.email?.toLowerCase() && c.area === areaName);
+                if (isACoord && !isBCoord) return -1;
+                if (!isACoord && isBCoord) return 1;
+                return a.nome.localeCompare(b.nome);
+              });
+              return sortedMembers.map(dip => renderEmployeeRow(dip, areaName));
+            })()
           )
         )}
       </>
@@ -2522,7 +2609,7 @@ export default function PianificazionePersonale() {
       )}
 
       {/* 2. TIMELINE CARICHI DI LAVORO */}
-      <div className="bg-white rounded-[2rem] shadow-xl border relative mb-10 flex flex-col max-h-[750px]">
+      <div className="bg-white rounded-[2rem] shadow-xl border overflow-hidden relative mb-10 flex flex-col max-h-[750px]">
         
         {/* Navigation Toolbar */}
         <div className="p-4 border-b border-gray-200 flex flex-col md:flex-row md:items-center justify-between gap-4 no-print bg-gray-50/50 rounded-t-[2rem] shrink-0">
@@ -2585,7 +2672,7 @@ export default function PianificazionePersonale() {
         </div>
 
         {/* Load Grid with clipping for rounded corners */}
-        <div className="w-full flex-1 overflow-hidden mb-4 rounded-b-2xl flex flex-col">
+        <div className="w-full flex-1 overflow-hidden flex flex-col">
           <div className="w-full overflow-auto scrollbar-thin flex-1">
             <table className="w-full text-center border-separate border-spacing-0 text-xs">
             <thead className="sticky top-0 z-30 bg-gray-100 border-b border-gray-200 font-bold text-gray-600 shadow-sm">
@@ -2607,9 +2694,19 @@ export default function PianificazionePersonale() {
                       <div className="font-extrabold text-gray-900 text-xs truncate" title={wk.label}>
                         {isNarrow ? wk.label.replace('Sett. ', 'S') : wk.label}
                       </div>
-                      {!isNarrow && (
-                        <div className="text-[11px] text-gray-400 mt-0.5 truncate">{wk.sub}</div>
-                      )}
+                      {(() => {
+                        const parts = (wk.sub || '').split(' - ');
+                        if (parts.length === 2) {
+                          return (
+                            <div className="text-[9px] leading-tight text-gray-400 mt-0.5 font-bold flex flex-col items-center select-none shrink-0">
+                              <span>{parts[0]}</span>
+                              <span className="opacity-30 text-[7px] leading-[5px] my-0.5">↓</span>
+                              <span>{parts[1]}</span>
+                            </div>
+                          );
+                        }
+                        return <div className="text-[10px] text-gray-400 mt-0.5 truncate">{wk.sub}</div>;
+                      })()}
                     </th>
                   );
                 })}
@@ -2623,7 +2720,7 @@ export default function PianificazionePersonale() {
                   </td>
                 </tr>
               </tbody>
-            ) : (soci.length === 0 && disegnatori.length === 0 && ingegneria.length === 0 && cantieri.length === 0 && amministrazione.length === 0 && nonAssegnati.length === 0) ? (
+            ) : (disegnatori.length === 0 && ingegneria.length === 0 && cantieri.length === 0 && amministrazione.length === 0 && nonAssegnati.length === 0) ? (
               <tbody className="divide-y divide-gray-100 font-medium bg-white">
                 <tr>
                   <td colSpan={timelineWeeks.length + 1} className="p-12 text-center text-gray-400 font-bold italic bg-white">
@@ -2633,36 +2730,31 @@ export default function PianificazionePersonale() {
               </tbody>
             ) : (
               <>
-                {/* SEZIONE SOCI */}
-                <tbody className="divide-y divide-gray-100 font-medium bg-white">
-                  <tr className="bg-rose-50/40 text-rose-950 font-extrabold text-xs border-b border-rose-100">
-                    <td colSpan={timelineWeeks.length + 1} className="p-3 text-left pl-6 sticky left-0 z-20 bg-rose-50/95 border-b border-rose-100" style={{ top: '55px' }}>
-                      <div className="flex items-center gap-2">
-                        <span className="uppercase tracking-wider font-black">Soci Proprietari ({soci.length})</span>
-                      </div>
-                    </td>
-                  </tr>
-                  {soci.length === 0 ? (
-                    <tr>
-                      <td colSpan={timelineWeeks.length + 1} className="p-4 text-center text-gray-400 italic bg-white">
-                        Nessun socio trovato.
-                      </td>
-                    </tr>
-                  ) : (
-                    soci.map(dip => renderEmployeeRow(dip, 'Soci'))
-                  )}
-                </tbody>
-
                 {/* SEZIONE MACRO AREE */}
-                <tbody className="divide-y divide-gray-100 font-medium bg-white">
+                <tbody className="divide-y divide-gray-100 font-medium bg-white border-b border-slate-900">
                   <tr className="bg-indigo-50/40 text-indigo-950 font-extrabold text-xs border-t border-indigo-100">
                     <td colSpan={timelineWeeks.length + 1} className="p-3 text-left pl-6 sticky left-0 z-20 bg-indigo-50/95 border-b border-indigo-100" style={{ top: '55px' }}>
                       <span className="uppercase tracking-wider font-black">Macro Aree Funzionali</span>
                     </td>
                   </tr>
+                </tbody>
+                
+                <tbody className="divide-y divide-gray-100 font-medium bg-white border-b border-slate-900">
                   {renderAreaRow('Disegnatori', disegnatori)}
+                </tbody>
+                <tbody className="no-print"><tr className="h-4 bg-gray-50"><td colSpan={timelineWeeks.length + 1} className="p-2 border-none"></td></tr></tbody>
+                
+                <tbody className="divide-y divide-gray-100 font-medium bg-white border-b border-slate-900">
                   {renderAreaRow('Ingegneria', ingegneria)}
+                </tbody>
+                <tbody className="no-print"><tr className="h-4 bg-gray-50"><td colSpan={timelineWeeks.length + 1} className="p-2 border-none"></td></tr></tbody>
+                
+                <tbody className="divide-y divide-gray-100 font-medium bg-white border-b border-slate-900">
                   {renderAreaRow('Cantieri / Ambiente', cantieri)}
+                </tbody>
+                <tbody className="no-print"><tr className="h-4 bg-gray-50"><td colSpan={timelineWeeks.length + 1} className="p-2 border-none"></td></tr></tbody>
+                
+                <tbody className="divide-y divide-gray-100 font-medium bg-white border-b border-slate-900">
                   {renderAreaRow('Amministrazione', amministrazione)}
                 </tbody>
 
@@ -2684,11 +2776,31 @@ export default function PianificazionePersonale() {
       </div>
 
         {/* Legend */}
-        <div className="p-4 bg-gray-50 flex flex-wrap gap-6 border-t justify-center text-xs font-bold text-gray-500 rounded-b-[2rem]">
-          <div className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-gray-300"></span> Carico Vuoto (0%)</div>
-          <div className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-amber-400"></span> Sotto-utilizzato (&lt; 100%)</div>
-          <div className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-green-500"></span> Ottimale (100%)</div>
-          <div className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-red-600"></span> Sovraccarico (&gt; 100%)</div>
+        <div className="p-4 bg-gray-50 flex flex-wrap gap-6 border-t justify-center text-xs font-bold text-gray-500 rounded-b-[2rem] select-none">
+          <div className="flex items-center gap-3">
+            <span className="w-4 h-4 rounded-lg bg-slate-50/50 border border-slate-200 shadow-sm shrink-0 flex items-center justify-center">
+              <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+            </span>
+            <span>Carico Vuoto (0%)</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="w-4 h-4 rounded-lg bg-sky-50 border border-sky-200 shadow-sm shrink-0 flex items-center justify-center">
+              <span className="w-1.5 h-1.5 rounded-full bg-sky-500"></span>
+            </span>
+            <span>Sotto-utilizzato (&lt; 100%)</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="w-4 h-4 rounded-lg bg-emerald-50 border border-emerald-200 shadow-sm shrink-0 flex items-center justify-center">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+            </span>
+            <span>Ottimale (100%)</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="w-4 h-4 rounded-lg bg-rose-50 border border-rose-200 shadow-sm shrink-0 flex items-center justify-center">
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-600"></span>
+            </span>
+            <span>Sovraccarico (&gt; 100%)</span>
+          </div>
         </div>
 
       </div>
