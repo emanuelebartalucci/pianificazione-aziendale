@@ -611,6 +611,39 @@ export default function PianificazionePersonale() {
     return leaveDaysFound;
   };
 
+  const getDayLoad = (dayName: string, commesseLoad: number, dayLeaves: any[]) => {
+    const leavesForDay = dayLeaves.filter(l => l.giorno === dayName);
+    if (leavesForDay.length === 0) return commesseLoad;
+    
+    const haGiornataIntera = leavesForDay.some(l => 
+      l.tipo === 'ferie' || 
+      l.tipo === 'malattia' || 
+      l.tipo === 'maternita' || 
+      (l.tipo !== 'smart' && l.tipo !== 'permesso' && l.tipo !== 'mattina' && l.tipo !== 'pomeriggio')
+    );
+    if (haGiornataIntera) return 100;
+    
+    const haMezzaGiornata = leavesForDay.some(l => 
+      l.tipo === 'permesso' || 
+      l.tipo === 'mattina' || 
+      l.tipo === 'pomeriggio'
+    );
+    if (haMezzaGiornata) return 50 + (commesseLoad * 0.5);
+    
+    return commesseLoad;
+  };
+
+  const calculateWeeklyLoad = (dipName: string, wkId: string, list: any[]) => {
+    const leaves = getLeavesForResourceInWeek(dipName, wkId);
+    const commesseLoad = list.reduce((acc, c) => acc + Number(c.percentuale), 0);
+    const baseDays = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
+    let totalWeekPct = 0;
+    for (const day of baseDays) {
+      totalWeekPct += getDayLoad(day, commesseLoad, leaves);
+    }
+    return Math.round(totalWeekPct / 5);
+  };
+
   const getBlockedDatesForResource = (resName: string, startDateStr: string, endDateStr: string) => {
     const blockedDates: Record<string, boolean> = {};
 
@@ -807,7 +840,7 @@ export default function PianificazionePersonale() {
       return;
     }
 
-    const warnings: string[] = [];
+
     const updatedAssignments = { ...assignments };
     const newNotifications = [...draftNotifications];
 
@@ -817,8 +850,13 @@ export default function PianificazionePersonale() {
       const blockedDates = getBlockedDatesForResource(resName, allocDataInizio, allocDataFine);
       const blockedDatesArray = Object.keys(blockedDates);
       if (blockedDatesArray.length > 0) {
-        const proceed = window.confirm(`Attenzione: nel periodo selezionato la risorsa ${resName} ha registrato ferie o permessi in alcune giornate (${blockedDatesArray.length} giorni di assenza trovati). Vuoi procedere comunque con l'assegnazione?`);
-        if (!proceed) return;
+        setConfirmConfig({
+          isOpen: true,
+          title: '⚠️ Avviso Conflitto Assenze',
+          message: `L'assegnazione per ${resName} è stata registrata in bozza, ma si segnala che nel periodo selezionato la risorsa ha registrato ferie o permessi nelle seguenti date: ${blockedDatesArray.join(', ')}.`,
+          type: 'warning',
+          onConfirm: () => setConfirmConfig(prev => ({ ...prev, isOpen: false }))
+        });
       }
 
       for (const wkId of targetWeekIds) {
@@ -826,10 +864,8 @@ export default function PianificazionePersonale() {
         const baseDays = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
         const allowedDays: string[] = [];
 
-        let basePct = percentage;
         const coveredDays = getCoveredDaysInWeek(wkId, allocDataInizio, allocDataFine);
         if (coveredDays === 0) continue;
-        basePct = Math.round((basePct * coveredDays) / 5);
 
         for (const day of baseDays) {
           const dayDate = getWeekdayDate(wkId, day);
@@ -839,7 +875,7 @@ export default function PianificazionePersonale() {
           }
         }
 
-        const actualPct = basePct;
+        const actualPct = percentage;
 
         if (actualPct === 0) continue;
 
@@ -863,7 +899,7 @@ export default function PianificazionePersonale() {
             dipendenteNome: resName,
             email: targetDip.email,
             weekLabel: wkLabel,
-            description: `Assegnata commessa: ${commObj.nome} (${actualPct}%)${actualPct < basePct ? ' [Percentuale ricalcolata per ferie/assenza]' : ''}`
+            description: `Assegnata commessa: ${commObj.nome} (${actualPct}%)`
           });
         }
       }
@@ -872,9 +908,6 @@ export default function PianificazionePersonale() {
       setDraftNotifications(newNotifications);
       setIsDirty(true);
       showToast("Assegnazione registrata in bozza!", "success");
-      if (warnings.length > 0) {
-        showToast("Operazione completata con variazioni per assenza/ferie.", "warning");
-      }
     } catch (err) {
       console.error(err);
       showToast("Si è verificato un errore durante il salvataggio locale.", "error");
@@ -1061,7 +1094,7 @@ export default function PianificazionePersonale() {
       }
     }
 
-    const warnings: string[] = [];
+
     const updatedAssignments = { ...assignments };
     const newNotifications = [...draftNotifications];
 
@@ -1070,14 +1103,13 @@ export default function PianificazionePersonale() {
 
       if (allocAction === 'assegna') {
         if (!commObj) return;
-        const useDateRange = true;
+        const conflictedResources: string[] = [];
         for (const resName of selectedResourceNames) {
           // Fetch approved leaves locally
           const blockedDates = getBlockedDatesForResource(resName, allocDataInizio, allocDataFine);
           const blockedDatesArray = Object.keys(blockedDates);
           if (blockedDatesArray.length > 0) {
-            const proceed = window.confirm(`Attenzione: nel periodo selezionato la risorsa ${resName} ha registrato ferie o permessi in alcune giornate (${blockedDatesArray.length} giorni di assenza trovati). Vuoi procedere comunque con l'assegnazione?`);
-            if (!proceed) continue;
+            conflictedResources.push(`${resName} (${blockedDatesArray.length} gg)`);
           }
 
           for (const wkId of targetWeekIds) {
@@ -1085,17 +1117,14 @@ export default function PianificazionePersonale() {
             const baseDays = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
             const allowedDays: string[] = [];
 
-            let basePct = Number(resourcePercentages[resName] || '100');
+            const basePct = Number(resourcePercentages[resName] || '100');
             
-            if (useDateRange) {
-              const coveredDays = getCoveredDaysInWeek(wkId, allocDataInizio, allocDataFine);
-              if (coveredDays === 0) continue;
-              basePct = Math.round((basePct * coveredDays) / 5);
-            }
+            const coveredDays = getCoveredDaysInWeek(wkId, allocDataInizio, allocDataFine);
+            if (coveredDays === 0) continue;
 
             for (const day of baseDays) {
               const dayDate = getWeekdayDate(wkId, day);
-              const isWithinRange = !useDateRange || (dayDate >= allocDataInizio && dayDate <= allocDataFine);
+              const isWithinRange = (dayDate >= allocDataInizio && dayDate <= allocDataFine);
               
               if (isWithinRange) {
                 allowedDays.push(day);
@@ -1127,12 +1156,22 @@ export default function PianificazionePersonale() {
                 dipendenteNome: resName,
                 email: targetDip.email,
                 weekLabel: wkLabel,
-                description: `Assegnata commessa: ${commObj.nome} (${actualPct}%)${actualPct < basePct ? ' [Percentuale ricalcolata per ferie/assenza]' : ''}`
+                description: `Assegnata commessa: ${commObj.nome} (${actualPct}%)`
               });
             }
           }
         }
         showToast("Assegnazioni registrate in bozza!", "success");
+
+        if (conflictedResources.length > 0) {
+          setConfirmConfig({
+            isOpen: true,
+            title: '⚠️ Avviso Conflitto Assenze',
+            message: `Le assegnazioni sono state registrate in bozza, ma si segnala che nel periodo selezionato le seguenti risorse hanno registrato ferie o permessi: ${conflictedResources.join(', ')}.`,
+            type: 'warning',
+            onConfirm: () => setConfirmConfig(prev => ({ ...prev, isOpen: false }))
+          });
+        }
 
       } else if (allocAction === 'rimuovi') {
         const hasCommessa = !!selectedCommessaId;
@@ -1252,8 +1291,13 @@ export default function PianificazionePersonale() {
         const blockedDatesB = getBlockedDatesForResource(targetResource, allocDataInizio, allocDataFine);
         const blockedDatesArrayB = Object.keys(blockedDatesB);
         if (blockedDatesArrayB.length > 0) {
-          const proceed = window.confirm(`Attenzione: nel periodo selezionato la risorsa sostitutiva ${targetResource} ha registrato ferie o permessi in alcune giornate (${blockedDatesArrayB.length} giorni di assenza trovati). Vuoi procedere comunque con la sostituzione?`);
-          if (!proceed) return;
+          setConfirmConfig({
+            isOpen: true,
+            title: '⚠️ Avviso Conflitto Sostituzione',
+            message: `La sostituzione è stata registrata in bozza, ma si segnala che nel periodo selezionato la risorsa sostitutiva ${targetResource} ha registrato ferie o permessi nelle seguenti date: ${blockedDatesArrayB.join(', ')}.`,
+            type: 'warning',
+            onConfirm: () => setConfirmConfig(prev => ({ ...prev, isOpen: false }))
+          });
         }
 
         for (const wkId of targetWeekIds) {
@@ -1343,9 +1387,7 @@ export default function PianificazionePersonale() {
       setCommessaSearchText('');
       setCommesseToRemove([]);
 
-      if (warnings.length > 0) {
-        showToast("Operazione completata con alcune variazioni (assenza/ferie).", "warning");
-      }
+
     } catch (err) {
       console.error("Errore salvataggio locale:", err);
       showToast("Si è verificato un errore durante la modifica locale.", "error");
@@ -1427,11 +1469,7 @@ export default function PianificazionePersonale() {
         const key = `${dip.nome}-${wk.id}`;
         const list = assignments[key] || [];
         const leaves = getLeavesForResourceInWeek(dip.nome, wk.id);
-        const commesseLoad = list.reduce((acc, c) => acc + Number(c.percentuale), 0);
-        const absenceDays = leaves.filter(l => l.tipo !== 'smart');
-        const absencePct = absenceDays.length * 20;
-        const totalLoad = commesseLoad >= 100 ? commesseLoad : Math.min(100, commesseLoad + absencePct);
-        
+        const totalLoad = calculateWeeklyLoad(dip.nome, wk.id, list);
         row.push(`${totalLoad}%`);
         
         const leavesStr = leaves.map(l => `${l.giorno}: ${l.dettagli}`).join(" | ");
@@ -1519,10 +1557,7 @@ export default function PianificazionePersonale() {
           const key = `${dip.nome}-${wk.id}`;
           const list = assignments[key] || [];
           const leaves = getLeavesForResourceInWeek(dip.nome, wk.id);
-          const commesseLoad = list.reduce((acc, c) => acc + Number(c.percentuale), 0);
-          const absenceDays = leaves.filter(l => l.tipo !== 'smart');
-          const absencePct = absenceDays.length * 20;
-          const totalLoad = commesseLoad >= 100 ? commesseLoad : Math.min(100, commesseLoad + absencePct);
+          const totalLoad = calculateWeeklyLoad(dip.nome, wk.id, list);
           
           const isCellModified = (() => {
             const listStr = JSON.stringify(list);
@@ -1711,7 +1746,8 @@ export default function PianificazionePersonale() {
               members.reduce((sum, dip) => {
                 const key = `${dip.nome}-${wk.id}`;
                 const list = assignments[key] || [];
-                return sum + list.reduce((acc, c) => acc + Number(c.percentuale), 0);
+                const dipLoad = calculateWeeklyLoad(dip.nome, wk.id, list);
+                return sum + dipLoad;
               }, 0) / members.length
             );
 
@@ -2314,6 +2350,54 @@ export default function PianificazionePersonale() {
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Assegna Nuova Commessa */}
+                    <div className="bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col justify-start">
+                      <h4 className="font-bold text-sm text-indigo-900 border-b pb-2 mb-4">
+                        ➕ Assegna Commessa
+                      </h4>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Seleziona Commessa</label>
+                          <select
+                            value={addCommessaId}
+                            onChange={e => setAddCommessaId(e.target.value)}
+                            className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-700"
+                          >
+                            <option value="">-- Seleziona Commessa --</option>
+                            {selectableCommesse.map(c => (
+                              <option key={c.id} value={c.id}>{c.nome}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Percentuale Carico</label>
+                          <select
+                            value={addPercentage}
+                            onChange={e => setAddPercentage(e.target.value)}
+                            className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-700"
+                          >
+                            {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
+                              <option key={pct} value={pct}>{pct}%</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={savingAllocations || !addCommessaId}
+                          onClick={async () => {
+                            await executeAssignResourceToCommessa(selectedResourceForTab, addCommessaId, parseInt(addPercentage));
+                            setAddCommessaId('');
+                          }}
+                          className="w-full flex items-center justify-center gap-2 bg-indigo-650 hover:bg-indigo-700 text-white font-black py-3 rounded-xl transition shadow-md active:scale-95 disabled:opacity-50 mt-2"
+                        >
+                          <Plus className="w-4 h-4" />
+                          <span>Conferma ed Esegui Assegnazione</span>
+                        </button>
+                      </div>
+                    </div>
+
                     {/* Lista Commesse Assegnate */}
                     <div className="bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col max-h-[420px]">
                       <h4 className="font-bold text-sm text-indigo-900 border-b pb-2 mb-3">
@@ -2391,54 +2475,6 @@ export default function PianificazionePersonale() {
                             );
                           })
                         )}
-                      </div>
-                    </div>
-
-                    {/* Assegna Nuova Commessa */}
-                    <div className="bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col justify-start">
-                      <h4 className="font-bold text-sm text-indigo-900 border-b pb-2 mb-4">
-                        ➕ Assegna Commessa
-                      </h4>
-                      <div className="space-y-4">
-                        <div>
-                          <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Seleziona Commessa</label>
-                          <select
-                            value={addCommessaId}
-                            onChange={e => setAddCommessaId(e.target.value)}
-                            className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-700"
-                          >
-                            <option value="">-- Seleziona Commessa --</option>
-                            {selectableCommesse.map(c => (
-                              <option key={c.id} value={c.id}>{c.nome}</option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div>
-                          <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Percentuale Carico</label>
-                          <select
-                            value={addPercentage}
-                            onChange={e => setAddPercentage(e.target.value)}
-                            className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-700"
-                          >
-                            {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
-                              <option key={pct} value={pct}>{pct}%</option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <button
-                          type="button"
-                          disabled={savingAllocations || !addCommessaId}
-                          onClick={async () => {
-                            await executeAssignResourceToCommessa(selectedResourceForTab, addCommessaId, parseInt(addPercentage));
-                            setAddCommessaId('');
-                          }}
-                          className="w-full flex items-center justify-center gap-2 bg-indigo-650 hover:bg-indigo-700 text-white font-black py-3 rounded-xl transition shadow-md active:scale-95 disabled:opacity-50 mt-2"
-                        >
-                          <Plus className="w-4 h-4" />
-                          <span>Conferma ed Esegui Assegnazione</span>
-                        </button>
                       </div>
                     </div>
                   </div>

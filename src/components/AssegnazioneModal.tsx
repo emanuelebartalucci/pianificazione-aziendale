@@ -52,8 +52,7 @@ export default function AssegnazioneModal({ isOpen, onClose, dipendente, weekId:
     if (!comm) return;
 
     if (hasLeaves) {
-      const proceed = window.confirm(`Attenzione: nella settimana selezionata il dipendente ${dipendente} ha registrato ferie o permessi. Vuoi procedere comunque con l'assegnazione?`);
-      if (!proceed) return;
+      showToast(`Attenzione: nella settimana selezionata il dipendente ${dipendente} ha registrato ferie o permessi. L'assegnazione è stata registrata.`, "warning");
     }
 
     const newAss: Assegnazione = {
