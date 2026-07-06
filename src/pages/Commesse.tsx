@@ -1172,9 +1172,16 @@ export default function Commesse() {
                           <div className="font-extrabold text-gray-900 text-xs truncate" title={wk.label}>
                             {isNarrow ? wk.label.replace('Sett. ', 'S') : wk.label}
                           </div>
-                          {!isNarrow && (
-                            <div className="text-[10px] font-bold text-gray-400 mt-0.5 truncate">{wk.sub}</div>
-                          )}
+                          {(() => {
+                            const [d1, d2] = wk.sub.split(' - ');
+                            return (
+                              <div className="text-[9.5px] font-bold text-gray-400 mt-0.5 flex flex-col items-center leading-none select-none">
+                                <span>{d1}</span>
+                                <span className="text-[8px] my-0.5 opacity-60">↓</span>
+                                <span>{d2}</span>
+                              </div>
+                            );
+                          })()}
                         </th>
                       );
                     })}
@@ -1272,10 +1279,10 @@ export default function Commesse() {
                                     }}
                                   >
                                     {assignedPeople.map((person, pIdx) => {
-                                      const daysDesc = person.giorni ? ` (${person.giorni.length === 5 ? 'Sett' : person.giorni.join(',')})` : '';
+                                      const hours = Math.round(person.pct * 40 / 100);
                                       const leaves = getLeavesForResourceInWeek(person.name, wk.id);
                                       const hasLeaves = leaves.length > 0;
-                                      const tooltipText = `${person.name} - Impegno: ${person.pct}%${daysDesc}${hasLeaves ? `\nAssenze: ${leaves.map(l => `${l.giorno} (${l.dettagli})`).join(', ')}` : ''}`;
+                                      const tooltipText = `${person.name} - Impegno: ${person.pct}% (${hours}h)${hasLeaves ? `\nAssenze: ${leaves.map(l => `${l.giorno} (${l.dettagli})`).join(', ')}` : ''}`;
 
                                       if (isUltraNarrow) {
                                         return (
@@ -1298,16 +1305,16 @@ export default function Commesse() {
                                         return (
                                           <div 
                                             key={pIdx} 
-                                            className={`text-[10px] font-bold text-center py-1 px-1 rounded-md border flex items-center justify-center gap-0.5 shadow-sm truncate select-none ${
+                                            className={`text-[10px] font-bold py-1 px-1.5 rounded-md border flex items-center justify-between gap-1 shadow-sm truncate select-none w-full ${
                                               hasLeaves 
                                                 ? 'bg-rose-50 text-rose-800 border-rose-200' 
                                                 : 'bg-indigo-50 text-indigo-900 border-indigo-150'
                                             }`}
                                             title={tooltipText}
                                           >
-                                            <span className="truncate">{initials}</span>
-                                            <span className="font-extrabold text-[9px] text-indigo-600 shrink-0">{person.pct}%</span>
-                                            {hasLeaves && <span className="text-[8px] text-red-500 shrink-0">⚠️</span>}
+                                            <span className="truncate text-left">{initials}</span>
+                                            <span className="font-extrabold text-[9px] text-indigo-600 shrink-0 text-right">{person.pct}% ({hours}h)</span>
+                                            {hasLeaves && <span className="text-[8px] text-red-500 shrink-0 ml-0.5">⚠️</span>}
                                           </div>
                                         );
                                       }
@@ -1315,16 +1322,13 @@ export default function Commesse() {
                                       return (
                                         <div 
                                           key={pIdx} 
-                                          className="text-[11px] bg-indigo-50/80 text-indigo-950 p-2 rounded-lg border border-indigo-100/60 flex flex-col shadow-sm gap-0.5"
+                                          className="text-[11px] bg-indigo-50/80 text-indigo-950 p-2 rounded-lg border border-indigo-100/60 flex flex-col shadow-sm gap-0.5 w-full"
                                           title={tooltipText}
                                         >
                                           <div className="flex justify-between items-center font-bold">
-                                            <span className="truncate pr-1">{person.name}</span>
-                                            <span className="text-indigo-600 font-black">{person.pct}%</span>
+                                            <span className="truncate pr-1 text-left">{person.name}</span>
+                                            <span className="text-indigo-600 font-black text-right whitespace-nowrap">{person.pct}% ({hours}h)</span>
                                           </div>
-                                          {person.giorni && person.giorni.length > 0 && person.giorni.length < 5 && (
-                                            <span className="text-[9.5px] text-indigo-500 font-black tracking-tight">{person.giorni.join(',')}</span>
-                                          )}
                                           {leaves.length > 0 && (
                                             <div className="mt-1 pt-1 border-t border-red-100 text-[9.5px] text-red-600 font-bold flex flex-col gap-0.5">
                                               {leaves.map((l, lIdx) => (

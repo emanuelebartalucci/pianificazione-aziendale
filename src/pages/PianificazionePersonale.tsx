@@ -597,6 +597,18 @@ export default function PianificazionePersonale() {
     const leaveDaysFound: { giorno: string; tipo: string; dettagli: string }[] = [];
     const dayNames = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
 
+    // 1. Aggiungi le chiusure aziendali come ferie collettive
+    weekDates.forEach((wDateStr, idx) => {
+      if (isInChiusuraAziendaleLocal(wDateStr) && !isItalianHoliday(wDateStr)) {
+        leaveDaysFound.push({
+          giorno: dayNames[idx],
+          tipo: 'ferie',
+          dettagli: 'Chiusura Aziendale'
+        });
+      }
+    });
+
+    // 2. Aggiungi le ferie approvate individuali se non già coperte da chiusura aziendale
     approvedLeaves.forEach(leave => {
       if (leave.dipendenteName !== resName) return;
       const start = leave.dataInizio || leave.data;
@@ -610,17 +622,20 @@ export default function PianificazionePersonale() {
         weekDates.forEach((wDateStr, idx) => {
           const [wY, wM, wD] = wDateStr.split('-').map(Number);
           const wDate = new Date(wY, wM - 1, wD);
-          if (wDate >= curr && wDate <= last && !isItalianHoliday(wDateStr) && !isInChiusuraAziendaleLocal(wDateStr)) {
-            let label = leave.tipo === 'ferie' ? 'Ferie' : leave.tipo === 'malattia' ? 'Malattia' : leave.tipo === 'maternita' ? 'Maternità' : leave.tipo === 'smart' ? 'Smart' : leave.tipo;
-            if (leave.tipo === 'mattina') label = 'Ass. Matt.';
-            if (leave.tipo === 'pomeriggio') label = 'Ass. Pom.';
-            if (leave.tipo === 'permesso') label = `Perm. (${leave.oraInizio || ''}-${leave.oraFine || ''})`;
+          if (wDate >= curr && wDate <= last && !isItalianHoliday(wDateStr)) {
+            const alreadyExists = leaveDaysFound.some(l => l.giorno === dayNames[idx]);
+            if (!alreadyExists) {
+              let label = leave.tipo === 'ferie' ? 'Ferie' : leave.tipo === 'malattia' ? 'Malattia' : leave.tipo === 'maternita' ? 'Maternità' : leave.tipo === 'smart' ? 'Smart' : leave.tipo;
+              if (leave.tipo === 'mattina') label = 'Ass. Matt.';
+              if (leave.tipo === 'pomeriggio') label = 'Ass. Pom.';
+              if (leave.tipo === 'permesso') label = `Perm. (${leave.oraInizio || ''}-${leave.oraFine || ''})`;
 
-            leaveDaysFound.push({
-              giorno: dayNames[idx],
-              tipo: leave.tipo,
-              dettagli: label
-            });
+              leaveDaysFound.push({
+                giorno: dayNames[idx],
+                tipo: leave.tipo,
+                dettagli: label
+              });
+            }
           }
         });
       }
@@ -1445,8 +1460,11 @@ export default function PianificazionePersonale() {
       timelineWeeks.forEach(wk => {
         const key = `${dip.nome}-${wk.id}`;
         const list = assignments[key] || [];
-        const totalLoad = list.reduce((acc, c) => acc + Number(c.percentuale), 0);
         const leaves = getLeavesForResourceInWeek(dip.nome, wk.id);
+        const commesseLoad = list.reduce((acc, c) => acc + Number(c.percentuale), 0);
+        const absenceDays = leaves.filter(l => l.tipo !== 'smart');
+        const absencePct = absenceDays.length * 20;
+        const totalLoad = commesseLoad >= 100 ? commesseLoad : Math.min(100, commesseLoad + absencePct);
         
         row.push(`${totalLoad}%`);
         
@@ -1534,8 +1552,11 @@ export default function PianificazionePersonale() {
         {timelineWeeks.map((wk, wIndex) => {
           const key = `${dip.nome}-${wk.id}`;
           const list = assignments[key] || [];
-          const totalLoad = list.reduce((acc, c) => acc + Number(c.percentuale), 0);
           const leaves = getLeavesForResourceInWeek(dip.nome, wk.id);
+          const commesseLoad = list.reduce((acc, c) => acc + Number(c.percentuale), 0);
+          const absenceDays = leaves.filter(l => l.tipo !== 'smart');
+          const absencePct = absenceDays.length * 20;
+          const totalLoad = commesseLoad >= 100 ? commesseLoad : Math.min(100, commesseLoad + absencePct);
           
           const isCellModified = (() => {
             const listStr = JSON.stringify(list);
