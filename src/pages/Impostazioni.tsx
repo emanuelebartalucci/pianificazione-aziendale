@@ -995,7 +995,7 @@ export default function Impostazioni() {
             <section className="bg-gradient-to-br from-teal-50 to-emerald-50/30 p-6 rounded-3xl border border-teal-100 shadow-sm md:col-span-2">
               <h3 className="text-xl font-bold text-teal-900 mb-2 flex items-center gap-2"><Star className="w-6 h-6 text-teal-650" /> Coordinatori Macro Aree</h3>
               <p className="text-sm text-teal-700/80 mb-4">I coordinatori responsabili di ciascuna macro area. Possono approvare richieste e pianificare le risorse del loro settore.</p>
-              <form onSubmit={handleAddCoordinatore} className="flex flex-wrap gap-3 mb-4">
+              <form onSubmit={handleAddCoordinatore} className="flex flex-wrap gap-3 mb-2">
                 <select 
                   required 
                   value={newCoordinatoreEmail} 
@@ -1017,26 +1017,8 @@ export default function Impostazioni() {
                   <option value="Cantieri / Ambiente">Cantieri / Ambiente</option>
                   <option value="Amministrazione">Amministrazione</option>
                 </select>
-                <button type="submit" className="bg-teal-655 text-white hover:bg-teal-700 px-5 py-3 rounded-xl transition font-bold shadow-md active:scale-95 cursor-pointer">Nomina Coordinatore</button>
+                <button type="submit" className="bg-teal-600 text-white hover:bg-teal-700 px-5 py-3 rounded-xl transition font-bold shadow-md active:scale-95 cursor-pointer">Nomina Coordinatore</button>
               </form>
-              <div className="max-h-80 overflow-y-auto bg-white/50 rounded-xl divide-y border border-teal-100">
-                {coordinatori.length === 0 ? (
-                  <p className="p-4 text-center text-xs text-gray-400 italic">Nessun coordinatore nominato.</p>
-                ) : (
-                  coordinatori.map(c => {
-                    const name = getDipNomeFromEmail(c.email);
-                    return (
-                      <div key={c.id} className="p-3 flex justify-between items-center text-sm">
-                        <div>
-                          <div className="font-bold text-teal-900">{name}</div>
-                          <div className="text-xs text-teal-700/70">{c.email} • <span className="font-semibold text-teal-650">{c.area}</span></div>
-                        </div>
-                        <button onClick={() => handleRemoveCoordinatore(c.id)} className="text-red-400 hover:text-red-650 p-1 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
             </section>
             
             {/* Gestione Appartenenza Macro Aree */}
@@ -1051,6 +1033,7 @@ export default function Impostazioni() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 {(['Disegnatori', 'Ingegneria', 'Cantieri / Ambiente', 'Amministrazione'] as const).map(areaName => {
                   const areaMembers = dipendenti.filter(d => d.macroArea === areaName && !isSoci(d.nome));
+                  const areaCoordinators = coordinatori.filter(c => c.area === areaName);
                   
                   return (
                     <div key={areaName} className="bg-white p-4 rounded-2xl border border-indigo-100 shadow-sm flex flex-col justify-between">
@@ -1061,6 +1044,33 @@ export default function Impostazioni() {
                             {areaMembers.length}
                           </span>
                         </h4>
+                        
+                        {/* Coordinatori di quest'area */}
+                        {areaCoordinators.length > 0 && (
+                          <div className="mb-4 space-y-1.5 border-b pb-3 no-print">
+                            <div className="text-[10px] font-black text-teal-800 uppercase tracking-wide flex items-center gap-1 select-none">
+                              👑 Coordinatori ({areaCoordinators.length})
+                            </div>
+                            {areaCoordinators.map(c => {
+                              const name = getDipNomeFromEmail(c.email);
+                              return (
+                                <div key={c.id} className="p-2 bg-gradient-to-r from-teal-50 to-emerald-50 rounded-xl border border-teal-200 flex justify-between items-center text-xs">
+                                  <div className="truncate pr-2">
+                                    <div className="font-extrabold text-teal-950 truncate" title={name}>{name}</div>
+                                    <div className="text-[9px] text-teal-700/80 truncate" title={c.email}>{c.email}</div>
+                                  </div>
+                                  <button 
+                                    onClick={() => handleRemoveCoordinatore(c.id)} 
+                                    className="text-red-400 hover:text-red-650 p-1 cursor-pointer shrink-0 transition-colors"
+                                    title="Rimuovi Coordinatore"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5"/>
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                         
                         <div className="space-y-2 max-h-60 overflow-y-auto pr-1 scrollbar-thin">
                           {areaMembers.length === 0 ? (
