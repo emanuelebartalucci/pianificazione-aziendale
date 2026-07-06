@@ -1368,9 +1368,21 @@ export default function PianificazionePersonale() {
   const collaborators = useMemo(() => {
     return filteredGridDipendenti.filter(d => isCollaboratore(d.nome, d.tipo));
   }, [filteredGridDipendenti]);
+  const myCoordinatedAreas = useMemo(() => {
+    const email = user?.email?.toLowerCase();
+    if (!email) return [];
+    return coordinatori
+      .filter(c => c.email.toLowerCase() === email)
+      .map(c => c.area);
+  }, [user, coordinatori]);
 
+  const isCoordinatoreQualsiasi = useMemo(() => {
+    return myCoordinatedAreas.length > 0;
+  }, [myCoordinatedAreas]);
 
-
+  const isDipendenteNormale = useMemo(() => {
+    return !isAdmin && !isSenior && !isCoordinatoreQualsiasi;
+  }, [isAdmin, isSenior, isCoordinatoreQualsiasi]);
   const disegnatori = useMemo(() => {
     return filteredGridDipendenti.filter(d => !isSoci(d.nome) && d.macroArea === 'Disegnatori');
   }, [filteredGridDipendenti]);
@@ -1649,8 +1661,12 @@ export default function PianificazionePersonale() {
   };
 
   const renderAreaRow = (areaName: string, members: Dipendente[]) => {
+    const isMyCoordinatedArea = myCoordinatedAreas.includes(areaName);
+    const canExpand = isAdmin || isSenior || isMyCoordinatedArea;
     const isExpanded = expandedAreas[areaName];
+
     const toggleExpand = () => {
+      if (!canExpand) return;
       setExpandedAreas(prev => ({
         ...prev,
         [areaName]: !prev[areaName]
@@ -1661,7 +1677,7 @@ export default function PianificazionePersonale() {
       <>
         <tr 
           onClick={toggleExpand}
-          className="bg-slate-100 hover:bg-slate-150 transition-colors font-extrabold text-xs cursor-pointer select-none border-b border-slate-200"
+          className={`bg-slate-100 hover:bg-slate-150 transition-colors font-extrabold text-xs select-none border-b border-slate-200 ${canExpand ? 'cursor-pointer' : 'cursor-default'}`}
         >
           {(() => {
             let areaHeaderClass = "bg-slate-100 text-slate-900 border-t-2 border-slate-900";
@@ -1681,7 +1697,9 @@ export default function PianificazionePersonale() {
                 style={{ width: '180px', minWidth: '180px', maxWidth: '180px' }}
               >
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-slate-500 w-3 text-center">{isExpanded ? '▼' : '▶'}</span>
+                  <span className="text-[10px] text-slate-500 w-3 text-center">
+                    {canExpand ? (isExpanded ? '▼' : '▶') : ''}
+                  </span>
                   <span className="uppercase tracking-wider">{areaName} ({members.length})</span>
                 </div>
               </td>
@@ -2697,6 +2715,23 @@ export default function PianificazionePersonale() {
                   </td>
                 </tr>
               </tbody>
+            ) : isDipendenteNormale ? (
+              (() => {
+                const currentDip = dipendenti.find(d => d.email.toLowerCase() === user?.email?.toLowerCase());
+                return (
+                  <tbody className="divide-y divide-gray-100 font-medium bg-white">
+                    {currentDip ? (
+                      renderEmployeeRow(currentDip, currentDip.macroArea || 'Non Assegnati')
+                    ) : (
+                      <tr>
+                        <td colSpan={timelineWeeks.length + 1} className="p-12 text-center text-gray-400 font-bold italic bg-white">
+                          Nessun dato personale trovato per il tuo utente.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                );
+              })()
             ) : (
               <>
                 {/* SEZIONE MACRO AREE */}

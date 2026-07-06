@@ -590,12 +590,20 @@ export default function Commesse() {
   }, [dipendenti, pmsEmails]);
 
   const isResponsabileDiQualcheCommessa = useMemo(() => {
-    return commesse.some(c => areNamesEqual(c.responsabile, myAssociatedName));
+    return commesse.some(c => {
+      const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
+      const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
+      return areNamesEqual(c.responsabile, myAssociatedName) || isPM;
+    });
   }, [commesse, myAssociatedName]);
 
   const commesseGestibili = useMemo(() => {
     if (isAdmin || isSenior) return commesse;
-    return commesse.filter(c => areNamesEqual(c.responsabile, myAssociatedName));
+    return commesse.filter(c => {
+      const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
+      const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
+      return areNamesEqual(c.responsabile, myAssociatedName) || isPM;
+    });
   }, [commesse, isAdmin, isSenior, myAssociatedName]);
 
   const handleAddCommessa = async (e: React.FormEvent) => {
@@ -1079,15 +1087,22 @@ export default function Commesse() {
                                 <div className="min-w-0 flex-1 text-left">
                                   <div className="flex items-center gap-1.5 justify-between">
                                     <div className="truncate font-extrabold text-sm text-gray-800" title={comm.nome}>{comm.nome}</div>
-                                    {(isAdmin || isSenior) && (
-                                      <button 
-                                        onClick={() => handleOpenEditModal(comm)}
-                                        className="text-gray-400 hover:text-blue-600 p-1 rounded transition-colors shrink-0 cursor-pointer"
-                                        title="Modifica dettagli (Responsabile, PM, Date)"
-                                      >
-                                        <Pencil className="w-3.5 h-3.5" />
-                                      </button>
-                                    )}
+                                    {(() => {
+                                      const pmArray = Array.isArray(comm.pm) ? comm.pm : (comm.pm ? [comm.pm] : []);
+                                      const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
+                                      const isResp = areNamesEqual(comm.responsabile, myAssociatedName);
+                                      const canEdit = isAdmin || isSenior || isPM || isResp;
+                                      
+                                      return canEdit && (
+                                        <button 
+                                          onClick={() => handleOpenEditModal(comm)}
+                                          className="text-gray-400 hover:text-blue-600 p-1 rounded transition-colors shrink-0 cursor-pointer"
+                                          title="Modifica dettagli (Responsabile, PM, Date)"
+                                        >
+                                          <Pencil className="w-3.5 h-3.5" />
+                                        </button>
+                                      );
+                                    })()}
                                   </div>
                                   {comm.dataInizio && comm.dataFine ? (
                                     <div className="text-[10px] text-gray-400 font-bold mt-0.5 truncate" title={`${formatDate(comm.dataInizio)} - ${formatDate(comm.dataFine)}`}>
