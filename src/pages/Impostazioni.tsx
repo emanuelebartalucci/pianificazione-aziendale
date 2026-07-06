@@ -1036,7 +1036,7 @@ export default function Impostazioni() {
                   const areaCoordinators = coordinatori.filter(c => c.area === areaName);
                   
                   return (
-                    <div key={areaName} className="bg-white p-4 rounded-2xl border border-indigo-100 shadow-sm flex flex-col justify-between">
+                    <div key={areaName} className="bg-white p-4 rounded-2xl border border-indigo-100 shadow-sm flex flex-col min-h-[520px]">
                       <div>
                         <h4 className="font-extrabold text-sm text-indigo-955 border-b pb-2 mb-3 uppercase tracking-wider flex justify-between items-center">
                           <span>{areaName}</span>
@@ -1072,7 +1072,7 @@ export default function Impostazioni() {
                           </div>
                         )}
                         
-                        <div className="space-y-2 max-h-60 overflow-y-auto pr-1 scrollbar-thin">
+                        <div className="space-y-2 max-h-[460px] overflow-y-auto pr-1 scrollbar-thin">
                           {areaMembers.length === 0 ? (
                             <p className="text-xs text-gray-400 italic">Nessun membro assegnato.</p>
                           ) : (
