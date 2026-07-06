@@ -5,6 +5,9 @@ import { collection, doc, setDoc, getDocs, query, where, addDoc, updateDoc, getD
 import { FileText, Printer, Save, Send, CheckCircle, AlertCircle, Edit, MessageSquare, Clock, MapPin, Check, X, ShieldAlert, Download, RefreshCw } from 'lucide-react';
 import { queueMail } from '../utils/mailSender';
 import ConfirmModal from '../components/ConfirmModal';
+import { isItalianHoliday, isWeekend as isWeekendGlobal } from '../utils/date';
+
+export { isItalianHoliday };
 
 const COLLABORATORI = [
   'Atanasio Daniele',
@@ -32,52 +35,6 @@ export function isCollaboratore(nome?: string | null, dipendentiList?: any[]): b
     if (found?.tipo === 'dipendente') return false;
   }
   return COLLABORATORI.some(c => c.toLowerCase() === clean);
-}
-
-export function isItalianHoliday(dateStr: string): boolean {
-  const parts = dateStr.split('-');
-  if (parts.length !== 3) return false;
-  const year = Number(parts[0]);
-  const month = Number(parts[1]);
-  const day = Number(parts[2]);
-
-  // Festività fisse
-  if (month === 1 && day === 1) return true; // Capodanno
-  if (month === 1 && day === 6) return true; // Epifania
-  if (month === 4 && day === 25) return true; // Liberazione
-  if (month === 5 && day === 1) return true; // Festa del Lavoro
-  if (month === 6 && day === 2) return true; // Festa della Repubblica
-  if (month === 8 && day === 15) return true; // Ferragosto
-  if (month === 11 && day === 1) return true; // Tutti i Santi
-  if (month === 12 && day === 8) return true; // Immacolata
-  if (month === 12 && day === 25) return true; // Natale
-  if (month === 12 && day === 26) return true; // Santo Stefano
-
-  // Pasquetta (Meeus/Jones/Butcher algorithm)
-  const a = year % 19;
-  const b = Math.floor(year / 100);
-  const c = year % 100;
-  const d = Math.floor(b / 4);
-  const e = b % 4;
-  const f = Math.floor((b + 8) / 25);
-  const g = Math.floor((b - f + 1) / 3);
-  const h = (19 * a + b - d - g + 15) % 30;
-  const i = Math.floor(c / 4);
-  const k = c % 4;
-  const l = (32 + 2 * e + 2 * i - h - k) % 7;
-  const m = Math.floor((a + 11 * h + 22 * l) / 451);
-  const easterMonth = Math.floor((h + l - 7 * m + 114) / 31);
-  const easterDay = ((h + l - 7 * m + 114) % 31) + 1;
-
-  const easterDate = new Date(year, easterMonth - 1, easterDay);
-  const easterMonday = new Date(easterDate);
-  easterMonday.setDate(easterDate.getDate() + 1);
-
-  if (month === (easterMonday.getMonth() + 1) && day === easterMonday.getDate()) {
-    return true;
-  }
-
-  return false;
 }
 
 export function isInChiusuraAziendale(_dateStr: string): boolean {
@@ -273,8 +230,52 @@ export default function Presenze() {
 
   // Check if a day is weekend
   const isWeekend = (dayNum: number) => {
-    const dayOfWeek = new Date(selectedYear, selectedMonth - 1, dayNum).getDay();
-    return dayOfWeek === 0 || dayOfWeek === 6; // 0 = Sunday, 6 = Saturday
+    return isWeekendGlobal(new Date(selectedYear, selectedMonth - 1, dayNum));
+  };
+
+  const getCellDayStyle = (dayNum: number) => {
+    const outOfMonth = dayNum > daysInMonth;
+    if (outOfMonth) return { className: "bg-gray-200/30 text-gray-400", style: {} };
+
+    const dateStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+    const isWk = isWeekend(dayNum);
+    const isHoliday = isItalianHoliday(dateStr);
+    const isChiusura = isInChiusuraAziendaleLocal(dateStr);
+
+    if (isWk || isHoliday) {
+      return {
+        className: "text-gray-500",
+        style: { background: 'linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%)' }
+      };
+    } else if (isChiusura) {
+      return {
+        className: "text-indigo-700",
+        style: { background: 'linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%)' }
+      };
+    }
+    return { className: "", style: {} };
+  };
+
+  const isCellDisabled = (dayNum: number, fieldType: 'lavoro' | 'assenza') => {
+    if (dayNum > daysInMonth) return true;
+    const dateStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+    const isWk = isWeekend(dayNum);
+    const isHoliday = isItalianHoliday(dateStr);
+    const isSpecialDay = isWk || isHoliday; // weekend o festivo
+
+    if (!isSpecialDay) {
+      // Le chiusure aziendali rimangono editabili per tutti
+      return false; 
+    }
+
+    // Per weekend e festivi
+    if (fieldType === 'assenza') {
+      return true; // Le assenze non sono mai selezionabili nei weekend/festivi
+    }
+
+    // Per il lavoro (ore ordinarie, straordinarie, trasferte) nei weekend/festivi:
+    // sono disabilitate a meno che il weekend non sia stato autorizzato
+    return !approvedWeekends[dateStr];
   };
 
   const isDayLockedForUser = (dNum: number) => {
@@ -375,7 +376,7 @@ export default function Presenze() {
         let permessoElettorale = 0;
 
         // Apply approved absences (only on working days)
-        if (approvedAbsences[dateStr] && !isWknd && !isHoliday) {
+        if (approvedAbsences[dateStr] && !isWknd && !isHoliday && !isInChiusuraAziendaleLocal(dateStr)) {
           const abs = approvedAbsences[dateStr];
           if (abs.tipo === 'ferie') {
             ore = 0;
@@ -3124,12 +3125,13 @@ export default function Presenze() {
                         {Array.from({ length: 31 }).map((_, i) => {
                           const dayNum = i + 1;
                           const outOfMonth = dayNum > daysInMonth;
-                          const isWk = !outOfMonth && isWeekend(dayNum);
+                          const dayStyle = getCellDayStyle(dayNum);
 
                           return (
                             <th 
                               key={i} 
-                              className={`p-2 border-r border-gray-200 w-[2.8%] min-w-[34px] ${outOfMonth ? 'bg-gray-300/50 text-gray-400' : isWk ? 'bg-gray-200/80 text-gray-600' : 'text-gray-700'}`}
+                              style={dayStyle.style}
+                              className={`p-2 border-r border-gray-200 w-[2.8%] min-w-[34px] ${outOfMonth ? 'bg-gray-300/50 text-gray-400' : dayStyle.className || 'text-gray-700'}`}
                             >
                               <div>{dayNum}</div>
                               {!outOfMonth && (
@@ -3153,14 +3155,15 @@ export default function Presenze() {
                               const d = i + 1;
                               const outOfMonth = d > daysInMonth;
                               const giorno = rapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || ''} align-middle`}>
                                   {!outOfMonth && giorno && (
                                     <div className="flex justify-center items-center">
                                       <input 
                                         type="checkbox"
-                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || isDayLockedForUser(d)}
+                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || isCellDisabled(d, 'lavoro')}
                                         checked={giorno.ore === 8}
                                         onChange={e => {
                                           const val = e.target.checked ? 8 : 0;
@@ -3186,14 +3189,15 @@ export default function Presenze() {
                               const d = i + 1;
                               const outOfMonth = d > daysInMonth;
                               const giorno = rapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || ''} align-middle`}>
                                   {!outOfMonth && giorno && (
                                     <div className="flex justify-center items-center">
                                       <input 
                                         type="checkbox"
-                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || isDayLockedForUser(d)}
+                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || isCellDisabled(d, 'lavoro')}
                                         checked={giorno.ore === 4}
                                         onChange={e => {
                                           const val = e.target.checked ? 4 : 0;
@@ -3221,14 +3225,15 @@ export default function Presenze() {
                               const d = i + 1;
                               const outOfMonth = d > daysInMonth;
                               const giorno = rapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || ''} align-middle`}>
                                   {!outOfMonth && giorno && (
                                     <div className="flex justify-center items-center">
                                       <input 
                                         type="checkbox"
-                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || isDayLockedForUser(d)}
+                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || isCellDisabled(d, 'lavoro')}
                                         checked={giorno.trasferta || false}
                                         onChange={e => handleCellChange(dayStr(d), 'trasferta', e.target.checked)}
                                         className="w-4 h-4 rounded text-blue-600 focus:ring-blue-400 cursor-pointer"
@@ -3253,15 +3258,16 @@ export default function Presenze() {
                               const d = i + 1;
                               const outOfMonth = d > daysInMonth;
                               const giorno = rapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : giorno && giorno.ore > 0 ? 'bg-emerald-50/70 font-semibold' : ''}`}>
+                                <td key={i} style={dayStyle.style} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.ore > 0 ? 'bg-emerald-50/70 font-semibold' : '')}`}>
                                   {!outOfMonth && giorno && (
                                     <input 
                                       type="number"
                                       min={0}
                                       max={24}
-                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isDayLockedForUser(d)}
+                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isCellDisabled(d, 'lavoro')}
                                       value={giorno.ore === 0 ? '' : giorno.ore}
                                       onChange={e => handleCellChange(dayStr(d), 'ore', e.target.value === '' ? 0 : Number(e.target.value))}
                                       className="w-full text-center border-none p-1 rounded font-bold outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-transparent disabled:opacity-70 text-gray-900"
@@ -3283,15 +3289,16 @@ export default function Presenze() {
                               const d = i + 1;
                               const outOfMonth = d > daysInMonth;
                               const giorno = rapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''}`}>
+                                <td key={i} style={dayStyle.style} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || ''}`}>
                                   {!outOfMonth && giorno && (
                                     <input 
                                       type="number"
                                       min={0}
                                       max={24}
-                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isDayLockedForUser(d)}
+                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isCellDisabled(d, 'lavoro')}
                                       value={giorno.straordinari === 0 ? '' : giorno.straordinari}
                                       onChange={e => handleCellChange(dayStr(d), 'straordinari', e.target.value === '' ? 0 : Number(e.target.value))}
                                       className="w-full text-center border-none p-1 rounded font-bold outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-transparent disabled:opacity-70 text-amber-600 font-extrabold"
@@ -3313,15 +3320,16 @@ export default function Presenze() {
                               const d = i + 1;
                               const outOfMonth = d > daysInMonth;
                               const giorno = rapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : giorno && giorno.permessi > 0 ? 'bg-indigo-100' : ''}`}>
+                                <td key={i} style={dayStyle.style} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.permessi > 0 ? 'bg-indigo-100' : '')}`}>
                                   {!outOfMonth && giorno && (
                                     <input 
                                       type="number"
                                       min={0}
                                       max={24}
-                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || giorno.ferie === (giorno.oreContratto ?? contractHours) || isDayLockedForUser(d)}
+                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || giorno.ferie === (giorno.oreContratto ?? contractHours) || isCellDisabled(d, 'assenza')}
                                       value={giorno.permessi === 0 ? '' : giorno.permessi}
                                       onChange={e => handleCellChange(dayStr(d), 'permessi', e.target.value === '' ? 0 : Number(e.target.value))}
                                       className="w-full text-center border-none p-1 rounded font-bold outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-transparent disabled:opacity-70 text-indigo-600"
@@ -3345,14 +3353,15 @@ export default function Presenze() {
                               const d = i + 1;
                               const outOfMonth = d > daysInMonth;
                               const giorno = rapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : giorno && giorno.ferie ? 'bg-amber-100' : ''} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.ferie ? 'bg-amber-100' : '')} align-middle`}>
                                   {!outOfMonth && giorno && (
                                     <div className="flex justify-center items-center">
                                       <input 
                                         type="checkbox"
-                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isDayLockedForUser(d)}
+                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isCellDisabled(d, 'assenza')}
                                         checked={!!giorno.ferie}
                                         onChange={e => handleCellChange(dayStr(d), 'ferie', e.target.checked)}
                                         className="w-4 h-4 rounded text-green-600 focus:ring-green-400 cursor-pointer"
@@ -3377,14 +3386,15 @@ export default function Presenze() {
                               const d = i + 1;
                               const outOfMonth = d > daysInMonth;
                               const giorno = rapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : giorno && giorno.malattia ? 'bg-red-100' : ''} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.malattia ? 'bg-red-100' : '')} align-middle`}>
                                   {!outOfMonth && giorno && (
                                     <div className="flex justify-center items-center">
                                       <input 
                                         type="checkbox"
-                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || isCellDisabled(d, 'assenza')}
                                         checked={giorno.malattia || false}
                                         onChange={e => handleCellChange(dayStr(d), 'malattia', e.target.checked)}
                                         className="w-4 h-4 rounded text-red-500 focus:ring-red-400 cursor-pointer"
@@ -3409,14 +3419,15 @@ export default function Presenze() {
                               const d = i + 1;
                               const outOfMonth = d > daysInMonth;
                               const giorno = rapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : giorno && giorno.permessoStudio ? 'bg-purple-100' : ''} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.permessoStudio ? 'bg-purple-100' : '')} align-middle`}>
                                   {!outOfMonth && giorno && (
                                     <div className="flex justify-center items-center">
                                       <input 
                                         type="checkbox"
-                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isDayLockedForUser(d)}
+                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isCellDisabled(d, 'assenza')}
                                         checked={!!giorno.permessoStudio}
                                         onChange={e => handleCellChange(dayStr(d), 'permessoStudio', e.target.checked)}
                                         className="w-4 h-4 rounded text-purple-600 focus:ring-purple-400 cursor-pointer"
@@ -3441,14 +3452,15 @@ export default function Presenze() {
                               const d = i + 1;
                               const outOfMonth = d > daysInMonth;
                               const giorno = rapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : giorno && giorno.permessoDonazione ? 'bg-teal-100' : ''} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.permessoDonazione ? 'bg-teal-100' : '')} align-middle`}>
                                   {!outOfMonth && giorno && (
                                     <div className="flex justify-center items-center">
                                       <input 
                                         type="checkbox"
-                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isDayLockedForUser(d)}
+                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isCellDisabled(d, 'assenza')}
                                         checked={!!giorno.permessoDonazione}
                                         onChange={e => handleCellChange(dayStr(d), 'permessoDonazione', e.target.checked)}
                                         className="w-4 h-4 rounded text-teal-600 focus:ring-teal-400 cursor-pointer"
@@ -3473,14 +3485,15 @@ export default function Presenze() {
                               const d = i + 1;
                               const outOfMonth = d > daysInMonth;
                               const giorno = rapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : giorno && giorno.permessoElettorale ? 'bg-indigo-100' : ''} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.permessoElettorale ? 'bg-indigo-100' : '')} align-middle`}>
                                   {!outOfMonth && giorno && (
                                     <div className="flex justify-center items-center">
                                       <input 
                                         type="checkbox"
-                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isDayLockedForUser(d)}
+                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isCellDisabled(d, 'assenza')}
                                         checked={!!giorno.permessoElettorale}
                                         onChange={e => handleCellChange(dayStr(d), 'permessoElettorale', e.target.checked)}
                                         className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-400 cursor-pointer"
@@ -3505,14 +3518,15 @@ export default function Presenze() {
                               const d = i + 1;
                               const outOfMonth = d > daysInMonth;
                               const giorno = rapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : isWeekend(d) ? 'bg-gray-100/40' : ''} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || ''} align-middle`}>
                                   {!outOfMonth && giorno && (
                                     <div className="flex justify-center items-center">
                                       <input 
                                         type="checkbox"
-                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || isDayLockedForUser(d)}
+                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || isCellDisabled(d, 'lavoro')}
                                         checked={giorno.trasferta || false}
                                         onChange={e => handleCellChange(dayStr(d), 'trasferta', e.target.checked)}
                                         className="w-4 h-4 rounded text-blue-600 focus:ring-blue-400 cursor-pointer"
@@ -4114,10 +4128,12 @@ export default function Presenze() {
                         {Array.from({ length: 31 }).map((_, i) => {
                           const d = i + 1;
                           const out = d > daysInMonth;
+                          const dayStyle = getCellDayStyle(d);
                           return (
                             <th 
                               key={i} 
-                              className={`p-1.5 border-r w-[2.8%] ${out ? 'bg-gray-300/50 text-gray-400' : isWeekend(d) ? 'bg-gray-200/70 text-gray-600' : 'text-gray-700'}`}
+                              style={dayStyle.style}
+                              className={`p-1.5 border-r w-[2.8%] ${out ? 'bg-gray-300/50 text-gray-400' : dayStyle.className || 'text-gray-700'}`}
                             >
                               {d}
                             </th>
@@ -4136,19 +4152,21 @@ export default function Presenze() {
                               const d = i + 1;
                               const out = d > daysInMonth;
                               const g = reviewingRapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-1 border-r ${out ? 'bg-gray-100/30' : dayStyle.className || ''} align-middle`}>
                                   {!out && g && (
                                     <div className="flex justify-center items-center">
                                       <input 
                                         type="checkbox"
+                                        disabled={isCellDisabled(d, 'lavoro')}
                                         checked={g.ore === 8}
                                         onChange={e => {
                                           const val = e.target.checked ? 8 : 0;
                                           handleReviewCellChange(dayStr(d), 'ore', val);
                                         }}
-                                        className="w-3.5 h-3.5 rounded text-indigo-600"
+                                        className="w-3.5 h-3.5 rounded text-indigo-600 cursor-pointer"
                                       />
                                     </div>
                                   )}
@@ -4168,19 +4186,21 @@ export default function Presenze() {
                               const d = i + 1;
                               const out = d > daysInMonth;
                               const g = reviewingRapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-1 border-r ${out ? 'bg-gray-100/30' : dayStyle.className || ''} align-middle`}>
                                   {!out && g && (
                                     <div className="flex justify-center items-center">
                                       <input 
                                         type="checkbox"
+                                        disabled={isCellDisabled(d, 'lavoro')}
                                         checked={g.ore === 4}
                                         onChange={e => {
                                           const val = e.target.checked ? 4 : 0;
                                           handleReviewCellChange(dayStr(d), 'ore', val);
                                         }}
-                                        className="w-3.5 h-3.5 rounded text-indigo-600"
+                                        className="w-3.5 h-3.5 rounded text-indigo-600 cursor-pointer"
                                       />
                                     </div>
                                   )}
@@ -4200,16 +4220,18 @@ export default function Presenze() {
                               const d = i + 1;
                               const out = d > daysInMonth;
                               const g = reviewingRapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-1 border-r ${out ? 'bg-gray-100/30' : dayStyle.className || ''} align-middle`}>
                                   {!out && g && (
                                     <div className="flex justify-center items-center">
                                       <input 
                                         type="checkbox"
+                                        disabled={isCellDisabled(d, 'lavoro')}
                                         checked={g.trasferta || false}
                                         onChange={e => handleReviewCellChange(dayStr(d), 'trasferta', e.target.checked)}
-                                        className="w-3.5 h-3.5 rounded text-blue-500"
+                                        className="w-3.5 h-3.5 rounded text-blue-500 cursor-pointer"
                                       />
                                     </div>
                                   )}
@@ -4231,13 +4253,14 @@ export default function Presenze() {
                               const d = i + 1;
                               const out = d > daysInMonth;
                               const g = reviewingRapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : g && g.ore > 0 ? 'bg-emerald-50/70' : ''}`}>
+                                <td key={i} style={dayStyle.style} className={`p-1 border-r ${out ? 'bg-gray-100/30' : dayStyle.className || (g && g.ore > 0 ? 'bg-emerald-50/70' : '')}`}>
                                   {!out && g && (
                                     <input 
                                       type="number"
-                                      disabled={g.malattia}
+                                      disabled={g.malattia || isCellDisabled(d, 'lavoro')}
                                       value={g.ore === 0 ? '' : g.ore}
                                       onChange={e => handleReviewCellChange(dayStr(d), 'ore', e.target.value === '' ? 0 : Number(e.target.value))}
                                       className="w-full text-center bg-transparent border-none p-0.5 rounded font-bold outline-none focus:bg-gray-50 text-gray-900"
@@ -4259,13 +4282,14 @@ export default function Presenze() {
                               const d = i + 1;
                               const out = d > daysInMonth;
                               const g = reviewingRapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''}`}>
+                                <td key={i} style={dayStyle.style} className={`p-1 border-r ${out ? 'bg-gray-100/30' : dayStyle.className || ''}`}>
                                   {!out && g && (
                                     <input 
                                       type="number"
-                                      disabled={g.malattia}
+                                      disabled={g.malattia || isCellDisabled(d, 'lavoro')}
                                       value={g.straordinari === 0 ? '' : g.straordinari}
                                       onChange={e => handleReviewCellChange(dayStr(d), 'straordinari', e.target.value === '' ? 0 : Number(e.target.value))}
                                       className="w-full text-center bg-transparent border-none p-0.5 rounded font-bold outline-none text-amber-600 focus:bg-gray-50 font-extrabold"
@@ -4287,13 +4311,14 @@ export default function Presenze() {
                               const d = i + 1;
                               const out = d > daysInMonth;
                               const g = reviewingRapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : g && g.permessi > 0 ? 'bg-indigo-100' : ''}`}>
+                                <td key={i} style={dayStyle.style} className={`p-1 border-r ${out ? 'bg-gray-100/30' : dayStyle.className || (g && g.permessi > 0 ? 'bg-indigo-100' : '')}`}>
                                   {!out && g && (
                                     <input 
                                       type="number"
-                                      disabled={g.malattia || g.ferie === (g.oreContratto ?? reviewContractHours)}
+                                      disabled={g.malattia || g.ferie === (g.oreContratto ?? reviewContractHours) || isCellDisabled(d, 'assenza')}
                                       value={g.permessi === 0 ? '' : g.permessi}
                                       onChange={e => handleReviewCellChange(dayStr(d), 'permessi', e.target.value === '' ? 0 : Number(e.target.value))}
                                       className="w-full text-center bg-transparent border-none p-0.5 rounded font-bold text-indigo-600 outline-none focus:bg-gray-50"
@@ -4315,14 +4340,15 @@ export default function Presenze() {
                               const d = i + 1;
                               const out = d > daysInMonth;
                               const g = reviewingRapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : g && g.ferie ? 'bg-amber-100' : ''} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-1 border-r ${out ? 'bg-gray-100/30' : dayStyle.className || (g && g.ferie ? 'bg-amber-100' : '')} align-middle`}>
                                   {!out && g && (
                                     <div className="flex justify-center items-center">
                                       <input 
                                         type="checkbox"
-                                        disabled={g.malattia}
+                                        disabled={g.malattia || isCellDisabled(d, 'assenza')}
                                         checked={!!g.ferie}
                                         onChange={e => handleReviewCellChange(dayStr(d), 'ferie', e.target.checked)}
                                         className="w-3.5 h-3.5 rounded text-green-500 cursor-pointer"
@@ -4345,16 +4371,18 @@ export default function Presenze() {
                               const d = i + 1;
                               const out = d > daysInMonth;
                               const g = reviewingRapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : g && g.malattia ? 'bg-red-100' : ''} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-1 border-r ${out ? 'bg-gray-100/30' : dayStyle.className || (g && g.malattia ? 'bg-red-100' : '')} align-middle`}>
                                   {!out && g && (
                                     <div className="flex justify-center items-center">
                                       <input 
                                         type="checkbox"
+                                        disabled={isCellDisabled(d, 'assenza')}
                                         checked={g.malattia || false}
                                         onChange={e => handleReviewCellChange(dayStr(d), 'malattia', e.target.checked)}
-                                        className="w-3.5 h-3.5 text-red-500 rounded"
+                                        className="w-3.5 h-3.5 text-red-500 rounded cursor-pointer"
                                       />
                                     </div>
                                   )}
@@ -4374,14 +4402,15 @@ export default function Presenze() {
                               const d = i + 1;
                               const out = d > daysInMonth;
                               const g = reviewingRapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : g && g.permessoStudio ? 'bg-purple-100' : ''} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-1 border-r ${out ? 'bg-gray-100/30' : dayStyle.className || (g && g.permessoStudio ? 'bg-purple-100' : '')} align-middle`}>
                                   {!out && g && (
                                     <div className="flex justify-center items-center">
                                       <input 
                                         type="checkbox"
-                                        disabled={g.malattia}
+                                        disabled={g.malattia || isCellDisabled(d, 'assenza')}
                                         checked={!!g.permessoStudio}
                                         onChange={e => handleReviewCellChange(dayStr(d), 'permessoStudio', e.target.checked)}
                                         className="w-3.5 h-3.5 rounded text-purple-600 cursor-pointer"
@@ -4404,14 +4433,15 @@ export default function Presenze() {
                               const d = i + 1;
                               const out = d > daysInMonth;
                               const g = reviewingRapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : g && g.permessoDonazione ? 'bg-teal-100' : ''} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-1 border-r ${out ? 'bg-gray-100/30' : dayStyle.className || (g && g.permessoDonazione ? 'bg-teal-100' : '')} align-middle`}>
                                   {!out && g && (
                                     <div className="flex justify-center items-center">
                                       <input 
                                         type="checkbox"
-                                        disabled={g.malattia}
+                                        disabled={g.malattia || isCellDisabled(d, 'assenza')}
                                         checked={!!g.permessoDonazione}
                                         onChange={e => handleReviewCellChange(dayStr(d), 'permessoDonazione', e.target.checked)}
                                         className="w-3.5 h-3.5 rounded text-teal-600 cursor-pointer"
@@ -4434,14 +4464,15 @@ export default function Presenze() {
                               const d = i + 1;
                               const out = d > daysInMonth;
                               const g = reviewingRapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : g && g.permessoElettorale ? 'bg-indigo-100' : ''} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-1 border-r ${out ? 'bg-gray-100/30' : dayStyle.className || (g && g.permessoElettorale ? 'bg-indigo-100' : '')} align-middle`}>
                                   {!out && g && (
                                     <div className="flex justify-center items-center">
                                       <input 
                                         type="checkbox"
-                                        disabled={g.malattia}
+                                        disabled={g.malattia || isCellDisabled(d, 'assenza')}
                                         checked={!!g.permessoElettorale}
                                         onChange={e => handleReviewCellChange(dayStr(d), 'permessoElettorale', e.target.checked)}
                                         className="w-3.5 h-3.5 rounded text-indigo-600 cursor-pointer"
@@ -4464,16 +4495,18 @@ export default function Presenze() {
                               const d = i + 1;
                               const out = d > daysInMonth;
                               const g = reviewingRapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} className={`p-1 border-r ${out ? 'bg-gray-100/30' : isWeekend(d) ? 'bg-gray-50/50' : ''} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-1 border-r ${out ? 'bg-gray-100/30' : dayStyle.className || ''} align-middle`}>
                                   {!out && g && (
                                     <div className="flex justify-center items-center">
                                       <input 
                                         type="checkbox"
+                                        disabled={isCellDisabled(d, 'lavoro')}
                                         checked={g.trasferta || false}
                                         onChange={e => handleReviewCellChange(dayStr(d), 'trasferta', e.target.checked)}
-                                        className="w-3.5 h-3.5 text-blue-500 rounded"
+                                        className="w-3.5 h-3.5 text-blue-500 rounded cursor-pointer"
                                       />
                                     </div>
                                   )}

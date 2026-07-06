@@ -15,6 +15,7 @@ export interface Dipendente {
   ivaRate?: number;
   raRate?: number;
   oreContratto?: number;
+  macroArea?: 'Disegnatori' | 'Ingegneria' | 'Cantieri / Ambiente' | 'Amministrazione';
 }
 
 export interface Commessa {
@@ -32,6 +33,12 @@ export interface Commessa {
   stato?: string;
 }
 
+export interface Coordinatore {
+  id: string;
+  email: string;
+  area: string;
+}
+
 interface AuthContextType {
   user: User | null;
   loading: boolean;
@@ -41,6 +48,7 @@ interface AuthContextType {
   myAssociatedName: string | null;
   dipendenti: Dipendente[];
   commesse: Commessa[];
+  coordinatori: Coordinatore[];
   refreshData: () => Promise<void>;
 }
 
@@ -58,6 +66,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [dynamicSeniors, setDynamicSeniors] = useState<string[]>([]);
   const [dipendenti, setDipendenti] = useState<Dipendente[]>([]);
   const [commesse, setCommesse] = useState<Commessa[]>([]);
+  const [coordinatori, setCoordinatori] = useState<Coordinatore[]>([]);
 
   // Funzione per caricare/aggiornare i dati on-demand
   const refreshData = async (currentUser?: User | null) => {
@@ -68,17 +77,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setDynamicSeniors([]);
       setDipendenti([]);
       setCommesse([]);
+      setCoordinatori([]);
       return;
     }
 
     try {
-      const [adminsSnap, seniorsSnap, hrSnap, dipendentiSnap, commesseSnap, legacyHrSnap] = await Promise.all([
+      const [adminsSnap, seniorsSnap, hrSnap, dipendentiSnap, commesseSnap, legacyHrSnap, coordinatoriSnap] = await Promise.all([
         getDocs(collection(db, 'admins')),
         getDocs(collection(db, 'seniors')),
         getDocs(collection(db, 'hr')),
         getDocs(collection(db, 'dipendenti')),
         getDocs(collection(db, 'catalogo_commesse')),
-        getDoc(doc(db, 'configurazione_sistema', 'hr'))
+        getDoc(doc(db, 'configurazione_sistema', 'hr')),
+        getDocs(collection(db, 'coordinatori'))
       ]);
 
       setDynamicAdmins(adminsSnap.docs.map(doc => doc.data().email?.toLowerCase()));
@@ -108,8 +119,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         ivaRate: doc.data().ivaRate,
         raRate: doc.data().raRate,
         oreContratto: doc.data().oreContratto,
+        macroArea: doc.data().macroArea,
       }));
       setDipendenti(deps.sort((a, b) => a.nome.localeCompare(b.nome)));
+
+      const coords = coordinatoriSnap.docs.map(doc => ({
+        id: doc.id,
+        email: doc.data().email || '',
+        area: doc.data().area || ''
+      }));
+      setCoordinatori(coords);
 
       const comms = commesseSnap.docs.map(doc => ({
         id: doc.id,
@@ -142,6 +161,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setDynamicSeniors([]);
         setDipendenti([]);
         setCommesse([]);
+        setCoordinatori([]);
         setLoading(false);
       } else {
         try {
@@ -175,6 +195,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       myAssociatedName,
       dipendenti,
       commesse,
+      coordinatori,
       refreshData
     }}>
       {children}

@@ -1,13 +1,13 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth, type Dipendente } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, onSnapshot, doc, query, where, getDocs, writeBatch } from 'firebase/firestore';
+import { collection, onSnapshot, doc, query, where, getDocs, writeBatch, addDoc, updateDoc } from 'firebase/firestore';
 import { Users, Printer, ChevronLeft, ChevronRight, Save, Download, ZoomIn, ZoomOut, Trash2, Plus, RefreshCw } from 'lucide-react';
-import { getWeekNumber, getStartOfWeek, addDays } from '../utils/date';
+import { getWeekNumber, getStartOfWeek, addDays, isItalianHoliday } from '../utils/date';
 import AssegnazioneModal from '../components/AssegnazioneModal';
 import ConfirmModal from '../components/ConfirmModal';
 import { addPendingNotification, getPendingNotifications, clearPendingNotifications, sendAllPendingNotifications } from '../utils/pendingNotifications';
-import { isCollaboratore } from './Impostazioni';
+import { isCollaboratore, isSoci } from './Impostazioni';
 import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
 
 
@@ -98,54 +98,9 @@ const formatCommDate = (dateStr?: string): string => {
   return dateStr;
 };
 
-const isItalianHoliday = (dateStr: string): boolean => {
-  const parts = dateStr.split('-');
-  if (parts.length !== 3) return false;
-  const year = Number(parts[0]);
-  const month = Number(parts[1]);
-  const day = Number(parts[2]);
-
-  // Festività fisse
-  if (month === 1 && day === 1) return true; // Capodanno
-  if (month === 1 && day === 6) return true; // Epifania
-  if (month === 4 && day === 25) return true; // Liberazione
-  if (month === 5 && day === 1) return true; // Festa del Lavoro
-  if (month === 6 && day === 2) return true; // Festa della Repubblica
-  if (month === 8 && day === 15) return true; // Ferragosto
-  if (month === 11 && day === 1) return true; // Tutti i Santi
-  if (month === 12 && day === 8) return true; // Immacolata
-  if (month === 12 && day === 25) return true; // Natale
-  if (month === 12 && day === 26) return true; // Santo Stefano
-
-  // Pasquetta (Meeus/Jones/Butcher algorithm)
-  const a = year % 19;
-  const b = Math.floor(year / 100);
-  const c = year % 100;
-  const d = Math.floor(b / 4);
-  const e = b % 4;
-  const f = Math.floor((b + 8) / 25);
-  const g = Math.floor((b - f + 1) / 3);
-  const h = (19 * a + b - d - g + 15) % 30;
-  const i = Math.floor(c / 4);
-  const k = c % 4;
-  const l = (32 + 2 * e + 2 * i - h - k) % 7;
-  const m = Math.floor((a + 11 * h + 22 * l) / 451);
-  const easterMonth = Math.floor((h + l - 7 * m + 114) / 31);
-  const easterDay = ((h + l - 7 * m + 114) % 31) + 1;
-
-  const easterDate = new Date(year, easterMonth - 1, easterDay);
-  const easterMonday = new Date(easterDate);
-  easterMonday.setDate(easterDate.getDate() + 1);
-
-  if (month === (easterMonday.getMonth() + 1) && day === easterMonday.getDate()) {
-    return true;
-  }
-
-  return false;
-};
 
 export default function PianificazionePersonale() {
-  const { isAdmin, isSenior, dipendenti, commesse, myAssociatedName } = useAuth();
+  const { isAdmin, isSenior, dipendenti, commesse, coordinatori, user, myAssociatedName } = useAuth();
   
   const [commessaSearchText, setCommessaSearchText] = useState('');
   const [isCommessaDropdownOpen, setIsCommessaDropdownOpen] = useState(false);
@@ -357,9 +312,14 @@ export default function PianificazionePersonale() {
   // Search filter for main grid
   const [gridSearchQuery, setGridSearchQuery] = useState('');
 
-  // Collapsible sections for grid
-  const [isDipendentiExpanded, setIsDipendentiExpanded] = useState(true);
-  const [isCollaboratoriExpanded, setIsCollaboratoriExpanded] = useState(true);
+  // Collapsible sections for macro areas
+  const [expandedAreas, setExpandedAreas] = useState<Record<string, boolean>>({
+    'Disegnatori': false,
+    'Ingegneria': false,
+    'Cantieri / Ambiente': false,
+    'Amministrazione': false,
+    'Non Assegnati': false,
+  });
 
   // Modal states for cell edits
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -402,6 +362,157 @@ export default function PianificazionePersonale() {
     return () => unsub();
   }, []);
 
+  // Stati per richieste disegnatori
+  const [richiesteDisegnatori, setRichiesteDisegnatori] = useState<any[]>([]);
+  const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
+  const [reqCommessaId, setReqCommessaId] = useState('');
+  const [reqDataInizio, setReqDataInizio] = useState('');
+  const [reqDataFine, setReqDataFine] = useState('');
+  const [reqPercentuale, setReqPercentuale] = useState(100);
+  const [reqNota, setReqNota] = useState('');
+  const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
+  const [selectedDisegnatoriPerRichiesta, setSelectedDisegnatoriPerRichiesta] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'richieste_disegnatori'), (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach(docSnap => {
+        list.push({ id: docSnap.id, ...docSnap.data() });
+      });
+      setRichiesteDisegnatori(list);
+    });
+    return () => unsub();
+  }, []);
+
+  const getWeekId = (d: Date): string => {
+    const date = new Date(d.getTime());
+    date.setDate(date.getDate() + 3 - (date.getDay() + 6) % 7);
+    const year = date.getFullYear();
+    const wkNum = getWeekNumber(date);
+    return `${year}-W${wkNum}`;
+  };
+
+  const handleSubmitRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reqCommessaId || !reqDataInizio || !reqDataFine || !reqPercentuale) {
+      showToast("Compila tutti i campi richiesti.", "warning");
+      return;
+    }
+    setIsSubmittingRequest(true);
+    try {
+      const commObj = commesse.find(c => c.id === reqCommessaId);
+      const commName = commObj ? commObj.nome : '';
+      
+      await addDoc(collection(db, 'richieste_disegnatori'), {
+        commessaId: reqCommessaId,
+        commessaName: commName,
+        dataInizio: reqDataInizio,
+        dataFine: reqDataFine,
+        percentuale: Number(reqPercentuale),
+        nota: reqNota,
+        richiedenteNome: myAssociatedName || user?.displayName || user?.email || '',
+        richiedenteEmail: user?.email?.toLowerCase() || '',
+        stato: 'in_attesa'
+      });
+      
+      showToast("Richiesta disegnatore inviata con successo!", "success");
+      setIsRequestModalOpen(false);
+      setReqCommessaId('');
+      setReqDataInizio('');
+      setReqDataFine('');
+      setReqPercentuale(100);
+      setReqNota('');
+    } catch (err) {
+      console.error("Errore salvataggio richiesta:", err);
+      showToast("Errore durante l'invio della richiesta.", "error");
+    } finally {
+      setIsSubmittingRequest(false);
+    }
+  };
+
+  const handleApproveRequest = async (req: any) => {
+    const disegnatoreNome = selectedDisegnatoriPerRichiesta[req.id];
+    if (!disegnatoreNome) {
+      showToast("Seleziona un disegnatore da assegnare.", "warning");
+      return;
+    }
+    try {
+      const start = new Date(req.dataInizio);
+      const end = new Date(req.dataFine);
+      
+      const weekIds = new Set<string>();
+      let curr = new Date(start);
+      while (curr <= end) {
+        const wkId = getWeekId(curr);
+        if (wkId) weekIds.add(wkId);
+        curr.setDate(curr.getDate() + 7);
+      }
+      const finalWkId = getWeekId(end);
+      if (finalWkId) weekIds.add(finalWkId);
+
+      const batch = writeBatch(db);
+      
+      const commObj = commesse.find(c => c.id === req.commessaId);
+      const colore = commObj ? (TIPOLOGIA_COLORS[commObj.tipologia || ''] || commObj.colore || '#64748b') : '#64748b';
+
+      for (const wkId of weekIds) {
+        const docId = `${disegnatoreNome}-${wkId}`;
+        const currentList = [...(assignments[docId] || [])];
+        const filtered = currentList.filter(c => c.commessaId !== req.commessaId);
+        filtered.push({
+          commessaId: req.commessaId,
+          commessaName: req.commessaName,
+          percentuale: Number(req.percentuale),
+          colore: colore
+        });
+        
+        const docRef = doc(db, 'assegnazioni', docId);
+        batch.set(docRef, { lista: filtered });
+      }
+      
+      const reqRef = doc(db, 'richieste_disegnatori', req.id);
+      batch.update(reqRef, {
+        stato: 'approvata',
+        disegnatoreAssegnato: disegnatoreNome
+      });
+      
+      await batch.commit();
+      await fetchAssignments();
+      showToast("Richiesta approvata e disegnatore assegnato con successo!", "success");
+    } catch (err) {
+      console.error("Errore approvazione richiesta:", err);
+      showToast("Errore durante l'approvazione.", "error");
+    }
+  };
+
+  const handleRejectRequest = async (reqId: string) => {
+    setConfirmConfig({
+      isOpen: true,
+      title: "Rifiuta Richiesta",
+      message: "Sei sicuro di voler rifiutare questa richiesta di disegnatore?",
+      type: "warning",
+      onConfirm: async () => {
+        try {
+          const reqRef = doc(db, 'richieste_disegnatori', reqId);
+          await updateDoc(reqRef, { stato: 'rifiutata' });
+          showToast("Richiesta rifiutata con successo.");
+          setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+        } catch (err) {
+          console.error("Errore rifiuto richiesta:", err);
+          showToast("Errore durante il rifiuto della richiesta.", "error");
+        }
+      }
+    });
+  };
+
+  const isInChiusuraAziendaleLocal = (dateStr: string) => {
+    return chiusureAziendali.some(closure => {
+      const start = closure.dataInizio;
+      const end = closure.dataFine;
+      return dateStr >= start && dateStr <= end;
+    });
+  };
+
   const getLeavesForResourceInWeek = (resName: string, wkId: string) => {
     const parts = wkId.split('-W');
     if (parts.length !== 2) return [];
@@ -440,7 +551,7 @@ export default function PianificazionePersonale() {
         weekDates.forEach((wDateStr, idx) => {
           const [wY, wM, wD] = wDateStr.split('-').map(Number);
           const wDate = new Date(wY, wM - 1, wD);
-          if (wDate >= curr && wDate <= last) {
+          if (wDate >= curr && wDate <= last && !isItalianHoliday(wDateStr) && !isInChiusuraAziendaleLocal(wDateStr)) {
             let label = leave.tipo === 'ferie' ? 'Ferie' : leave.tipo === 'malattia' ? 'Malattia' : leave.tipo === 'maternita' ? 'Maternità' : leave.tipo === 'smart' ? 'Smart' : leave.tipo;
             if (leave.tipo === 'mattina') label = 'Ass. Matt.';
             if (leave.tipo === 'pomeriggio') label = 'Ass. Pom.';
@@ -1252,6 +1363,30 @@ export default function PianificazionePersonale() {
     return filteredGridDipendenti.filter(d => isCollaboratore(d.nome, d.tipo));
   }, [filteredGridDipendenti]);
 
+  const soci = useMemo(() => {
+    return filteredGridDipendenti.filter(d => isSoci(d.nome));
+  }, [filteredGridDipendenti]);
+
+  const disegnatori = useMemo(() => {
+    return filteredGridDipendenti.filter(d => !isSoci(d.nome) && d.macroArea === 'Disegnatori');
+  }, [filteredGridDipendenti]);
+
+  const ingegneria = useMemo(() => {
+    return filteredGridDipendenti.filter(d => !isSoci(d.nome) && d.macroArea === 'Ingegneria');
+  }, [filteredGridDipendenti]);
+
+  const cantieri = useMemo(() => {
+    return filteredGridDipendenti.filter(d => !isSoci(d.nome) && d.macroArea === 'Cantieri / Ambiente');
+  }, [filteredGridDipendenti]);
+
+  const amministrazione = useMemo(() => {
+    return filteredGridDipendenti.filter(d => !isSoci(d.nome) && d.macroArea === 'Amministrazione');
+  }, [filteredGridDipendenti]);
+
+  const nonAssegnati = useMemo(() => {
+    return filteredGridDipendenti.filter(d => !isSoci(d.nome) && !d.macroArea);
+  }, [filteredGridDipendenti]);
+
   const handleExportGridToExcel = () => {
     let csvContent = "\uFEFF"; // UTF-8 BOM
     
@@ -1326,6 +1461,258 @@ export default function PianificazionePersonale() {
     });
   };
 
+  const renderEmployeeRow = (dip: Dipendente, parentAreaName: string) => {
+    const isCoordinatoreArea = coordinatori.some(c => c.email.toLowerCase() === user?.email?.toLowerCase() && c.area === parentAreaName);
+    const isEditable = isAdmin || isCoordinatoreArea;
+
+    return (
+      <tr key={dip.id} className="hover:bg-indigo-50/20 transition-colors bg-white">
+        <td 
+          className="p-4 text-left font-bold text-gray-800 bg-white sticky left-0 z-10 shadow-[1px_0_0_0_#f3f4f6] border-b align-middle truncate pl-8"
+          style={{ width: '180px', minWidth: '180px', maxWidth: '180px' }}
+          title={dip.nome}
+        >
+          <div className="flex items-center gap-1.5">
+            <span className="text-gray-400 text-[10px]">↳</span>
+            <span className="truncate">{dip.nome}</span>
+          </div>
+        </td>
+        
+        {timelineWeeks.map((wk, wIndex) => {
+          const key = `${dip.nome}-${wk.id}`;
+          const list = assignments[key] || [];
+          const totalLoad = list.reduce((acc, c) => acc + Number(c.percentuale), 0);
+          const leaves = getLeavesForResourceInWeek(dip.nome, wk.id);
+          
+          const isCellModified = (() => {
+            const listStr = JSON.stringify(list);
+            const dbListStr = JSON.stringify(dbAssignments[key] || []);
+            return listStr !== dbListStr;
+          })();
+
+          let bgClass = "bg-slate-50/50 text-slate-400";
+          if (isEditable) bgClass += " hover:bg-slate-100/60";
+          let indicatorColor = "bg-gray-300";
+
+          if (totalLoad > 0) {
+            if (totalLoad < 100) {
+              bgClass = isEditable 
+                ? "bg-sky-50 text-sky-800 hover:bg-sky-100/80" 
+                : "bg-sky-50 text-sky-800";
+              indicatorColor = "bg-sky-400";
+            } else if (totalLoad === 100) {
+              bgClass = isEditable 
+                ? "bg-emerald-50 text-emerald-800 hover:bg-emerald-100/80" 
+                : "bg-emerald-50 text-emerald-800";
+              indicatorColor = "bg-emerald-550";
+            } else {
+              bgClass = isEditable 
+                ? "bg-rose-50 text-rose-800 hover:bg-rose-100/90 font-black" 
+                : "bg-rose-50 text-rose-800 font-black";
+              indicatorColor = "bg-rose-600";
+            }
+          }
+
+          const ferieCount = leaves.filter(l => l.tipo === 'ferie').length;
+          const malattiaCount = leaves.filter(l => l.tipo === 'malattia').length;
+          const maternitaCount = leaves.filter(l => l.tipo === 'maternita').length;
+          const permessoCount = leaves.filter(l => l.tipo === 'permesso' || l.tipo === 'mattina' || l.tipo === 'pomeriggio').length;
+          const smartCount = leaves.filter(l => l.tipo === 'smart').length;
+
+          // I Disegnatori possono essere modificati solo da Romanello (coordinatore) o admin
+          const isDisegnatore = parentAreaName === 'Disegnatori';
+          const canDirectlyEditCell = isEditable && (!isDisegnatore || isAdmin || isCoordinatoreArea);
+
+          return (
+            <td 
+              key={wIndex} 
+              onClick={() => canDirectlyEditCell && handleCellClick(dip.nome, wk.id, wk.label, wk.sub)}
+              className={`border-l border-b border-gray-100 align-middle transition-colors ${canDirectlyEditCell ? 'cursor-pointer' : 'cursor-default'} ${bgClass} ${
+                isUltraNarrow ? 'p-1' : isNarrow ? 'p-1.5' : 'p-3'
+              }`}
+              style={{ 
+                minWidth: weekColumnMinWidth, 
+                width: weekColumnMinWidth,
+                outline: isCellModified ? '2px dashed #d97706' : undefined,
+                outlineOffset: '-2px'
+              }}
+            >
+              <div 
+                className="flex flex-col items-center justify-center relative group/cell"
+                style={{ 
+                  minHeight: isNarrow ? '40px' : '56px',
+                  gap: isUltraNarrow ? '1px' : '2px'
+                }}
+              >
+                <span className={`${isUltraNarrow ? 'text-[10px]' : 'text-xs'} font-black`}>{totalLoad}%</span>
+                
+                {!isUltraNarrow && (
+                  <span className={`w-1.5 h-1.5 rounded-full shadow-sm ${indicatorColor}`}></span>
+                )}
+
+                {leaves.length > 0 && (
+                  <div className="flex gap-0.5 justify-center mt-0.5 w-full flex-wrap">
+                    {isUltraNarrow ? (
+                      <span className="text-[9px]" title="Assenze presenti">⚠️</span>
+                    ) : isNarrow ? (
+                      <span className="text-[9px] font-extrabold px-1 rounded bg-orange-100 text-orange-750" title={`${leaves.length} assenze`}>
+                        ⚠️ {leaves.length}g
+                      </span>
+                    ) : (
+                      <>
+                        {ferieCount > 0 && (
+                          <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-orange-100 text-orange-700 border border-orange-200" title="Ferie">
+                            🌴 {ferieCount}g
+                          </span>
+                        )}
+                        {malattiaCount > 0 && (
+                          <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-red-100 text-red-700 border border-red-200" title="Malattia">
+                            🤒 {malattiaCount}g
+                          </span>
+                        )}
+                        {maternitaCount > 0 && (
+                          <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-pink-100 text-pink-700 border border-pink-200" title="Maternità">
+                            🍼 {maternitaCount}g
+                          </span>
+                        )}
+                        {permessoCount > 0 && (
+                          <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-purple-100 text-purple-700 border border-purple-200" title="Permessi / Ass. parziale">
+                            ⏱️ {permessoCount}g
+                          </span>
+                        )}
+                        {smartCount > 0 && (
+                          <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-indigo-100 text-indigo-700 border border-indigo-200" title="Smart Working">
+                            🏠 {smartCount}g
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+                
+                {(list.length > 0 || leaves.length > 0) && (
+                  <div className="hidden group-hover/cell:flex absolute bottom-full mb-1 bg-gray-900 text-white text-[11px] rounded-lg p-2.5 flex-col gap-1 z-50 shadow-md min-w-[170px] pointer-events-none text-left">
+                    <div className="font-bold text-[10px] text-indigo-300 border-b border-gray-800 pb-0.5 mb-1">{dip.nome} ({wk.label})</div>
+                    {list.map((a, idx) => (
+                      <div key={idx} className="flex justify-between items-center gap-2 border-b border-gray-800 pb-1 last:border-none last:pb-0">
+                        <span className="truncate">{a.commessaName}</span>
+                        <span className="font-extrabold text-indigo-400">{a.percentuale}%</span>
+                      </div>
+                    ))}
+                    {leaves.length > 0 && (
+                      <div className="border-t border-gray-700 pt-1.5 mt-1 flex flex-col gap-1">
+                        <span className="text-[9.5px] font-bold text-orange-400">Assenze/Ferie:</span>
+                        {leaves.map((l, idx) => (
+                          <div key={idx} className="flex justify-between items-center text-[9.5px] gap-2">
+                            <span>{l.giorno}</span>
+                            <span className="font-bold text-gray-300">{l.dettagli}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </td>
+          );
+        })}
+      </tr>
+    );
+  };
+
+  const renderAreaRow = (areaName: string, members: Dipendente[]) => {
+    const isExpanded = expandedAreas[areaName];
+    const toggleExpand = () => {
+      setExpandedAreas(prev => ({
+        ...prev,
+        [areaName]: !prev[areaName]
+      }));
+    };
+
+    return (
+      <>
+        <tr 
+          onClick={toggleExpand}
+          className="bg-slate-100 hover:bg-slate-150 transition-colors font-extrabold text-xs cursor-pointer select-none border-t border-b border-slate-200"
+        >
+          <td 
+            className="p-4 text-left font-black text-slate-800 bg-slate-100 sticky left-0 z-10 shadow-[1px_0_0_0_#e2e8f0] border-b align-middle truncate"
+            style={{ width: '180px', minWidth: '180px', maxWidth: '180px' }}
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-slate-500 w-3 text-center">{isExpanded ? '▼' : '▶'}</span>
+              <span className="uppercase tracking-wider text-slate-900">{areaName} ({members.length})</span>
+            </div>
+          </td>
+
+          {timelineWeeks.map((wk, wIndex) => {
+            const avgLoad = members.length === 0 ? 0 : Math.round(
+              members.reduce((sum, dip) => {
+                const key = `${dip.nome}-${wk.id}`;
+                const list = assignments[key] || [];
+                return sum + list.reduce((acc, c) => acc + Number(c.percentuale), 0);
+              }, 0) / members.length
+            );
+
+            let bgClass = "bg-slate-50 text-slate-400";
+            let indicatorColor = "bg-slate-350";
+
+            if (avgLoad > 0) {
+              if (avgLoad < 80) {
+                bgClass = "bg-sky-50/70 text-sky-800";
+                indicatorColor = "bg-sky-400";
+              } else if (avgLoad >= 80 && avgLoad <= 100) {
+                bgClass = "bg-emerald-50/70 text-emerald-800";
+                indicatorColor = "bg-emerald-500";
+              } else {
+                bgClass = "bg-rose-50/75 text-rose-800 font-black";
+                indicatorColor = "bg-rose-600";
+              }
+            }
+
+            return (
+              <td 
+                key={wIndex} 
+                className={`border-l border-b border-slate-150 align-middle transition-colors ${bgClass} ${
+                  isUltraNarrow ? 'p-1' : isNarrow ? 'p-1.5' : 'p-3'
+                }`}
+                style={{ 
+                  minWidth: weekColumnMinWidth, 
+                  width: weekColumnMinWidth,
+                }}
+              >
+                <div 
+                  className="flex flex-col items-center justify-center relative"
+                  style={{ 
+                    minHeight: isNarrow ? '40px' : '56px',
+                    gap: isUltraNarrow ? '1px' : '2px'
+                  }}
+                >
+                  <span className={`${isUltraNarrow ? 'text-[10px]' : 'text-xs'} font-black`}>{avgLoad}%</span>
+                  {!isUltraNarrow && (
+                    <span className={`w-1.5 h-1.5 rounded-full ${indicatorColor}`}></span>
+                  )}
+                </div>
+              </td>
+            );
+          })}
+        </tr>
+
+        {isExpanded && (
+          members.length === 0 ? (
+            <tr>
+              <td colSpan={timelineWeeks.length + 1} className="p-4 text-center text-gray-400 italic bg-white pl-8">
+                Nessuna risorsa in questa area.
+              </td>
+            </tr>
+          ) : (
+            members.map(dip => renderEmployeeRow(dip, areaName))
+          )
+        )}
+      </>
+    );
+  };
+
   const shiftGridPeriod = (weeksOffset: number) => {
     setGridBaseDate(prev => addDays(prev, weeksOffset * 7));
   };
@@ -1368,7 +1755,90 @@ export default function PianificazionePersonale() {
             </button>
           </div>
         </h2>
+        <div className="flex items-center gap-3 no-print">
+          <button
+            onClick={() => setIsRequestModalOpen(true)}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-750 text-white px-5 py-2.5 rounded-2xl font-bold text-xs shadow-md active:scale-95 transition-all cursor-pointer"
+          >
+            <span>✉️</span> Richiedi Disegnatore
+          </button>
+        </div>
       </div>
+
+      {/* SEZIONE BLINDATA: GESTIONE RICHIESTE DISEGNATORI */}
+      {(isAdmin || coordinatori.some(c => c.email.toLowerCase() === user?.email?.toLowerCase() && c.area === 'Disegnatori') || isSoci(myAssociatedName)) && (
+        (() => {
+          const pendingReqs = richiesteDisegnatori.filter(r => r.stato === 'in_attesa');
+          if (pendingReqs.length === 0) return null;
+          
+          return (
+            <div className="bg-gradient-to-br from-teal-50 to-emerald-50 rounded-[2rem] p-6 border border-teal-100 shadow-sm space-y-4 no-print animate-in fade-in duration-300">
+              <h3 className="text-xl font-bold text-teal-900 flex items-center gap-2">
+                📥 Gestione Richieste Disegnatori in Attesa ({pendingReqs.length})
+              </h3>
+              <p className="text-xs text-teal-700/80">Valuta i carichi di lavoro correnti ed assegna la risorsa definitiva per approvare la richiesta.</p>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {pendingReqs.map(req => {
+                  const selectedDisegnatore = selectedDisegnatoriPerRichiesta[req.id] || '';
+                  
+                  return (
+                    <div key={req.id} className="bg-white p-5 rounded-2xl border border-teal-100 shadow-sm flex flex-col justify-between gap-3 text-xs">
+                      <div>
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="font-extrabold text-teal-950 text-sm">{req.commessaName}</span>
+                          <span className="bg-teal-100 text-teal-800 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider text-[9px]">In Attesa</span>
+                        </div>
+                        <div className="text-gray-500 mt-1 space-y-1">
+                          <div>📅 Periodo: <strong className="text-gray-700">{formatCommDate(req.dataInizio)}</strong> al <strong className="text-gray-700">{formatCommDate(req.dataFine)}</strong></div>
+                          <div>⚡ Carico Richiesto: <strong className="text-gray-800">{req.percentuale}%</strong></div>
+                          <div>👤 Richiedente: <span className="font-semibold text-gray-700">{req.richiedenteNome}</span> ({req.richiedenteEmail})</div>
+                          {req.nota && (
+                            <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 italic text-gray-650 mt-2">
+                              " {req.nota} "
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      
+                      <div className="flex flex-col gap-2 mt-3 pt-3 border-t border-gray-100">
+                        <label className="block text-[10px] font-bold text-teal-950 uppercase tracking-wider">Seleziona Disegnatore Definitivo</label>
+                        <div className="flex gap-2">
+                          <select 
+                            value={selectedDisegnatore}
+                            onChange={e => setSelectedDisegnatoriPerRichiesta(prev => ({ ...prev, [req.id]: e.target.value }))}
+                            className="flex-1 p-2.5 border border-teal-200 rounded-xl bg-slate-50 text-xs font-bold text-gray-750 focus:ring-2 focus:ring-teal-500 outline-none"
+                          >
+                            <option value="">-- Scegli Disegnatore --</option>
+                            {disegnatori.map(d => (
+                              <option key={d.id} value={d.nome}>{d.nome}</option>
+                            ))}
+                          </select>
+                          
+                          <button
+                            onClick={() => handleApproveRequest(req)}
+                            disabled={!selectedDisegnatore}
+                            className="bg-teal-600 text-white font-extrabold px-4 py-2.5 rounded-xl shadow hover:bg-teal-700 transition active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                          >
+                            Approva
+                          </button>
+                          
+                          <button
+                            onClick={() => handleRejectRequest(req.id)}
+                            className="bg-transparent hover:bg-rose-50 text-rose-600 font-extrabold px-3 py-2.5 rounded-xl border border-rose-200 transition active:scale-95 cursor-pointer"
+                          >
+                            Rifiuta
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()
+      )}
 
       {/* BOZZA DRAFT BANNER */}
       {isDirty && (
@@ -1687,16 +2157,9 @@ export default function PianificazionePersonale() {
                                     }}
                                     className="p-1 border border-gray-200 rounded-lg bg-white font-bold text-[10px] text-gray-700 outline-none focus:border-indigo-400"
                                   >
-                                    <option value="10">10%</option>
-                                    <option value="20">20%</option>
-                                    <option value="30">30%</option>
-                                    <option value="40">40%</option>
-                                    <option value="50">50%</option>
-                                    <option value="60">60%</option>
-                                    <option value="70">70%</option>
-                                    <option value="80">80%</option>
-                                    <option value="90">90%</option>
-                                    <option value="100">100%</option>
+                                    {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
+                                      <option key={pct} value={pct}>{pct}%</option>
+                                    ))}
                                   </select>
                                   <button
                                     type="button"
@@ -1815,16 +2278,9 @@ export default function PianificazionePersonale() {
                                         }}
                                         className="p-1 border border-gray-200 rounded-lg bg-white font-bold text-[10px] text-gray-700 outline-none focus:border-indigo-400"
                                       >
-                                        <option value="10">10%</option>
-                                        <option value="20">20%</option>
-                                        <option value="30">30%</option>
-                                        <option value="40">40%</option>
-                                        <option value="50">50%</option>
-                                        <option value="60">60%</option>
-                                        <option value="70">70%</option>
-                                        <option value="80">80%</option>
-                                        <option value="90">90%</option>
-                                        <option value="100">100%</option>
+                                        {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
+                                          <option key={pct} value={pct}>{pct}%</option>
+                                        ))}
                                       </select>
                                       <button
                                         type="button"
@@ -1887,16 +2343,9 @@ export default function PianificazionePersonale() {
                             onChange={e => setAddPercentage(e.target.value)}
                             className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-700"
                           >
-                            <option value="10">10%</option>
-                            <option value="20">20%</option>
-                            <option value="30">30%</option>
-                            <option value="40">40%</option>
-                            <option value="50">50%</option>
-                            <option value="60">60%</option>
-                            <option value="70">70%</option>
-                            <option value="80">80%</option>
-                            <option value="90">90%</option>
-                            <option value="100">100%</option>
+                            {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
+                              <option key={pct} value={pct}>{pct}%</option>
+                            ))}
                           </select>
                         </div>
 
@@ -2174,7 +2623,7 @@ export default function PianificazionePersonale() {
                   </td>
                 </tr>
               </tbody>
-            ) : employees.length === 0 && collaborators.length === 0 ? (
+            ) : (soci.length === 0 && disegnatori.length === 0 && ingegneria.length === 0 && cantieri.length === 0 && amministrazione.length === 0 && nonAssegnati.length === 0) ? (
               <tbody className="divide-y divide-gray-100 font-medium bg-white">
                 <tr>
                   <td colSpan={timelineWeeks.length + 1} className="p-12 text-center text-gray-400 font-bold italic bg-white">
@@ -2184,357 +2633,50 @@ export default function PianificazionePersonale() {
               </tbody>
             ) : (
               <>
-                {/* DIPENDENTI SECTION */}
+                {/* SEZIONE SOCI */}
                 <tbody className="divide-y divide-gray-100 font-medium bg-white">
-                  {/* DIPENDENTI ACCORDION HEADER */}
-                  <tr 
-                    onClick={() => setIsDipendentiExpanded(!isDipendentiExpanded)} 
-                    className="bg-indigo-50/40 text-indigo-900 font-extrabold text-xs cursor-pointer hover:bg-indigo-50 transition-colors select-none"
-                  >
-                    <td colSpan={timelineWeeks.length + 1} className="p-3 text-left pl-6 sticky left-0 z-20 border-b border-indigo-100/60 bg-indigo-50/95" style={{ top: '55px' }}>
+                  <tr className="bg-rose-50/40 text-rose-950 font-extrabold text-xs border-b border-rose-100">
+                    <td colSpan={timelineWeeks.length + 1} className="p-3 text-left pl-6 sticky left-0 z-20 bg-rose-50/95 border-b border-rose-100" style={{ top: '55px' }}>
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-indigo-500 w-3 text-center">{isDipendentiExpanded ? '▼' : '▶'}</span>
-                        <span className="uppercase tracking-wider font-black">Dipendenti Interni ({employees.length})</span>
+                        <span className="uppercase tracking-wider font-black">Soci Proprietari ({soci.length})</span>
                       </div>
                     </td>
                   </tr>
-
-                  {/* DIPENDENTI ROWS */}
-                  {isDipendentiExpanded && (
-                    employees.length === 0 ? (
-                      <tr>
-                        <td colSpan={timelineWeeks.length + 1} className="p-4 text-center text-gray-400 italic bg-white">
-                          Nessun dipendente trovato.
-                        </td>
-                      </tr>
-                    ) : (
-                      employees.map(dip => (
-                        <tr key={dip.id} className="hover:bg-indigo-50/20 transition-colors bg-white">
-                          <td 
-                            className="p-4 text-left font-bold text-gray-800 bg-white sticky left-0 z-10 shadow-[1px_0_0_0_#f3f4f6] border-b align-middle truncate"
-                            style={{ width: '180px', minWidth: '180px', maxWidth: '180px' }}
-                            title={dip.nome}
-                          >
-                            {dip.nome}
-                          </td>
-                          
-                          {timelineWeeks.map((wk, wIndex) => {
-                            const key = `${dip.nome}-${wk.id}`;
-                            const list = assignments[key] || [];
-                            const totalLoad = list.reduce((acc, c) => acc + Number(c.percentuale), 0);
-                            const leaves = getLeavesForResourceInWeek(dip.nome, wk.id);
-
-                            const isEditable = isAdmin || isSenior;
-                            
-                            const isCellModified = (() => {
-                              const listStr = JSON.stringify(list);
-                              const dbListStr = JSON.stringify(dbAssignments[key] || []);
-                              return listStr !== dbListStr;
-                            })();
-
-                            let bgClass = "bg-slate-50/50 text-slate-400";
-                            if (isEditable) bgClass += " hover:bg-slate-100/60";
-                            let indicatorColor = "bg-gray-300";
-
-                            if (totalLoad > 0) {
-                              if (totalLoad < 100) {
-                                bgClass = isEditable 
-                                  ? "bg-sky-50 text-sky-800 hover:bg-sky-100/80" 
-                                  : "bg-sky-50 text-sky-800";
-                                indicatorColor = "bg-sky-400";
-                              } else if (totalLoad === 100) {
-                                bgClass = isEditable 
-                                  ? "bg-emerald-50 text-emerald-800 hover:bg-emerald-100/80" 
-                                  : "bg-emerald-50 text-emerald-800";
-                                indicatorColor = "bg-emerald-500";
-                              } else {
-                                bgClass = isEditable 
-                                  ? "bg-rose-50 text-rose-800 hover:bg-rose-100/90 font-black" 
-                                  : "bg-rose-50 text-rose-800 font-black";
-                                indicatorColor = "bg-rose-600";
-                              }
-                            }
-
-                            const ferieCount = leaves.filter(l => l.tipo === 'ferie').length;
-                            const malattiaCount = leaves.filter(l => l.tipo === 'malattia').length;
-                            const maternitaCount = leaves.filter(l => l.tipo === 'maternita').length;
-                            const permessoCount = leaves.filter(l => l.tipo === 'permesso' || l.tipo === 'mattina' || l.tipo === 'pomeriggio').length;
-                            const smartCount = leaves.filter(l => l.tipo === 'smart').length;
-
-                            return (
-                              <td 
-                                key={wIndex} 
-                                onClick={() => isEditable && handleCellClick(dip.nome, wk.id, wk.label, wk.sub)}
-                                className={`border-l border-b border-gray-100 align-middle transition-colors ${isEditable ? 'cursor-pointer' : 'cursor-default'} ${bgClass} ${
-                                  isUltraNarrow ? 'p-1' : isNarrow ? 'p-1.5' : 'p-3'
-                                }`}
-                                style={{ 
-                                  minWidth: weekColumnMinWidth, 
-                                  width: weekColumnMinWidth,
-                                  outline: isCellModified ? '2px dashed #d97706' : undefined,
-                                  outlineOffset: '-2px'
-                                }}
-                              >
-                                <div 
-                                  className="flex flex-col items-center justify-center relative group/cell"
-                                  style={{ 
-                                    minHeight: isNarrow ? '40px' : '56px',
-                                    gap: isUltraNarrow ? '1px' : '2px'
-                                  }}
-                                >
-                                  <span className={`${isUltraNarrow ? 'text-[10px]' : 'text-xs'} font-black`}>{totalLoad}%</span>
-                                  
-                                  {!isUltraNarrow && (
-                                    <span className={`w-1.5 h-1.5 rounded-full shadow-sm ${indicatorColor}`}></span>
-                                  )}
-
-                                  {leaves.length > 0 && (
-                                    <div className="flex gap-0.5 justify-center mt-0.5 w-full flex-wrap">
-                                      {isUltraNarrow ? (
-                                        <span className="text-[9px]" title="Assenze presenti">⚠️</span>
-                                      ) : isNarrow ? (
-                                        <span className="text-[9px] font-extrabold px-1 rounded bg-orange-100 text-orange-750" title={`${leaves.length} assenze`}>
-                                          ⚠️ {leaves.length}g
-                                        </span>
-                                      ) : (
-                                        <>
-                                          {ferieCount > 0 && (
-                                            <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-orange-100 text-orange-700 border border-orange-200" title="Ferie">
-                                              🌴 {ferieCount}g
-                                            </span>
-                                          )}
-                                          {malattiaCount > 0 && (
-                                            <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-red-100 text-red-700 border border-red-200" title="Malattia">
-                                              🤒 {malattiaCount}g
-                                            </span>
-                                          )}
-                                          {maternitaCount > 0 && (
-                                            <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-pink-100 text-pink-700 border border-pink-200" title="Maternità">
-                                              🍼 {maternitaCount}g
-                                            </span>
-                                          )}
-                                          {permessoCount > 0 && (
-                                            <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-purple-100 text-purple-700 border border-purple-200" title="Permessi / Ass. parziale">
-                                              ⏱️ {permessoCount}g
-                                            </span>
-                                          )}
-                                          {smartCount > 0 && (
-                                            <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-indigo-100 text-indigo-700 border border-indigo-200" title="Smart Working">
-                                              🏠 {smartCount}g
-                                            </span>
-                                          )}
-                                        </>
-                                      )}
-                                    </div>
-                                  )}
-                                  
-                                  {(list.length > 0 || leaves.length > 0) && (
-                                    <div className="hidden group-hover/cell:flex absolute bottom-full mb-1 bg-gray-900 text-white text-[11px] rounded-lg p-2.5 flex-col gap-1 z-50 shadow-md min-w-[170px] pointer-events-none text-left">
-                                      <div className="font-bold text-[10px] text-indigo-300 border-b border-gray-800 pb-0.5 mb-1">{dip.nome} ({wk.label})</div>
-                                      {list.map((a, idx) => (
-                                        <div key={idx} className="flex justify-between items-center gap-2 border-b border-gray-800 pb-1 last:border-none last:pb-0">
-                                          <span className="truncate">{a.commessaName}</span>
-                                          <span className="font-extrabold text-indigo-400">{a.percentuale}%</span>
-                                        </div>
-                                      ))}
-                                      {leaves.length > 0 && (
-                                        <div className="border-t border-gray-700 pt-1.5 mt-1 flex flex-col gap-1">
-                                          <span className="text-[9.5px] font-bold text-orange-400">Assenze/Ferie:</span>
-                                          {leaves.map((l, idx) => (
-                                            <div key={idx} className="flex justify-between items-center text-[9.5px] gap-2">
-                                              <span>{l.giorno}</span>
-                                              <span className="font-bold text-gray-300">{l.dettagli}</span>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))
-                    )
+                  {soci.length === 0 ? (
+                    <tr>
+                      <td colSpan={timelineWeeks.length + 1} className="p-4 text-center text-gray-400 italic bg-white">
+                        Nessun socio trovato.
+                      </td>
+                    </tr>
+                  ) : (
+                    soci.map(dip => renderEmployeeRow(dip, 'Soci'))
                   )}
                 </tbody>
 
-                {/* COLLABORATORI SECTION */}
+                {/* SEZIONE MACRO AREE */}
                 <tbody className="divide-y divide-gray-100 font-medium bg-white">
-                  {/* COLLABORATORI ACCORDION HEADER */}
-                  <tr 
-                    onClick={() => setIsCollaboratoriExpanded(!isCollaboratoriExpanded)} 
-                    className="bg-amber-50/40 text-amber-950 font-extrabold text-xs cursor-pointer hover:bg-amber-50/80 transition-colors select-none border-t border-amber-100"
-                  >
-                    <td colSpan={timelineWeeks.length + 1} className="p-3 text-left pl-6 sticky left-0 z-20 border-b border-amber-100 bg-amber-50/95" style={{ top: '55px' }}>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-amber-500 w-3 text-center">{isCollaboratoriExpanded ? '▼' : '▶'}</span>
-                        <span className="uppercase tracking-wider font-black">Collaboratori Esterni P. IVA ({collaborators.length})</span>
-                      </div>
+                  <tr className="bg-indigo-50/40 text-indigo-950 font-extrabold text-xs border-t border-indigo-100">
+                    <td colSpan={timelineWeeks.length + 1} className="p-3 text-left pl-6 sticky left-0 z-20 bg-indigo-50/95 border-b border-indigo-100" style={{ top: '55px' }}>
+                      <span className="uppercase tracking-wider font-black">Macro Aree Funzionali</span>
                     </td>
                   </tr>
-
-                  {/* COLLABORATORI ROWS */}
-                  {isCollaboratoriExpanded && (
-                    collaborators.length === 0 ? (
-                      <tr>
-                        <td colSpan={timelineWeeks.length + 1} className="p-4 text-center text-gray-400 italic bg-white">
-                          Nessun collaboratore trovato.
-                        </td>
-                      </tr>
-                    ) : (
-                      collaborators.map(dip => (
-                        <tr key={dip.id} className="hover:bg-indigo-50/20 transition-colors bg-white">
-                          <td 
-                            className="p-4 text-left font-bold text-gray-800 bg-white sticky left-0 z-10 shadow-[1px_0_0_0_#f3f4f6] border-b align-middle truncate"
-                            style={{ width: '180px', minWidth: '180px', maxWidth: '180px' }}
-                            title={dip.nome}
-                          >
-                            {dip.nome}
-                          </td>
-                          
-                          {timelineWeeks.map((wk, wIndex) => {
-                            const key = `${dip.nome}-${wk.id}`;
-                            const list = assignments[key] || [];
-                            const totalLoad = list.reduce((acc, c) => acc + Number(c.percentuale), 0);
-                            const leaves = getLeavesForResourceInWeek(dip.nome, wk.id);
-
-                            const isEditable = isAdmin || isSenior;
-                            
-                            const isCellModified = (() => {
-                              const listStr = JSON.stringify(list);
-                              const dbListStr = JSON.stringify(dbAssignments[key] || []);
-                              return listStr !== dbListStr;
-                            })();
-
-                            let bgClass = "bg-slate-50/50 text-slate-400";
-                            if (isEditable) bgClass += " hover:bg-slate-100/60";
-                            let indicatorColor = "bg-gray-300";
-
-                            if (totalLoad > 0) {
-                              if (totalLoad < 100) {
-                                bgClass = isEditable 
-                                  ? "bg-sky-50 text-sky-800 hover:bg-sky-100/80" 
-                                  : "bg-sky-50 text-sky-800";
-                                indicatorColor = "bg-sky-400";
-                              } else if (totalLoad === 100) {
-                                bgClass = isEditable 
-                                  ? "bg-emerald-50 text-emerald-800 hover:bg-emerald-100/80" 
-                                  : "bg-emerald-50 text-emerald-800";
-                                indicatorColor = "bg-emerald-500";
-                              } else {
-                                bgClass = isEditable 
-                                  ? "bg-rose-50 text-rose-800 hover:bg-rose-100/90 font-black" 
-                                  : "bg-rose-50 text-rose-800 font-black";
-                                indicatorColor = "bg-rose-600";
-                              }
-                            }
-
-                            const ferieCount = leaves.filter(l => l.tipo === 'ferie').length;
-                            const malattiaCount = leaves.filter(l => l.tipo === 'malattia').length;
-                            const maternitaCount = leaves.filter(l => l.tipo === 'maternita').length;
-                            const permessoCount = leaves.filter(l => l.tipo === 'permesso' || l.tipo === 'mattina' || l.tipo === 'pomeriggio').length;
-                            const smartCount = leaves.filter(l => l.tipo === 'smart').length;
-
-                            return (
-                              <td 
-                                key={wIndex} 
-                                onClick={() => isEditable && handleCellClick(dip.nome, wk.id, wk.label, wk.sub)}
-                                className={`border-l border-b border-gray-100 align-middle transition-colors ${isEditable ? 'cursor-pointer' : 'cursor-default'} ${bgClass} ${
-                                  isUltraNarrow ? 'p-1' : isNarrow ? 'p-1.5' : 'p-3'
-                                }`}
-                                style={{ 
-                                  minWidth: weekColumnMinWidth, 
-                                  width: weekColumnMinWidth,
-                                  outline: isCellModified ? '2px dashed #d97706' : undefined,
-                                  outlineOffset: '-2px'
-                                }}
-                              >
-                                <div 
-                                  className="flex flex-col items-center justify-center relative group/cell"
-                                  style={{ 
-                                    minHeight: isNarrow ? '40px' : '56px',
-                                    gap: isUltraNarrow ? '1px' : '2px'
-                                  }}
-                                >
-                                  <span className={`${isUltraNarrow ? 'text-[10px]' : 'text-xs'} font-black`}>{totalLoad}%</span>
-                                  
-                                  {!isUltraNarrow && (
-                                    <span className={`w-1.5 h-1.5 rounded-full shadow-sm ${indicatorColor}`}></span>
-                                  )}
-
-                                  {leaves.length > 0 && (
-                                    <div className="flex gap-0.5 justify-center mt-0.5 w-full flex-wrap">
-                                      {isUltraNarrow ? (
-                                        <span className="text-[9px]" title="Assenze presenti">⚠️</span>
-                                      ) : isNarrow ? (
-                                        <span className="text-[9px] font-extrabold px-1 rounded bg-orange-100 text-orange-750" title={`${leaves.length} assenze`}>
-                                          ⚠️ {leaves.length}g
-                                        </span>
-                                      ) : (
-                                        <>
-                                          {ferieCount > 0 && (
-                                            <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-orange-100 text-orange-700 border border-orange-200" title="Ferie">
-                                              🌴 {ferieCount}g
-                                            </span>
-                                          )}
-                                          {malattiaCount > 0 && (
-                                            <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-red-100 text-red-700 border border-red-200" title="Malattia">
-                                              🤒 {malattiaCount}g
-                                            </span>
-                                          )}
-                                          {maternitaCount > 0 && (
-                                            <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-pink-100 text-pink-700 border border-pink-200" title="Maternità">
-                                              🍼 {maternitaCount}g
-                                            </span>
-                                          )}
-                                          {permessoCount > 0 && (
-                                            <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-purple-100 text-purple-700 border border-purple-200" title="Permessi / Ass. parziale">
-                                              ⏱️ {permessoCount}g
-                                            </span>
-                                          )}
-                                          {smartCount > 0 && (
-                                            <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-indigo-100 text-indigo-700 border border-indigo-200" title="Smart Working">
-                                              🏠 {smartCount}g
-                                            </span>
-                                          )}
-                                        </>
-                                      )}
-                                    </div>
-                                  )}
-                                  
-                                  {(list.length > 0 || leaves.length > 0) && (
-                                    <div className="hidden group-hover/cell:flex absolute bottom-full mb-1 bg-gray-900 text-white text-[11px] rounded-lg p-2.5 flex-col gap-1 z-50 shadow-md min-w-[170px] pointer-events-none text-left">
-                                      <div className="font-bold text-[10px] text-indigo-300 border-b border-gray-800 pb-0.5 mb-1">{dip.nome} ({wk.label})</div>
-                                      {list.map((a, idx) => (
-                                        <div key={idx} className="flex justify-between items-center gap-2 border-b border-gray-800 pb-1 last:border-none last:pb-0">
-                                          <span className="truncate">{a.commessaName}</span>
-                                          <span className="font-extrabold text-indigo-400">{a.percentuale}%</span>
-                                        </div>
-                                      ))}
-                                      {leaves.length > 0 && (
-                                        <div className="border-t border-gray-700 pt-1.5 mt-1 flex flex-col gap-1">
-                                          <span className="text-[9.5px] font-bold text-orange-400">Assenze/Ferie:</span>
-                                          {leaves.map((l, idx) => (
-                                            <div key={idx} className="flex justify-between items-center text-[9.5px] gap-2">
-                                              <span>{l.giorno}</span>
-                                              <span className="font-bold text-gray-300">{l.dettagli}</span>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))
-                    )
-                  )}
+                  {renderAreaRow('Disegnatori', disegnatori)}
+                  {renderAreaRow('Ingegneria', ingegneria)}
+                  {renderAreaRow('Cantieri / Ambiente', cantieri)}
+                  {renderAreaRow('Amministrazione', amministrazione)}
                 </tbody>
+
+                {/* SEZIONE PERSONALE NON ASSEGNATO */}
+                {nonAssegnati.length > 0 && (
+                  <tbody className="divide-y divide-gray-100 font-medium bg-white">
+                    <tr className="bg-amber-50/40 text-amber-955 font-extrabold text-xs border-t border-amber-100">
+                      <td colSpan={timelineWeeks.length + 1} className="p-3 text-left pl-6 sticky left-0 z-20 bg-amber-50/95 border-b border-amber-100" style={{ top: '55px' }}>
+                        <span className="uppercase tracking-wider font-black">Personale Non Assegnato ({nonAssegnati.length})</span>
+                      </td>
+                    </tr>
+                    {nonAssegnati.map(dip => renderEmployeeRow(dip, 'Non Assegnati'))}
+                  </tbody>
+                )}
               </>
             )}
           </table>
@@ -2575,6 +2717,111 @@ export default function PianificazionePersonale() {
         onConfirm={confirmConfig.onConfirm}
         onCancel={() => setConfirmConfig(prev => ({ ...prev, isOpen: false }))}
       />
+
+      {/* MODALE RICHIESTA DISEGNATORE */}
+      {isRequestModalOpen && (
+        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-md flex items-center justify-center z-[9999] p-4 no-print animate-in fade-in duration-200">
+          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-lg border border-gray-100 flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
+            <div className="p-6 sm:p-8 border-b flex justify-between items-center bg-gradient-to-br from-indigo-50/50 to-slate-50 rounded-t-[2rem]">
+              <div>
+                <h3 className="text-xl font-bold text-indigo-950">Richiedi Prenotazione Disegnatore</h3>
+                <p className="text-xs text-indigo-700/80 mt-1">Invia una richiesta al coordinatore dell'area Disegnatore.</p>
+              </div>
+              <button 
+                onClick={() => setIsRequestModalOpen(false)}
+                className="text-gray-400 hover:text-gray-650 text-lg font-bold p-2 hover:bg-gray-100 rounded-full transition"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <form onSubmit={handleSubmitRequest} className="p-6 sm:p-8 space-y-4 overflow-y-auto flex-1">
+              <div>
+                <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Seleziona Commessa</label>
+                <select
+                  required
+                  value={reqCommessaId}
+                  onChange={e => setReqCommessaId(e.target.value)}
+                  className="w-full p-3 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner"
+                >
+                  <option value="">-- Seleziona Commessa --</option>
+                  {selectableCommesse.map(c => (
+                    <option key={c.id} value={c.id}>{c.nome} [{c.codiceCommessa}]</option>
+                  ))}
+                </select>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Data Inizio</label>
+                  <input
+                    required
+                    type="date"
+                    value={reqDataInizio}
+                    onChange={e => setReqDataInizio(e.target.value)}
+                    className="w-full p-3 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Data Fine</label>
+                  <input
+                    required
+                    type="date"
+                    value={reqDataFine}
+                    onChange={e => setReqDataFine(e.target.value)}
+                    className="w-full p-3 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner"
+                  />
+                </div>
+              </div>
+              
+              <div>
+                <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Percentuale di Carico Richiesta</label>
+                <div className="flex items-center gap-3">
+                  <input
+                    required
+                    type="number"
+                    min="5"
+                    max="100"
+                    step="5"
+                    value={reqPercentuale}
+                    onChange={e => setReqPercentuale(Number(e.target.value))}
+                    className="w-32 p-3 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner"
+                  />
+                  <span className="text-xs text-gray-500 font-semibold">% (Scaglioni del 5%)</span>
+                </div>
+              </div>
+              
+              <div>
+                <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Nota Facoltativa</label>
+                <textarea
+                  placeholder="Es. Mi servirebbe il disegnatore X se libero perché ha seguito la fase preliminare..."
+                  value={reqNota}
+                  onChange={e => setReqNota(e.target.value)}
+                  rows={3}
+                  className="w-full p-3 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-semibold text-gray-750 outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner resize-none"
+                />
+              </div>
+              
+              <div className="flex gap-3 pt-4 border-t">
+                <button
+                  type="button"
+                  onClick={() => setIsRequestModalOpen(false)}
+                  className="flex-1 bg-transparent hover:bg-gray-100 text-gray-700 font-extrabold py-3 rounded-xl border transition active:scale-95 text-xs text-center cursor-pointer"
+                >
+                  Chiudi
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingRequest}
+                  className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold py-3 rounded-xl shadow-md transition active:scale-95 text-xs text-center disabled:opacity-50 cursor-pointer"
+                >
+                  {isSubmittingRequest ? "Invio in corso..." : "Invia Richiesta"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

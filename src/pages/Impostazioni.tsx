@@ -64,7 +64,7 @@ export const isSoci = (nome?: string | null): boolean => {
 };
 
 export default function Impostazioni() {
-  const { isAdmin, isHR, dipendenti, refreshData } = useAuth();
+  const { isAdmin, isHR, dipendenti, coordinatori, refreshData } = useAuth();
   const isAuthorized = isAdmin || isHR;
   
   // Stato per la modale di conferma personalizzata
@@ -109,13 +109,17 @@ export default function Impostazioni() {
   const [hrList, setHrList] = useState<{id: string, email: string}[]>([]);
   const [newSeniorEmail, setNewSeniorEmail] = useState('');
   const [newPmEmail, setNewPmEmail] = useState('');
+  const [newCoordinatoreEmail, setNewCoordinatoreEmail] = useState('');
+  const [newCoordinatoreArea, setNewCoordinatoreArea] = useState('');
   
   // Collaborator editing states (unused ones removed)
   
   const [newDipNome, setNewDipNome] = useState('');
   const [newDipEmail, setNewDipEmail] = useState('');
+  const [newDipMacroArea, setNewDipMacroArea] = useState('');
   const [newCollabNome, setNewCollabNome] = useState('');
   const [newCollabEmail, setNewCollabEmail] = useState('');
+  const [newCollabMacroArea, setNewCollabMacroArea] = useState('');
 
   // Nuovi stati per Clienti e Project Manager
   const [newClientNome, setNewClientNome] = useState('');
@@ -257,11 +261,13 @@ export default function Impostazioni() {
       await addDoc(collection(db, 'dipendenti'), { 
         nome: newDipNome, 
         email: newDipEmail.toLowerCase(),
-        tipo: 'dipendente'
+        tipo: 'dipendente',
+        macroArea: newDipMacroArea || null
       });
       await refreshData();
       setNewDipNome('');
       setNewDipEmail('');
+      setNewDipMacroArea('');
     }
   };
 
@@ -271,12 +277,66 @@ export default function Impostazioni() {
       await addDoc(collection(db, 'dipendenti'), { 
         nome: newCollabNome, 
         email: newCollabEmail.toLowerCase(),
-        tipo: 'collaboratore'
+        tipo: 'collaboratore',
+        macroArea: newCollabMacroArea || null
       });
       await refreshData();
       setNewCollabNome('');
       setNewCollabEmail('');
+      setNewCollabMacroArea('');
     }
+  };
+
+  const handleUpdateMacroArea = async (id: string, newArea: string) => {
+    try {
+      const docRef = doc(db, 'dipendenti', id);
+      await updateDoc(docRef, { macroArea: newArea || null });
+      await refreshData();
+      showToast("Macro area aggiornata con successo!", "success");
+    } catch (err) {
+      console.error("Errore aggiornamento macro area:", err);
+      showToast("Errore durante l'aggiornamento.", "error");
+    }
+  };
+
+  const handleAddCoordinatore = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCoordinatoreEmail || !newCoordinatoreArea) {
+      showToast("Seleziona un dipendente e una macro area.", "warning");
+      return;
+    }
+    try {
+      const docId = `${newCoordinatoreEmail.toLowerCase()}_${newCoordinatoreArea.replace(/ \/ /g, '_')}`;
+      await setDoc(doc(db, 'coordinatori', docId), {
+        email: newCoordinatoreEmail.toLowerCase(),
+        area: newCoordinatoreArea
+      });
+      await refreshData();
+      setNewCoordinatoreEmail('');
+      setNewCoordinatoreArea('');
+      showToast("Coordinatore nominato con successo!", "success");
+    } catch (err) {
+      console.error("Errore nomina coordinatore:", err);
+      showToast("Errore durante la nomina.", "error");
+    }
+  };
+
+  const handleRemoveCoordinatore = async (id: string) => {
+    triggerConfirm(
+      "Rimuovi Coordinatore",
+      "Sei sicuro di voler revocare la nomina di questo coordinatore?",
+      async () => {
+        try {
+          await deleteDoc(doc(db, 'coordinatori', id));
+          await refreshData();
+          showToast("Nomina coordinatore revocata con successo!", "success");
+        } catch (err) {
+          console.error("Errore rimozione coordinatore:", err);
+          showToast("Errore durante la revoca.", "error");
+        }
+      },
+      'danger'
+    );
   };
 
   const handleMoveEmployeeType = (id: string, newTipo: 'dipendente' | 'collaboratore') => {
@@ -750,19 +810,41 @@ export default function Impostazioni() {
               <p className="text-sm text-indigo-700/80 mb-4">Solo i dipendenti in questa lista possono registrarsi all'app.</p>
               <form onSubmit={handleAddDipendente} className="flex flex-col gap-3 mb-5">
                 <input required type="text" placeholder="Nome Completo (es. Rossi Mario)" value={newDipNome} onChange={e => setNewDipNome(e.target.value)} className="w-full p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition shadow-inner font-bold text-gray-700 text-xs" />
+                <input required type="email" placeholder="Email Aziendale" value={newDipEmail} onChange={e => setNewDipEmail(e.target.value)} className="w-full p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition shadow-inner font-bold text-gray-700 text-xs" />
                 <div className="flex gap-2">
-                  <input required type="email" placeholder="Email Aziendale" value={newDipEmail} onChange={e => setNewDipEmail(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition shadow-inner font-bold text-gray-700 text-xs" />
+                  <select 
+                    value={newDipMacroArea} 
+                    onChange={e => setNewDipMacroArea(e.target.value)} 
+                    className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition shadow-inner font-bold text-gray-700 text-xs"
+                  >
+                    <option value="">-- Seleziona Macro Area --</option>
+                    <option value="Disegnatori">Disegnatori</option>
+                    <option value="Ingegneria">Ingegneria</option>
+                    <option value="Cantieri / Ambiente">Cantieri / Ambiente</option>
+                    <option value="Amministrazione">Amministrazione</option>
+                  </select>
                   <button type="submit" className="bg-indigo-600 text-white px-5 rounded-xl hover:bg-indigo-700 transition font-bold shadow-md active:scale-95 flex items-center gap-1 cursor-pointer"><Plus className="w-5 h-5"/> Aggiungi</button>
                 </div>
               </form>
               <div className="max-h-[350px] overflow-y-auto bg-white/50 rounded-xl divide-y border border-indigo-100">
                 {dipendenti.filter(d => !isCollaboratore(d.nome, d.tipo) && !isSoci(d.nome)).map(d => (
-                  <div key={d.id} className="p-3 flex justify-between items-center text-sm">
-                    <div>
-                      <div className="font-bold text-indigo-900">{d.nome}</div>
-                      <div className="text-xs text-indigo-600/70">{d.email || 'Nessuna email'}</div>
+                  <div key={d.id} className="p-3 flex justify-between items-center text-sm gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-bold text-indigo-900 truncate">{d.nome}</div>
+                      <div className="text-xs text-indigo-600/70 truncate">{d.email || 'Nessuna email'}</div>
                     </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex items-center gap-2 shrink-0">
+                      <select 
+                        value={d.macroArea || ''} 
+                        onChange={e => handleUpdateMacroArea(d.id, e.target.value)}
+                        className="text-[10px] p-1.5 border border-indigo-200 rounded-lg bg-white/80 font-semibold outline-none focus:ring-1 focus:ring-indigo-500 text-gray-700"
+                      >
+                        <option value="">Nessuna Area</option>
+                        <option value="Disegnatori">Disegnatori</option>
+                        <option value="Ingegneria">Ingegneria</option>
+                        <option value="Cantieri / Ambiente">Cantieri / Amb.</option>
+                        <option value="Amministrazione">Amministr.</option>
+                      </select>
                       <button 
                         type="button"
                         onClick={() => handleMoveEmployeeType(d.id, 'collaboratore')} 
@@ -792,19 +874,41 @@ export default function Impostazioni() {
               <p className="text-sm text-amber-700/80 mb-4">Solo i collaboratori in questa lista possono registrarsi all'app.</p>
               <form onSubmit={handleAddCollaboratore} className="flex flex-col gap-3 mb-5">
                 <input required type="text" placeholder="Nome Completo (es. Rossi Mario)" value={newCollabNome} onChange={e => setNewCollabNome(e.target.value)} className="w-full p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-amber-400 transition shadow-inner font-bold text-gray-700 text-xs" />
+                <input required type="email" placeholder="Email Aziendale" value={newCollabEmail} onChange={e => setNewCollabEmail(e.target.value)} className="w-full p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-amber-400 transition shadow-inner font-bold text-gray-700 text-xs" />
                 <div className="flex gap-2">
-                  <input required type="email" placeholder="Email Aziendale" value={newCollabEmail} onChange={e => setNewCollabEmail(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-amber-400 transition shadow-inner font-bold text-gray-700 text-xs" />
+                  <select 
+                    value={newCollabMacroArea} 
+                    onChange={e => setNewCollabMacroArea(e.target.value)} 
+                    className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-amber-400 transition shadow-inner font-bold text-gray-700 text-xs"
+                  >
+                    <option value="">-- Seleziona Macro Area --</option>
+                    <option value="Disegnatori">Disegnatori</option>
+                    <option value="Ingegneria">Ingegneria</option>
+                    <option value="Cantieri / Ambiente">Cantieri / Ambiente</option>
+                    <option value="Amministrazione">Amministrazione</option>
+                  </select>
                   <button type="submit" className="bg-amber-600 text-white px-5 rounded-xl hover:bg-amber-700 transition font-bold shadow-md active:scale-95 flex items-center gap-1 cursor-pointer"><Plus className="w-5 h-5"/> Aggiungi</button>
                 </div>
               </form>
               <div className="max-h-[350px] overflow-y-auto bg-white/50 rounded-xl divide-y border border-amber-100">
                 {dipendenti.filter(d => isCollaboratore(d.nome, d.tipo) && !isSoci(d.nome)).map(d => (
-                  <div key={d.id} className="p-3 flex justify-between items-center text-sm">
-                    <div>
-                      <div className="font-bold text-amber-900">{d.nome}</div>
-                      <div className="text-xs text-amber-600/70">{d.email || 'Nessuna email'}</div>
+                  <div key={d.id} className="p-3 flex justify-between items-center text-sm gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-bold text-amber-900 truncate">{d.nome}</div>
+                      <div className="text-xs text-amber-600/70 truncate">{d.email || 'Nessuna email'}</div>
                     </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex items-center gap-2 shrink-0">
+                      <select 
+                        value={d.macroArea || ''} 
+                        onChange={e => handleUpdateMacroArea(d.id, e.target.value)}
+                        className="text-[10px] p-1.5 border border-amber-200 rounded-lg bg-white/80 font-semibold outline-none focus:ring-1 focus:ring-amber-500 text-gray-700"
+                      >
+                        <option value="">Nessuna Area</option>
+                        <option value="Disegnatori">Disegnatori</option>
+                        <option value="Ingegneria">Ingegneria</option>
+                        <option value="Cantieri / Ambiente">Cantieri / Amb.</option>
+                        <option value="Amministrazione">Amministr.</option>
+                      </select>
                       <button 
                         type="button"
                         onClick={() => handleMoveEmployeeType(d.id, 'dipendente')} 
@@ -965,6 +1069,54 @@ export default function Impostazioni() {
                     </div>
                   );
                 })}
+              </div>
+            </section>
+
+            {/* Coordinatori Macro Aree */}
+            <section className="bg-gradient-to-br from-teal-50 to-emerald-50/30 p-6 rounded-3xl border border-teal-100 shadow-sm md:col-span-2">
+              <h3 className="text-xl font-bold text-teal-900 mb-2 flex items-center gap-2"><Star className="w-6 h-6 text-teal-650" /> Coordinatori Macro Aree</h3>
+              <p className="text-sm text-teal-700/80 mb-4">I coordinatori responsabili di ciascuna macro area. Possono approvare richieste e pianificare le risorse del loro settore.</p>
+              <form onSubmit={handleAddCoordinatore} className="flex flex-wrap gap-3 mb-4">
+                <select 
+                  required 
+                  value={newCoordinatoreEmail} 
+                  onChange={e => setNewCoordinatoreEmail(e.target.value)} 
+                  className="flex-1 min-w-[200px] p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-teal-400 transition shadow-inner font-medium text-teal-900"
+                >
+                  <option value="">Seleziona dipendente</option>
+                  {dipendenti.filter(d => d.email).map(d => <option key={d.id} value={d.email}>{d.nome}</option>)}
+                </select>
+                <select 
+                  required 
+                  value={newCoordinatoreArea} 
+                  onChange={e => setNewCoordinatoreArea(e.target.value)} 
+                  className="flex-1 min-w-[200px] p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-teal-400 transition shadow-inner font-medium text-teal-900"
+                >
+                  <option value="">Seleziona macro area</option>
+                  <option value="Disegnatori">Disegnatori</option>
+                  <option value="Ingegneria">Ingegneria</option>
+                  <option value="Cantieri / Ambiente">Cantieri / Ambiente</option>
+                  <option value="Amministrazione">Amministrazione</option>
+                </select>
+                <button type="submit" className="bg-teal-655 text-white hover:bg-teal-700 px-5 py-3 rounded-xl transition font-bold shadow-md active:scale-95 cursor-pointer">Nomina Coordinatore</button>
+              </form>
+              <div className="max-h-80 overflow-y-auto bg-white/50 rounded-xl divide-y border border-teal-100">
+                {coordinatori.length === 0 ? (
+                  <p className="p-4 text-center text-xs text-gray-400 italic">Nessun coordinatore nominato.</p>
+                ) : (
+                  coordinatori.map(c => {
+                    const name = getDipNomeFromEmail(c.email);
+                    return (
+                      <div key={c.id} className="p-3 flex justify-between items-center text-sm">
+                        <div>
+                          <div className="font-bold text-teal-900">{name}</div>
+                          <div className="text-xs text-teal-700/70">{c.email} • <span className="font-semibold text-teal-650">{c.area}</span></div>
+                        </div>
+                        <button onClick={() => handleRemoveCoordinatore(c.id)} className="text-red-400 hover:text-red-650 p-1 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </section>
 

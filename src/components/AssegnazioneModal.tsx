@@ -174,16 +174,9 @@ export default function AssegnazioneModal({ isOpen, onClose, dipendente, weekId:
                   onChange={e => setSelectedPercent(e.target.value)}
                   className="w-full p-3 text-sm border-none rounded-xl bg-white outline-none focus:ring-2 focus:ring-blue-500 shadow-sm font-semibold text-gray-700"
                 >
-                  <option value="10">10%</option>
-                  <option value="20">20%</option>
-                  <option value="30">30%</option>
-                  <option value="40">40%</option>
-                  <option value="50">50%</option>
-                  <option value="60">60%</option>
-                  <option value="70">70%</option>
-                  <option value="80">80%</option>
-                  <option value="90">90%</option>
-                  <option value="100">100%</option>
+                  {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
+                    <option key={pct} value={pct}>{pct}%</option>
+                  ))}
                 </select>
               </div>
 
