@@ -25,12 +25,15 @@ export interface Commessa {
   dataInizio?: string;
   dataFine?: string;
   responsabile?: string;
-  pm?: string;
+  pm?: string | string[];
   codiceCommessa?: string;
   anno?: string;
   tipologia?: string;
   cliente?: string;
   stato?: string;
+  giornateSeniorProject?: number;
+  giornateProject?: number;
+  giornateJuniorProject?: number;
 }
 
 export interface Coordinatore {

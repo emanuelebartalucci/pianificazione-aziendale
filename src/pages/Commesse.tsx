@@ -159,7 +159,9 @@ export default function Commesse() {
   const [newCommessaDataInizio, setNewCommessaDataInizio] = useState('');
   const [newCommessaDataFine, setNewCommessaDataFine] = useState('');
   const [newCommessaResponsabile, setNewCommessaResponsabile] = useState('');
-  const [newCommessaPM, setNewCommessaPM] = useState('');
+  const [newCommessaSeniorDays, setNewCommessaSeniorDays] = useState('');
+  const [newCommessaProjectDays, setNewCommessaProjectDays] = useState('');
+  const [newCommessaJuniorDays, setNewCommessaJuniorDays] = useState('');
 
   // Searchable Client Dropdown States
   const [selectedClient, setSelectedClient] = useState<{ codice: string; nome: string } | null>(null);
@@ -191,7 +193,11 @@ export default function Commesse() {
   // Stati per la modifica dei dettagli della commessa (Responsabile, PM, Date)
   const [editingCommessa, setEditingCommessa] = useState<any | null>(null);
   const [editResponsabile, setEditResponsabile] = useState('');
-  const [editPM, setEditPM] = useState('');
+  const [editPMs, setEditPMs] = useState<string[]>([]);
+  const [selectedAddPM, setSelectedAddPM] = useState('');
+  const [editSeniorDays, setEditSeniorDays] = useState('');
+  const [editProjectDays, setEditProjectDays] = useState('');
+  const [editJuniorDays, setEditJuniorDays] = useState('');
   const [editDataInizio, setEditDataInizio] = useState('');
   const [editDataFine, setEditDataFine] = useState('');
   const [editStato, setEditStato] = useState('Aperta');
@@ -199,6 +205,7 @@ export default function Commesse() {
   
   const [seniorsEmails, setSeniorsEmails] = useState<string[]>([]);
   const [pmsEmails, setPmsEmails] = useState<string[]>([]);
+  const [coordinatori, setCoordinatori] = useState<{ id: string; email: string; area: string }[]>([]);
   const [isCommessaDropdownOpen, setIsCommessaDropdownOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
 
@@ -234,15 +241,21 @@ export default function Commesse() {
   const loadCommesseData = async () => {
     try {
       await refreshData();
-      const [seniorsSnap, pmsSnap, clientiSnap, assegnazioniSnap] = await Promise.all([
+      const [seniorsSnap, pmsSnap, clientiSnap, assegnazioniSnap, coordinatoriSnap] = await Promise.all([
         getDocs(collection(db, 'seniors')),
         getDocs(collection(db, 'project_managers')),
         getDocs(collection(db, 'clienti')),
-        getDocs(collection(db, 'assegnazioni'))
+        getDocs(collection(db, 'assegnazioni')),
+        getDocs(collection(db, 'coordinatori'))
       ]);
       
       setSeniorsEmails(seniorsSnap.docs.map(d => (d.data().email || '').toLowerCase()));
       setPmsEmails(pmsSnap.docs.map(d => (d.data().email || '').toLowerCase()));
+      setCoordinatori(coordinatoriSnap.docs.map(d => ({
+        id: d.id,
+        email: d.data().email || '',
+        area: d.data().area || ''
+      })));
       setClientiList(clientiSnap.docs.map(d => ({
         id: d.id,
         codice: d.data().codice || '',
@@ -378,11 +391,13 @@ export default function Commesse() {
     // Righe
     groupedCommesse.forEach(group => {
       group.commesseList.forEach(comm => {
+        const pmArray = Array.isArray(comm.pm) ? comm.pm : (comm.pm ? [comm.pm] : []);
+        const pmStr = pmArray.join(', ');
         const row = [
           group.clientName,
           comm.nome,
           comm.responsabile || "",
-          comm.pm || "",
+          pmStr,
           comm.dataInizio ? formatDate(comm.dataInizio) : "",
           comm.dataFine ? formatDate(comm.dataFine) : ""
         ];
@@ -425,7 +440,8 @@ export default function Commesse() {
         const titolo = ((c as any).titolo || '').toLowerCase();
         const cliente = ((c as any).cliente || '').toLowerCase();
         const resp = (c.responsabile || '').toLowerCase();
-        const pm = (c.pm || '').toLowerCase();
+        const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
+        const pm = pmArray.join(', ').toLowerCase();
         return name.includes(query) ||
                code.includes(query) ||
                titolo.includes(query) ||
@@ -448,11 +464,13 @@ export default function Commesse() {
         }
       });
 
-      list = list.filter(c => 
-        assignedCommessaIds.has(c.id) ||
-        areNamesEqual(c.responsabile, myAssociatedName) ||
-        areNamesEqual(c.pm, myAssociatedName)
-      );
+      list = list.filter(c => {
+        const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
+        const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
+        return assignedCommessaIds.has(c.id) ||
+               areNamesEqual(c.responsabile, myAssociatedName) ||
+               isPM;
+      });
     }
 
     const groups: Record<string, { clientName: string; commesseList: typeof commesse }> = {};
@@ -491,8 +509,26 @@ export default function Commesse() {
     const respDip = dipendenti.find(d => areNamesEqual(d.nome, comm.responsabile));
     setEditResponsabile(respDip ? respDip.nome : (comm.responsabile || ''));
     
-    const pmDip = dipendenti.find(d => areNamesEqual(d.nome, comm.pm));
-    setEditPM(pmDip ? pmDip.nome : (comm.pm || ''));
+    // Gestione PMs multipli: comm.pm può essere un array o una stringa
+    let initialPMs: string[] = [];
+    if (comm.pm) {
+      if (Array.isArray(comm.pm)) {
+        initialPMs = comm.pm;
+      } else {
+        initialPMs = [comm.pm];
+      }
+    }
+    const formattedPMs = initialPMs.map(pmName => {
+      const pmDip = dipendenti.find(d => areNamesEqual(d.nome, pmName));
+      return pmDip ? pmDip.nome : pmName;
+    });
+    setEditPMs(formattedPMs);
+    setSelectedAddPM('');
+
+    // Giornate stimate
+    setEditSeniorDays(comm.giornateSeniorProject !== undefined ? String(comm.giornateSeniorProject) : '0');
+    setEditProjectDays(comm.giornateProject !== undefined ? String(comm.giornateProject) : '0');
+    setEditJuniorDays(comm.giornateJuniorProject !== undefined ? String(comm.giornateJuniorProject) : '0');
     
     setEditDataInizio(comm.dataInizio || '');
     setEditDataFine(comm.dataFine || '');
@@ -513,7 +549,10 @@ export default function Commesse() {
       const docRef = doc(db, 'catalogo_commesse', editingCommessa.id);
       const updates = {
         responsabile: editResponsabile,
-        pm: editPM,
+        pm: editPMs,
+        giornateSeniorProject: Number(editSeniorDays) || 0,
+        giornateProject: Number(editProjectDays) || 0,
+        giornateJuniorProject: Number(editJuniorDays) || 0,
         dataInizio: editDataInizio,
         dataFine: editDataFine,
         stato: editStato
@@ -538,17 +577,23 @@ export default function Commesse() {
         }
       }
 
-      if (editPM && editPM !== editingCommessa.pm && editPM !== editResponsabile) {
-        const pmDip = dipendenti.find(d => d.nome === editPM);
+      // Notifica ai PM aggiunti
+      const oldPMs = Array.isArray(editingCommessa.pm) 
+        ? editingCommessa.pm 
+        : (editingCommessa.pm ? [editingCommessa.pm] : []);
+      const addedPMs = editPMs.filter(p => !oldPMs.includes(p));
+
+      for (const addedPM of addedPMs) {
+        const pmDip = dipendenti.find(d => d.nome === addedPM);
         if (pmDip && pmDip.email) {
           const subject = `[Notifica] Abilitazione Funzioni PM - Commessa ${editingCommessa.nome}`;
           const htmlBody = `
-            <p>Ciao <strong>${editPM}</strong>,</p>
+            <p>Ciao <strong>${addedPM}</strong>,</p>
             <p>Sei stato assegnato come <strong>Project Manager (PM)</strong> per la commessa <strong>${editingCommessa.nome}</strong>.</p>
             ${editDataInizio ? `<p>Periodo previsto: dal <strong>${formatDate(editDataInizio)}</strong> al <strong>${formatDate(editDataFine)}</strong>.</p>` : ''}
             <p>Puoi procedere al monitoraggio e pianificazione delle risorse per questa commessa dall'applicazione.</p>
           `;
-          const plainText = `Ciao ${editPM},\n\nSei stato assegnato come Project Manager (PM) per la commessa ${editingCommessa.nome}.\n\nPuoi procedere alla pianificazione dall'applicazione.\n\nQuesta è una notifica automatica.`;
+          const plainText = `Ciao ${addedPM},\n\nSei stato assegnato come Project Manager (PM) per la commessa ${editingCommessa.nome}.\n\nPuoi procedere alla pianificazione dall'applicazione.\n\nQuesta è una notifica automatica.`;
           await queueMail(pmDip.email.toLowerCase(), subject, htmlBody, plainText);
         }
       }
@@ -592,13 +637,24 @@ export default function Commesse() {
     return commesse.some(c => c.codiceCommessa === generatedCodiceCommessa);
   }, [generatedCodiceCommessa, commesse]);
 
-  const seniorsList = useMemo(() => {
-    return dipendenti.filter(d => d.email && seniorsEmails.includes(d.email.toLowerCase()));
-  }, [dipendenti, seniorsEmails]);
+  const responsabiliMacroAreeList = useMemo(() => {
+    const coordEmails = new Set(coordinatori.map(c => c.email.toLowerCase()));
+    return dipendenti.filter(d => d.email && coordEmails.has(d.email.toLowerCase()));
+  }, [dipendenti, coordinatori]);
+
 
   const pmsList = useMemo(() => {
     return dipendenti.filter(d => d.email && pmsEmails.includes(d.email.toLowerCase()));
   }, [dipendenti, pmsEmails]);
+
+  const isResponsabileDiQualcheCommessa = useMemo(() => {
+    return commesse.some(c => areNamesEqual(c.responsabile, myAssociatedName));
+  }, [commesse, myAssociatedName]);
+
+  const commesseGestibili = useMemo(() => {
+    if (isAdmin || isSenior) return commesse;
+    return commesse.filter(c => areNamesEqual(c.responsabile, myAssociatedName));
+  }, [commesse, isAdmin, isSenior, myAssociatedName]);
 
   const handleAddCommessa = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -635,7 +691,10 @@ export default function Commesse() {
         dataInizio: newCommessaDataInizio || '',
         dataFine: newCommessaDataFine || '',
         responsabile: newCommessaResponsabile || '',
-        pm: newCommessaPM || ''
+        pm: [],
+        giornateSeniorProject: Number(newCommessaSeniorDays) || 0,
+        giornateProject: Number(newCommessaProjectDays) || 0,
+        giornateJuniorProject: Number(newCommessaJuniorDays) || 0
       };
       
       await addDoc(collection(db, 'catalogo_commesse'), payload);
@@ -648,7 +707,9 @@ export default function Commesse() {
       setNewCommessaDataFine('');
       setNewCommessaLettera('A');
       setNewCommessaResponsabile('');
-      setNewCommessaPM('');
+      setNewCommessaSeniorDays('');
+      setNewCommessaProjectDays('');
+      setNewCommessaJuniorDays('');
       
       showToast("Commessa salvata nel catalogo con successo!", "success");
     } catch (err) {
@@ -822,14 +883,14 @@ export default function Commesse() {
         </h2>
         
         <div className={`flex items-center gap-2 text-xs font-bold px-4 py-2 rounded-xl border ${
-          (isAdmin || isSenior) ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-blue-50 text-blue-700 border-blue-100'
+          (isAdmin || isSenior || isResponsabileDiQualcheCommessa) ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-blue-50 text-blue-700 border-blue-100'
         }`}>
-          {(isAdmin || isSenior) ? 'Vista Amministrazione e Assegnazione' : 'Vista di Sola Consultazione'}
+          {(isAdmin || isSenior || isResponsabileDiQualcheCommessa) ? 'Vista Amministrazione e Assegnazione' : 'Vista di Sola Consultazione'}
         </div>
       </div>
       
-      {/* TAB BAR (Solo per Admin e Responsabili/Seniors) */}
-      {(isAdmin || isSenior) && (
+      {/* TAB BAR (Solo per Admin, Seniors e Responsabili) */}
+      {(isAdmin || isSenior || isResponsabileDiQualcheCommessa) && (
         <div className="flex border-b border-gray-200 gap-2 no-print">
           <button
             type="button"
@@ -976,11 +1037,13 @@ export default function Commesse() {
                                     });
                                   }
                                 });
-                                allowedCommesse = commesse.filter(c => 
-                                  assignedCommessaIds.has(c.id) ||
-                                  areNamesEqual(c.responsabile, myAssociatedName) ||
-                                  areNamesEqual(c.pm, myAssociatedName)
-                                );
+                                allowedCommesse = commesse.filter(c => {
+                                  const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
+                                  const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
+                                  return assignedCommessaIds.has(c.id) ||
+                                         areNamesEqual(c.responsabile, myAssociatedName) ||
+                                         isPM;
+                                });
                               }
 
                               const filtered = allowedCommesse.filter(c => {
@@ -988,7 +1051,8 @@ export default function Commesse() {
                                 const code = (c.codiceCommessa || '').toLowerCase();
                                 const client = (c.cliente || '').toLowerCase();
                                 const resp = (c.responsabile || '').toLowerCase();
-                                const pm = (c.pm || '').toLowerCase();
+                                const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
+                                const pm = pmArray.join(', ').toLowerCase();
                                 const tipologia = (c.tipologia || '').toLowerCase();
                                 const anno = (c.anno || '').toLowerCase();
                                 return name.includes(search) ||
@@ -1292,8 +1356,8 @@ export default function Commesse() {
         </>
       )}
 
-      {/* TAB 2: GESTIONE CATALOGO (Solo per Admin e Responsabili/Seniors) */}
-      {(activeTab === 'gestione' && (isAdmin || isSenior)) && (
+      {/* TAB 2: GESTIONE CATALOGO (Per Admin, Seniors e Responsabili) */}
+      {(activeTab === 'gestione' && (isAdmin || isSenior || isResponsabileDiQualcheCommessa)) && (
         <div className="space-y-8">
           <section className="bg-gradient-to-br from-emerald-50 to-teal-50 p-6 rounded-3xl border border-emerald-100 shadow-sm">
             <div className="flex justify-between items-center mb-4">
@@ -1308,8 +1372,9 @@ export default function Commesse() {
               </button>
             </div>
             
-            <div className="mb-6 bg-white/50 p-5 rounded-2xl border border-emerald-100/50 shadow-inner">
-              <form onSubmit={handleAddCommessa} className="space-y-4">
+            {(isAdmin || isSenior) && (
+              <div className="mb-6 bg-white/50 p-5 rounded-2xl border border-emerald-100/50 shadow-inner">
+                <form onSubmit={handleAddCommessa} className="space-y-4">
                 
                 {/* Selettore Cliente Ricercabile */}
                 <div className="relative">
@@ -1422,24 +1487,34 @@ export default function Commesse() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3">
                   <div>
-                    <label className="block text-[10px] font-bold text-emerald-950 mb-1 ml-1">Responsabile (Opzionale)</label>
+                    <label className="block text-[10px] font-bold text-emerald-950 mb-1 ml-1">Responsabile (Selezionato tra i Coordinatori)</label>
                     <select value={newCommessaResponsabile} onChange={e => setNewCommessaResponsabile(e.target.value)} className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs">
                       <option value="">-- Nessuno --</option>
-                      {seniorsList.map(s => (
-                        <option key={s.id} value={s.nome}>{s.nome}</option>
+                      {responsabiliMacroAreeList.map(r => (
+                        <option key={r.id} value={r.nome}>{r.nome}</option>
                       ))}
                     </select>
                   </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-emerald-950 mb-1 ml-1">Project Manager (PM - Opzionale)</label>
-                    <select value={newCommessaPM} onChange={e => setNewCommessaPM(e.target.value)} className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs">
-                      <option value="">-- Nessuno --</option>
-                      {pmsList.map(p => (
-                        <option key={p.id} value={p.nome}>{p.nome}</option>
-                      ))}
-                    </select>
+                </div>
+
+                {/* Sezione Giornate Stimate */}
+                <div className="bg-emerald-100/30 p-4 rounded-2xl border border-emerald-100/50 space-y-3">
+                  <h4 className="text-xs font-black text-emerald-950 uppercase tracking-wide">Giornate Stimate di Lavoro</h4>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1">Senior Project</label>
+                      <input type="number" min={0} placeholder="0" value={newCommessaSeniorDays} onChange={e => setNewCommessaSeniorDays(e.target.value)} className="w-full p-2 border-none rounded-lg bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-750 text-xs text-center" />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1">Project</label>
+                      <input type="number" min={0} placeholder="0" value={newCommessaProjectDays} onChange={e => setNewCommessaProjectDays(e.target.value)} className="w-full p-2 border-none rounded-lg bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-750 text-xs text-center" />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1">Junior Project</label>
+                      <input type="number" min={0} placeholder="0" value={newCommessaJuniorDays} onChange={e => setNewCommessaJuniorDays(e.target.value)} className="w-full p-2 border-none rounded-lg bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-750 text-xs text-center" />
+                    </div>
                   </div>
                 </div>
 
@@ -1448,6 +1523,7 @@ export default function Commesse() {
                 </button>
               </form>
             </div>
+          )}
 
             {/* Box di ricerca commesse */}
             <div className="mb-3">
@@ -1472,23 +1548,25 @@ export default function Commesse() {
                     <th className="p-2.5">Stato</th>
                     <th className="p-2.5">Resp.</th>
                     <th className="p-2.5">PM</th>
+                    <th className="p-2.5">Giornate Stimate (S/P/J)</th>
                     <th className="p-2.5 text-center"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-emerald-50/60 font-medium text-emerald-950">
                   {(() => {
-                    const filtered = commesse.filter(c => {
+                    const filtered = commesseGestibili.filter(c => {
                       const queryStr = searchCommessaQuery.toLowerCase();
                       const codice = (c as any).codiceCommessa || '';
                       const titolo = (c as any).titolo || c.nome || '';
                       const cliente = (c as any).cliente || '';
                       const resp = c.responsabile || '';
-                      const pm = c.pm || '';
+                      const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
+                      const pmStr = pmArray.join(', ');
                       return codice.toLowerCase().includes(queryStr) ||
                              titolo.toLowerCase().includes(queryStr) ||
                              cliente.toLowerCase().includes(queryStr) ||
                              resp.toLowerCase().includes(queryStr) ||
-                             pm.toLowerCase().includes(queryStr) ||
+                             pmStr.toLowerCase().includes(queryStr) ||
                              c.nome.toLowerCase().includes(queryStr);
                     });
 
@@ -1527,7 +1605,12 @@ export default function Commesse() {
                             </span>
                           </td>
                           <td className="p-2.5 truncate max-w-[100px]" title={c.responsabile || ''}>{c.responsabile || ''}</td>
-                          <td className="p-2.5 truncate max-w-[100px]" title={c.pm || ''}>{c.pm || ''}</td>
+                          <td className="p-2.5 truncate max-w-[120px]" title={(() => { const arr = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []); return arr.join(', '); })()}>{(() => { const arr = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []); return arr.join(', '); })() || ''}</td>
+                          <td className="p-2.5 whitespace-nowrap font-bold text-slate-700">
+                            {c.giornateSeniorProject !== undefined || c.giornateProject !== undefined || c.giornateJuniorProject !== undefined
+                              ? `${c.giornateSeniorProject || 0} / ${c.giornateProject || 0} / ${c.giornateJuniorProject || 0}`
+                              : '0 / 0 / 0'}
+                          </td>
                           <td className="p-2.5 text-center">
                             <div className="flex items-center justify-center gap-1.5">
                               <button 
@@ -1595,23 +1678,75 @@ export default function Commesse() {
                 </select>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Project Manager (PM)</label>
-                <select 
-                  value={editPM} 
-                  onChange={e => setEditPM(e.target.value)}
-                  className="w-full p-3 border-none bg-gray-50 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-bold text-gray-700"
-                >
-                  <option value="">-- Nessuno --</option>
-                  {(() => {
-                    const list = dipendenti.filter(d => d.email && pmsEmails.includes(d.email.toLowerCase()));
-                    if (editPM && !list.some(d => d.nome === editPM)) {
-                      const current = dipendenti.find(d => d.nome === editPM);
-                      if (current) list.push(current);
-                    }
-                    return list.map(d => <option key={d.id} value={d.nome}>{d.nome}</option>);
-                  })()}
-                </select>
+              {/* Gestione PMs Multipli */}
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Project Managers (PM)</label>
+                
+                {/* Lista PM attuali */}
+                <div className="space-y-1.5 max-h-28 overflow-y-auto pr-1">
+                  {editPMs.length === 0 ? (
+                    <p className="text-xs text-gray-400 italic">Nessun PM assegnato.</p>
+                  ) : (
+                    editPMs.map(pmName => (
+                      <div key={pmName} className="p-2 bg-blue-50/50 rounded-xl border border-blue-100 flex justify-between items-center text-xs">
+                        <span className="font-extrabold text-blue-950 truncate">{pmName}</span>
+                        <button 
+                          type="button" 
+                          onClick={() => setEditPMs(prev => prev.filter(x => x !== pmName))}
+                          className="text-red-400 hover:text-red-650 transition-colors p-1 cursor-pointer shrink-0"
+                          title="Rimuovi PM"
+                        >
+                          <X className="w-3.5 h-3.5"/>
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Selettore aggiunta PM */}
+                <div className="flex gap-2 mt-2">
+                  <select 
+                    value={selectedAddPM}
+                    onChange={e => setSelectedAddPM(e.target.value)}
+                    className="flex-1 p-2 bg-gray-50 border-none rounded-xl text-xs outline-none focus:ring-1 focus:ring-blue-500 shadow-inner font-bold text-gray-700"
+                  >
+                    <option value="">-- Seleziona PM da aggiungere --</option>
+                    {pmsList.filter(p => !editPMs.includes(p.nome)).map(p => (
+                      <option key={p.id} value={p.nome}>{p.nome}</option>
+                    ))}
+                  </select>
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      if (selectedAddPM && !editPMs.includes(selectedAddPM)) {
+                        setEditPMs(prev => [...prev, selectedAddPM]);
+                        setSelectedAddPM('');
+                      }
+                    }}
+                    className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-xl text-xs font-bold transition shadow-sm active:scale-95 cursor-pointer shrink-0"
+                  >
+                    Aggiungi
+                  </button>
+                </div>
+              </div>
+
+              {/* Sezione Giornate Stimate */}
+              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100 space-y-3">
+                <h4 className="text-xs font-black text-gray-900 uppercase tracking-wide">Giornate Stimate di Lavoro</h4>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[9px] font-bold text-gray-700 mb-1 ml-1 text-center">Senior Project</label>
+                    <input type="number" min={0} value={editSeniorDays} onChange={e => setEditSeniorDays(e.target.value)} className="w-full p-2 border-none rounded-lg bg-white shadow-sm focus:ring-2 focus:ring-blue-500 outline-none font-bold text-gray-750 text-xs text-center" />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-gray-700 mb-1 ml-1 text-center">Project</label>
+                    <input type="number" min={0} value={editProjectDays} onChange={e => setEditProjectDays(e.target.value)} className="w-full p-2 border-none rounded-lg bg-white shadow-sm focus:ring-2 focus:ring-blue-500 outline-none font-bold text-gray-750 text-xs text-center" />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-gray-700 mb-1 ml-1 text-center">Junior Project</label>
+                    <input type="number" min={0} value={editJuniorDays} onChange={e => setEditJuniorDays(e.target.value)} className="w-full p-2 border-none rounded-lg bg-white shadow-sm focus:ring-2 focus:ring-blue-500 outline-none font-bold text-gray-750 text-xs text-center" />
+                  </div>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

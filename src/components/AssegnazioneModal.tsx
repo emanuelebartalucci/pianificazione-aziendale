@@ -21,10 +21,11 @@ interface AssegnazioneModalProps {
   commesseCatalog: Commessa[];
   currentAssignments: Assegnazione[];
   dipendentiList: Dipendente[];
+  hasLeaves?: boolean;
   onSave?: (updatedList: Assegnazione[], addedNotification?: string, removedNotification?: string) => void;
 }
 
-export default function AssegnazioneModal({ isOpen, onClose, dipendente, weekId: _weekId, weekLabel, weekSub, commesseCatalog, currentAssignments, dipendentiList: _dipendentiList, onSave }: AssegnazioneModalProps) {
+export default function AssegnazioneModal({ isOpen, onClose, dipendente, weekId: _weekId, weekLabel, weekSub, commesseCatalog, currentAssignments, dipendentiList: _dipendentiList, hasLeaves, onSave }: AssegnazioneModalProps) {
   const [selectedCommessa, setSelectedCommessa] = useState('');
   const [selectedPercent, setSelectedPercent] = useState<string>('100');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
@@ -49,6 +50,11 @@ export default function AssegnazioneModal({ isOpen, onClose, dipendente, weekId:
 
     const comm = commesseCatalog.find(c => c.id === selectedCommessa);
     if (!comm) return;
+
+    if (hasLeaves) {
+      const proceed = window.confirm(`Attenzione: nella settimana selezionata il dipendente ${dipendente} ha registrato ferie o permessi. Vuoi procedere comunque con l'assegnazione?`);
+      if (!proceed) return;
+    }
 
     const newAss: Assegnazione = {
       commessaId: comm.id,

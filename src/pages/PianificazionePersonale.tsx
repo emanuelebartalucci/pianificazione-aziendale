@@ -10,6 +10,16 @@ import { addPendingNotification, getPendingNotifications, clearPendingNotificati
 import { isCollaboratore, isSoci } from './Impostazioni';
 import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
 
+const areNamesEqual = (n1?: string | null, n2?: string | null): boolean => {
+  if (!n1 || !n2) return false;
+  const clean1 = n1.toLowerCase().trim().replace(/\s+/g, ' ');
+  const clean2 = n2.toLowerCase().trim().replace(/\s+/g, ' ');
+  if (clean1 === clean2) return true;
+  const w1 = clean1.split(' ').sort().join(' ');
+  const w2 = clean2.split(' ').sort().join(' ');
+  return w1 === w2;
+};
+
 
 interface Assegnazione {
   commessaId: string;
@@ -185,13 +195,21 @@ export default function PianificazionePersonale() {
   }, [dipendenti, searchQuery]);
 
   const isPMOrResponsabile = useMemo(() => {
-    return commesse.some(c => c.pm === myAssociatedName || c.responsabile === myAssociatedName);
+    return commesse.some(c => {
+      const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
+      const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
+      return isPM || areNamesEqual(c.responsabile, myAssociatedName);
+    });
   }, [commesse, myAssociatedName]);
 
   const selectableCommesse = useMemo(() => {
     const openCommesse = commesse.filter(c => c.stato !== 'Chiusa');
     if (isAdmin || isSenior) return openCommesse;
-    return openCommesse.filter(c => c.pm === myAssociatedName || c.responsabile === myAssociatedName);
+    return openCommesse.filter(c => {
+      const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
+      const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
+      return isPM || areNamesEqual(c.responsabile, myAssociatedName);
+    });
   }, [commesse, isAdmin, isSenior, myAssociatedName]);
 
   const assignedCommesseForSelected = useMemo(() => {
@@ -742,7 +760,9 @@ export default function PianificazionePersonale() {
     }
     const commObj = commesse.find(c => c.id === commessaId);
     if (commObj) {
-      const isUserAllowed = isAdmin || isSenior || commObj.responsabile === myAssociatedName || commObj.pm === myAssociatedName;
+      const pmArray = Array.isArray(commObj.pm) ? commObj.pm : (commObj.pm ? [commObj.pm] : []);
+      const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
+      const isUserAllowed = isAdmin || isSenior || areNamesEqual(commObj.responsabile, myAssociatedName) || isPM;
       if (!isUserAllowed) {
         showToast("Non hai i permessi per questa commessa.", "error");
         return;
@@ -810,7 +830,9 @@ export default function PianificazionePersonale() {
       return;
     }
 
-    const isUserAllowed = isAdmin || isSenior || commObj.responsabile === myAssociatedName || commObj.pm === myAssociatedName;
+    const pmArray = Array.isArray(commObj.pm) ? commObj.pm : (commObj.pm ? [commObj.pm] : []);
+    const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
+    const isUserAllowed = isAdmin || isSenior || areNamesEqual(commObj.responsabile, myAssociatedName) || isPM;
     if (!isUserAllowed) {
       showToast("Non hai i permessi per questa commessa (PM/Responsabile o Admin richiesto).", "error");
       return;
@@ -824,6 +846,11 @@ export default function PianificazionePersonale() {
       const targetWeekIds = getWeeksSpannedByDates(allocDataInizio, allocDataFine);
 
       const blockedDates = getBlockedDatesForResource(resName, allocDataInizio, allocDataFine);
+      const blockedDatesArray = Object.keys(blockedDates);
+      if (blockedDatesArray.length > 0) {
+        const proceed = window.confirm(`Attenzione: nel periodo selezionato la risorsa ${resName} ha registrato ferie o permessi in alcune giornate (${blockedDatesArray.length} giorni di assenza trovati). Vuoi procedere comunque con l'assegnazione?`);
+        if (!proceed) return;
+      }
 
       for (const wkId of targetWeekIds) {
         const docId = `${resName}-${wkId}`;
@@ -835,32 +862,17 @@ export default function PianificazionePersonale() {
         if (coveredDays === 0) continue;
         basePct = Math.round((basePct * coveredDays) / 5);
 
-        const targetDayCount = Math.round(basePct / 20);
-        let allocatedCount = 0;
         for (const day of baseDays) {
-          if (allocatedCount >= targetDayCount) break;
           const dayDate = getWeekdayDate(wkId, day);
           const isWithinRange = (dayDate >= allocDataInizio && dayDate <= allocDataFine);
-          if (isWithinRange && !blockedDates[dayDate]) {
+          if (isWithinRange) {
             allowedDays.push(day);
-            allocatedCount++;
           }
         }
 
-        const actualPct = targetDayCount > 0
-          ? Math.round((basePct * allowedDays.length) / targetDayCount)
-          : 0;
+        const actualPct = basePct;
 
-        if (actualPct === 0) {
-          const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
-          warnings.push(`- ${resName} (${wkLabel}): non assegnato (assenza totale).`);
-          continue;
-        }
-
-        if (actualPct < basePct) {
-          const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
-          warnings.push(`- ${resName} (${wkLabel}): assegnato al ${actualPct}% per assenze.`);
-        }
+        if (actualPct === 0) continue;
 
         const currentList = updatedAssignments[docId] || [];
         const filteredList = currentList.filter(a => a.commessaId !== commessaId);
@@ -1034,7 +1046,9 @@ export default function PianificazionePersonale() {
 
     // Permissions check
     if (commObj) {
-      const isUserAllowed = isAdmin || isSenior || commObj.responsabile === myAssociatedName || commObj.pm === myAssociatedName;
+      const pmArray = Array.isArray(commObj.pm) ? commObj.pm : (commObj.pm ? [commObj.pm] : []);
+      const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
+      const isUserAllowed = isAdmin || isSenior || areNamesEqual(commObj.responsabile, myAssociatedName) || isPM;
       if (!isUserAllowed) {
         showToast("Non hai i permessi per pianificare risorse su questa commessa (solo Amministratori, Responsabili Senior o il PM/Responsabile specifico della commessa sono autorizzati).", "error");
         return;
@@ -1091,6 +1105,11 @@ export default function PianificazionePersonale() {
         for (const resName of selectedResourceNames) {
           // Fetch approved leaves locally
           const blockedDates = getBlockedDatesForResource(resName, allocDataInizio, allocDataFine);
+          const blockedDatesArray = Object.keys(blockedDates);
+          if (blockedDatesArray.length > 0) {
+            const proceed = window.confirm(`Attenzione: nel periodo selezionato la risorsa ${resName} ha registrato ferie o permessi in alcune giornate (${blockedDatesArray.length} giorni di assenza trovati). Vuoi procedere comunque con l'assegnazione?`);
+            if (!proceed) continue;
+          }
 
           for (const wkId of targetWeekIds) {
             const docId = `${resName}-${wkId}`;
@@ -1105,34 +1124,18 @@ export default function PianificazionePersonale() {
               basePct = Math.round((basePct * coveredDays) / 5);
             }
 
-            const targetDayCount = Math.round(basePct / 20);
-
-            let allocatedCount = 0;
             for (const day of baseDays) {
-              if (allocatedCount >= targetDayCount) break;
               const dayDate = getWeekdayDate(wkId, day);
               const isWithinRange = !useDateRange || (dayDate >= allocDataInizio && dayDate <= allocDataFine);
               
-              if (isWithinRange && !blockedDates[dayDate]) {
+              if (isWithinRange) {
                 allowedDays.push(day);
-                allocatedCount++;
               }
             }
 
-            const actualPct = targetDayCount > 0
-              ? Math.round((basePct * allowedDays.length) / targetDayCount)
-              : 0;
+            const actualPct = basePct;
 
-            if (actualPct === 0) {
-              const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
-              warnings.push(`- ${resName} (${wkLabel}): non assegnato (assenza totale).`);
-              continue;
-            }
-
-            if (actualPct < basePct) {
-              const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
-              warnings.push(`- ${resName} (${wkLabel}): assegnato solo al ${actualPct}% (invece del ${basePct}%) per giornate di assenza/ferie.`);
-            }
+            if (actualPct === 0) continue;
 
             const currentList = updatedAssignments[docId] || [];
             const filteredList = currentList.filter(a => a.commessaId !== selectedCommessaId);
@@ -1278,6 +1281,11 @@ export default function PianificazionePersonale() {
       } else if (allocAction === 'sostituisci') {
         if (!commObj) return;
         const blockedDatesB = getBlockedDatesForResource(targetResource, allocDataInizio, allocDataFine);
+        const blockedDatesArrayB = Object.keys(blockedDatesB);
+        if (blockedDatesArrayB.length > 0) {
+          const proceed = window.confirm(`Attenzione: nel periodo selezionato la risorsa sostitutiva ${targetResource} ha registrato ferie o permessi in alcune giornate (${blockedDatesArrayB.length} giorni di assenza trovati). Vuoi procedere comunque con la sostituzione?`);
+          if (!proceed) return;
+        }
 
         for (const wkId of targetWeekIds) {
           const docIdA = `${sourceResource}-${wkId}`;
@@ -1301,21 +1309,15 @@ export default function PianificazionePersonale() {
           const baseDays = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
           const allowedDaysB: string[] = [];
 
-          const targetDayCount = Math.round(basePct / 20);
-          let allocatedCount = 0;
           for (const day of baseDays) {
-            if (allocatedCount >= targetDayCount) break;
             const dayDate = getWeekdayDate(wkId, day);
             const isWithinRange = (dayDate >= allocDataInizio && dayDate <= allocDataFine);
-            if (isWithinRange && !blockedDatesB[dayDate]) {
+            if (isWithinRange) {
               allowedDaysB.push(day);
-              allocatedCount++;
             }
           }
 
-          const actualPctB = targetDayCount > 0
-            ? Math.round((basePct * allowedDaysB.length) / targetDayCount)
-            : 0;
+          const actualPctB = basePct;
           const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
 
           if (actualPctB > 0) {
@@ -1331,12 +1333,6 @@ export default function PianificazionePersonale() {
               giorni: allowedDaysB
             };
             updatedAssignments[docIdB] = [...filteredListB, newAllocationB];
-
-            if (actualPctB < basePct) {
-              warnings.push(`- ${targetResource} (${wkLabel}): assegnato solo al ${actualPctB}% (invece del ${basePct}%) per giornate di assenza/ferie.`);
-            }
-          } else {
-            warnings.push(`- ${targetResource} (${wkLabel}): non assegnato (assenza totale).`);
           }
 
           // Coda notifica A
@@ -2156,13 +2152,13 @@ export default function PianificazionePersonale() {
                             const pcts = Object.values(r.percentuali);
                             const minPct = Math.min(...pcts);
                             const maxPct = Math.max(...pcts);
-                            const displayPct = minPct === maxPct ? `${minPct}%` : `Variabile (${minPct}%-${maxPct}%)`;
+                            const displayPct = minPct === maxPct ? `${minPct}%` : `${minPct}% - ${maxPct}%`;
                             
                             return (
                               <div key={r.nome} className="flex justify-between items-center p-2.5 bg-white rounded-xl border border-indigo-50 shadow-sm hover:border-indigo-100 transition-colors">
                                 <div className="flex flex-col gap-0.5 truncate pr-2">
                                   <span className="font-bold text-xs text-gray-850 truncate">{r.nome}</span>
-                                  <span className="text-[10px] font-black text-indigo-650">{displayPct}</span>
+                                  {displayPct && <span className="text-[10px] font-black text-indigo-650">Impegno commessa: {displayPct}</span>}
                                 </div>
                                 <div className="flex items-center gap-2">
                                   <select
@@ -2338,11 +2334,13 @@ export default function PianificazionePersonale() {
                             const pcts = Object.values(c.percentuali);
                             const minPct = Math.min(...pcts);
                             const maxPct = Math.max(...pcts);
-                            const displayPct = minPct === maxPct ? `${minPct}%` : `Variabile (${minPct}%-${maxPct}%)`;
+                            const displayPct = minPct === maxPct ? `${minPct}%` : `${minPct}% - ${maxPct}%`;
 
                             // Permessi di modifica per questa commessa
                             const commObj = commesse.find(x => x.id === c.id);
-                            const hasPermission = isAdmin || isSenior || (commObj && (commObj.pm === myAssociatedName || commObj.responsabile === myAssociatedName));
+                            const pmArray = commObj && commObj.pm ? (Array.isArray(commObj.pm) ? commObj.pm : [commObj.pm]) : [];
+                            const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
+                            const hasPermission = isAdmin || isSenior || (commObj && (isPM || areNamesEqual(commObj.responsabile, myAssociatedName)));
 
                             return (
                               <div key={c.id} className="flex justify-between items-center p-2.5 bg-white rounded-xl border border-indigo-50 shadow-sm hover:border-indigo-100 transition-colors">
@@ -2351,7 +2349,7 @@ export default function PianificazionePersonale() {
                                     <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm" style={{ backgroundColor: c.colore }}></span>
                                     <span className="font-bold text-xs text-gray-850 truncate">{c.nome}</span>
                                   </div>
-                                  <span className="text-[10px] font-black text-indigo-650 ml-4.5">{displayPct}</span>
+                                  {displayPct && <span className="text-[10px] font-black text-indigo-650 ml-4.5">Impegno commessa: {displayPct}</span>}
                                 </div>
 
                                 <div className="flex items-center gap-2 shrink-0">
@@ -2815,6 +2813,7 @@ export default function PianificazionePersonale() {
         commesseCatalog={selectableCommesse}
         currentAssignments={assignments[`${modalData.dipendente}-${modalData.weekId}`] || []}
         dipendentiList={dipendenti}
+        hasLeaves={getLeavesForResourceInWeek(modalData.dipendente, modalData.weekId).length > 0}
         onSave={(updatedList, addedNotif, removedNotif) => {
           handleLocalCellChange(modalData.dipendente, modalData.weekId, modalData.weekLabel, updatedList, addedNotif, removedNotif);
           setIsModalOpen(false);
