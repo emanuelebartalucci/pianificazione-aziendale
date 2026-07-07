@@ -120,7 +120,7 @@ export default function PianificazionePersonale() {
     myAssociatedName, 
     refreshData,
     assegnazioni: globalAssignments,
-    chiusureAziendali,
+
     approvedLeaves,
     richiesteDisegnatori
   } = useAuth();
@@ -531,13 +531,7 @@ export default function PianificazionePersonale() {
     });
   };
 
-  const isInChiusuraAziendaleLocal = (dateStr: string) => {
-    return chiusureAziendali.some(closure => {
-      const start = closure.dataInizio;
-      const end = closure.dataFine;
-      return dateStr >= start && dateStr <= end;
-    });
-  };
+
 
   const getLeavesForResourceInWeek = (resName: string, wkId: string) => {
     const parts = wkId.split('-W');
@@ -564,18 +558,7 @@ export default function PianificazionePersonale() {
     const leaveDaysFound: { giorno: string; tipo: string; dettagli: string }[] = [];
     const dayNames = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
 
-    // 1. Aggiungi le chiusure aziendali come ferie collettive
-    weekDates.forEach((wDateStr, idx) => {
-      if (isInChiusuraAziendaleLocal(wDateStr) && !isItalianHoliday(wDateStr)) {
-        leaveDaysFound.push({
-          giorno: dayNames[idx],
-          tipo: 'ferie',
-          dettagli: 'Chiusura Aziendale'
-        });
-      }
-    });
-
-    // 2. Aggiungi le ferie approvate individuali se non già coperte da chiusura aziendale
+    // 1. Aggiungi le ferie approvate individuali
     approvedLeaves.forEach(leave => {
       if (leave.dipendenteName !== resName) return;
       const start = leave.dataInizio || leave.data;
@@ -667,24 +650,7 @@ export default function PianificazionePersonale() {
       }
     });
 
-    // 2. Aggiungi le chiusure aziendali
-    chiusureAziendali.forEach(closure => {
-      const start = closure.dataInizio;
-      const end = closure.dataFine;
-      if (start && end) {
-        const [sY, sM, sD] = start.split('-').map(Number);
-        const [eY, eM, eD] = end.split('-').map(Number);
-        const curr = new Date(sY, sM - 1, sD);
-        const last = new Date(eY, eM - 1, eD);
-        while (curr <= last) {
-          const y = curr.getFullYear();
-          const m = String(curr.getMonth() + 1).padStart(2, '0');
-          const ds = String(curr.getDate()).padStart(2, '0');
-          blockedDates[`${y}-${m}-${ds}`] = true;
-          curr.setDate(curr.getDate() + 1);
-        }
-      }
-    });
+
 
     // 3. Aggiungi le festività nazionali italiane nel range date
     if (startDateStr && endDateStr) {
