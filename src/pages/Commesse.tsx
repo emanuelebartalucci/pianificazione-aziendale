@@ -49,27 +49,27 @@ interface WeekInfo {
   dateObj?: Date;
 }
 
-// Client dictionary for code translation
-const CLIENTI_DICTIONARY: Record<string, string> = {
-  '61': 'GSK',
-  '12': 'Novartis',
-  '33': 'Eli Lilly',
-  '45': 'Pfizer',
-  '01': 'Ingegnoso',
-  '99': 'Cliente di Test'
-};
+// // Client dictionary for code translation
+// const CLIENTI_DICTIONARY: Record<string, string> = {
+//   '61': 'GSK',
+//   '12': 'Novartis',
+//   '33': 'Eli Lilly',
+//   '45': 'Pfizer',
+//   '01': 'Ingegnoso',
+//   '99': 'Cliente di Test'
+// };
 
-const getClientName = (code: string): string => {
-  return CLIENTI_DICTIONARY[code] || `Cliente ${code}`;
-};
+// const getClientName = (code: string): string => {
+//   return CLIENTI_DICTIONARY[code] || `Cliente ${code}`;
+// };
 
-const parseClientCode = (commessaName: string): string => {
-  const match = commessaName.match(/^P-\d+-(\d+)/i);
-  if (match) {
-    return match[1];
-  }
-  return '';
-};
+// const parseClientCode = (commessaName: string): string => {
+//   const match = commessaName.match(/^P-\d+-(\d+)/i);
+//   if (match) {
+//     return match[1];
+//   }
+//   return '';
+// };
 
 const formatDate = (dateStr: string): string => {
   if (!dateStr) return '';
@@ -131,8 +131,11 @@ export default function Commesse() {
   } = useAuth();
   
   const [baseDate, setBaseDate] = useState<Date>(new Date());
-  const [zoomWeeks, setZoomWeeks] = useState<number>(13); // Default to 3 Months (13 Weeks)
-  const [selectedCommessaFilter, setSelectedCommessaFilter] = useState<string>(''); // Single commessa detail view
+  const [zoomWeeks, setZoomWeeks] = useState<number>(10); // Default to 10 Weeks
+  const [selectedCommessaIdsFilter, setSelectedCommessaIdsFilter] = useState<string[]>([]);
+  const [selectedClientFilter, setSelectedClientFilter] = useState<string>('');
+  const [selectedPMFilter, setSelectedPMFilter] = useState<string>('');
+  const [selectedTipologiaFilter, setSelectedTipologiaFilter] = useState<string>('');
   const [commessaTextQuery, setCommessaTextQuery] = useState('');
 
   // Tab control
@@ -183,15 +186,51 @@ export default function Commesse() {
   const isNarrow = useMemo(() => parseInt(weekColumnMinWidth) < 80, [weekColumnMinWidth]);
   const isUltraNarrow = useMemo(() => parseInt(weekColumnMinWidth) < 50, [weekColumnMinWidth]);
 
-  const [collapsedClients, setCollapsedClients] = useState<Record<string, boolean>>({});
 
-  const toggleClientCollapse = (clientName: string) => {
-    setCollapsedClients(prev => ({
-      ...prev,
-      [clientName]: !prev[clientName]
-    }));
-  };
   
+  const selectableClientiPerFiltro = useMemo(() => {
+    const set = new Set<string>();
+    commesse.forEach(c => {
+      if (c.cliente) set.add(c.cliente.trim());
+    });
+    return Array.from(set).sort();
+  }, [commesse]);
+
+  const selectablePMPerFiltro = useMemo(() => {
+    const set = new Set<string>();
+    commesse.forEach(c => {
+      if (c.responsabile) set.add(c.responsabile.trim());
+    });
+    return Array.from(set).sort();
+  }, [commesse]);
+
+  const selectableTipologiePerFiltro = useMemo(() => {
+    const set = new Set<string>();
+    commesse.forEach(c => {
+      if (c.tipologia) set.add(c.tipologia.trim());
+    });
+    return Array.from(set).sort();
+  }, [commesse]);
+
+  const toggleCommessaIdFilter = (commId: string) => {
+    setSelectedCommessaIdsFilter(prev => {
+      const next = prev.includes(commId) ? prev.filter(id => id !== commId) : [...prev, commId];
+      if (next.length === 1) {
+        const comm = commesse.find(c => c.id === next[0]);
+        if (comm && comm.dataInizio && comm.dataFine) {
+          const start = new Date(comm.dataInizio);
+          const end = new Date(comm.dataFine);
+          const diffTime = Math.abs(end.getTime() - start.getTime());
+          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+          const numWks = Math.max(2, Math.min(52, Math.ceil(diffDays / 7)));
+          setBaseDate(getStartOfWeek(start));
+          setZoomWeeks(numWks);
+        }
+      }
+      return next;
+    });
+  };
+
   // Stati per la modifica dei dettagli della commessa (Responsabile, PM, Date)
   const [editingCommessa, setEditingCommessa] = useState<any | null>(null);
   const [editResponsabile, setEditResponsabile] = useState('');
@@ -215,25 +254,26 @@ export default function Commesse() {
     }, 4500);
   };
 
-  const handleSelectCommessaFilter = (commId: string) => {
-    setSelectedCommessaFilter(commId);
-    if (commId) {
-      const comm = commesse.find(c => c.id === commId);
-      if (comm && comm.dataInizio && comm.dataFine) {
-        const start = new Date(comm.dataInizio);
-        const end = new Date(comm.dataFine);
-        const diffTime = Math.abs(end.getTime() - start.getTime());
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        const numWks = Math.max(2, Math.min(52, Math.ceil(diffDays / 7)));
-        
-        setBaseDate(getStartOfWeek(start));
-        setZoomWeeks(numWks);
-      }
-    } else {
-      setBaseDate(new Date());
-      setZoomWeeks(13); // Reset to default 3 months
-    }
-  };
+  // const handleSelectCommessaFilter = (commId: string) => {
+  //   if (commId) {
+  //     setSelectedCommessaIdsFilter([commId]);
+  //     const comm = commesse.find(c => c.id === commId);
+  //     if (comm && comm.dataInizio && comm.dataFine) {
+  //       const start = new Date(comm.dataInizio);
+  //       const end = new Date(comm.dataFine);
+  //       const diffTime = Math.abs(end.getTime() - start.getTime());
+  //       const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  //       const numWks = Math.max(2, Math.min(52, Math.ceil(diffDays / 7)));
+  //       
+  //       setBaseDate(getStartOfWeek(start));
+  //       setZoomWeeks(numWks);
+  //     }
+  //   } else {
+  //     setSelectedCommessaIdsFilter([]);
+  //     setBaseDate(new Date());
+  //     setZoomWeeks(10); // Reset to default 10 weeks
+  //   }
+  // };
   
 
 
@@ -332,18 +372,17 @@ export default function Commesse() {
     csvContent += headers.join(";") + "\n";
 
     // Righe
-    groupedCommesse.forEach(group => {
-      group.commesseList.forEach(comm => {
-        const pmArray = Array.isArray(comm.pm) ? comm.pm : (comm.pm ? [comm.pm] : []);
-        const pmStr = pmArray.join(', ');
-        const row = [
-          group.clientName,
-          comm.nome,
-          comm.responsabile || "",
-          pmStr,
-          comm.dataInizio ? formatDate(comm.dataInizio) : "",
-          comm.dataFine ? formatDate(comm.dataFine) : ""
-        ];
+    filteredCommesse.forEach(comm => {
+      const pmArray = Array.isArray(comm.pm) ? comm.pm : (comm.pm ? [comm.pm] : []);
+      const pmStr = pmArray.join(', ');
+      const row = [
+        comm.cliente || "Altri Clienti",
+        comm.nome,
+        comm.responsabile || "",
+        pmStr,
+        comm.dataInizio ? formatDate(comm.dataInizio) : "",
+        comm.dataFine ? formatDate(comm.dataFine) : ""
+      ];
         
         activeWeeks.forEach(wk => {
           const assignedPeople = getAssignmentsForCommessaInWeek(comm.id, wk.id);
@@ -355,7 +394,6 @@ export default function Commesse() {
         });
         
         csvContent += row.map(val => `"${val.replace(/"/g, '""')}"`).join(";") + "\n";
-      });
     });
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -368,12 +406,29 @@ export default function Commesse() {
     document.body.removeChild(link);
   };
 
-  // Group commesse by client
-  const groupedCommesse = useMemo(() => {
-    // Filter commesse if a single one is selected in detail
-    let list = selectedCommessaFilter 
-      ? commesse.filter(c => c.id === selectedCommessaFilter)
-      : commesse;
+  // Filtra commesse con filtri avanzati ed in ordine alfabetico
+  const filteredCommesse = useMemo(() => {
+    let list = commesse;
+
+    // Filtro per multi-selezione commesse
+    if (selectedCommessaIdsFilter.length > 0) {
+      list = list.filter(c => selectedCommessaIdsFilter.includes(c.id));
+    }
+
+    // Filtro per Cliente
+    if (selectedClientFilter) {
+      list = list.filter(c => c.cliente === selectedClientFilter);
+    }
+
+    // Filtro per Responsabile
+    if (selectedPMFilter) {
+      list = list.filter(c => areNamesEqual(c.responsabile, selectedPMFilter));
+    }
+
+    // Filtro per Tipologia
+    if (selectedTipologiaFilter) {
+      list = list.filter(c => c.tipologia === selectedTipologiaFilter);
+    }
 
     if (commessaTextQuery.trim()) {
       const query = commessaTextQuery.toLowerCase().trim();
@@ -394,7 +449,7 @@ export default function Commesse() {
       });
     }
 
-    // Filter for standard employees
+    // Filtro per standard employees (che vedono solo quelle a cui sono assegnati)
     if (!isAdmin && !isSenior && myAssociatedName) {
       const assignedCommessaIds = new Set<string>();
       Object.entries(assignments).forEach(([key, listAss]) => {
@@ -416,20 +471,9 @@ export default function Commesse() {
       });
     }
 
-    const groups: Record<string, { clientName: string; commesseList: typeof commesse }> = {};
-    
-    list.forEach(c => {
-      const clientName = c.cliente ? c.cliente.trim() : (parseClientCode(c.nome) ? getClientName(parseClientCode(c.nome)) : 'Altri Clienti');
-      const clientKey = clientName.toUpperCase() || 'ALTRI CLIENTI';
-      
-      if (!groups[clientKey]) {
-        groups[clientKey] = { clientName, commesseList: [] };
-      }
-      groups[clientKey].commesseList.push(c);
-    });
-    
-    return Object.values(groups).sort((a, b) => a.clientName.localeCompare(b.clientName));
-  }, [commesse, selectedCommessaFilter, commessaTextQuery, isAdmin, isSenior, myAssociatedName, assignments]);
+    // Ordine alfabetico
+    return [...list].sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+  }, [commesse, selectedCommessaIdsFilter, selectedClientFilter, selectedPMFilter, selectedTipologiaFilter, commessaTextQuery, isAdmin, isSenior, myAssociatedName, assignments]);
 
   // Get people allocated to a commessa in a specific week
   const getAssignmentsForCommessaInWeek = (commId: string, wkId: string) => {
@@ -786,59 +830,103 @@ export default function Commesse() {
           {/* TIMELINE TABLE CARD */}
           <div className="bg-white rounded-[2rem] shadow-xl border relative mb-10 flex flex-col max-h-[750px] pb-4">
             
-            {/* TOOLBAR */}
-            <div className="p-4 border-b border-gray-200 flex flex-col md:flex-row md:items-center justify-between gap-4 no-print bg-gray-50/50 rounded-t-[2rem] shrink-0 md:h-20">
+                        {/* TOOLBAR */}
+            <div className="p-4 border-b border-gray-200 flex flex-col lg:flex-row lg:items-center justify-between gap-4 no-print bg-gray-50/50 rounded-t-[2rem] shrink-0 py-4">
               <div className="flex flex-wrap items-center justify-between gap-4 w-full">
                 
-                {/* Filters and Zoom */}
-                <div className="flex flex-wrap items-center gap-4 flex-1">
-                  
-                  {/* Zoom Temporale magnifier buttons */}
+                {/* Filters and Zoom - Filtri Avanzati */}
+                <div className="flex flex-wrap items-end gap-3 flex-1">
+                  {/* Zoom Temporale */}
                   <div className="flex flex-col">
-                    <label className="text-[10px] font-extrabold text-gray-400 uppercase tracking-wider ml-1 mb-1">Zoom Temporale</label>
+                    <label className="text-[10px] font-extrabold text-gray-455 uppercase tracking-wider ml-1 mb-1">Zoom</label>
                     <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-gray-200 shadow-sm h-[38px]">
                       <button 
                         type="button"
                         onClick={() => setZoomWeeks(prev => Math.max(2, prev - 2))} 
-                        className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-650 transition flex items-center justify-center cursor-pointer"
-                        title="Zoom In (Vedi meno settimane, più dettaglio)"
+                        className="p-1 hover:bg-gray-100 rounded-lg text-gray-655 transition flex items-center justify-center cursor-pointer"
+                        title="Zoom In"
                       >
                         <ZoomIn className="w-4 h-4 text-blue-600" />
                       </button>
-                      <span className="text-xs font-bold text-gray-750 min-w-[50px] text-center select-none">{zoomWeeks} Sett.</span>
+                      <span className="text-xs font-bold text-gray-750 min-w-[45px] text-center select-none">{zoomWeeks} Sett.</span>
                       <button 
                         type="button"
                         onClick={() => setZoomWeeks(prev => Math.min(52, prev + 2))} 
-                        className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-650 transition flex items-center justify-center cursor-pointer"
-                        title="Zoom Out (Vedi più settimane, panoramica)"
+                        className="p-1 hover:bg-gray-100 rounded-lg text-gray-655 transition flex items-center justify-center cursor-pointer"
+                        title="Zoom Out"
                       >
                         <ZoomOut className="w-4 h-4 text-blue-600" />
                       </button>
                     </div>
                   </div>
 
-                  {/* Combined Searchable Commessa Dropdown */}
+                  {/* Filtro Cliente */}
+                  <div className="flex flex-col">
+                    <label className="text-[10px] font-extrabold text-gray-455 uppercase tracking-wider ml-1 mb-1">Cliente</label>
+                    <select
+                      value={selectedClientFilter}
+                      onChange={e => setSelectedClientFilter(e.target.value)}
+                      className="p-2 border bg-white rounded-xl font-bold text-gray-700 text-xs outline-none focus:ring-2 focus:ring-blue-400 w-44 shadow-sm cursor-pointer h-[38px]"
+                    >
+                      <option value="">Tutti i Clienti</option>
+                      {selectableClientiPerFiltro.map(client => (
+                        <option key={client} value={client}>{client}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Filtro Responsabile */}
+                  <div className="flex flex-col">
+                    <label className="text-[10px] font-extrabold text-gray-455 uppercase tracking-wider ml-1 mb-1">Responsabile</label>
+                    <select
+                      value={selectedPMFilter}
+                      onChange={e => setSelectedPMFilter(e.target.value)}
+                      className="p-2 border bg-white rounded-xl font-bold text-gray-700 text-xs outline-none focus:ring-2 focus:ring-blue-400 w-44 shadow-sm cursor-pointer h-[38px]"
+                    >
+                      <option value="">Tutti i Responsabili</option>
+                      {selectablePMPerFiltro.map(pm => (
+                        <option key={pm} value={pm}>{pm}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Filtro Tipologia */}
+                  <div className="flex flex-col">
+                    <label className="text-[10px] font-extrabold text-gray-455 uppercase tracking-wider ml-1 mb-1">Tipo</label>
+                    <select
+                      value={selectedTipologiaFilter}
+                      onChange={e => setSelectedTipologiaFilter(e.target.value)}
+                      className="p-2 border bg-white rounded-xl font-bold text-gray-700 text-xs outline-none focus:ring-2 focus:ring-blue-400 w-32 shadow-sm cursor-pointer h-[38px]"
+                    >
+                      <option value="">Tutte le Tipologie</option>
+                      {selectableTipologiePerFiltro.map(t => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Filtro Commessa Multi-selezione */}
                   <div className="relative flex flex-col">
-                    <label className="text-[10px] font-extrabold text-gray-400 uppercase tracking-wider ml-1 mb-1">Cerca Commessa</label>
+                    <label className="text-[10px] font-extrabold text-gray-455 uppercase tracking-wider ml-1 mb-1">Commesse</label>
                     <div className="relative">
                       <button
                         type="button"
                         onClick={() => setIsCommessaDropdownOpen(!isCommessaDropdownOpen)}
-                        className="p-2.5 border bg-white rounded-xl font-bold text-gray-700 text-xs text-left outline-none focus:ring-2 focus:ring-blue-400 w-80 shadow-sm flex justify-between items-center cursor-pointer"
+                        className="p-2.5 border bg-white rounded-xl font-bold text-gray-700 text-xs text-left outline-none focus:ring-2 focus:ring-blue-400 w-52 shadow-sm flex justify-between items-center cursor-pointer h-[38px]"
                       >
                         <span className="truncate mr-4 text-gray-700">
-                          {selectedCommessaFilter 
-                            ? (commesse.find(c => c.id === selectedCommessaFilter)?.nome || 'Commessa selezionata') 
-                            : 'Tutte le Commesse'}
+                          {selectedCommessaIdsFilter.length === 0 
+                            ? 'Tutte le Commesse' 
+                            : `${selectedCommessaIdsFilter.length} Selezionate`}
                         </span>
-                        <span className="text-gray-400 ml-auto shrink-0 text-[10px]">▼</span>
+                        <span className="text-gray-455 ml-auto shrink-0 text-[10px]">▼</span>
                       </button>
-                      {selectedCommessaFilter && (
+                      {selectedCommessaIdsFilter.length > 0 && (
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleSelectCommessaFilter('');
+                            setSelectedCommessaIdsFilter([]);
                             setCommessaTextQuery('');
                           }}
                           className="absolute right-8 top-1/2 -translate-y-1/2 text-red-500 hover:text-red-700 font-extrabold text-[10px] bg-red-50 px-2 py-1 rounded-lg transition"
@@ -853,42 +941,58 @@ export default function Commesse() {
                           setIsCommessaDropdownOpen(false);
                           setCommessaTextQuery('');
                         }}></div>
-                        <div className="absolute left-0 mt-12 w-96 max-h-80 bg-white border border-gray-150 rounded-2xl shadow-2xl z-50 p-3 flex flex-col gap-2 animate-in fade-in slide-in-from-top-2 duration-150">
+                        <div className="absolute left-0 mt-12 w-80 max-h-80 bg-white border border-gray-150 rounded-2xl shadow-2xl z-50 p-3 flex flex-col gap-2 animate-in fade-in slide-in-from-top-2 duration-150">
                           <div className="relative shrink-0">
                             <input
                               type="text"
-                              placeholder="Cerca per codice, titolo, cliente..."
+                              placeholder="Cerca commessa..."
                               value={commessaTextQuery}
                               onChange={e => setCommessaTextQuery(e.target.value)}
-                              className="w-full p-2.5 pl-3 border border-gray-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-400 bg-gray-50/50 text-gray-700"
+                              className="w-full p-2 border border-gray-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-400 bg-gray-50/50 text-gray-700"
                               autoFocus
                             />
                             {commessaTextQuery && (
                               <button
                                 type="button"
                                 onClick={() => setCommessaTextQuery('')}
-                                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs font-black"
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-650 text-xs font-black"
                               >
                                 ✕
                               </button>
                             )}
                           </div>
-                          <div className="overflow-y-auto max-h-56 divide-y divide-gray-50 pr-1 scrollbar-thin">
+                          
+                          <div className="flex justify-between items-center text-[10px] font-bold text-blue-600 border-b pb-1.5 shrink-0 px-1">
                             <button
                               type="button"
                               onClick={() => {
-                                handleSelectCommessaFilter('');
-                                setCommessaTextQuery('');
-                                setIsCommessaDropdownOpen(false);
+                                const filteredComms = commesse.filter(c => {
+                                  const query = commessaTextQuery.toLowerCase().trim();
+                                  if (!query) return true;
+                                  return (c.nome || '').toLowerCase().includes(query) || (c.cliente || '').toLowerCase().includes(query);
+                                });
+                                setSelectedCommessaIdsFilter(filteredComms.map(c => c.id));
                               }}
-                              className="w-full text-left p-2.5 hover:bg-blue-50 text-xs font-bold text-blue-600 transition-colors cursor-pointer rounded-lg"
+                              className="hover:underline cursor-pointer"
                             >
-                              -- Mostra Tutte le Commesse --
+                              Seleziona tutti filtrati
                             </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedCommessaIdsFilter([]);
+                              }}
+                              className="hover:underline text-red-655 cursor-pointer"
+                            >
+                              Deseleziona tutti
+                            </button>
+                          </div>
+
+                          <div className="overflow-y-auto max-h-48 divide-y divide-gray-50 pr-1 scrollbar-thin">
                             {(() => {
                               const search = commessaTextQuery.toLowerCase().trim();
-                              let allowedCommesse = commesse;
                               
+                              let listToDisplay = commesse;
                               if (!isAdmin && !isSenior && myAssociatedName) {
                                 const assignedCommessaIds = new Set<string>();
                                 Object.entries(assignments).forEach(([key, listAss]) => {
@@ -900,7 +1004,7 @@ export default function Commesse() {
                                     });
                                   }
                                 });
-                                allowedCommesse = commesse.filter(c => {
+                                listToDisplay = commesse.filter(c => {
                                   const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
                                   const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
                                   return assignedCommessaIds.has(c.id) ||
@@ -909,73 +1013,74 @@ export default function Commesse() {
                                 });
                               }
 
-                              const filtered = allowedCommesse.filter(c => {
+                              const filtered = listToDisplay.filter(c => {
                                 const name = (c.nome || '').toLowerCase();
-                                const code = (c.codiceCommessa || '').toLowerCase();
                                 const client = (c.cliente || '').toLowerCase();
-                                const resp = (c.responsabile || '').toLowerCase();
-                                const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
-                                const pm = pmArray.join(', ').toLowerCase();
-                                const tipologia = (c.tipologia || '').toLowerCase();
-                                const anno = (c.anno || '').toLowerCase();
-                                return name.includes(search) ||
-                                       code.includes(search) ||
-                                       client.includes(search) ||
-                                       resp.includes(search) ||
-                                       pm.includes(search) ||
-                                       tipologia.includes(search) ||
-                                       anno.includes(search);
-                              });
+                                return name.includes(search) || client.includes(search);
+                              }).sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
 
                               if (filtered.length === 0) {
                                 return <div className="p-3 text-xs text-gray-400 italic font-bold">Nessuna commessa trovata</div>;
                               }
 
-                              return filtered.map(c => (
-                                <button
-                                  key={c.id}
-                                  type="button"
-                                  onClick={() => {
-                                    handleSelectCommessaFilter(c.id);
-                                    setCommessaTextQuery('');
-                                    setIsCommessaDropdownOpen(false);
-                                  }}
-                                  className="w-full text-left p-2.5 hover:bg-blue-50 text-xs font-semibold text-gray-700 transition-colors flex flex-col gap-0.5 cursor-pointer rounded-lg"
-                                >
-                                  <div className="flex items-center gap-2">
-                                    <span className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor: TIPOLOGIA_COLORS[c.tipologia || ''] || c.colore || '#64748b'}}></span>
-                                    <span className="font-bold text-gray-800 truncate">{c.nome}</span>
-                                  </div>
-                                  {c.cliente && (
-                                    <span className="text-[10px] text-gray-400 font-bold ml-4">Cliente: {c.cliente}</span>
-                                  )}
-                                </button>
-                              ));
+                              return filtered.map(c => {
+                                const isChecked = selectedCommessaIdsFilter.includes(c.id);
+                                return (
+                                  <label
+                                    key={c.id}
+                                    className="flex items-center gap-2.5 p-2 hover:bg-blue-50/50 text-xs font-semibold text-gray-700 transition-colors cursor-pointer rounded-lg select-none"
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={isChecked}
+                                      onChange={() => toggleCommessaIdFilter(c.id)}
+                                      className="rounded text-blue-600 focus:ring-blue-400 border-gray-300 w-3.5 h-3.5"
+                                    />
+                                    <span className="truncate" title={c.nome}>{c.nome}</span>
+                                  </label>
+                                );
+                              });
                             })()}
                           </div>
                         </div>
                       </>
                     )}
                   </div>
+
+                  {/* Pulsante Azzera Tutti i Filtri */}
+                  {(selectedClientFilter || selectedPMFilter || selectedTipologiaFilter || selectedCommessaIdsFilter.length > 0) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedClientFilter('');
+                        setSelectedPMFilter('');
+                        setSelectedTipologiaFilter('');
+                        setSelectedCommessaIdsFilter([]);
+                      }}
+                      className="px-3 py-2 text-xs font-bold text-red-655 hover:text-red-705 bg-red-50 hover:bg-red-100 rounded-xl transition border border-red-100 shadow-sm shrink-0 h-[38px] active:scale-95 cursor-pointer"
+                    >
+                      Azzera Filtri
+                    </button>
+                  )}
                   
                   {/* Show timeline info */}
-                  {selectedCommessaFilter && (
+                  {selectedCommessaIdsFilter.length === 1 && (
                     <div className="flex flex-col justify-end h-[38px]">
-                      <div className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-3 py-2 rounded-xl flex items-center gap-1.5 h-full">
+                      <div className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-3.5 py-2 rounded-xl flex items-center gap-1.5 h-full">
                         <Calendar className="w-3.5 h-3.5" />
-                        Mostrato intero arco temporale della commessa.
+                        Arco temporale commessa attivo.
                       </div>
                     </div>
                   )}
                 </div>
 
                 {/* Navigation Controls */}
-                {!selectedCommessaFilter && (
+                {selectedCommessaIdsFilter.length !== 1 && (
                   <div className="flex items-center gap-3">
                     <div className="flex items-center gap-1 bg-white p-1.5 rounded-xl border border-gray-200 shadow-sm">
-                      <button onClick={() => shiftPeriod(-zoomWeeks)} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-600 transition" title="Indietro"><ChevronLeft className="w-4 h-4" /></button>
+                      <button onClick={() => shiftPeriod(-zoomWeeks)} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-655 transition" title="Indietro"><ChevronLeft className="w-4 h-4" /></button>
                       <button onClick={resetToToday} className="px-3 py-1.5 text-xs font-extrabold text-gray-700 hover:bg-gray-100 rounded-lg transition">Oggi</button>
-                      <button onClick={() => shiftPeriod(zoomWeeks)} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-600 transition" title="Avanti"><ChevronRight className="w-4 h-4" /></button>
+                      <button onClick={() => shiftPeriod(zoomWeeks)} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-655 transition" title="Avanti"><ChevronRight className="w-4 h-4" /></button>
                       <div className="h-5 w-px bg-gray-200 mx-1"></div>
                       <input 
                         type="date" 
@@ -992,8 +1097,7 @@ export default function Commesse() {
                 )}
               </div>
             </div>
-
-            {/* Load Grid Wrapper with clipping for rounded corners */}
+{/* Load Grid Wrapper with clipping for rounded corners */}
             <div className="w-full flex-1 overflow-hidden rounded-b-2xl flex flex-col">
               <div className="w-full overflow-auto scrollbar-thin flex-1">
                 <table className="w-full text-left border-separate border-spacing-0 text-xs">
@@ -1002,7 +1106,7 @@ export default function Commesse() {
                   <tr className="bg-gray-50 border-b text-[11px] font-black text-gray-500 text-center uppercase tracking-wider" style={{ height: '40px' }}>
                     <th 
                       className="p-0 pl-2.5 text-left sticky left-0 top-0 z-35 bg-gray-50 shadow-[1px_0_0_0_#e5e7eb] font-black truncate"
-                      style={{ width: '180px', minWidth: '180px', maxWidth: '180px', height: '40px', lineHeight: '40px' }}
+                      style={{ width: '240px', minWidth: '240px', maxWidth: '240px', height: '40px', lineHeight: '40px' }}
                     >
                       Mesi
                     </th>
@@ -1016,7 +1120,7 @@ export default function Commesse() {
                   <tr className="h-12">
                     <th 
                       className="p-4 font-extrabold text-gray-900 sticky left-0 z-35 bg-white shadow-[1px_0_0_0_#e5e7eb] h-12 truncate"
-                      style={{ width: '180px', minWidth: '180px', maxWidth: '180px', top: '39px' }}
+                      style={{ width: '240px', minWidth: '240px', maxWidth: '240px', top: '39px' }}
                     >
                       Commesse e Clienti
                     </th>
@@ -1047,176 +1151,152 @@ export default function Commesse() {
                   </tr>
                 </thead>
                 
-                {groupedCommesse.length === 0 ? (
+                                {filteredCommesse.length === 0 ? (
                   <tbody className="divide-y divide-gray-100 font-medium">
                     <tr>
                       <td colSpan={activeWeeks.length + 1} className="p-12 text-center text-gray-400 font-bold italic">
-                        {!isAdmin && !isSenior ? "Non sei assegnato a nessuna commessa in questo periodo." : "Nessuna commessa registrata a catalogo."}
+                        {!isAdmin && !isSenior ? "Non sei assegnato a nessuna commessa in questo periodo." : "Nessuna commessa trovata con i filtri selezionati."}
                       </td>
                     </tr>
                   </tbody>
                 ) : (
-                  groupedCommesse.map(group => {
-                    return (
-                      <tbody key={group.clientName} className="divide-y divide-gray-105 font-medium">
-                        {/* CLIENT HEADER ROW */}
-                        {group.clientName && group.clientName.toUpperCase() !== 'ALTRI CLIENTI' && group.clientName.toUpperCase() !== 'VARI' && (
-                          <tr 
-                            onClick={() => toggleClientCollapse(group.clientName)}
-                            className="bg-gray-50 font-black text-gray-800 text-xs select-none cursor-pointer hover:bg-gray-100 transition-colors"
+                  <tbody className="divide-y divide-gray-105 font-medium bg-white">
+                    {filteredCommesse.map(comm => {
+                      return (
+                        <tr key={comm.id} className="hover:bg-blue-50/20 transition-colors bg-white">
+                          <td 
+                            className="p-3 font-bold text-gray-800 bg-white sticky left-0 z-10 shadow-[1px_0_0_0_#f3f4f6] border-b align-middle text-left"
+                            style={{ width: '240px', minWidth: '240px', maxWidth: '240px' }}
                           >
-                            <td colSpan={activeWeeks.length + 1} className="p-3.5 pl-6 text-left border-b border-gray-200 uppercase bg-gray-100 sticky left-0 z-20" style={{ top: '87px' }}>
-                              <div className="flex items-center gap-2">
-                                <span className="text-[10px] text-gray-500 w-3 text-center">{collapsedClients[group.clientName] ? '▶' : '▼'}</span>
-                                <span className="text-[13px] font-black">Cliente: {group.clientName}</span>
-                                <span className="text-[11px] text-gray-450 font-bold ml-1">({group.commesseList.length} {group.commesseList.length === 1 ? 'commessa' : 'commesse'})</span>
-                              </div>
-                            </td>
-                          </tr>
-                        )}
-                        {group.commesseList.map(comm => {
-                          if (collapsedClients[group.clientName]) return null;
-                          return (
-                            <tr key={comm.id} className="hover:bg-blue-50/20 transition-colors bg-white">
-                            <td 
-                              className="p-4 font-bold text-gray-800 bg-white sticky left-0 z-10 shadow-[1px_0_0_0_#f3f4f6] border-b align-middle text-left truncate"
-                              style={{ width: '180px', minWidth: '180px', maxWidth: '180px' }}
-                            >
-                              <div className="flex items-center gap-3">
-                                <span className="w-3.5 h-3.5 rounded-full shadow-inner shrink-0" style={{backgroundColor: (comm.tipologia && TIPOLOGIA_COLORS[comm.tipologia]) || comm.colore || '#64748b'}}></span>
-                                <div className="min-w-0 flex-1 text-left">
-                                  <div className="flex items-center gap-1.5 justify-between">
-                                    <div className="truncate font-extrabold text-sm text-gray-800" title={comm.nome}>{comm.nome}</div>
-                                    {(() => {
-                                      const pmArray = Array.isArray(comm.pm) ? comm.pm : (comm.pm ? [comm.pm] : []);
-                                      const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
-                                      const isResp = areNamesEqual(comm.responsabile, myAssociatedName);
-                                      const canEdit = isAdmin || isSenior || isPM || isResp;
-                                      
-                                      return canEdit && (
-                                        <button 
-                                          onClick={() => handleOpenEditModal(comm)}
-                                          className="text-gray-400 hover:text-blue-600 p-1 rounded transition-colors shrink-0 cursor-pointer"
-                                          title="Modifica dettagli (Responsabile, PM, Date)"
-                                        >
-                                          <Pencil className="w-3.5 h-3.5" />
-                                        </button>
-                                      );
-                                    })()}
-                                  </div>
-                                  {comm.dataInizio && comm.dataFine ? (
-                                    <div className="text-[10px] text-gray-400 font-bold mt-0.5 truncate" title={`${formatDate(comm.dataInizio)} - ${formatDate(comm.dataFine)}`}>
-                                      Periodo: {formatDate(comm.dataInizio)} - {formatDate(comm.dataFine)}
-                                    </div>
-                                  ) : (
-                                    <div className="text-[10px] text-orange-500 font-bold mt-0.5 truncate">
-                                      Nessun periodo impostato
-                                    </div>
-                                  )}
-                                  {(comm.responsabile || comm.pm) ? (
-                                    <div className="text-[9.5px] text-gray-500 font-semibold mt-1 truncate" title={`${comm.responsabile ? `Resp: ${comm.responsabile}` : ''}${comm.pm ? ` | PM: ${comm.pm}` : ''}`}>
-                                      {comm.responsabile && `Resp: ${comm.responsabile}`} {comm.pm && ` | PM: ${comm.pm}`}
-                                    </div>
-                                  ) : (
-                                    <div className="text-[9.5px] text-gray-455 font-medium mt-1 italic truncate">
-                                      Resp/PM non assegnati
-                                    </div>
-                                  )}
+                            <div className="flex items-center gap-2">
+                              <span className="w-3 h-3 rounded-full shadow-inner shrink-0" style={{backgroundColor: (comm.tipologia && TIPOLOGIA_COLORS[comm.tipologia]) || comm.colore || '#64748b'}}></span>
+                              <div className="min-w-0 flex-1 text-left">
+                                <div className="flex items-center gap-1.5 justify-between">
+                                  <div className="whitespace-normal break-words font-extrabold text-xs text-gray-800" title={comm.nome}>{comm.nome}</div>
+                                  {(() => {
+                                    const pmArray = Array.isArray(comm.pm) ? comm.pm : (comm.pm ? [comm.pm] : []);
+                                    const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
+                                    const isResp = areNamesEqual(comm.responsabile, myAssociatedName);
+                                    const canEdit = isAdmin || isSenior || isPM || isResp;
+                                    
+                                    return canEdit && (
+                                      <button 
+                                        onClick={() => handleOpenEditModal(comm)}
+                                        className="text-gray-400 hover:text-blue-600 p-1 rounded transition-colors shrink-0 cursor-pointer"
+                                        title="Modifica dettagli (Responsabile, PM, Date)"
+                                      >
+                                        <Pencil className="w-3 h-3" />
+                                      </button>
+                                    );
+                                  })()}
                                 </div>
+                                <div className="text-[9.5px] text-indigo-655 font-bold italic mt-0.5">
+                                  💼 Cliente: {comm.cliente || 'Nessun cliente'}
+                                </div>
+                                {comm.dataInizio && comm.dataFine ? (
+                                  <div className="text-[9.5px] text-gray-400 font-bold mt-0.5 truncate" title={`${formatDate(comm.dataInizio)} - ${formatDate(comm.dataFine)}`}>
+                                    Periodo: {formatDate(comm.dataInizio)} - {formatDate(comm.dataFine)}
+                                  </div>
+                                ) : (
+                                  <div className="text-[9.5px] text-orange-500 font-bold mt-0.5 truncate">
+                                    Nessun periodo impostato
+                                  </div>
+                                )}
+                                {(comm.responsabile || comm.pm) ? (
+                                  <div className="text-[9px] text-gray-500 font-semibold mt-1 truncate" title={`${comm.responsabile ? `Resp: ${comm.responsabile}` : ''}${comm.pm ? ` | PM: ${comm.pm}` : ''}`}>
+                                    {comm.responsabile && `Resp: ${comm.responsabile}`} {comm.pm && ` | PM: ${comm.pm}`}
+                                  </div>
+                                ) : (
+                                  <div className="text-[9px] text-gray-455 font-medium mt-1 italic truncate">
+                                    Resp/PM non assegnati
+                                  </div>
+                                )}
                               </div>
-                            </td>
-                            {activeWeeks.map((wk, wIndex) => {
-                              const assignedPeople = getAssignmentsForCommessaInWeek(comm.id, wk.id);
-                              const isCurrentWeek = wk.id === `${new Date().getFullYear()}-W${getWeekNumber(new Date())}`;
-                              const isWithinRange = isWeekWithinRange(wk.dateObj, comm.dataInizio, comm.dataFine);
-                              const commColor = (comm.tipologia && TIPOLOGIA_COLORS[comm.tipologia]) || comm.colore || '#3b82f6';
-                              const cellBg = isWithinRange ? hexToRgba(commColor, 0.08) : undefined;
-                              return (
-                                <td 
-                                  key={wIndex} 
-                                  className={`${isUltraNarrow ? 'p-1' : isNarrow ? 'p-1.5' : 'p-3'} border-l border-b border-gray-100 align-top ${isCurrentWeek ? 'ring-2 ring-inset ring-blue-300' : ''}`}
-                                  style={{ backgroundColor: cellBg, minWidth: weekColumnMinWidth, width: weekColumnMinWidth }}
+                            </div>
+                          </td>
+                          {activeWeeks.map((wk, wIndex) => {
+                            const assignedPeople = getAssignmentsForCommessaInWeek(comm.id, wk.id);
+                            const isCurrentWeek = wk.id === `${new Date().getFullYear()}-W${getWeekNumber(new Date())}`;
+                            const isWithinRange = isWeekWithinRange(wk.dateObj, comm.dataInizio, comm.dataFine);
+                            const commColor = (comm.tipologia && TIPOLOGIA_COLORS[comm.tipologia]) || comm.colore || '#3b82f6';
+                            const cellBg = isWithinRange ? hexToRgba(commColor, 0.08) : undefined;
+                            return (
+                              <td 
+                                key={wIndex} 
+                                className={`${isUltraNarrow ? 'p-1' : 'p-2'} border-l border-b border-gray-100 align-top ${isCurrentWeek ? 'ring-2 ring-inset ring-blue-300' : ''}`}
+                                style={{ backgroundColor: cellBg, minWidth: weekColumnMinWidth, width: weekColumnMinWidth }}
+                              >
+                                <div 
+                                  className="flex flex-col"
+                                  style={{ 
+                                    minHeight: isNarrow ? '30px' : '40px', 
+                                    gap: '4px' 
+                                  }}
                                 >
-                                  <div 
-                                    className="flex flex-col"
-                                    style={{ 
-                                      minHeight: isNarrow ? '40px' : '66px', 
-                                      gap: isUltraNarrow ? '2px' : isNarrow ? '4px' : '6px' 
-                                    }}
-                                  >
-                                    {assignedPeople.map((person, pIdx) => {
-                                      const hours = Math.round(person.pct * 40 / 100);
-                                      const leaves = getLeavesForResourceInWeek(person.name, wk.id);
-                                      const hasLeaves = leaves.length > 0;
-                                      const tooltipText = `${person.name} - Impegno: ${person.pct}% (${hours}h)${hasLeaves ? `\nAssenze: ${leaves.map(l => `${l.giorno} (${l.dettagli})`).join(', ')}` : ''}`;
+                                  {assignedPeople.map((person, pIdx) => {
+                                    const hours = Math.round(person.pct * 40 / 100);
+                                    const leaves = getLeavesForResourceInWeek(person.name, wk.id);
+                                    const hasLeaves = leaves.length > 0;
+                                    const leavesStr = leaves.map(l => `${l.giorno}: ${l.tipo === 'ferie' ? 'Ferie' : l.tipo === 'malattia' ? 'Malattia' : l.tipo === 'permesso' ? 'Permesso' : 'Assenza'}${l.dettagli ? ` (${l.dettagli})` : ''}`).join(', ');
+                                    const tooltipText = `${person.name} - Impegno: ${person.pct}% (${hours}h)${hasLeaves ? `\nAssenze: ${leavesStr}` : ''}`;
 
-                                      if (isUltraNarrow) {
-                                        return (
-                                          <div 
-                                            key={pIdx} 
-                                            className={`text-[9px] font-black text-center py-1 px-0.5 rounded-md border flex items-center justify-center shadow-sm select-none ${
-                                              hasLeaves 
-                                                ? 'bg-rose-50 text-rose-800 border-rose-200 ring-1 ring-rose-300' 
-                                                : 'bg-indigo-50 text-indigo-900 border-indigo-150'
-                                            }`}
-                                            title={tooltipText}
-                                          >
-                                            {person.pct}%
-                                          </div>
-                                        );
-                                      }
-
-                                      if (isNarrow) {
-                                        const initials = getInitials(person.name);
-                                        return (
-                                          <div 
-                                            key={pIdx} 
-                                            className={`text-[10px] font-bold py-1 px-1.5 rounded-md border flex items-center justify-between gap-1 shadow-sm truncate select-none w-full ${
-                                              hasLeaves 
-                                                ? 'bg-rose-50 text-rose-800 border-rose-200' 
-                                                : 'bg-indigo-50 text-indigo-900 border-indigo-150'
-                                            }`}
-                                            title={tooltipText}
-                                          >
-                                            <span className="truncate text-left">{initials}</span>
-                                            <span className="font-extrabold text-[9px] text-indigo-600 shrink-0 text-right">{person.pct}% ({hours}h)</span>
-                                            {hasLeaves && <span className="text-[8px] text-red-500 shrink-0 ml-0.5">⚠️</span>}
-                                          </div>
-                                        );
-                                      }
-
+                                    if (isUltraNarrow) {
                                       return (
                                         <div 
                                           key={pIdx} 
-                                          className="text-[11px] bg-indigo-50/80 text-indigo-950 p-2 rounded-lg border border-indigo-100/60 flex flex-col shadow-sm gap-0.5 w-full"
+                                          className={`text-[9px] font-black text-center py-1 px-0.5 rounded-md border flex items-center justify-center shadow-sm select-none ${
+                                            hasLeaves 
+                                              ? 'bg-rose-50 text-rose-800 border-rose-200 ring-1 ring-rose-300' 
+                                              : 'bg-indigo-50 text-indigo-900 border-indigo-150'
+                                          }`}
                                           title={tooltipText}
                                         >
-                                          <div className="flex justify-between items-center font-bold">
-                                            <span className="truncate pr-1 text-left">{person.name}</span>
-                                            <span className="text-indigo-600 font-black text-right whitespace-nowrap">{person.pct}% ({hours}h)</span>
-                                          </div>
-                                          {leaves.length > 0 && (
-                                            <div className="mt-1 pt-1 border-t border-red-100 text-[9.5px] text-red-600 font-bold flex flex-col gap-0.5">
-                                              {leaves.map((l, lIdx) => (
-                                                <span key={lIdx} className="flex items-center gap-0.5 truncate" title={`${l.giorno}: ${l.dettagli}`}>
-                                                  ⚠️ {l.giorno}: {l.tipo === 'ferie' ? 'F' : (l.tipo === 'malattia' || l.tipo === 'maternita') ? 'M' : l.tipo === 'permesso' ? 'P' : 'A'}
-                                                </span>
-                                              ))}
-                                            </div>
-                                          )}
+                                          {person.pct}%
                                         </div>
                                       );
-                                    })}
-                                  </div>
-                                </td>
-                              );
-                            })}
-                          </tr>
-                          );
-                        })}
-                      </tbody>
-                    );
-                  })
+                                    }
+
+                                    if (isNarrow) {
+                                      const initials = getInitials(person.name);
+                                      return (
+                                        <div 
+                                          key={pIdx} 
+                                          className={`text-[10px] font-bold py-1 px-1.5 rounded-md border flex items-center justify-between gap-1 shadow-sm truncate select-none w-full ${
+                                            hasLeaves 
+                                              ? 'bg-rose-50 text-rose-800 border-rose-200' 
+                                              : 'bg-indigo-50 text-indigo-900 border-indigo-150'
+                                          }`}
+                                          title={tooltipText}
+                                        >
+                                          <span className="truncate text-left">{initials}</span>
+                                          <span className="font-extrabold text-[9px] text-indigo-655 shrink-0 text-right">{person.pct}% ({hours}h)</span>
+                                          {hasLeaves && <span className="text-[8px] text-red-500 shrink-0 ml-0.5">⚠️</span>}
+                                        </div>
+                                      );
+                                    }
+
+                                    return (
+                                      <div 
+                                        key={pIdx} 
+                                        className="text-[11px] bg-indigo-50/80 text-indigo-950 p-1.5 rounded-lg border border-indigo-100/60 flex items-center justify-between gap-1 shadow-sm w-full select-none"
+                                        title={tooltipText}
+                                      >
+                                        <div className="flex items-center gap-1 min-w-0 flex-1">
+                                          {hasLeaves && <span className="text-[11px] shrink-0 text-amber-500" title={`Assenze: ${leavesStr}`}>⚠️</span>}
+                                          <span className="truncate font-bold text-left">{person.name}</span>
+                                        </div>
+                                        <span className="text-indigo-650 font-black shrink-0 text-right text-[10px]">{person.pct}% ({hours}h)</span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
                 )}
               </table>
             </div>

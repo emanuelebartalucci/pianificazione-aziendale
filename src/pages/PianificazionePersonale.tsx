@@ -411,6 +411,15 @@ export default function PianificazionePersonale() {
   const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
   const [selectedDisegnatoriPerRichiesta, setSelectedDisegnatoriPerRichiesta] = useState<Record<string, string>>({});
 
+  const openRequestModalWithSelection = () => {
+    setReqCommessaId(selectedCommessaId);
+    setReqDataInizio(allocDataInizio);
+    setReqDataFine(allocDataFine);
+    setReqPercentuale(100);
+    setReqNota('');
+    setIsRequestModalOpen(true);
+  };
+
   const getWeekId = (d: Date): string => {
     const date = new Date(d.getTime());
     date.setDate(date.getDate() + 3 - (date.getDay() + 6) % 7);
@@ -819,7 +828,7 @@ export default function PianificazionePersonale() {
         setConfirmConfig({
           isOpen: true,
           title: '⚠️ Avviso Conflitto Assenze',
-          message: `L'assegnazione per ${resName} è stata registrata in bozza, ma si segnala che nel periodo selezionato la risorsa ha registrato ferie o permessi nelle seguenti date: ${blockedDatesArray.join(', ')}.`,
+          message: `L'assegnazione per ${resName} è stata registrata in bozza, ma si segnala che nel periodo selezionato la risorsa ha registrato ferie o permessi.`,
           type: 'warning',
           onConfirm: () => setConfirmConfig(prev => ({ ...prev, isOpen: false }))
         });
@@ -1075,7 +1084,7 @@ export default function PianificazionePersonale() {
           const blockedDates = getBlockedDatesForResource(resName, allocDataInizio, allocDataFine);
           const blockedDatesArray = Object.keys(blockedDates);
           if (blockedDatesArray.length > 0) {
-            conflictedResources.push(`${resName} (${blockedDatesArray.length} gg)`);
+            conflictedResources.push(resName);
           }
 
           for (const wkId of targetWeekIds) {
@@ -1260,7 +1269,7 @@ export default function PianificazionePersonale() {
           setConfirmConfig({
             isOpen: true,
             title: '⚠️ Avviso Conflitto Sostituzione',
-            message: `La sostituzione è stata registrata in bozza, ma si segnala che nel periodo selezionato la risorsa sostitutiva ${targetResource} ha registrato ferie o permessi nelle seguenti date: ${blockedDatesArrayB.join(', ')}.`,
+            message: `La sostituzione è stata registrata in bozza, ma si segnala che nel periodo selezionato la risorsa sostitutiva ${targetResource} ha registrato ferie o permessi.`,
             type: 'warning',
             onConfirm: () => setConfirmConfig(prev => ({ ...prev, isOpen: false }))
           });
@@ -1824,6 +1833,11 @@ export default function PianificazionePersonale() {
           <div className="p-3 bg-indigo-100 rounded-2xl"><Users className="text-indigo-600 w-8 h-8" /></div>
           <div className="flex items-center gap-3">
             <span>Pianificazione del Personale e Carichi</span>
+            {(isAdmin || isSoci(myAssociatedName) || coordinatori.some(c => c.email.toLowerCase() === user?.email?.toLowerCase() && c.area === 'Disegnatori')) && richiesteDisegnatori.filter(r => r.stato === 'in_attesa').length > 0 && (
+              <span className="bg-red-500 text-white text-[10px] font-black px-2 py-1 rounded-full shadow-sm animate-pulse ml-2">
+                {richiesteDisegnatori.filter(r => r.stato === 'in_attesa').length} RICHIESTE IN ATTESA
+              </span>
+            )}
             <button 
               onClick={() => window.location.reload()}
               title="Aggiorna Dati"
@@ -1833,14 +1847,6 @@ export default function PianificazionePersonale() {
             </button>
           </div>
         </h2>
-        <div className="flex items-center gap-3 no-print">
-          <button
-            onClick={() => setIsRequestModalOpen(true)}
-            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-750 text-white px-5 py-2.5 rounded-2xl font-bold text-xs shadow-md active:scale-95 transition-all cursor-pointer"
-          >
-            <span>✉️</span> Richiedi Disegnatore
-          </button>
-        </div>
       </div>
 
       {/* SEZIONE BLINDATA: GESTIONE RICHIESTE DISEGNATORI */}
@@ -2061,7 +2067,8 @@ export default function PianificazionePersonale() {
                         {(() => {
                           const search = commessaSearchText.toLowerCase();
                           const filtered = selectableCommesse.filter(c =>
-                            c.nome.toLowerCase().includes(search)
+                            c.nome.toLowerCase().includes(search) ||
+                            (c.cliente && c.cliente.toLowerCase().includes(search))
                           );
                           if (filtered.length === 0) {
                             return <div className="p-3 text-xs text-gray-450 italic font-bold">Nessuna commessa abilitata trovata</div>;
@@ -2070,16 +2077,17 @@ export default function PianificazionePersonale() {
                             <button
                               key={c.id}
                               type="button"
+                              title={c.nome}
                               onClick={() => {
                                 setSelectedCommessaId(c.id);
                                 setCommessaSearchText(c.nome);
                                 setIsCommessaDropdownOpen(false);
                               }}
-                              className="w-full text-left p-3 hover:bg-indigo-50 text-xs font-semibold text-gray-700 transition-colors flex justify-between items-center cursor-pointer"
+                              className="w-full text-left px-3 py-2 hover:bg-indigo-50 text-xs font-semibold text-gray-700 transition-colors flex flex-col gap-0.5 cursor-pointer"
                             >
-                              <span className="truncate pr-2">{c.nome}</span>
-                              <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-black shrink-0">
-                                {c.codiceCommessa || c.nome.split(' - ')[0]}
+                              <span className="truncate w-full font-bold text-gray-800">{c.nome}</span>
+                              <span className="text-[9.5px] text-indigo-650 font-semibold italic">
+                                💼 Cliente: {c.cliente || 'Nessun cliente'}
                               </span>
                             </button>
                           ));
@@ -2126,136 +2134,149 @@ export default function PianificazionePersonale() {
                 </div>
               </div>
 
-              {/* Colonna 2 & 3: Risorse Assegnate & Non Assegnate */}
+                            {/* Colonna 2 & 3: Risorse Assegnate & Non Assegnate */}
               <div className="lg:col-span-2 space-y-6">
                 {!selectedCommessaId || !allocDataInizio || !allocDataFine ? (
                   <div className="bg-white/50 border border-dashed border-indigo-200 rounded-2xl p-8 text-center text-xs font-bold text-indigo-900/60 flex items-center justify-center h-full min-h-[200px]">
                     ⚠️ Seleziona una commessa e un periodo di date per visualizzare e gestire le risorse assegnate.
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {/* Lista Risorse Assegnate */}
-                    <div className="bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col max-h-[420px]">
-                      <h4 className="font-bold text-sm text-indigo-900 border-b pb-2 mb-3">
-                        👥 Risorse Assegnate ({risorseAssegnateAllaCommessa.length})
-                      </h4>
-                      <div className="overflow-y-auto flex-1 space-y-2 pr-1 scrollbar-thin">
-                        {risorseAssegnateAllaCommessa.length === 0 ? (
-                          <p className="text-xs text-gray-405 italic p-3 text-center">Nessuna risorsa assegnata in questo periodo.</p>
-                        ) : (
-                          risorseAssegnateAllaCommessa.map(r => {
-                            const pcts = Object.values(r.percentuali);
-                            const minPct = Math.min(...pcts);
-                            const maxPct = Math.max(...pcts);
-                            const displayPct = minPct === maxPct ? `${minPct}%` : `${minPct}% - ${maxPct}%`;
-                            
-                            return (
-                              <div key={r.nome} className="flex justify-between items-center p-2.5 bg-white rounded-xl border border-indigo-50 shadow-sm hover:border-indigo-100 transition-colors">
-                                <div className="flex flex-col gap-0.5 truncate pr-2">
-                                  <span className="font-bold text-xs text-gray-850 truncate">{r.nome}</span>
-                                  {displayPct && <span className="text-[10px] font-black text-indigo-650">Impegno commessa: {displayPct}</span>}
+                  <div className="space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {/* Altre Risorse (Non Assegnate) */}
+                      <div className="bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col max-h-[420px]">
+                        <h4 className="font-bold text-sm text-indigo-900 border-b pb-2 mb-3">
+                          ➕ Aggiungi Risorsa ({risorseNonAssegnateAllaCommessa.length})
+                        </h4>
+                        <div className="mb-2 shrink-0">
+                          <input 
+                            type="text" 
+                            placeholder="Filtra dipendenti..." 
+                            value={searchQuery}
+                            onChange={e => setSearchQuery(e.target.value)}
+                            className="w-full p-2 border border-indigo-100 bg-white rounded-xl text-xs outline-none focus:ring-1 focus:ring-indigo-400 shadow-inner font-bold text-gray-700"
+                          />
+                        </div>
+                        <div className="overflow-y-auto flex-1 space-y-2 pr-1 scrollbar-thin">
+                          {risorseNonAssegnateAllaCommessa.length === 0 ? (
+                            <p className="text-xs text-gray-405 italic p-3 text-center">Tutte le risorse sono assegnate.</p>
+                          ) : (
+                            risorseNonAssegnateAllaCommessa.map(r => {
+                              const currentPct = assignPercentageMap[r.nome] || '100';
+                              return (
+                                <div key={r.nome} className="flex justify-between items-center p-2.5 bg-white rounded-xl border border-indigo-50 shadow-sm hover:border-indigo-100 transition-colors">
+                                  <span className="font-bold text-xs text-gray-750 truncate pr-2">{r.nome}</span>
+                                  <div className="flex items-center gap-2">
+                                    <select
+                                      value={currentPct}
+                                      onChange={e => {
+                                        const val = e.target.value;
+                                        setAssignPercentageMap(prev => ({ ...prev, [r.nome]: val }));
+                                      }}
+                                      className="p-1 border border-gray-200 rounded-lg bg-white font-bold text-[10px] text-gray-700 outline-none focus:border-indigo-400"
+                                    >
+                                      {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
+                                        <option key={pct} value={pct}>{pct}%</option>
+                                      ))}
+                                    </select>
+                                    <button
+                                      type="button"
+                                      disabled={savingAllocations}
+                                      onClick={async () => {
+                                        await executeAssignResourceToCommessa(r.nome, selectedCommessaId, parseInt(currentPct));
+                                      }}
+                                      className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-[10px] px-2.5 py-1.5 rounded-lg transition shadow-sm active:scale-95 disabled:opacity-50"
+                                    >
+                                      <Plus className="w-3.5 h-3.5" />
+                                      <span>Assegna</span>
+                                    </button>
+                                  </div>
                                 </div>
-                                <div className="flex items-center gap-2">
-                                  <select
-                                    value={pcts[0] || 100}
-                                    disabled={savingAllocations}
-                                    onChange={async (e) => {
-                                      await executeAssignResourceToCommessa(r.nome, selectedCommessaId, parseInt(e.target.value));
-                                    }}
-                                    className="p-1 border border-gray-200 rounded-lg bg-white font-bold text-[10px] text-gray-700 outline-none focus:border-indigo-400"
-                                  >
-                                    <option value="10">10%</option>
-                                    <option value="20">20%</option>
-                                    <option value="30">30%</option>
-                                    <option value="40">40%</option>
-                                    <option value="50">50%</option>
-                                    <option value="60">60%</option>
-                                    <option value="70">70%</option>
-                                    <option value="80">80%</option>
-                                    <option value="90">90%</option>
-                                    <option value="100">100%</option>
-                                  </select>
-                                  <button
-                                    type="button"
-                                    disabled={savingAllocations}
-                                    onClick={() => {
-                                      setConfirmConfig({
-                                        isOpen: true,
-                                        title: 'Rimozione Risorsa',
-                                        message: `Sei sicuro di voler rimuovere ${r.nome} da questa commessa per il periodo selezionato?`,
-                                        type: 'danger',
-                                        onConfirm: async () => {
-                                          await executeRemoveResourceFromCommessa(r.nome, selectedCommessaId);
-                                          setConfirmConfig(prev => ({ ...prev, isOpen: false }));
-                                        }
-                                      });
-                                    }}
-                                    className="text-red-500 hover:text-red-750 hover:bg-red-55 p-1.5 rounded-lg transition-colors disabled:opacity-50"
-                                    title="Rimuovi risorsa da questa commessa"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
+                              );
+                            })
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Lista Risorse Assegnate */}
+                      <div className="bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col max-h-[420px]">
+                        <h4 className="font-bold text-sm text-indigo-900 border-b pb-2 mb-3">
+                          👥 Risorse Assegnate ({risorseAssegnateAllaCommessa.length})
+                        </h4>
+                        <div className="overflow-y-auto flex-1 space-y-2 pr-1 scrollbar-thin">
+                          {risorseAssegnateAllaCommessa.length === 0 ? (
+                            <p className="text-xs text-gray-405 italic p-3 text-center">Nessuna risorsa assegnata in questo periodo.</p>
+                          ) : (
+                            risorseAssegnateAllaCommessa.map(r => {
+                              const pcts = Object.values(r.percentuali);
+                              const minPct = Math.min(...pcts);
+                              const maxPct = Math.max(...pcts);
+                              const displayPct = minPct === maxPct ? `${minPct}%` : `${minPct}% - ${maxPct}%`;
+                              
+                              return (
+                                <div key={r.nome} className="flex justify-between items-center p-2.5 bg-white rounded-xl border border-indigo-50 shadow-sm hover:border-indigo-100 transition-colors">
+                                  <div className="flex flex-col gap-0.5 truncate pr-2">
+                                    <span className="font-bold text-xs text-gray-850 truncate">{r.nome}</span>
+                                    {displayPct && <span className="text-[10px] font-black text-indigo-650">Impegno commessa: {displayPct}</span>}
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <select
+                                      value={pcts[0] || 100}
+                                      disabled={savingAllocations}
+                                      onChange={async (e) => {
+                                        await executeAssignResourceToCommessa(r.nome, selectedCommessaId, parseInt(e.target.value));
+                                      }}
+                                      className="p-1 border border-gray-200 rounded-lg bg-white font-bold text-[10px] text-gray-700 outline-none focus:border-indigo-400"
+                                    >
+                                      <option value="10">10%</option>
+                                      <option value="20">20%</option>
+                                      <option value="30">30%</option>
+                                      <option value="40">40%</option>
+                                      <option value="50">50%</option>
+                                      <option value="60">60%</option>
+                                      <option value="70">70%</option>
+                                      <option value="80">80%</option>
+                                      <option value="90">90%</option>
+                                      <option value="100">100%</option>
+                                    </select>
+                                    <button
+                                      type="button"
+                                      disabled={savingAllocations}
+                                      onClick={() => {
+                                        setConfirmConfig({
+                                          isOpen: true,
+                                          title: 'Rimozione Risorsa',
+                                          message: `Sei sicuro di voler rimuovere ${r.nome} da questa commessa per il periodo selezionato?`,
+                                          type: 'danger',
+                                          onConfirm: async () => {
+                                            await executeRemoveResourceFromCommessa(r.nome, selectedCommessaId);
+                                            setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+                                          }
+                                        });
+                                      }}
+                                      className="text-red-500 hover:text-red-750 hover:bg-red-55 p-1.5 rounded-lg transition-colors disabled:opacity-50"
+                                      title="Rimuovi risorsa da questa commessa"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  </div>
                                 </div>
-                              </div>
-                            );
-                          })
-                        )}
+                              );
+                            })
+                          )}
+                        </div>
                       </div>
                     </div>
 
-                    {/* Altre Risorse (Non Assegnate) */}
-                    <div className="bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col max-h-[420px]">
-                      <h4 className="font-bold text-sm text-indigo-900 border-b pb-2 mb-3">
-                        ➕ Aggiungi Risorsa ({risorseNonAssegnateAllaCommessa.length})
-                      </h4>
-                      <div className="mb-2 shrink-0">
-                        <input 
-                          type="text" 
-                          placeholder="Filtra dipendenti..." 
-                          value={searchQuery}
-                          onChange={e => setSearchQuery(e.target.value)}
-                          className="w-full p-2 border border-indigo-100 bg-white rounded-xl text-xs outline-none focus:ring-1 focus:ring-indigo-400 shadow-inner font-bold text-gray-700"
-                        />
-                      </div>
-                      <div className="overflow-y-auto flex-1 space-y-2 pr-1 scrollbar-thin">
-                        {risorseNonAssegnateAllaCommessa.length === 0 ? (
-                          <p className="text-xs text-gray-405 italic p-3 text-center">Tutte le risorse sono assegnate.</p>
-                        ) : (
-                          risorseNonAssegnateAllaCommessa.map(r => {
-                            const currentPct = assignPercentageMap[r.nome] || '100';
-                            return (
-                              <div key={r.nome} className="flex justify-between items-center p-2.5 bg-white rounded-xl border border-indigo-50 shadow-sm hover:border-indigo-100 transition-colors">
-                                <span className="font-bold text-xs text-gray-750 truncate pr-2">{r.nome}</span>
-                                <div className="flex items-center gap-2">
-                                  <select
-                                    value={currentPct}
-                                    onChange={e => {
-                                      const val = e.target.value;
-                                      setAssignPercentageMap(prev => ({ ...prev, [r.nome]: val }));
-                                    }}
-                                    className="p-1 border border-gray-200 rounded-lg bg-white font-bold text-[10px] text-gray-700 outline-none focus:border-indigo-400"
-                                  >
-                                    {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
-                                      <option key={pct} value={pct}>{pct}%</option>
-                                    ))}
-                                  </select>
-                                  <button
-                                    type="button"
-                                    disabled={savingAllocations}
-                                    onClick={async () => {
-                                      await executeAssignResourceToCommessa(r.nome, selectedCommessaId, parseInt(currentPct));
-                                    }}
-                                    className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-[10px] px-2.5 py-1.5 rounded-lg transition shadow-sm active:scale-95 disabled:opacity-50"
-                                  >
-                                    <Plus className="w-3.5 h-3.5" />
-                                    <span>Assegna</span>
-                                  </button>
-                                </div>
-                              </div>
-                            );
-                          })
-                        )}
-                      </div>
+                    {/* Pulsante Richiedi Disegnatore sotto la griglia */}
+                    <div className="flex justify-end pt-2">
+                      <button
+                        type="button"
+                        onClick={openRequestModalWithSelection}
+                        className="flex items-center gap-2 bg-teal-600 hover:bg-teal-700 text-white px-5 py-2.5 rounded-2xl font-bold text-xs shadow-md active:scale-95 transition-all cursor-pointer animate-in fade-in duration-200"
+                      >
+                        <span>✉️</span> Richiedi Disegnatore per questa Commessa
+                      </button>
                     </div>
                   </div>
                 )}
@@ -2356,7 +2377,7 @@ export default function PianificazionePersonale() {
                             await executeAssignResourceToCommessa(selectedResourceForTab, addCommessaId, parseInt(addPercentage));
                             setAddCommessaId('');
                           }}
-                          className="w-full flex items-center justify-center gap-2 bg-indigo-650 hover:bg-indigo-700 text-white font-black py-3 rounded-xl transition shadow-md active:scale-95 disabled:opacity-50 mt-2"
+                          className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black py-3 rounded-xl transition shadow-md active:scale-95 disabled:opacity-50 mt-2"
                         >
                           <Plus className="w-4 h-4" />
                           <span>Conferma ed Esegui Assegnazione</span>
@@ -2493,7 +2514,8 @@ export default function PianificazionePersonale() {
                           {(() => {
                             const search = commessaSearchText.toLowerCase();
                             const filtered = selectableCommesse.filter(c =>
-                              c.nome.toLowerCase().includes(search)
+                              c.nome.toLowerCase().includes(search) ||
+                              (c.cliente && c.cliente.toLowerCase().includes(search))
                             );
                             if (filtered.length === 0) {
                               return <div className="p-3 text-xs text-gray-450 italic font-bold">Nessuna commessa trovata</div>;
@@ -2502,16 +2524,17 @@ export default function PianificazionePersonale() {
                               <button
                                 key={c.id}
                                 type="button"
+                                title={c.nome}
                                 onClick={() => {
                                   setSelectedCommessaId(c.id);
                                   setCommessaSearchText(c.nome);
                                   setIsCommessaDropdownOpen(false);
                                 }}
-                                className="w-full text-left p-3 hover:bg-indigo-50 text-xs font-semibold text-gray-700 transition-colors flex justify-between items-center cursor-pointer"
+                                className="w-full text-left px-3 py-2 hover:bg-indigo-50 text-xs font-semibold text-gray-700 transition-colors flex flex-col gap-0.5 cursor-pointer"
                               >
-                                <span className="truncate pr-2">{c.nome}</span>
-                                <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-black shrink-0">
-                                  {c.codiceCommessa || c.nome.split(' - ')[0]}
+                                <span className="truncate w-full font-bold text-gray-800">{c.nome}</span>
+                                <span className="text-[9.5px] text-indigo-650 font-semibold italic">
+                                  💼 Cliente: {c.cliente || 'Nessun cliente'}
                                 </span>
                               </button>
                             ));
@@ -2589,7 +2612,7 @@ export default function PianificazionePersonale() {
                   type="submit"
                   disabled={savingAllocations}
                   onClick={() => setAllocAction('sostituisci')}
-                  className="flex items-center gap-2 bg-indigo-650 hover:bg-indigo-700 text-white font-black px-8 py-3.5 rounded-xl transition shadow-lg active:scale-95 disabled:opacity-50"
+                  className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black px-8 py-3.5 rounded-xl transition shadow-lg active:scale-95 disabled:opacity-50"
                 >
                   <Save className="w-5 h-5" />
                   {savingAllocations ? 'Sostituzione...' : 'Conferma ed Esegui Sostituzione'}
@@ -2895,19 +2918,16 @@ export default function PianificazionePersonale() {
               
               <div>
                 <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Percentuale di Carico Richiesta</label>
-                <div className="flex items-center gap-3">
-                  <input
-                    required
-                    type="number"
-                    min="5"
-                    max="100"
-                    step="5"
-                    value={reqPercentuale}
-                    onChange={e => setReqPercentuale(Number(e.target.value))}
-                    className="w-32 p-3 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner"
-                  />
-                  <span className="text-xs text-gray-500 font-semibold">% (Scaglioni del 5%)</span>
-                </div>
+                <select
+                  required
+                  value={reqPercentuale}
+                  onChange={e => setReqPercentuale(Number(e.target.value))}
+                  className="w-full p-3 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner"
+                >
+                  {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
+                    <option key={pct} value={pct}>{pct}%</option>
+                  ))}
+                </select>
               </div>
               
               <div>
