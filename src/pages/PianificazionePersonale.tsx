@@ -1536,12 +1536,12 @@ export default function PianificazionePersonale() {
           let indicatorColor = "bg-slate-400"; // Grigio scuro per 0%
 
           if (totalLoad > 0) {
-            if (totalLoad < 100) {
+            if (totalLoad < 90) {
               bgClass = isEditable 
                 ? "bg-sky-50 text-sky-900 hover:bg-sky-100/80 font-bold" 
                 : "bg-sky-50 text-sky-900 font-bold";
               indicatorColor = "bg-sky-500"; // Celeste acceso
-            } else if (totalLoad === 100) {
+            } else if (totalLoad >= 90 && totalLoad <= 100) {
               bgClass = isEditable 
                 ? "bg-emerald-50 text-emerald-900 hover:bg-emerald-100/80 font-bold" 
                 : "bg-emerald-50 text-emerald-900 font-bold";
@@ -1721,10 +1721,10 @@ export default function PianificazionePersonale() {
             let indicatorColor = "bg-slate-400"; // Grigio scuro per 0%
 
             if (avgLoad > 0) {
-              if (avgLoad < 80) {
+              if (avgLoad < 90) {
                 bgClass = "bg-sky-50/70 text-sky-900 font-bold";
                 indicatorColor = "bg-sky-500"; // Celeste acceso
-              } else if (avgLoad >= 80 && avgLoad <= 100) {
+              } else if (avgLoad >= 90 && avgLoad <= 100) {
                 bgClass = "bg-emerald-50/70 text-emerald-900 font-bold";
                 indicatorColor = "bg-emerald-500"; // Verde acceso
               } else {
@@ -2793,13 +2793,13 @@ export default function PianificazionePersonale() {
             <span className="w-4 h-4 rounded-lg bg-sky-50 border border-sky-200 shadow-sm shrink-0 flex items-center justify-center">
               <span className="w-1.5 h-1.5 rounded-full bg-sky-500"></span>
             </span>
-            <span>Sotto-utilizzato (&lt; 100%)</span>
+            <span>Sotto-utilizzato (&lt; 90%)</span>
           </div>
           <div className="flex items-center gap-3">
             <span className="w-4 h-4 rounded-lg bg-emerald-50 border border-emerald-200 shadow-sm shrink-0 flex items-center justify-center">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
             </span>
-            <span>Ottimale (100%)</span>
+            <span>Ottimale (90% - 100%)</span>
           </div>
           <div className="flex items-center gap-3">
             <span className="w-4 h-4 rounded-lg bg-rose-50 border border-rose-200 shadow-sm shrink-0 flex items-center justify-center">
