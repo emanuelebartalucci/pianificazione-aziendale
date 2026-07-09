@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, addDoc, doc, setDoc, deleteDoc, onSnapshot, updateDoc } from 'firebase/firestore';
-import { Shield, UserCheck, Star, Users, Plus, Trash2, Settings, Printer, Building2, Search, ArrowRightLeft } from 'lucide-react';
+import { Shield, UserCheck, Star, Users, Plus, Trash2, Settings, Printer, Building2, Search, ArrowRightLeft, Pencil, X } from 'lucide-react';
 import ConfirmModal from '../components/ConfirmModal';
 
 
@@ -108,8 +108,7 @@ export default function Impostazioni() {
   const [newHrEmail, setNewHrEmail] = useState('');
   const [hrList, setHrList] = useState<{id: string, email: string}[]>([]);
 
-  const [newCoordinatoreEmail, setNewCoordinatoreEmail] = useState('');
-  const [newCoordinatoreArea, setNewCoordinatoreArea] = useState('');
+  const [editingEmployeeAreaId, setEditingEmployeeAreaId] = useState<string | null>(null);
   
   // Collaborator editing states (unused ones removed)
   
@@ -128,6 +127,10 @@ export default function Impostazioni() {
   // Liste dinamiche da visualizzare (caricate da context o listener locali per eliminazione)
   const [adminsList, setAdminsList] = useState<{id: string, email: string}[]>([]);
   const [emailNotificationsPaused, setEmailNotificationsPaused] = useState(false);
+  const [newPmEmail, setNewPmEmail] = useState('');
+  const [newCommercialeEmail, setNewCommercialeEmail] = useState('');
+  const [pmsList, setPmsList] = useState<{id: string, email: string}[]>([]);
+  const [commercialiList, setCommercialiList] = useState<{id: string, email: string}[]>([]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -145,7 +148,13 @@ export default function Impostazioni() {
         nome: d.data().nome
       })).sort((a, b) => Number(a.codice) - Number(b.codice)));
     });
-    return () => { unsubA(); unsubH(); unsubEmail(); unsubC(); };
+    const unsubPM = onSnapshot(collection(db, 'project_managers'), (snap) => {
+      setPmsList(snap.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
+    });
+    const unsubComm = onSnapshot(collection(db, 'commerciali'), (snap) => {
+      setCommercialiList(snap.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
+    });
+    return () => { unsubA(); unsubH(); unsubEmail(); unsubC(); unsubPM(); unsubComm(); };
   }, [isAdmin]);
 
   if (!isAuthorized) {
@@ -270,39 +279,63 @@ export default function Impostazioni() {
     }
   };
 
-  const handleAddCoordinatore = async (e: React.FormEvent) => {
+  const handleAddPM = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newCoordinatoreEmail || !newCoordinatoreArea) {
-      showToast("Seleziona un dipendente e una macro area.", "warning");
-      return;
-    }
-    try {
-      const docId = `${newCoordinatoreEmail.toLowerCase()}_${newCoordinatoreArea.replace(/ \/ /g, '_')}`;
-      await setDoc(doc(db, 'coordinatori', docId), {
-        email: newCoordinatoreEmail.toLowerCase(),
-        area: newCoordinatoreArea
-      });
+    if(newPmEmail) {
+      if (pmsList.some(p => p.email.toLowerCase() === newPmEmail.toLowerCase())) {
+        showToast("Questo dipendente è già un PM.", "warning");
+        return;
+      }
+      await addDoc(collection(db, 'project_managers'), { email: newPmEmail.toLowerCase() });
       await refreshData();
-      setNewCoordinatoreEmail('');
-      setNewCoordinatoreArea('');
-      showToast("Coordinatore nominato con successo!", "success");
-    } catch (err) {
-      console.error("Errore nomina coordinatore:", err);
-      showToast("Errore durante la nomina.", "error");
+      setNewPmEmail('');
+      showToast("Project Manager nominato con successo!", "success");
     }
   };
 
-  const handleRemoveCoordinatore = async (id: string) => {
+  const handleRemovePM = async (id: string) => {
     triggerConfirm(
-      "Rimuovi Coordinatore",
-      "Sei sicuro di voler revocare la nomina di questo coordinatore?",
+      "Rimuovi PM",
+      "Sei sicuro di voler revocare la nomina di questo Project Manager?",
       async () => {
         try {
-          await deleteDoc(doc(db, 'coordinatori', id));
+          await deleteDoc(doc(db, 'project_managers', id));
           await refreshData();
-          showToast("Nomina coordinatore revocata con successo!", "success");
+          showToast("Nomina PM revocata con successo!", "success");
         } catch (err) {
-          console.error("Errore rimozione coordinatore:", err);
+          console.error("Errore rimozione PM:", err);
+          showToast("Errore durante la revoca.", "error");
+        }
+      },
+      'danger'
+    );
+  };
+
+  const handleAddCommerciale = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if(newCommercialeEmail) {
+      if (commercialiList.some(c => c.email.toLowerCase() === newCommercialeEmail.toLowerCase())) {
+        showToast("Questo dipendente è già un Commerciale.", "warning");
+        return;
+      }
+      await addDoc(collection(db, 'commerciali'), { email: newCommercialeEmail.toLowerCase() });
+      await refreshData();
+      setNewCommercialeEmail('');
+      showToast("Commerciale nominato con successo!", "success");
+    }
+  };
+
+  const handleRemoveCommerciale = async (id: string) => {
+    triggerConfirm(
+      "Rimuovi Commerciale",
+      "Sei sicuro di voler revocare la nomina di questo Commerciale?",
+      async () => {
+        try {
+          await deleteDoc(doc(db, 'commerciali', id));
+          await refreshData();
+          showToast("Nomina Commerciale revocata con successo!", "success");
+        } catch (err) {
+          console.error("Errore rimozione Commerciale:", err);
           showToast("Errore durante la revoca.", "error");
         }
       },
@@ -791,7 +824,8 @@ export default function Impostazioni() {
                     <option value="">-- Seleziona Macro Area --</option>
                     <option value="Disegnatori">Disegnatori</option>
                     <option value="Ingegneria">Ingegneria</option>
-                    <option value="Cantieri / Ambiente">Cantieri / Ambiente</option>
+                    <option value="Sicurezza Cantieri">Sicurezza Cantieri</option>
+                    <option value="Consulenza Sicurezza">Consulenza Sicurezza</option>
                     <option value="Amministrazione">Amministrazione</option>
                   </select>
                   <button type="submit" className="bg-indigo-600 text-white px-5 rounded-xl hover:bg-indigo-700 transition font-bold shadow-md active:scale-95 flex items-center gap-1 cursor-pointer"><Plus className="w-5 h-5"/> Aggiungi</button>
@@ -813,7 +847,8 @@ export default function Impostazioni() {
                         <option value="">Nessuna Area</option>
                         <option value="Disegnatori">Disegnatori</option>
                         <option value="Ingegneria">Ingegneria</option>
-                        <option value="Cantieri / Ambiente">Cantieri / Amb.</option>
+                        <option value="Sicurezza Cantieri">Sicurezza Cantieri</option>
+                        <option value="Consulenza Sicurezza">Consulenza Sicurezza</option>
                         <option value="Amministrazione">Amministr.</option>
                       </select>
                       <button 
@@ -855,7 +890,8 @@ export default function Impostazioni() {
                     <option value="">-- Seleziona Macro Area --</option>
                     <option value="Disegnatori">Disegnatori</option>
                     <option value="Ingegneria">Ingegneria</option>
-                    <option value="Cantieri / Ambiente">Cantieri / Ambiente</option>
+                    <option value="Sicurezza Cantieri">Sicurezza Cantieri</option>
+                    <option value="Consulenza Sicurezza">Consulenza Sicurezza</option>
                     <option value="Amministrazione">Amministrazione</option>
                   </select>
                   <button type="submit" className="bg-amber-600 text-white px-5 rounded-xl hover:bg-amber-700 transition font-bold shadow-md active:scale-95 flex items-center gap-1 cursor-pointer"><Plus className="w-5 h-5"/> Aggiungi</button>
@@ -877,7 +913,8 @@ export default function Impostazioni() {
                         <option value="">Nessuna Area</option>
                         <option value="Disegnatori">Disegnatori</option>
                         <option value="Ingegneria">Ingegneria</option>
-                        <option value="Cantieri / Ambiente">Cantieri / Amb.</option>
+                        <option value="Sicurezza Cantieri">Sicurezza Cantieri</option>
+                        <option value="Consulenza Sicurezza">Consulenza Sicurezza</option>
                         <option value="Amministrazione">Amministr.</option>
                       </select>
                       <button 
@@ -991,34 +1028,70 @@ export default function Impostazioni() {
               </div>
             </section>
 
-            {/* Coordinatori Macro Aree */}
-            <section className="bg-gradient-to-br from-teal-50 to-emerald-50/30 p-6 rounded-3xl border border-teal-100 shadow-sm md:col-span-2">
-              <h3 className="text-xl font-bold text-teal-900 mb-2 flex items-center gap-2"><Star className="w-6 h-6 text-teal-650" /> Coordinatori Macro Aree</h3>
-              <p className="text-sm text-teal-700/80 mb-4">I coordinatori responsabili di ciascuna macro area. Possono approvare richieste e pianificare le risorse del loro settore.</p>
-              <form onSubmit={handleAddCoordinatore} className="flex flex-wrap gap-3 mb-2">
-                <select 
-                  required 
-                  value={newCoordinatoreEmail} 
-                  onChange={e => setNewCoordinatoreEmail(e.target.value)} 
-                  className="flex-1 min-w-[200px] p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-teal-400 transition shadow-inner font-medium text-teal-900"
-                >
+            {/* Project Managers */}
+            <section className="bg-gradient-to-br from-blue-50 to-indigo-50/40 p-6 rounded-3xl border border-blue-100 shadow-sm h-fit">
+              <h3 className="text-xl font-bold text-blue-900 mb-2 flex items-center gap-2">
+                <Star className="w-6 h-6 text-blue-600" /> Project Managers (PM)
+              </h3>
+              <p className="text-sm text-blue-750 mb-4">Nomina o rimuovi i Project Manager abilitati a supervisionare le commesse.</p>
+              <form onSubmit={handleAddPM} className="flex gap-2 mb-4">
+                <select required value={newPmEmail} onChange={e => setNewPmEmail(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-blue-400 transition shadow-inner font-medium text-blue-900">
                   <option value="">Seleziona dipendente</option>
                   {dipendenti.filter(d => d.email).map(d => <option key={d.id} value={d.email}>{d.nome}</option>)}
                 </select>
-                <select 
-                  required 
-                  value={newCoordinatoreArea} 
-                  onChange={e => setNewCoordinatoreArea(e.target.value)} 
-                  className="flex-1 min-w-[200px] p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-teal-400 transition shadow-inner font-medium text-teal-900"
-                >
-                  <option value="">Seleziona macro area</option>
-                  <option value="Disegnatori">Disegnatori</option>
-                  <option value="Ingegneria">Ingegneria</option>
-                  <option value="Cantieri / Ambiente">Cantieri / Ambiente</option>
-                  <option value="Amministrazione">Amministrazione</option>
-                </select>
-                <button type="submit" className="bg-teal-600 text-white hover:bg-teal-700 px-5 py-3 rounded-xl transition font-bold shadow-md active:scale-95 cursor-pointer">Nomina Coordinatore</button>
+                <button type="submit" className="bg-blue-600 text-white px-5 rounded-xl hover:bg-blue-700 transition font-bold shadow-md active:scale-95 cursor-pointer">Nomina</button>
               </form>
+              <div className="max-h-80 overflow-y-auto bg-white/50 rounded-xl divide-y border border-blue-100">
+                {pmsList.length === 0 ? (
+                  <p className="p-4 text-xs text-gray-400 italic font-bold">Nessun PM nominato.</p>
+                ) : (
+                  pmsList.map(p => {
+                    const name = getDipNomeFromEmail(p.email);
+                    return (
+                      <div key={p.id} className="p-3 flex justify-between items-center text-sm">
+                        <div>
+                          <div className="font-bold text-blue-900">{name}</div>
+                          <div className="text-xs text-blue-700/70">{p.email}</div>
+                        </div>
+                        <button onClick={() => handleRemovePM(p.id)} className="text-blue-405 hover:text-red-655 p-1 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </section>
+
+            {/* Commerciali */}
+            <section className="bg-gradient-to-br from-amber-50 to-orange-50/40 p-6 rounded-3xl border border-amber-100 shadow-sm h-fit">
+              <h3 className="text-xl font-bold text-amber-900 mb-2 flex items-center gap-2">
+                <Star className="w-6 h-6 text-amber-600" /> Commerciali
+              </h3>
+              <p className="text-sm text-amber-750 mb-4">Nomina o rimuovi i Commerciali. Riceveranno le notifiche email all'apertura delle commesse.</p>
+              <form onSubmit={handleAddCommerciale} className="flex gap-2 mb-4">
+                <select required value={newCommercialeEmail} onChange={e => setNewCommercialeEmail(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-amber-400 transition shadow-inner font-medium text-amber-900">
+                  <option value="">Seleziona dipendente</option>
+                  {dipendenti.filter(d => d.email).map(d => <option key={d.id} value={d.email}>{d.nome}</option>)}
+                </select>
+                <button type="submit" className="bg-amber-600 text-white px-5 rounded-xl hover:bg-amber-700 transition font-bold shadow-md active:scale-95 cursor-pointer">Nomina</button>
+              </form>
+              <div className="max-h-80 overflow-y-auto bg-white/50 rounded-xl divide-y border border-amber-100">
+                {commercialiList.length === 0 ? (
+                  <p className="p-4 text-xs text-gray-400 italic font-bold">Nessun Commerciale nominato.</p>
+                ) : (
+                  commercialiList.map(c => {
+                    const name = getDipNomeFromEmail(c.email);
+                    return (
+                      <div key={c.id} className="p-3 flex justify-between items-center text-sm">
+                        <div>
+                          <div className="font-bold text-amber-900">{name}</div>
+                          <div className="text-xs text-amber-700/70">{c.email}</div>
+                        </div>
+                        <button onClick={() => handleRemoveCommerciale(c.id)} className="text-amber-405 hover:text-red-655 p-1 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
             </section>
             
             {/* Gestione Appartenenza Macro Aree */}
@@ -1030,9 +1103,9 @@ export default function Impostazioni() {
                 Visualizza e sposta i dipendenti e collaboratori tra le diverse macro aree funzionali.
               </p>
               
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 h-[650px]">
-                {(['Disegnatori', 'Ingegneria', 'Cantieri / Ambiente', 'Amministrazione'] as const).map(areaName => {
-                  const areaMembers = dipendenti.filter(d => d.macroArea === areaName && !isSoci(d.nome));
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 h-[650px]">
+                {(['Disegnatori', 'Ingegneria', 'Sicurezza Cantieri', 'Consulenza Sicurezza', 'Amministrazione'] as const).map(areaName => {
+                  const areaMembers = dipendenti.filter(d => d.macroArea === areaName && !isSoci(d.nome) && !coordinatori.some(c => c.email.toLowerCase() === d.email.toLowerCase() && c.area === areaName));
                   const areaCoordinators = coordinatori.filter(c => c.area === areaName);
                   
                   return (
@@ -1052,19 +1125,77 @@ export default function Impostazioni() {
                           </div>
                           {areaCoordinators.map(c => {
                             const name = getDipNomeFromEmail(c.email);
+                            const m = dipendenti.find(d => d.email?.toLowerCase() === c.email?.toLowerCase());
+                            if (!m) return null;
+                            const isEditing = editingEmployeeAreaId === m.id;
+                            
                             return (
-                              <div key={c.id} className="p-2 bg-gradient-to-r from-teal-50 to-emerald-50 rounded-xl border border-teal-200 flex justify-between items-center text-xs">
-                                <div className="truncate pr-2">
-                                  <div className="font-extrabold text-teal-950 truncate" title={name}>{name}</div>
-                                  <div className="text-[9px] text-teal-700/80 truncate" title={c.email}>{c.email}</div>
-                                </div>
-                                <button 
-                                  onClick={() => handleRemoveCoordinatore(c.id)} 
-                                  className="text-red-400 hover:text-red-650 p-1 cursor-pointer shrink-0 transition-colors"
-                                  title="Rimuovi Coordinatore"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5"/>
-                                </button>
+                              <div key={c.id} className="p-2 bg-gradient-to-r from-teal-50 to-emerald-50 rounded-xl border border-teal-200 flex items-center justify-between text-xs min-h-[38px] gap-2">
+                                {isEditing ? (
+                                  <div className="flex flex-col gap-1.5 w-full">
+                                    <div className="flex items-center gap-1.5 w-full">
+                                      <select
+                                        autoFocus
+                                        value={m.macroArea || ''}
+                                        onChange={async (e) => {
+                                          const newArea = e.target.value;
+                                          // Rimuoviamo il coordinatore dall'area corrente
+                                          await deleteDoc(doc(db, 'coordinatori', c.id));
+                                          // Se l'utente imposta una nuova area, aggiorniamo la macroarea del dipendente
+                                          await handleUpdateMacroArea(m.id, newArea);
+                                          setEditingEmployeeAreaId(null);
+                                        }}
+                                        className="flex-1 p-1 border border-teal-300 rounded-lg bg-white text-[11px] font-bold text-gray-700 outline-none focus:border-teal-500"
+                                      >
+                                        <option value="">Nessuna Area (Rimuovi)</option>
+                                        <option value="Disegnatori">Disegnatori</option>
+                                        <option value="Ingegneria">Ingegneria</option>
+                                        <option value="Sicurezza Cantieri">Sicurezza Cantieri</option>
+                                        <option value="Consulenza Sicurezza">Consulenza Sicurezza</option>
+                                        <option value="Amministrazione">Amministrazione</option>
+                                      </select>
+                                      
+                                      <button
+                                        type="button"
+                                        onClick={() => setEditingEmployeeAreaId(null)}
+                                        className="text-gray-455 hover:text-gray-655 p-1 bg-white hover:bg-gray-50 rounded-lg border border-gray-150 transition-all shrink-0 cursor-pointer"
+                                      >
+                                        <X className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                    
+                                    <label className="flex items-center gap-1.5 text-[9px] font-bold text-gray-755 bg-white px-1.5 py-1 rounded-lg border border-gray-200 cursor-pointer w-fit select-none">
+                                      <input
+                                        type="checkbox"
+                                        checked={true}
+                                        onChange={async (e) => {
+                                          if (!e.target.checked) {
+                                            // Rimuoviamo coordinatore
+                                            await deleteDoc(doc(db, 'coordinatori', c.id));
+                                            await refreshData();
+                                            setEditingEmployeeAreaId(null);
+                                          }
+                                        }}
+                                        className="w-3 h-3 text-teal-650 rounded border-gray-300 cursor-pointer"
+                                      />
+                                      <span>Coordinatore</span>
+                                    </label>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <div className="truncate pr-2">
+                                      <div className="font-extrabold text-teal-950 truncate" title={name}>{name}</div>
+                                      <div className="text-[9px] text-teal-700/80 truncate" title={c.email}>{c.email}</div>
+                                    </div>
+                                    <button 
+                                      onClick={() => setEditingEmployeeAreaId(m.id)} 
+                                      className="text-teal-600 hover:text-teal-850 p-1 bg-white hover:bg-teal-50 rounded-lg border border-teal-200 hover:border-teal-350 transition-all shrink-0 cursor-pointer font-bold"
+                                      title="Modifica ruolo/area"
+                                    >
+                                      <Pencil className="w-3.5 h-3.5"/>
+                                    </button>
+                                  </>
+                                )}
                               </div>
                             );
                           })}
@@ -1075,22 +1206,88 @@ export default function Impostazioni() {
                           {areaMembers.length === 0 ? (
                             <p className="text-xs text-gray-400 italic">Nessun membro assegnato.</p>
                           ) : (
-                            areaMembers.map(m => (
-                              <div key={m.id} className="p-2 bg-slate-50 rounded-xl border border-slate-100 flex flex-col gap-1 text-xs">
-                                <div className="font-bold text-gray-800">{m.nome}</div>
-                                <select
-                                  value={m.macroArea || ''}
-                                  onChange={e => handleUpdateMacroArea(m.id, e.target.value)}
-                                  className="p-1.5 border border-gray-200 rounded-lg bg-white text-[11px] font-semibold text-gray-700 outline-none focus:border-indigo-400"
-                                >
-                                  <option value="">Nessuna Area</option>
-                                  <option value="Disegnatori">Disegnatori</option>
-                                  <option value="Ingegneria">Ingegneria</option>
-                                  <option value="Cantieri / Ambiente">Cantieri / Ambiente</option>
-                                  <option value="Amministrazione">Amministrazione</option>
-                                </select>
-                              </div>
-                            ))
+                            areaMembers.map(m => {
+                              const isEditing = editingEmployeeAreaId === m.id;
+                              const isCoord = coordinatori.some(c => c.email.toLowerCase() === m.email.toLowerCase() && c.area === areaName);
+                              
+                              return (
+                                <div key={m.id} className="p-2 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-150 flex items-center justify-between text-xs transition-colors gap-2 min-h-[38px]">
+                                  {isEditing ? (
+                                    <div className="flex flex-col gap-1.5 w-full">
+                                      <div className="flex items-center gap-1.5 w-full">
+                                        <select
+                                          autoFocus
+                                          value={m.macroArea || ''}
+                                          onChange={async (e) => {
+                                            const newArea = e.target.value;
+                                            await handleUpdateMacroArea(m.id, newArea);
+                                            setEditingEmployeeAreaId(null);
+                                          }}
+                                          className="flex-1 p-1 border border-indigo-200 rounded-lg bg-white text-[11px] font-bold text-gray-700 outline-none focus:border-indigo-400"
+                                        >
+                                          <option value="">Nessuna Area (Rimuovi)</option>
+                                          <option value="Disegnatori">Disegnatori</option>
+                                          <option value="Ingegneria">Ingegneria</option>
+                                          <option value="Sicurezza Cantieri">Sicurezza Cantieri</option>
+                                          <option value="Consulenza Sicurezza">Consulenza Sicurezza</option>
+                                          <option value="Amministrazione">Amministrazione</option>
+                                        </select>
+                                        
+                                        <button
+                                          type="button"
+                                          onClick={() => setEditingEmployeeAreaId(null)}
+                                          className="text-gray-400 hover:text-gray-655 p-1 bg-white hover:bg-gray-50 rounded-lg border border-gray-150 transition-all shrink-0 cursor-pointer"
+                                        >
+                                          <X className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                      
+                                      {m.macroArea && (
+                                        <label className="flex items-center gap-1.5 text-[9px] font-bold text-gray-755 bg-white px-1.5 py-1 rounded-lg border border-gray-200 cursor-pointer w-fit select-none">
+                                          <input
+                                            type="checkbox"
+                                            checked={isCoord}
+                                            onChange={async (e) => {
+                                              const currentArea = m.macroArea;
+                                              if (!currentArea) return;
+                                              const shouldBeCoord = e.target.checked;
+                                              if (shouldBeCoord) {
+                                                const docId = `${m.email.toLowerCase()}_${currentArea.replace(/ \/ /g, '_')}`;
+                                                await setDoc(doc(db, 'coordinatori', docId), {
+                                                  email: m.email.toLowerCase(),
+                                                  area: currentArea
+                                                });
+                                              } else {
+                                                const coordObj = coordinatori.find(c => c.email.toLowerCase() === m.email.toLowerCase() && c.area === currentArea);
+                                                if (coordObj) {
+                                                  await deleteDoc(doc(db, 'coordinatori', coordObj.id));
+                                                }
+                                              }
+                                              await refreshData();
+                                              setEditingEmployeeAreaId(null);
+                                            }}
+                                            className="w-3 h-3 text-indigo-650 rounded border-gray-300 cursor-pointer"
+                                          />
+                                          <span>Coordinatore</span>
+                                        </label>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <span className="font-extrabold text-gray-700 truncate" title={m.nome}>{m.nome}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => setEditingEmployeeAreaId(m.id)}
+                                        className="text-gray-400 hover:text-indigo-650 p-1 bg-white hover:bg-indigo-50 rounded-lg border border-gray-150 hover:border-indigo-200 transition-all shrink-0 cursor-pointer"
+                                        title="Sposta area o nomina coordinatore"
+                                      >
+                                        <Pencil className="w-3 h-3" />
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              );
+                            })
                           )}
                         </div>
                     </div>
@@ -1108,22 +1305,53 @@ export default function Impostazioni() {
                       ⚠️ Risorse Non Assegnate a una Macro Area ({unassigned.length})
                     </h4>
                     <div className="flex flex-wrap gap-3">
-                      {unassigned.map(m => (
-                        <div key={m.id} className="p-2.5 bg-amber-50 rounded-xl border border-amber-100 flex items-center gap-3 text-xs">
-                          <span className="font-bold text-amber-950">{m.nome}</span>
-                          <select
-                            value=""
-                            onChange={e => handleUpdateMacroArea(m.id, e.target.value)}
-                            className="p-1.5 border border-amber-200 rounded-lg bg-white text-[11px] font-bold text-gray-750 outline-none focus:border-amber-400"
-                          >
-                            <option value="">Assegna a...</option>
-                            <option value="Disegnatori">Disegnatori</option>
-                            <option value="Ingegneria">Ingegneria</option>
-                            <option value="Cantieri / Ambiente">Cantieri / Ambiente</option>
-                            <option value="Amministrazione">Amministrazione</option>
-                          </select>
-                        </div>
-                      ))}
+                      {unassigned.map(m => {
+                        const isEditing = editingEmployeeAreaId === m.id;
+                        return (
+                          <div key={m.id} className="p-2.5 bg-amber-50 hover:bg-amber-100/70 rounded-xl border border-amber-150 flex items-center justify-between text-xs transition-colors gap-2 min-h-[38px]">
+                            {isEditing ? (
+                              <div className="flex items-center gap-1.5 w-full">
+                                <select
+                                  autoFocus
+                                  value=""
+                                  onChange={async (e) => {
+                                    const newArea = e.target.value;
+                                    await handleUpdateMacroArea(m.id, newArea);
+                                    setEditingEmployeeAreaId(null);
+                                  }}
+                                  className="flex-1 p-1 border border-amber-300 rounded-lg bg-white text-[11px] font-bold text-gray-750 outline-none focus:border-amber-400"
+                                >
+                                  <option value="">Assegna a...</option>
+                                  <option value="Disegnatori">Disegnatori</option>
+                                  <option value="Ingegneria">Ingegneria</option>
+                                  <option value="Sicurezza Cantieri">Sicurezza Cantieri</option>
+                                  <option value="Consulenza Sicurezza">Consulenza Sicurezza</option>
+                                  <option value="Amministrazione">Amministrazione</option>
+                                </select>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingEmployeeAreaId(null)}
+                                  className="text-gray-400 hover:text-gray-655 p-1 bg-white hover:bg-gray-50 rounded-lg border border-gray-150 transition-all shrink-0 cursor-pointer"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ) : (
+                              <>
+                                <span className="font-extrabold text-amber-955 truncate" title={m.nome}>{m.nome}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingEmployeeAreaId(m.id)}
+                                  className="text-amber-500 hover:text-amber-705 p-1 bg-white hover:bg-amber-50 rounded-lg border border-amber-200 hover:border-amber-350 transition-all shrink-0 cursor-pointer"
+                                  title="Assegna a macro area"
+                                >
+                                  <Pencil className="w-3 h-3" />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 );

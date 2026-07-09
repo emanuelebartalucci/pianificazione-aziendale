@@ -15,7 +15,7 @@ export interface Dipendente {
   ivaRate?: number;
   raRate?: number;
   oreContratto?: number;
-  macroArea?: 'Disegnatori' | 'Ingegneria' | 'Cantieri / Ambiente' | 'Amministrazione';
+  macroArea?: 'Disegnatori' | 'Ingegneria' | 'Sicurezza Cantieri' | 'Consulenza Sicurezza' | 'Amministrazione';
 }
 
 export interface Commessa {
@@ -59,6 +59,8 @@ interface AuthContextType {
   richiesteDisegnatori: any[];
   pmsEmails: string[];
   seniorsEmails: string[];
+  commercialiEmails: string[];
+  isCommerciale: boolean;
   refreshData: () => Promise<void>;
 }
 
@@ -85,6 +87,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [richiesteDisegnatori, setRichiesteDisegnatori] = useState<any[]>([]);
   const [pmsEmails, setPmsEmails] = useState<string[]>([]);
   const [seniorsEmails, setSeniorsEmails] = useState<string[]>([]);
+  const [dynamicCommerciali, setDynamicCommerciali] = useState<string[]>([]);
 
 
   // Funzione mock retrocompatibile
@@ -117,6 +120,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setRichiesteDisegnatori([]);
         setPmsEmails([]);
         setSeniorsEmails([]);
+        setDynamicCommerciali([]);
         setLoading(false);
       } else {
         try {
@@ -224,6 +228,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             setPmsEmails(snap.docs.map(d => (d.data().email || '').toLowerCase()));
           }));
 
+          // 13. Commerciali
+          unsubs.push(onSnapshot(collection(db, 'commerciali'), (snap) => {
+            setDynamicCommerciali(snap.docs.map(d => (d.data().email || '').toLowerCase()).filter(Boolean));
+          }));
+
           // 12. Richieste ferie (approved leaves)
           unsubs.push(onSnapshot(collection(db, 'richieste_ferie'), (snap) => {
             const list: any[] = [];
@@ -269,6 +278,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const isAdmin = DEFAULT_ADMINS.includes(userEmail) || dynamicAdmins.includes(userEmail);
   const isHR = dynamicHrs.includes(userEmail);
   const isSenior = dynamicSeniors.includes(userEmail);
+  const isCommerciale = dynamicCommerciali.includes(userEmail);
   
   const myDip = dipendenti.find(d => d.email?.toLowerCase() === userEmail);
   const myAssociatedName = myDip ? myDip.nome : null;
@@ -291,6 +301,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       richiesteDisegnatori,
       pmsEmails,
       seniorsEmails,
+      commercialiEmails: dynamicCommerciali,
+      isCommerciale,
       refreshData
     }}>
       {children}

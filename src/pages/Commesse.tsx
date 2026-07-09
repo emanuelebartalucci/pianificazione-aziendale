@@ -127,7 +127,8 @@ export default function Commesse() {
     approvedLeaves, 
     coordinatori, 
     pmsEmails, 
-    seniorsEmails 
+    isCommerciale,
+    commercialiEmails
   } = useAuth();
   
   const [baseDate, setBaseDate] = useState<Date>(new Date());
@@ -693,6 +694,34 @@ export default function Commesse() {
       
       await addDoc(collection(db, 'catalogo_commesse'), payload);
       
+      // Invio notifica e-mail ai Commerciali configurati
+      if (!isCommerciale && commercialiEmails && commercialiEmails.length > 0) {
+        const mailSubject = `[Nuova Commessa] Aperta commessa: ${payload.nome}`;
+        const mailBody = `
+          <p>Gentile Commerciale,</p>
+          <p>Ti informiamo che è stata aperta una nuova commessa sulla piattaforma di pianificazione con i seguenti dettagli:</p>
+          <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 15px 0;" />
+          <table border="0" cellpadding="5" cellspacing="0" style="font-size: 14px; color: #374151; width: 100%;">
+            <tr><td style="font-weight: bold; width: 150px;">Codice Commessa:</td><td>${payload.codiceCommessa}</td></tr>
+            <tr><td style="font-weight: bold;">Titolo:</td><td>${payload.titolo}</td></tr>
+            <tr><td style="font-weight: bold;">Cliente:</td><td>${payload.cliente}</td></tr>
+            <tr><td style="font-weight: bold;">Tipologia:</td><td>${TIPOLOGIE_COMMESSE[payload.tipologia] || payload.tipologia}</td></tr>
+            <tr><td style="font-weight: bold;">Anno:</td><td>${payload.anno}</td></tr>
+            <tr><td style="font-weight: bold;">Data Inizio:</td><td>${payload.dataInizio ? new Date(payload.dataInizio).toLocaleDateString('it-IT') : 'Non specificata'}</td></tr>
+            <tr><td style="font-weight: bold;">Data Fine:</td><td>${payload.dataFine ? new Date(payload.dataFine).toLocaleDateString('it-IT') : 'Non specificata'}</td></tr>
+            <tr><td style="font-weight: bold;">Responsabile:</td><td>${payload.responsabile || 'Non assegnato'}</td></tr>
+            <tr><td style="font-weight: bold;">Stima Giornate Senior:</td><td>${payload.giornateSeniorProject} gg</td></tr>
+            <tr><td style="font-weight: bold;">Stima Giornate Project:</td><td>${payload.giornateProject} gg</td></tr>
+            <tr><td style="font-weight: bold;">Stima Giornate Junior:</td><td>${payload.giornateJuniorProject} gg</td></tr>
+          </table>
+          <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 15px 0;" />
+          <p>Puoi ora procedere all'apertura di questa commessa sul gestionale separato aziendale.</p>
+        `;
+        for (const email of commercialiEmails) {
+          await queueMail(email, mailSubject, mailBody);
+        }
+      }
+      
       setSelectedClient(null);
       setClientSearchText('');
       setNewCommessaTitolo('');
@@ -790,14 +819,14 @@ export default function Commesse() {
         </h2>
         
         <div className={`flex items-center gap-2 text-xs font-bold px-4 py-2 rounded-xl border ${
-          (isAdmin || isSenior || isResponsabileDiQualcheCommessa) ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-blue-50 text-blue-700 border-blue-100'
+          (isAdmin || isSenior || isResponsabileDiQualcheCommessa || isCommerciale) ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-blue-50 text-blue-700 border-blue-100'
         }`}>
-          {(isAdmin || isSenior || isResponsabileDiQualcheCommessa) ? 'Vista Amministrazione e Assegnazione' : 'Vista di Sola Consultazione'}
+          {(isAdmin || isSenior || isResponsabileDiQualcheCommessa || isCommerciale) ? 'Vista Amministrazione e Assegnazione' : 'Vista di Sola Consultazione'}
         </div>
       </div>
       
-      {/* TAB BAR (Solo per Admin, Seniors e Responsabili) */}
-      {(isAdmin || isSenior || isResponsabileDiQualcheCommessa) && (
+      {/* TAB BAR (Solo per Admin, Seniors, Responsabili e Commerciali) */}
+      {(isAdmin || isSenior || isResponsabileDiQualcheCommessa || isCommerciale) && (
         <div className="flex border-b border-gray-200 gap-2 no-print">
           <button
             type="button"
@@ -825,7 +854,7 @@ export default function Commesse() {
       )}
 
       {/* TAB 1: CONSULTAZIONE COMMESSE */}
-      {(activeTab === 'consultazione' || (!isAdmin && !isSenior)) && (
+      {activeTab === 'consultazione' && (
         <>
           {/* TIMELINE TABLE CARD */}
           <div className="bg-white rounded-[2rem] shadow-xl border relative mb-10 flex flex-col max-h-[750px] pb-4">
@@ -1306,8 +1335,8 @@ export default function Commesse() {
         </>
       )}
 
-      {/* TAB 2: GESTIONE CATALOGO (Per Admin, Seniors e Responsabili) */}
-      {(activeTab === 'gestione' && (isAdmin || isSenior || isResponsabileDiQualcheCommessa)) && (
+      {/* TAB 2: GESTIONE CATALOGO (Per Admin, Seniors, Responsabili e Commerciali) */}
+      {(activeTab === 'gestione' && (isAdmin || isSenior || isResponsabileDiQualcheCommessa || isCommerciale)) && (
         <div className="space-y-8">
           <section className="bg-gradient-to-br from-emerald-50 to-teal-50 p-6 rounded-3xl border border-emerald-100 shadow-sm">
             <div className="flex justify-between items-center mb-4">
@@ -1316,7 +1345,7 @@ export default function Commesse() {
               </h3>
             </div>
             
-            {(isAdmin || isSenior) && (
+            {(isAdmin || isSenior || isCommerciale) && (
               <div className="mb-6 bg-white/50 p-5 rounded-2xl border border-emerald-100/50 shadow-inner">
                 <form onSubmit={handleAddCommessa} className="space-y-4">
                 
@@ -1612,7 +1641,7 @@ export default function Commesse() {
                 >
                   <option value="">-- Nessuno --</option>
                   {(() => {
-                    const list = dipendenti.filter(d => d.email && seniorsEmails.includes(d.email.toLowerCase()));
+                    const list = [...responsabiliMacroAreeList];
                     if (editResponsabile && !list.some(d => d.nome === editResponsabile)) {
                       const current = dipendenti.find(d => d.nome === editResponsabile);
                       if (current) list.push(current);

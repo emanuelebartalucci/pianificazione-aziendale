@@ -347,7 +347,8 @@ export default function PianificazionePersonale() {
   const [expandedAreas, setExpandedAreas] = useState<Record<string, boolean>>({
     'Disegnatori': false,
     'Ingegneria': false,
-    'Cantieri / Ambiente': false,
+    'Sicurezza Cantieri': false,
+    'Consulenza Sicurezza': false,
     'Amministrazione': false,
     'Non Assegnati': false,
   });
@@ -375,7 +376,7 @@ export default function PianificazionePersonale() {
         let area: string | null = null;
         if (disegnatoriNames.includes(d.nome)) area = 'Disegnatori';
         else if (ingegneriaNames.includes(d.nome)) area = 'Ingegneria';
-        else if (cantieriNames.includes(d.nome)) area = 'Cantieri / Ambiente';
+        else if (cantieriNames.includes(d.nome)) area = 'Sicurezza Cantieri';
         else if (amministrazioneNames.includes(d.nome)) area = 'Amministrazione';
         
         if (area && d.macroArea !== area) {
@@ -1408,8 +1409,12 @@ export default function PianificazionePersonale() {
     return filteredGridDipendenti.filter(d => !isSoci(d.nome) && d.macroArea === 'Ingegneria');
   }, [filteredGridDipendenti]);
 
-  const cantieri = useMemo(() => {
-    return filteredGridDipendenti.filter(d => !isSoci(d.nome) && d.macroArea === 'Cantieri / Ambiente');
+  const sicurezzaCantieri = useMemo(() => {
+    return filteredGridDipendenti.filter(d => !isSoci(d.nome) && d.macroArea === 'Sicurezza Cantieri');
+  }, [filteredGridDipendenti]);
+
+  const consulenzaSicurezza = useMemo(() => {
+    return filteredGridDipendenti.filter(d => !isSoci(d.nome) && d.macroArea === 'Consulenza Sicurezza');
   }, [filteredGridDipendenti]);
 
   const amministrazione = useMemo(() => {
@@ -1503,8 +1508,10 @@ export default function PianificazionePersonale() {
       areaColorClass = "border-l-4 border-teal-500 bg-teal-50/30 text-teal-950";
     } else if (parentAreaName === 'Ingegneria') {
       areaColorClass = "border-l-4 border-indigo-500 bg-indigo-50/30 text-indigo-950";
-    } else if (parentAreaName === 'Cantieri / Ambiente') {
+    } else if (parentAreaName === 'Sicurezza Cantieri') {
       areaColorClass = "border-l-4 border-emerald-500 bg-emerald-50/30 text-emerald-950";
+    } else if (parentAreaName === 'Consulenza Sicurezza') {
+      areaColorClass = "border-l-4 border-amber-500 bg-amber-50/30 text-amber-950";
     } else if (parentAreaName === 'Amministrazione') {
       areaColorClass = "border-l-4 border-blue-500 bg-blue-50/30 text-blue-950";
     }
@@ -1695,8 +1702,10 @@ export default function PianificazionePersonale() {
               areaHeaderClass = "bg-teal-100 text-teal-950 border-t-2 border-teal-600";
             } else if (areaName === 'Ingegneria') {
               areaHeaderClass = "bg-indigo-100 text-indigo-955 border-t-2 border-indigo-600";
-            } else if (areaName === 'Cantieri / Ambiente') {
+            } else if (areaName === 'Sicurezza Cantieri') {
               areaHeaderClass = "bg-emerald-100 text-emerald-955 border-t-2 border-emerald-600";
+            } else if (areaName === 'Consulenza Sicurezza') {
+              areaHeaderClass = "bg-amber-100 text-amber-955 border-t-2 border-amber-600";
             } else if (areaName === 'Amministrazione') {
               areaHeaderClass = "bg-blue-100 text-blue-955 border-t-2 border-blue-600";
             }
@@ -1745,7 +1754,8 @@ export default function PianificazionePersonale() {
             let areaTopBorder = "border-t-2 border-slate-900";
             if (areaName === 'Disegnatori') areaTopBorder = "border-t-2 border-teal-600";
             else if (areaName === 'Ingegneria') areaTopBorder = "border-t-2 border-indigo-600";
-            else if (areaName === 'Cantieri / Ambiente') areaTopBorder = "border-t-2 border-emerald-600";
+            else if (areaName === 'Sicurezza Cantieri') areaTopBorder = "border-t-2 border-emerald-600";
+            else if (areaName === 'Consulenza Sicurezza') areaTopBorder = "border-t-2 border-amber-600";
             else if (areaName === 'Amministrazione') areaTopBorder = "border-t-2 border-blue-600";
 
             return (
@@ -2732,7 +2742,7 @@ export default function PianificazionePersonale() {
                   </td>
                 </tr>
               </tbody>
-            ) : (disegnatori.length === 0 && ingegneria.length === 0 && cantieri.length === 0 && amministrazione.length === 0 && nonAssegnati.length === 0) ? (
+            ) : (disegnatori.length === 0 && ingegneria.length === 0 && sicurezzaCantieri.length === 0 && consulenzaSicurezza.length === 0 && amministrazione.length === 0 && nonAssegnati.length === 0) ? (
               <tbody className="divide-y divide-gray-100 font-medium bg-white">
                 <tr>
                   <td colSpan={timelineWeeks.length + 1} className="p-12 text-center text-gray-400 font-bold italic bg-white">
@@ -2761,7 +2771,7 @@ export default function PianificazionePersonale() {
               <>
                 {/* SEZIONE MACRO AREE */}
                 <tbody className="divide-y divide-gray-100 font-medium bg-white border-b border-slate-900">
-                  <tr className="bg-indigo-50/40 text-indigo-950 font-extrabold text-xs border-t border-indigo-100">
+                  <tr className="bg-indigo-50/40 text-indigo-955 font-extrabold text-xs border-t border-indigo-100">
                     <td colSpan={timelineWeeks.length + 1} className="p-3 text-left pl-6 sticky left-0 z-20 bg-indigo-50/95 border-b border-indigo-100" style={{ top: '55px' }}>
                       <span className="uppercase tracking-wider font-black">Macro Aree Funzionali</span>
                     </td>
@@ -2779,7 +2789,12 @@ export default function PianificazionePersonale() {
                 <tbody className="no-print"><tr className="h-4 bg-gray-50"><td colSpan={timelineWeeks.length + 1} className="p-2 border-none"></td></tr></tbody>
                 
                 <tbody className="divide-y divide-gray-100 font-medium bg-white border-b border-slate-900">
-                  {renderAreaRow('Cantieri / Ambiente', cantieri)}
+                  {renderAreaRow('Sicurezza Cantieri', sicurezzaCantieri)}
+                </tbody>
+                <tbody className="no-print"><tr className="h-4 bg-gray-50"><td colSpan={timelineWeeks.length + 1} className="p-2 border-none"></td></tr></tbody>
+                
+                <tbody className="divide-y divide-gray-100 font-medium bg-white border-b border-slate-900">
+                  {renderAreaRow('Consulenza Sicurezza', consulenzaSicurezza)}
                 </tbody>
                 <tbody className="no-print"><tr className="h-4 bg-gray-50"><td colSpan={timelineWeeks.length + 1} className="p-2 border-none"></td></tr></tbody>
                 
