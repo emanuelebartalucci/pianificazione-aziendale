@@ -1257,13 +1257,16 @@ export default function Commesse() {
                               >
                                 <div 
                                   className="flex flex-col"
-                                  style={{ 
+                                      style={{ 
                                     minHeight: isNarrow ? '30px' : '40px', 
                                     gap: '4px' 
                                   }}
                                 >
                                   {assignedPeople.map((person, pIdx) => {
-                                    const hours = Math.round(person.pct * 40 / 100);
+                                    const dip = dipendenti.find(d => areNamesEqual(d.nome, person.name));
+                                    const dailyContractHours = dip?.oreContratto ?? 8;
+                                    const weeklyContractHours = dailyContractHours * 5;
+                                    const hours = Math.round(person.pct * weeklyContractHours / 100);
                                     const leaves = getLeavesForResourceInWeek(person.name, wk.id);
                                     const hasLeaves = leaves.length > 0;
                                     const leavesStr = leaves.map(l => `${l.giorno}: ${l.tipo === 'ferie' ? 'Ferie' : l.tipo === 'malattia' ? 'Malattia' : l.tipo === 'permesso' ? 'Permesso' : 'Assenza'}${l.dettagli ? ` (${l.dettagli})` : ''}`).join(', ');
