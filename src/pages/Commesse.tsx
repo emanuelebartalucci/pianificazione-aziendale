@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, doc, setDoc, addDoc, deleteDoc, getDocs } from 'firebase/firestore';
@@ -97,6 +97,47 @@ const getInitials = (name: string): string => {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 };
 
+interface CommessaProgetto {
+  descrizione: string;
+  pm: string;
+  sgq: 'SI' | 'NO';
+  verificatori: string;
+  compilatore: string;
+  giornateSenior: number;
+  giornateProject: number;
+  giornateJunior: number;
+}
+
+const getNextAvailableLetter = (
+  tipologia: string,
+  anno: string,
+  clientCodice: string,
+  existingCommesse: any[]
+): string => {
+  const paddedClientCode = clientCodice.padStart(4, '0');
+  const prefix = `${tipologia}${anno.slice(-2)}${paddedClientCode}`;
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  
+  for (let i = 0; i < alphabet.length; i++) {
+    const letter = alphabet[i];
+    const candidateCode = `${prefix}${letter}`;
+    if (!existingCommesse.some(c => c.codiceCommessa === candidateCode)) {
+      return letter;
+    }
+  }
+  
+  for (let i = 0; i < alphabet.length; i++) {
+    for (let j = 0; j < alphabet.length; j++) {
+      const letter = alphabet[i] + alphabet[j];
+      const candidateCode = `${prefix}${letter}`;
+      if (!existingCommesse.some(c => c.codiceCommessa === candidateCode)) {
+        return letter;
+      }
+    }
+  }
+  return 'A';
+};
+
 // Custom extended week generator
 const generateWeeksExtended = (baseDate: Date, numWeeks: number): WeekInfo[] => {
   const weeks: WeekInfo[] = [];
@@ -165,9 +206,44 @@ export default function Commesse() {
   const [newCommessaDataInizio, setNewCommessaDataInizio] = useState('');
   const [newCommessaDataFine, setNewCommessaDataFine] = useState('');
   const [newCommessaResponsabile, setNewCommessaResponsabile] = useState('');
-  const [newCommessaSeniorDays, setNewCommessaSeniorDays] = useState('');
-  const [newCommessaProjectDays, setNewCommessaProjectDays] = useState('');
-  const [newCommessaJuniorDays, setNewCommessaJuniorDays] = useState('');
+
+  // Split in Progetti states
+  const [newCommessaProgetti, setNewCommessaProgetti] = useState<CommessaProgetto[]>([
+    {
+      descrizione: 'FORMAZIONE - Attività formative sulla commessa',
+      pm: '',
+      sgq: 'NO',
+      verificatori: '',
+      compilatore: '',
+      giornateSenior: 0,
+      giornateProject: 0,
+      giornateJunior: 0
+    }
+  ]);
+
+  const handleAddProgettoField = () => {
+    setNewCommessaProgetti(prev => [
+      ...prev,
+      {
+        descrizione: '',
+        pm: '',
+        sgq: 'NO',
+        verificatori: '',
+        compilatore: '',
+        giornateSenior: 0,
+        giornateProject: 0,
+        giornateJunior: 0
+      }
+    ]);
+  };
+
+  const handleRemoveProgettoField = (index: number) => {
+    setNewCommessaProgetti(prev => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleUpdateProgettoField = (index: number, fields: Partial<CommessaProgetto>) => {
+    setNewCommessaProgetti(prev => prev.map((p, idx) => idx === index ? { ...p, ...fields } : p));
+  };
 
   // Searchable Client Dropdown States
   const [selectedClient, setSelectedClient] = useState<{ codice: string; nome: string } | null>(null);
@@ -624,6 +700,18 @@ export default function Commesse() {
     return commesse.some(c => c.codiceCommessa === generatedCodiceCommessa);
   }, [generatedCodiceCommessa, commesse]);
 
+  useEffect(() => {
+    if (selectedClient && newCommessaAnno) {
+      const nextLetter = getNextAvailableLetter(
+        newCommessaTipologia,
+        newCommessaAnno,
+        selectedClient.codice,
+        commesse
+      );
+      setNewCommessaLettera(nextLetter);
+    }
+  }, [selectedClient, newCommessaTipologia, newCommessaAnno, commesse]);
+
   const responsabiliMacroAreeList = useMemo(() => {
     const coordEmails = new Set(coordinatori.map(c => c.email.toLowerCase()));
     return dipendenti.filter(d => d.email && coordEmails.has(d.email.toLowerCase()));
@@ -673,6 +761,12 @@ export default function Commesse() {
 
     const calculatedColor = TIPOLOGIA_COLORS[newCommessaTipologia] || '#64748b';
 
+    // Calcolo totali giornate e elenco PM univoci
+    const totalSeniorDays = newCommessaProgetti.reduce((acc, p) => acc + (p.sgq === 'NO' ? Number(p.giornateSenior) || 0 : 0), 0);
+    const totalProjectDays = newCommessaProgetti.reduce((acc, p) => acc + (p.sgq === 'NO' ? Number(p.giornateProject) || 0 : 0), 0);
+    const totalJuniorDays = newCommessaProgetti.reduce((acc, p) => acc + (p.sgq === 'NO' ? Number(p.giornateJunior) || 0 : 0), 0);
+    const pmsUnivoci = Array.from(new Set(newCommessaProgetti.map(p => p.pm).filter(name => name !== '')));
+
     try {
       const payload = {
         nome: `${codiceCommessa} - ${newCommessaTitolo}`,
@@ -686,10 +780,11 @@ export default function Commesse() {
         dataInizio: newCommessaDataInizio || '',
         dataFine: newCommessaDataFine || '',
         responsabile: newCommessaResponsabile || '',
-        pm: [],
-        giornateSeniorProject: Number(newCommessaSeniorDays) || 0,
-        giornateProject: Number(newCommessaProjectDays) || 0,
-        giornateJuniorProject: Number(newCommessaJuniorDays) || 0
+        pm: pmsUnivoci,
+        giornateSeniorProject: totalSeniorDays,
+        giornateProject: totalProjectDays,
+        giornateJuniorProject: totalJuniorDays,
+        progetti: newCommessaProgetti
       };
       
       await addDoc(collection(db, 'catalogo_commesse'), payload);
@@ -697,26 +792,58 @@ export default function Commesse() {
       // Invio notifica e-mail ai Commerciali configurati
       if (!isCommerciale && commercialiEmails && commercialiEmails.length > 0) {
         const mailSubject = `[Nuova Commessa] Aperta commessa: ${payload.nome}`;
+        
+        let progettiHtml = '';
+        payload.progetti.forEach((p, index) => {
+          let sgqInfo = '';
+          if (p.sgq === 'SI') {
+            sgqInfo = `<strong>SGQ:</strong> Sì<br/><strong>Verif./Valid.:</strong> ${p.verificatori || '-'}<br/><strong>Compilatore:</strong> ${p.compilatore || '-'}`;
+          } else {
+            sgqInfo = `<strong>SGQ:</strong> No<br/><strong>Giornate:</strong> Senior: ${p.giornateSenior} gg | Project: ${p.giornateProject} gg | Junior: ${p.giornateJunior} gg`;
+          }
+          const formattedDesc = (p.descrizione || '').replace(/\n/g, '<br/>');
+          progettiHtml += `
+            <tr style="background-color: ${index % 2 === 0 ? '#f9fafb' : '#ffffff'};">
+              <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-weight: 600; font-size: 13px; line-height: 1.45;">${formattedDesc || '(Nessuna descrizione)'}</td>
+              <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 13px; vertical-align: top;">${p.pm || 'Non assegnato'}</td>
+              <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 12px; line-height: 1.5; vertical-align: top;">${sgqInfo}</td>
+            </tr>
+          `;
+        });
+
         const mailBody = `
           <p>Gentile Commerciale,</p>
           <p>Ti informiamo che è stata aperta una nuova commessa sulla piattaforma di pianificazione con i seguenti dettagli:</p>
           <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 15px 0;" />
           <table border="0" cellpadding="5" cellspacing="0" style="font-size: 14px; color: #374151; width: 100%;">
-            <tr><td style="font-weight: bold; width: 150px;">Codice Commessa:</td><td>${payload.codiceCommessa}</td></tr>
+            <tr><td style="font-weight: bold; width: 180px;">Codice Commessa:</td><td>${payload.codiceCommessa}</td></tr>
             <tr><td style="font-weight: bold;">Titolo:</td><td>${payload.titolo}</td></tr>
             <tr><td style="font-weight: bold;">Cliente:</td><td>${payload.cliente}</td></tr>
             <tr><td style="font-weight: bold;">Tipologia:</td><td>${TIPOLOGIE_COMMESSE[payload.tipologia] || payload.tipologia}</td></tr>
             <tr><td style="font-weight: bold;">Anno:</td><td>${payload.anno}</td></tr>
             <tr><td style="font-weight: bold;">Data Inizio:</td><td>${payload.dataInizio ? new Date(payload.dataInizio).toLocaleDateString('it-IT') : 'Non specificata'}</td></tr>
             <tr><td style="font-weight: bold;">Data Fine:</td><td>${payload.dataFine ? new Date(payload.dataFine).toLocaleDateString('it-IT') : 'Non specificata'}</td></tr>
-            <tr><td style="font-weight: bold;">Responsabile:</td><td>${payload.responsabile || 'Non assegnato'}</td></tr>
-            <tr><td style="font-weight: bold;">Stima Giornate Senior:</td><td>${payload.giornateSeniorProject} gg</td></tr>
-            <tr><td style="font-weight: bold;">Stima Giornate Project:</td><td>${payload.giornateProject} gg</td></tr>
-            <tr><td style="font-weight: bold;">Stima Giornate Junior:</td><td>${payload.giornateJuniorProject} gg</td></tr>
+            <tr><td style="font-weight: bold;">Responsabile Commessa:</td><td>${payload.responsabile || 'Non assegnato'}</td></tr>
+            <tr><td style="font-weight: bold;">Giornate Totali Stimate (No SGQ):</td><td>Senior: ${payload.giornateSeniorProject} gg | Project: ${payload.giornateProject} gg | Junior: ${payload.giornateJuniorProject} gg</td></tr>
           </table>
-          <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 15px 0;" />
+          
+          <h3 style="color: #065f46; font-size: 16px; margin-top: 25px; margin-bottom: 10px;">Split in Progetti</h3>
+          <table border="0" cellpadding="0" cellspacing="0" style="width: 100%; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; font-family: inherit;">
+            <thead style="background-color: #f3f4f6;">
+              <tr>
+                <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Descrizione Progetto</th>
+                <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Project Manager</th>
+                <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Configurazione / SGQ</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${progettiHtml}
+            </tbody>
+          </table>
+          <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 25px 0;" />
           <p>Puoi ora procedere all'apertura di questa commessa sul gestionale separato aziendale.</p>
         `;
+
         for (const email of commercialiEmails) {
           await queueMail(email, mailSubject, mailBody);
         }
@@ -729,9 +856,18 @@ export default function Commesse() {
       setNewCommessaDataFine('');
       setNewCommessaLettera('A');
       setNewCommessaResponsabile('');
-      setNewCommessaSeniorDays('');
-      setNewCommessaProjectDays('');
-      setNewCommessaJuniorDays('');
+      setNewCommessaProgetti([
+        {
+          descrizione: 'FORMAZIONE - Attività formative sulla commessa',
+          pm: '',
+          sgq: 'NO',
+          verificatori: '',
+          compilatore: '',
+          giornateSenior: 0,
+          giornateProject: 0,
+          giornateJunior: 0
+        }
+      ]);
       
       showToast("Commessa salvata nel catalogo con successo!", "success");
     } catch (err) {
@@ -1475,22 +1611,150 @@ export default function Commesse() {
                   </div>
                 </div>
 
-                {/* Sezione Giornate Stimate */}
-                <div className="bg-emerald-100/30 p-4 rounded-2xl border border-emerald-100/50 space-y-3">
-                  <h4 className="text-xs font-black text-emerald-950 uppercase tracking-wide">Giornate Stimate di Lavoro</h4>
-                  <div className="grid grid-cols-3 gap-3">
-                    <div>
-                      <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1">Senior Project</label>
-                      <input type="number" min={0} placeholder="0" value={newCommessaSeniorDays} onChange={e => setNewCommessaSeniorDays(e.target.value)} className="w-full p-2 border-none rounded-lg bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-750 text-xs text-center" />
-                    </div>
-                    <div>
-                      <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1">Project</label>
-                      <input type="number" min={0} placeholder="0" value={newCommessaProjectDays} onChange={e => setNewCommessaProjectDays(e.target.value)} className="w-full p-2 border-none rounded-lg bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-750 text-xs text-center" />
-                    </div>
-                    <div>
-                      <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1">Junior Project</label>
-                      <input type="number" min={0} placeholder="0" value={newCommessaJuniorDays} onChange={e => setNewCommessaJuniorDays(e.target.value)} className="w-full p-2 border-none rounded-lg bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-750 text-xs text-center" />
-                    </div>
+                {/* Sezione Split in Progetti */}
+                <div className="bg-gradient-to-br from-indigo-50/50 to-emerald-50/50 p-5 rounded-2xl border border-indigo-100/60 space-y-4">
+                  <div className="flex justify-between items-center">
+                    <h4 className="text-xs font-black text-indigo-950 uppercase tracking-wide flex items-center gap-1.5">
+                      🔀 Split in Progetti
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={handleAddProgettoField}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-[10px] px-3 py-1.5 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
+                    >
+                      + Aggiungi Progetto
+                    </button>
+                  </div>
+
+                  <div className="space-y-4">
+                    {newCommessaProgetti.map((progetto, idx) => (
+                      <div key={idx} className="bg-white p-4 rounded-xl border border-gray-150 space-y-3 relative shadow-sm">
+                        <div className="flex justify-between items-center gap-3">
+                          <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider">
+                            Progetto #{idx + 1}
+                          </span>
+                          {idx > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveProgettoField(idx)}
+                              className="text-red-500 hover:text-red-700 font-extrabold text-[10px] bg-red-50 hover:bg-red-100/50 px-2 py-1 rounded transition cursor-pointer"
+                            >
+                              Rimuovi
+                            </button>
+                          )}
+                        </div>
+
+                        <div>
+                          <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Descrizione Progetto</label>
+                          <textarea
+                            required
+                            rows={3}
+                            placeholder="Inserisci la descrizione o l'identificativo del progetto (puoi andare a capo)..."
+                            value={progetto.descrizione}
+                            onChange={e => handleUpdateProgettoField(idx, { descrizione: e.target.value })}
+                            className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-semibold text-gray-700 text-xs resize-y"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Project Manager</label>
+                            <select
+                              required
+                              value={progetto.pm}
+                              onChange={e => handleUpdateProgettoField(idx, { pm: e.target.value })}
+                              className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
+                            >
+                              <option value="">-- Seleziona PM --</option>
+                              {pmsList.map(pm => (
+                                <option key={pm.id} value={pm.nome}>{pm.nome}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Abilitato SGQ</label>
+                            <select
+                              value={progetto.sgq}
+                              onChange={e => handleUpdateProgettoField(idx, { sgq: e.target.value as 'SI' | 'NO' })}
+                              className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
+                            >
+                              <option value="NO">NO</option>
+                              <option value="SI">SI</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {progetto.sgq === 'SI' ? (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-indigo-50/30 p-3 rounded-lg border border-indigo-100/50">
+                            <div>
+                              <label className="block text-[9px] font-bold text-indigo-900 mb-1 ml-1">Verificatori / Validatori</label>
+                              <select
+                                required
+                                value={progetto.verificatori}
+                                onChange={e => handleUpdateProgettoField(idx, { verificatori: e.target.value })}
+                                className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
+                              >
+                                <option value="">-- Seleziona Risorsa --</option>
+                                {dipendenti.map(d => (
+                                  <option key={d.id} value={d.nome}>{d.nome}</option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <div>
+                              <label className="block text-[9px] font-bold text-indigo-900 mb-1 ml-1">Compilatore (Facoltativo)</label>
+                              <select
+                                value={progetto.compilatore}
+                                onChange={e => handleUpdateProgettoField(idx, { compilatore: e.target.value })}
+                                className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
+                              >
+                                <option value="">-- Nessuno --</option>
+                                {dipendenti.map(d => (
+                                  <option key={d.id} value={d.nome}>{d.nome}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-3 gap-2 bg-emerald-50/30 p-3 rounded-lg border border-emerald-100/50">
+                            <div>
+                              <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1 text-center">Senior Project</label>
+                              <input
+                                type="number"
+                                min={0}
+                                placeholder="0"
+                                value={progetto.giornateSenior || ''}
+                                onChange={e => handleUpdateProgettoField(idx, { giornateSenior: Number(e.target.value) || 0 })}
+                                className="w-full p-2 border border-emerald-100 rounded-lg bg-white text-center font-bold text-gray-700 text-xs outline-none focus:ring-1 focus:ring-emerald-400"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1 text-center">Project</label>
+                              <input
+                                type="number"
+                                min={0}
+                                placeholder="0"
+                                value={progetto.giornateProject || ''}
+                                onChange={e => handleUpdateProgettoField(idx, { giornateProject: Number(e.target.value) || 0 })}
+                                className="w-full p-2 border border-emerald-100 rounded-lg bg-white text-center font-bold text-gray-700 text-xs outline-none focus:ring-1 focus:ring-emerald-400"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1 text-center">Junior Project</label>
+                              <input
+                                type="number"
+                                min={0}
+                                placeholder="0"
+                                value={progetto.giornateJunior || ''}
+                                onChange={e => handleUpdateProgettoField(idx, { giornateJunior: Number(e.target.value) || 0 })}
+                                className="w-full p-2 border border-emerald-100 rounded-lg bg-white text-center font-bold text-gray-700 text-xs outline-none focus:ring-1 focus:ring-emerald-400"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 </div>
 
