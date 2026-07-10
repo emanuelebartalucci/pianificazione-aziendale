@@ -1547,23 +1547,27 @@ export default function PianificazionePersonale() {
             return listStr !== dbListStr;
           })();
 
+          // I Disegnatori possono essere modificati solo da Romanello (coordinatore) o admin
+          const isDisegnatore = parentAreaName === 'Disegnatori';
+          const canDirectlyEditCell = (isEditable || isPMOrResponsabile) && (!isDisegnatore || isAdmin || isCoordinatoreArea);
+
           let bgClass = "bg-slate-50/50 text-slate-400 font-bold";
-          if (isEditable) bgClass += " hover:bg-slate-100/60";
+          if (canDirectlyEditCell) bgClass += " hover:bg-slate-100/60";
           let indicatorColor = "bg-slate-400"; // Grigio scuro per 0%
 
           if (totalLoad > 0) {
             if (totalLoad < 90) {
-              bgClass = isEditable 
+              bgClass = canDirectlyEditCell 
                 ? "bg-sky-50 text-sky-900 hover:bg-sky-100/80 font-bold" 
                 : "bg-sky-50 text-sky-900 font-bold";
               indicatorColor = "bg-sky-500"; // Celeste acceso
             } else if (totalLoad >= 90 && totalLoad <= 100) {
-              bgClass = isEditable 
+              bgClass = canDirectlyEditCell 
                 ? "bg-emerald-50 text-emerald-900 hover:bg-emerald-100/80 font-bold" 
                 : "bg-emerald-50 text-emerald-900 font-bold";
               indicatorColor = "bg-emerald-500"; // Verde acceso
             } else {
-              bgClass = isEditable 
+              bgClass = canDirectlyEditCell 
                 ? "bg-rose-50 text-rose-900 hover:bg-rose-100/90 font-black" 
                 : "bg-rose-50 text-rose-900 font-black";
               indicatorColor = "bg-rose-600"; // Rosso acceso
@@ -1575,10 +1579,6 @@ export default function PianificazionePersonale() {
           const maternitaCount = leaves.filter(l => l.tipo === 'maternita').length;
           const permessoCount = leaves.filter(l => l.tipo === 'permesso' || l.tipo === 'mattina' || l.tipo === 'pomeriggio').length;
           const smartCount = leaves.filter(l => l.tipo === 'smart').length;
-
-          // I Disegnatori possono essere modificati solo da Romanello (coordinatore) o admin
-          const isDisegnatore = parentAreaName === 'Disegnatori';
-          const canDirectlyEditCell = isEditable && (!isDisegnatore || isAdmin || isCoordinatoreArea);
 
           return (
             <td 
@@ -2642,9 +2642,9 @@ export default function PianificazionePersonale() {
           <div>
             <h3 className="font-extrabold text-xl text-gray-900">Carichi di Lavoro Settimanali</h3>
             <p className="text-xs text-gray-400 font-bold mt-0.5">
-              {(isAdmin || isSenior) 
-                ? "* Clicca su una cella per aggiungere, rimuovere o modificare i dettagli delle commesse per quella settimana."
-                : "* Vista di sola lettura. (Solo Amministratori o Responsabili Senior possono modificare la pianificazione)"
+              {(isAdmin || isSenior || isPMOrResponsabile) 
+                ? "* Clicca su una cella per aggiungere, rimuovere o modificare i dettagli delle commesse di cui sei PM, Responsabile o Admin per quella settimana."
+                : "* Vista di sola lettura. (Solo Amministratori, Coordinatori o PM/Responsabili possono modificare la pianificazione)"
               }
             </p>
           </div>

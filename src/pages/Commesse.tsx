@@ -101,7 +101,7 @@ interface CommessaProgetto {
   descrizione: string;
   pm: string;
   sgq: 'SI' | 'NO';
-  verificatori: string;
+  verificatori: string[];
   compilatore: string;
   giornateSenior: number;
   giornateProject: number;
@@ -213,7 +213,7 @@ export default function Commesse() {
       descrizione: 'FORMAZIONE - Attività formative sulla commessa',
       pm: '',
       sgq: 'NO',
-      verificatori: '',
+      verificatori: [],
       compilatore: '',
       giornateSenior: 0,
       giornateProject: 0,
@@ -221,28 +221,15 @@ export default function Commesse() {
     }
   ]);
 
-  const handleAddProgettoField = () => {
-    setNewCommessaProgetti(prev => [
-      ...prev,
-      {
-        descrizione: '',
-        pm: '',
-        sgq: 'NO',
-        verificatori: '',
-        compilatore: '',
-        giornateSenior: 0,
-        giornateProject: 0,
-        giornateJunior: 0
-      }
-    ]);
-  };
-
-  const handleRemoveProgettoField = (index: number) => {
-    setNewCommessaProgetti(prev => prev.filter((_, idx) => idx !== index));
-  };
-
   const handleUpdateProgettoField = (index: number, fields: Partial<CommessaProgetto>) => {
     setNewCommessaProgetti(prev => prev.map((p, idx) => idx === index ? { ...p, ...fields } : p));
+  };
+
+  // States for Editing Projects Split
+  const [editProgetti, setEditProgetti] = useState<CommessaProgetto[]>([]);
+
+  const handleUpdateEditProgettoField = (index: number, fields: Partial<CommessaProgetto>) => {
+    setEditProgetti(prev => prev.map((p, idx) => idx === index ? { ...p, ...fields } : p));
   };
 
   // Searchable Client Dropdown States
@@ -311,11 +298,7 @@ export default function Commesse() {
   // Stati per la modifica dei dettagli della commessa (Responsabile, PM, Date)
   const [editingCommessa, setEditingCommessa] = useState<any | null>(null);
   const [editResponsabile, setEditResponsabile] = useState('');
-  const [editPMs, setEditPMs] = useState<string[]>([]);
-  const [selectedAddPM, setSelectedAddPM] = useState('');
-  const [editSeniorDays, setEditSeniorDays] = useState('');
-  const [editProjectDays, setEditProjectDays] = useState('');
-  const [editJuniorDays, setEditJuniorDays] = useState('');
+
   const [editDataInizio, setEditDataInizio] = useState('');
   const [editDataFine, setEditDataFine] = useState('');
   const [editStato, setEditStato] = useState('Aperta');
@@ -573,26 +556,34 @@ export default function Commesse() {
     const respDip = dipendenti.find(d => areNamesEqual(d.nome, comm.responsabile));
     setEditResponsabile(respDip ? respDip.nome : (comm.responsabile || ''));
     
-    // Gestione PMs multipli: comm.pm può essere un array o una stringa
-    let initialPMs: string[] = [];
-    if (comm.pm) {
-      if (Array.isArray(comm.pm)) {
-        initialPMs = comm.pm;
-      } else {
-        initialPMs = [comm.pm];
-      }
-    }
-    const formattedPMs = initialPMs.map(pmName => {
-      const pmDip = dipendenti.find(d => areNamesEqual(d.nome, pmName));
-      return pmDip ? pmDip.nome : pmName;
-    });
-    setEditPMs(formattedPMs);
-    setSelectedAddPM('');
 
-    // Giornate stimate
-    setEditSeniorDays(comm.giornateSeniorProject !== undefined ? String(comm.giornateSeniorProject) : '0');
-    setEditProjectDays(comm.giornateProject !== undefined ? String(comm.giornateProject) : '0');
-    setEditJuniorDays(comm.giornateJuniorProject !== undefined ? String(comm.giornateJuniorProject) : '0');
+    // Inizializzazione progetti split in modifica
+    const initialProgetti = (comm.progetti || [
+      {
+        descrizione: 'FORMAZIONE - Attività formative sulla commessa',
+        pm: '',
+        sgq: 'NO',
+        verificatori: [],
+        compilatore: '',
+        giornateSenior: Number(comm.giornateSeniorProject) || 0,
+        giornateProject: Number(comm.giornateProject) || 0,
+        giornateJunior: Number(comm.giornateJuniorProject) || 0
+      }
+    ]).map((p: any) => {
+      let vArr: string[] = [];
+      if (p.verificatori) {
+        if (Array.isArray(p.verificatori)) {
+          vArr = p.verificatori;
+        } else {
+          vArr = [p.verificatori];
+        }
+      }
+      return {
+        ...p,
+        verificatori: vArr
+      };
+    });
+    setEditProgetti(initialProgetti);
     
     setEditDataInizio(comm.dataInizio || '');
     setEditDataFine(comm.dataFine || '');
@@ -611,15 +602,23 @@ export default function Commesse() {
     setSavingEdit(true);
     try {
       const docRef = doc(db, 'catalogo_commesse', editingCommessa.id);
+
+      // Calcolo dinamico dei totali dai progetti in modifica
+      const totalSeniorDays = editProgetti.reduce((acc, p) => acc + (p.sgq === 'NO' ? Number(p.giornateSenior) || 0 : 0), 0);
+      const totalProjectDays = editProgetti.reduce((acc, p) => acc + (p.sgq === 'NO' ? Number(p.giornateProject) || 0 : 0), 0);
+      const totalJuniorDays = editProgetti.reduce((acc, p) => acc + (p.sgq === 'NO' ? Number(p.giornateJunior) || 0 : 0), 0);
+      const pmsUnivoci = Array.from(new Set(editProgetti.map(p => p.pm).filter(name => name !== '')));
+
       const updates = {
         responsabile: editResponsabile,
-        pm: editPMs,
-        giornateSeniorProject: Number(editSeniorDays) || 0,
-        giornateProject: Number(editProjectDays) || 0,
-        giornateJuniorProject: Number(editJuniorDays) || 0,
+        pm: pmsUnivoci,
+        giornateSeniorProject: totalSeniorDays,
+        giornateProject: totalProjectDays,
+        giornateJuniorProject: totalJuniorDays,
         dataInizio: editDataInizio,
         dataFine: editDataFine,
-        stato: editStato
+        stato: editStato,
+        progetti: editProgetti
       };
 
       await setDoc(docRef, updates, { merge: true });
@@ -644,7 +643,7 @@ export default function Commesse() {
       const oldPMs = Array.isArray(editingCommessa.pm) 
         ? editingCommessa.pm 
         : (editingCommessa.pm ? [editingCommessa.pm] : []);
-      const addedPMs = editPMs.filter(p => !oldPMs.includes(p));
+      const addedPMs = pmsUnivoci.filter((p: string) => !oldPMs.includes(p));
 
       for (const addedPM of addedPMs) {
         const pmDip = dipendenti.find(d => d.nome === addedPM);
@@ -797,7 +796,8 @@ export default function Commesse() {
         payload.progetti.forEach((p, index) => {
           let sgqInfo = '';
           if (p.sgq === 'SI') {
-            sgqInfo = `<strong>SGQ:</strong> Sì<br/><strong>Verif./Valid.:</strong> ${p.verificatori || '-'}<br/><strong>Compilatore:</strong> ${p.compilatore || '-'}`;
+            const vList = Array.isArray(p.verificatori) ? p.verificatori.join(', ') : (p.verificatori || '-');
+            sgqInfo = `<strong>SGQ:</strong> Sì<br/><strong>Verif./Valid.:</strong> ${vList || '-'}<br/><strong>Compilatore:</strong> ${p.compilatore || '-'}`;
           } else {
             sgqInfo = `<strong>SGQ:</strong> No<br/><strong>Giornate:</strong> Senior: ${p.giornateSenior} gg | Project: ${p.giornateProject} gg | Junior: ${p.giornateJunior} gg`;
           }
@@ -861,7 +861,7 @@ export default function Commesse() {
           descrizione: 'FORMAZIONE - Attività formative sulla commessa',
           pm: '',
           sgq: 'NO',
-          verificatori: '',
+          verificatori: [],
           compilatore: '',
           giornateSenior: 0,
           giornateProject: 0,
@@ -1611,39 +1611,17 @@ export default function Commesse() {
                   </div>
                 </div>
 
-                {/* Sezione Split in Progetti */}
+                {/* Sezione Dettagli Progetto & SGQ */}
                 <div className="bg-gradient-to-br from-indigo-50/50 to-emerald-50/50 p-5 rounded-2xl border border-indigo-100/60 space-y-4">
                   <div className="flex justify-between items-center">
                     <h4 className="text-xs font-black text-indigo-950 uppercase tracking-wide flex items-center gap-1.5">
-                      🔀 Split in Progetti
+                      🔀 Dettagli Progetto & SGQ
                     </h4>
-                    <button
-                      type="button"
-                      onClick={handleAddProgettoField}
-                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-[10px] px-3 py-1.5 rounded-lg transition-all active:scale-95 shadow-sm cursor-pointer"
-                    >
-                      + Aggiungi Progetto
-                    </button>
                   </div>
 
                   <div className="space-y-4">
                     {newCommessaProgetti.map((progetto, idx) => (
                       <div key={idx} className="bg-white p-4 rounded-xl border border-gray-150 space-y-3 relative shadow-sm">
-                        <div className="flex justify-between items-center gap-3">
-                          <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider">
-                            Progetto #{idx + 1}
-                          </span>
-                          {idx > 0 && (
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveProgettoField(idx)}
-                              className="text-red-500 hover:text-red-700 font-extrabold text-[10px] bg-red-50 hover:bg-red-100/50 px-2 py-1 rounded transition cursor-pointer"
-                            >
-                              Rimuovi
-                            </button>
-                          )}
-                        </div>
-
                         <div>
                           <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Descrizione Progetto</label>
                           <textarea
@@ -1688,15 +1666,40 @@ export default function Commesse() {
                         {progetto.sgq === 'SI' ? (
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-indigo-50/30 p-3 rounded-lg border border-indigo-100/50">
                             <div>
-                              <label className="block text-[9px] font-bold text-indigo-900 mb-1 ml-1">Verificatori / Validatori</label>
+                              <label className="block text-[9px] font-bold text-indigo-900 mb-1.5 ml-1">Verificatori / Validatori</label>
+                              <div className="flex flex-wrap gap-1 mb-2">
+                                {(!progetto.verificatori || progetto.verificatori.length === 0) ? (
+                                  <span className="text-[10px] text-gray-400 italic ml-1">Nessun validatore</span>
+                                ) : (
+                                  progetto.verificatori.map(vName => (
+                                    <div key={vName} className="flex items-center gap-1.5 bg-indigo-100 border border-indigo-200 px-2 py-0.5 rounded-lg text-[10px] font-bold text-indigo-900 shadow-sm animate-in fade-in zoom-in-95 duration-150">
+                                      <span>{vName}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const updatedList = progetto.verificatori.filter(x => x !== vName);
+                                          handleUpdateProgettoField(idx, { verificatori: updatedList });
+                                        }}
+                                        className="text-indigo-450 hover:text-indigo-700 transition cursor-pointer"
+                                      >
+                                        ✕
+                                      </button>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
                               <select
-                                required
-                                value={progetto.verificatori}
-                                onChange={e => handleUpdateProgettoField(idx, { verificatori: e.target.value })}
+                                value=""
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  if (val && !progetto.verificatori.includes(val)) {
+                                    handleUpdateProgettoField(idx, { verificatori: [...progetto.verificatori, val] });
+                                  }
+                                }}
                                 className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
                               >
-                                <option value="">-- Seleziona Risorsa --</option>
-                                {dipendenti.map(d => (
+                                <option value="">+ Aggiungi Validatore...</option>
+                                {dipendenti.filter(d => !progetto.verificatori.includes(d.nome)).map(d => (
                                   <option key={d.id} value={d.nome}>{d.nome}</option>
                                 ))}
                               </select>
@@ -1788,7 +1791,6 @@ export default function Commesse() {
                     <th className="p-2.5">Stato</th>
                     <th className="p-2.5">Resp.</th>
                     <th className="p-2.5">PM</th>
-                    <th className="p-2.5">Giornate Stimate (S/P/J)</th>
                     <th className="p-2.5 text-center"></th>
                   </tr>
                 </thead>
@@ -1813,7 +1815,7 @@ export default function Commesse() {
                     if (filtered.length === 0) {
                       return (
                         <tr>
-                          <td colSpan={9} className="p-8 text-center text-gray-400 font-bold italic">
+                          <td colSpan={8} className="p-8 text-center text-gray-400 font-bold italic">
                             Nessuna commessa trovata.
                           </td>
                         </tr>
@@ -1846,11 +1848,6 @@ export default function Commesse() {
                           </td>
                           <td className="p-2.5 truncate max-w-[100px]" title={c.responsabile || ''}>{c.responsabile || ''}</td>
                           <td className="p-2.5 truncate max-w-[120px]" title={(() => { const arr = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []); return arr.join(', '); })()}>{(() => { const arr = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []); return arr.join(', '); })() || ''}</td>
-                          <td className="p-2.5 whitespace-nowrap font-bold text-slate-700">
-                            {c.giornateSeniorProject !== undefined || c.giornateProject !== undefined || c.giornateJuniorProject !== undefined
-                              ? `${c.giornateSeniorProject || 0} / ${c.giornateProject || 0} / ${c.giornateJuniorProject || 0}`
-                              : '0 / 0 / 0'}
-                          </td>
                           <td className="p-2.5 text-center">
                             <div className="flex items-center justify-center gap-1.5">
                               <button 
@@ -1882,146 +1879,235 @@ export default function Commesse() {
 
       {editingCommessa && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2rem] shadow-2xl max-w-md w-full border border-gray-150 p-6 flex flex-col gap-6 animate-in fade-in zoom-in-95 duration-200">
-            <div className="flex justify-between items-center">
+          <div className="bg-white rounded-[2rem] shadow-2xl max-w-5xl w-full border border-gray-150 p-6 flex flex-col gap-6 animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center shrink-0">
               <h3 className="text-xl font-black text-gray-900 flex items-center gap-2">
                 <Briefcase className="w-6 h-6 text-blue-600" />
-                <span>Assegna Resp/PM & Date</span>
+                <span>Modifica Commessa e Split Progetti</span>
               </h3>
               <button onClick={() => setEditingCommessa(null)} className="text-gray-400 hover:text-gray-600 p-1.5 rounded-xl hover:bg-gray-100 transition">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="bg-blue-50 border border-blue-100 p-4 rounded-2xl">
+            <div className="bg-blue-50 border border-blue-100 p-4 rounded-2xl shrink-0">
               <div className="text-[11px] font-bold uppercase tracking-wider text-blue-500">Commessa in modifica</div>
               <div className="font-extrabold text-blue-900 text-sm mt-0.5">{editingCommessa.nome}</div>
             </div>
 
-            <form onSubmit={handleSaveCommessaDetails} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Responsabile</label>
-                <select 
-                  value={editResponsabile} 
-                  onChange={e => setEditResponsabile(e.target.value)}
-                  className="w-full p-3 border-none bg-gray-50 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-bold text-gray-700"
-                >
-                  <option value="">-- Nessuno --</option>
-                  {(() => {
-                    const list = [...responsabiliMacroAreeList];
-                    if (editResponsabile && !list.some(d => d.nome === editResponsabile)) {
-                      const current = dipendenti.find(d => d.nome === editResponsabile);
-                      if (current) list.push(current);
-                    }
-                    return list.map(d => <option key={d.id} value={d.nome}>{d.nome}</option>);
-                  })()}
-                </select>
-              </div>
-
-              {/* Gestione PMs Multipli */}
-              <div className="space-y-2">
-                <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Project Managers (PM)</label>
-                
-                {/* Lista PM attuali */}
-                <div className="space-y-1.5 max-h-28 overflow-y-auto pr-1">
-                  {editPMs.length === 0 ? (
-                    <p className="text-xs text-gray-400 italic">Nessun PM assegnato.</p>
-                  ) : (
-                    editPMs.map(pmName => (
-                      <div key={pmName} className="p-2 bg-blue-50/50 rounded-xl border border-blue-100 flex justify-between items-center text-xs">
-                        <span className="font-extrabold text-blue-950 truncate">{pmName}</span>
-                        <button 
-                          type="button" 
-                          onClick={() => setEditPMs(prev => prev.filter(x => x !== pmName))}
-                          className="text-red-400 hover:text-red-650 transition-colors p-1 cursor-pointer shrink-0"
-                          title="Rimuovi PM"
-                        >
-                          <X className="w-3.5 h-3.5"/>
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
-
-                {/* Selettore aggiunta PM */}
-                <div className="flex gap-2 mt-2">
-                  <select 
-                    value={selectedAddPM}
-                    onChange={e => setSelectedAddPM(e.target.value)}
-                    className="flex-1 p-2 bg-gray-50 border-none rounded-xl text-xs outline-none focus:ring-1 focus:ring-blue-500 shadow-inner font-bold text-gray-700"
-                  >
-                    <option value="">-- Seleziona PM da aggiungere --</option>
-                    {pmsList.filter(p => !editPMs.includes(p.nome)).map(p => (
-                      <option key={p.id} value={p.nome}>{p.nome}</option>
-                    ))}
-                  </select>
-                  <button 
-                    type="button"
-                    onClick={() => {
-                      if (selectedAddPM && !editPMs.includes(selectedAddPM)) {
-                        setEditPMs(prev => [...prev, selectedAddPM]);
-                        setSelectedAddPM('');
-                      }
-                    }}
-                    className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-xl text-xs font-bold transition shadow-sm active:scale-95 cursor-pointer shrink-0"
-                  >
-                    Aggiungi
-                  </button>
-                </div>
-              </div>
-
-              {/* Sezione Giornate Stimate */}
-              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100 space-y-3">
-                <h4 className="text-xs font-black text-gray-900 uppercase tracking-wide">Giornate Stimate di Lavoro</h4>
-                <div className="grid grid-cols-3 gap-3">
+            <form onSubmit={handleSaveCommessaDetails} className="flex-1 flex flex-col gap-6 min-h-0">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start overflow-y-auto pr-1">
+                {/* COLONNA SINISTRA: Informazioni Generali */}
+                <div className="space-y-4 md:col-span-1 md:border-r md:pr-6 md:border-gray-150">
+                  <h4 className="text-xs font-black text-gray-900 uppercase tracking-wide">Dettagli Commessa</h4>
+                  
                   <div>
-                    <label className="block text-[9px] font-bold text-gray-700 mb-1 ml-1 text-center">Senior Project</label>
-                    <input type="number" min={0} value={editSeniorDays} onChange={e => setEditSeniorDays(e.target.value)} className="w-full p-2 border-none rounded-lg bg-white shadow-sm focus:ring-2 focus:ring-blue-500 outline-none font-bold text-gray-750 text-xs text-center" />
+                    <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Responsabile</label>
+                    <select 
+                      value={editResponsabile} 
+                      onChange={e => setEditResponsabile(e.target.value)}
+                      className="w-full p-3 border-none bg-gray-50 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-bold text-gray-700"
+                    >
+                      <option value="">-- Nessuno --</option>
+                      {(() => {
+                        const list = [...responsabiliMacroAreeList];
+                        if (editResponsabile && !list.some(d => d.nome === editResponsabile)) {
+                          const current = dipendenti.find(d => d.nome === editResponsabile);
+                          if (current) list.push(current);
+                        }
+                        return list.map(d => <option key={d.id} value={d.nome}>{d.nome}</option>);
+                      })()}
+                    </select>
                   </div>
+
                   <div>
-                    <label className="block text-[9px] font-bold text-gray-700 mb-1 ml-1 text-center">Project</label>
-                    <input type="number" min={0} value={editProjectDays} onChange={e => setEditProjectDays(e.target.value)} className="w-full p-2 border-none rounded-lg bg-white shadow-sm focus:ring-2 focus:ring-blue-500 outline-none font-bold text-gray-750 text-xs text-center" />
+                    <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Stato</label>
+                    <select 
+                      value={editStato} 
+                      onChange={e => setEditStato(e.target.value)}
+                      className="w-full p-3 border-none bg-gray-50 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-bold text-gray-700"
+                    >
+                      <option value="Aperta">Aperta</option>
+                      <option value="Chiusa">Chiusa</option>
+                    </select>
                   </div>
+
                   <div>
-                    <label className="block text-[9px] font-bold text-gray-700 mb-1 ml-1 text-center">Junior Project</label>
-                    <input type="number" min={0} value={editJuniorDays} onChange={e => setEditJuniorDays(e.target.value)} className="w-full p-2 border-none rounded-lg bg-white shadow-sm focus:ring-2 focus:ring-blue-500 outline-none font-bold text-gray-750 text-xs text-center" />
+                    <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Data Inizio (Opzionale)</label>
+                    <input 
+                      type="date" 
+                      value={editDataInizio} 
+                      onChange={e => setEditDataInizio(e.target.value)}
+                      className="w-full p-3 border-none bg-gray-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-semibold text-gray-650"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Data Fine (Opzionale)</label>
+                    <input 
+                      type="date" 
+                      value={editDataFine} 
+                      onChange={e => setEditDataFine(e.target.value)}
+                      className="w-full p-3 border-none bg-gray-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-semibold text-gray-650"
+                    />
                   </div>
                 </div>
+
+                {/* COLONNA DESTRA: Dettagli Progetto & SGQ */}
+                <div className="space-y-4 md:col-span-2">
+                  <div className="bg-gradient-to-br from-indigo-50/50 to-emerald-50/50 p-5 rounded-2xl border border-indigo-100/60 space-y-4">
+                    <div className="flex justify-between items-center">
+                      <h4 className="text-xs font-black text-indigo-950 uppercase tracking-wide flex items-center gap-1.5">
+                        🔀 Dettagli Progetto & SGQ
+                      </h4>
+                    </div>
+
+                    <div className="space-y-4">
+                      {editProgetti.map((progetto, idx) => (
+                        <div key={idx} className="bg-white p-4 rounded-xl border border-gray-150 space-y-3 relative shadow-sm">
+                          <div>
+                            <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Descrizione Progetto</label>
+                            <textarea
+                              required
+                              rows={3}
+                              placeholder="Inserisci la descrizione o l'identificativo del progetto (puoi andare a capo)..."
+                              value={progetto.descrizione}
+                              onChange={e => handleUpdateEditProgettoField(idx, { descrizione: e.target.value })}
+                              className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-semibold text-gray-700 text-xs resize-y"
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Project Manager</label>
+                              <select
+                                required
+                                value={progetto.pm}
+                                onChange={e => handleUpdateEditProgettoField(idx, { pm: e.target.value })}
+                                className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
+                              >
+                                <option value="">-- Seleziona PM --</option>
+                                {pmsList.map(pm => (
+                                  <option key={pm.id} value={pm.nome}>{pm.nome}</option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <div>
+                              <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Abilitato SGQ</label>
+                              <select
+                                value={progetto.sgq}
+                                onChange={e => handleUpdateEditProgettoField(idx, { sgq: e.target.value as 'SI' | 'NO' })}
+                                className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
+                              >
+                                <option value="NO">NO</option>
+                                <option value="SI">SI</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          {progetto.sgq === 'SI' ? (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-indigo-50/30 p-3 rounded-lg border border-indigo-100/50">
+                              <div>
+                                <label className="block text-[9px] font-bold text-indigo-900 mb-1.5 ml-1">Verificatori / Validatori</label>
+                                <div className="flex flex-wrap gap-1 mb-2">
+                                  {(!progetto.verificatori || progetto.verificatori.length === 0) ? (
+                                    <span className="text-[10px] text-gray-400 italic ml-1">Nessun validatore</span>
+                                  ) : (
+                                    progetto.verificatori.map(vName => (
+                                      <div key={vName} className="flex items-center gap-1.5 bg-indigo-100 border border-indigo-200 px-2 py-0.5 rounded-lg text-[10px] font-bold text-indigo-900 shadow-sm animate-in fade-in zoom-in-95 duration-150">
+                                        <span>{vName}</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const updatedList = (progetto.verificatori || []).filter(x => x !== vName);
+                                            handleUpdateEditProgettoField(idx, { verificatori: updatedList });
+                                          }}
+                                          className="text-indigo-455 hover:text-indigo-700 transition cursor-pointer"
+                                        >
+                                          ✕
+                                        </button>
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
+                                <select
+                                  value=""
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    const currentList = progetto.verificatori || [];
+                                    if (val && !currentList.includes(val)) {
+                                      handleUpdateEditProgettoField(idx, { verificatori: [...currentList, val] });
+                                    }
+                                  }}
+                                  className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
+                                >
+                                  <option value="">+ Aggiungi Validatore...</option>
+                                  {dipendenti.filter(d => !(progetto.verificatori || []).includes(d.nome)).map(d => (
+                                    <option key={d.id} value={d.nome}>{d.nome}</option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div>
+                                <label className="block text-[9px] font-bold text-indigo-900 mb-1 ml-1">Compilatore (Facoltativo)</label>
+                                <select
+                                  value={progetto.compilatore || ''}
+                                  onChange={e => handleUpdateEditProgettoField(idx, { compilatore: e.target.value })}
+                                  className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
+                                >
+                                  <option value="">-- Nessuno --</option>
+                                  {dipendenti.map(d => (
+                                    <option key={d.id} value={d.nome}>{d.nome}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-3 gap-2 bg-emerald-50/30 p-3 rounded-lg border border-emerald-100/50">
+                              <div>
+                                <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1 text-center">Senior Project</label>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  placeholder="0"
+                                  value={progetto.giornateSenior || ''}
+                                  onChange={e => handleUpdateEditProgettoField(idx, { giornateSenior: Number(e.target.value) || 0 })}
+                                  className="w-full p-2 border border-emerald-100 rounded-lg bg-white text-center font-bold text-gray-700 text-xs outline-none focus:ring-1 focus:ring-emerald-400"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1 text-center">Project</label>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  placeholder="0"
+                                  value={progetto.giornateProject || ''}
+                                  onChange={e => handleUpdateEditProgettoField(idx, { giornateProject: Number(e.target.value) || 0 })}
+                                  className="w-full p-2 border border-emerald-100 rounded-lg bg-white text-center font-bold text-gray-700 text-xs outline-none focus:ring-1 focus:ring-emerald-400"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1 text-center">Junior Project</label>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  placeholder="0"
+                                  value={progetto.giornateJunior || ''}
+                                  onChange={e => handleUpdateEditProgettoField(idx, { giornateJunior: Number(e.target.value) || 0 })}
+                                  className="w-full p-2 border border-emerald-100 rounded-lg bg-white text-center font-bold text-gray-700 text-xs outline-none focus:ring-1 focus:ring-emerald-400"
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Stato</label>
-                  <select 
-                    value={editStato} 
-                    onChange={e => setEditStato(e.target.value)}
-                    className="w-full p-3 border-none bg-gray-50 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-bold text-gray-700"
-                  >
-                    <option value="Aperta">Aperta</option>
-                    <option value="Chiusa">Chiusa</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Data Inizio (Opzionale)</label>
-                  <input 
-                    type="date" 
-                    value={editDataInizio} 
-                    onChange={e => setEditDataInizio(e.target.value)}
-                    className="w-full p-3 border-none bg-gray-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-semibold text-gray-650"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Data Fine (Opzionale)</label>
-                  <input 
-                    type="date" 
-                    value={editDataFine} 
-                    onChange={e => setEditDataFine(e.target.value)}
-                    className="w-full p-3 border-none bg-gray-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-semibold text-gray-650"
-                  />
-                </div>
-              </div>
-
-              <div className="flex gap-3 pt-4">
+              <div className="flex gap-3 pt-4 border-t border-gray-150 shrink-0">
                 <button 
                   type="button" 
                   onClick={() => setEditingCommessa(null)} 
