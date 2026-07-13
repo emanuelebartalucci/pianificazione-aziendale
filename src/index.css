@@ -21,7 +21,7 @@
 /* Regole per la stampa (ereditate dall'originale) */
 @media print {
   @page {
-    size: portrait;
+    size: landscape;
     margin: 0.6cm;
   }
   .no-print { display: none !important; }

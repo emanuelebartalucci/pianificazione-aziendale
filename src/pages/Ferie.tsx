@@ -4,6 +4,7 @@ import { db } from '../services/firebase';
 import { collection, addDoc, doc, updateDoc, deleteDoc, query, where, getDocs } from 'firebase/firestore';
 import { Calendar, CheckCircle, XCircle, Clock, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
 import { queueMail } from '../utils/mailSender';
+import { isItalianHoliday, isWeekend } from '../utils/date';
 
 const formatDate = (dateStr: string) => {
   if (!dateStr) return '';
@@ -33,33 +34,10 @@ export default function Ferie() {
   
   const [viewMode, setViewMode] = useState<'calendario' | 'tabella'>('calendario');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
+  const [chiusureAziendali, setChiusureAziendali] = useState<Array<{ dataInizio: string; dataFine: string }>>([]);
 
-  const isItalianHoliday = (dateStr: string) => {
-    const h = [
-      '-01-01', // Capodanno
-      '-01-06', // Epifania
-      '-04-25', // Liberazione
-      '-05-01', // Lavoro
-      '-06-02', // Repubblica
-      '-08-15', // Ferragosto
-      '-11-01', // Tutti i santi
-      '-12-08', // Immacolata
-      '-12-25', // Natale
-      '-12-26', // S. Stefano
-    ];
-    const monthDay = dateStr.substring(5);
-    if (h.includes('-' + monthDay)) return true;
-
-    const pasquettaDates = [
-      '2024-04-01',
-      '2025-04-21',
-      '2026-04-06',
-      '2027-03-29',
-      '2028-04-17',
-      '2029-04-02',
-      '2030-04-22'
-    ];
-    return pasquettaDates.includes(dateStr);
+  const isInChiusuraAziendaleLocal = (dateStr: string) => {
+    return chiusureAziendali.some(c => dateStr >= c.dataInizio && dateStr <= c.dataFine);
   };
 
   const showToast = (message: string, type: 'success' | 'warning' | 'error' = 'success') => {
@@ -105,6 +83,18 @@ export default function Ferie() {
 
   const loadFerieData = async () => {
     try {
+      const closuresSnap = await getDocs(collection(db, 'chiusure_aziendali')).catch(err => {
+        console.error("Errore query chiusure:", err);
+        return null;
+      });
+      const listClosures: any[] = [];
+      if (closuresSnap) {
+        closuresSnap.forEach(d => {
+          listClosures.push(d.data());
+        });
+      }
+      setChiusureAziendali(listClosures);
+
       if (isHR || isAdmin) {
         const halfYearAgo = new Date();
         halfYearAgo.setMonth(halfYearAgo.getMonth() - 6);
@@ -863,23 +853,46 @@ export default function Ferie() {
     // Ordiniamo le altre richieste in ordine alfabetico per dipendente
     const sortedOthers = [...otherReqs].sort((a, b) => a.dipendenteName.localeCompare(b.dipendenteName));
 
+    const isWknd = isWeekend(dateStr);
+    const isHoliday = isItalianHoliday(dateStr);
+    const isChiusura = isInChiusuraAziendaleLocal(dateStr) || closureReqs.length > 0;
+    const isSpecialDay = isWknd || isHoliday;
+
+    let cellStyle: React.CSSProperties = {};
+    let cellClass = "min-h-[100px] rounded-xl border border-gray-200 p-2 shadow-sm hover:shadow-md transition-all flex flex-col";
+    
+    if (isSpecialDay) {
+      cellStyle = { background: 'linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%)' };
+      cellClass += " bg-gray-100/50 text-gray-500";
+    } else if (isChiusura) {
+      cellStyle = { background: 'linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%)' };
+      cellClass += " bg-indigo-50/50";
+    } else {
+      cellClass += " bg-white";
+    }
+
+    // Se è un giorno festivo o weekend, non mostriamo le richieste individuali di assenza
+    const displayOthers = isSpecialDay ? [] : sortedOthers;
+    // Se c'è chiusura aziendale, mostriamo il badge Chiusura solo se non è weekend/festivo
+    const showClosureBadge = isChiusura && !isSpecialDay;
+
     calendarCells.push(
-      <div key={day} className="min-h-[100px] bg-white rounded-xl border border-gray-200 p-2 shadow-sm hover:shadow-md transition-shadow flex flex-col">
-        <div className="font-bold text-gray-700 mb-1 text-right">{day}</div>
+      <div key={day} style={cellStyle} className={cellClass}>
+        <div className={`font-bold mb-1 text-right ${isSpecialDay ? 'text-gray-400' : 'text-gray-700'}`}>{day}</div>
         <div className="flex-1 flex flex-col gap-1 overflow-y-auto custom-scrollbar pr-1">
           {/* Badge riepilogativo per le chiusure aziendali */}
-          {closureReqs.length > 0 && (
+          {showClosureBadge && (
             <div 
-              className="bg-indigo-50 border border-indigo-200 text-indigo-800 text-[10px] p-1.5 rounded-lg font-extrabold text-center flex items-center justify-center gap-1.5 shadow-sm cursor-help select-none mb-0.5 shrink-0"
-              title={`Dipendenti in ferie per chiusura:\n${[...closureReqs].map(r => r.dipendenteName).sort((a, b) => a.localeCompare(b)).join('\n')}`}
+              className="bg-indigo-100 border border-indigo-200 text-indigo-900 text-[10px] p-1.5 rounded-lg font-extrabold text-center flex items-center justify-center gap-1.5 shadow-sm cursor-help select-none mb-0.5 shrink-0"
+              title={closureReqs.length > 0 ? `Dipendenti in ferie per chiusura:\n${[...closureReqs].map(r => r.dipendenteName).sort((a, b) => a.localeCompare(b)).join('\n')}` : `Azienda chiusa per ferie collettive`}
             >
               <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0"></span>
-              <span className="truncate">🏢 Chiusura ({closureReqs.length} dip.)</span>
+              <span className="truncate">🏢 Chiusura {closureReqs.length > 0 ? `(${closureReqs.length} dip.)` : ''}</span>
             </div>
           )}
 
           {/* Mappa delle altre richieste ordinate alfabeticamente */}
-          {sortedOthers.map(req => {
+          {displayOthers.map(req => {
             const t = getTipoData(req.tipo);
             let bg = 'bg-gray-100 border-gray-200 text-gray-800';
             let dotBg = 'bg-gray-400';
@@ -1238,13 +1251,26 @@ export default function Ferie() {
                       const day = i + 1;
                       if (day > daysInMonth) return <th key={i} className="bg-gray-100"></th>;
                       const dateStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                      const dObj = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), day);
-                      const dayOfWeek = dObj.getDay();
-                      const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
+                      const isWknd = isWeekend(dateStr);
                       const isHoliday = isItalianHoliday(dateStr);
-                      const isGray = isWknd || isHoliday;
+                      const isChiusura = isInChiusuraAziendaleLocal(dateStr);
+                      const isSpecialDay = isWknd || isHoliday;
+
+                      let thStyle: React.CSSProperties = {};
+                      let thClass = "p-2 text-center text-xs font-bold border-r border-gray-200";
+
+                      if (isSpecialDay) {
+                        thStyle = { background: 'linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%)' };
+                        thClass += " text-gray-500";
+                      } else if (isChiusura) {
+                        thStyle = { background: 'linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%)' };
+                        thClass += " text-indigo-700";
+                      } else {
+                        thClass += " text-gray-500";
+                      }
+
                       return (
-                        <th key={i} className={`p-2 text-center text-xs font-bold ${isGray ? 'bg-gray-200/60 text-gray-650' : 'text-gray-500'} border-r border-gray-200`}>
+                        <th key={i} style={thStyle} className={thClass}>
                           {day}
                         </th>
                       );
@@ -1265,10 +1291,10 @@ export default function Ferie() {
                             if (day > daysInMonth) return <td key={i} className="bg-gray-50 border-r border-gray-150"></td>;
 
                             const dateStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                            const dObj = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), day);
-                            const dayOfWeek = dObj.getDay();
-                            const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
+                            const isWknd = isWeekend(dateStr);
                             const isHoliday = isItalianHoliday(dateStr);
+                            const isChiusura = isInChiusuraAziendaleLocal(dateStr);
+                            const isSpecialDay = isWknd || isHoliday;
 
                             const req = richieste.find(r => {
                               const start = r.dataInizio || r.data;
@@ -1277,10 +1303,14 @@ export default function Ferie() {
                             });
 
                             let cellBg = '';
+                            let cellStyle: React.CSSProperties = {};
                             let cellText = '';
                             let titleStr = `${dip.nome} - ${day}/${currentMonth.getMonth() + 1}`;
 
-                            if (req) {
+                            if (isSpecialDay) {
+                              cellBg = 'text-gray-400';
+                              cellStyle = { background: 'linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%)' };
+                            } else if (req) {
                               const isApproved = req.stato === 'Approvato';
                               const isRejected = req.stato === 'Rifiutato';
 
@@ -1323,11 +1353,12 @@ export default function Ferie() {
                                   : 'bg-yellow-50 border-yellow-250 text-yellow-750 opacity-60';
                                 cellText = 'E';
                               }
-                            } else if (isWknd || isHoliday) {
-                              cellBg = 'bg-gray-100/70 text-gray-400';
+                            } else if (isChiusura) {
+                              cellBg = 'text-indigo-400';
+                              cellStyle = { background: 'linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%)' };
                             }
 
-                            const isClickable = !!req && (isHR || isAdmin);
+                            const isClickable = !!req && (isHR || isAdmin) && !isSpecialDay;
 
                             return (
                               <td 
@@ -1339,6 +1370,7 @@ export default function Ferie() {
                                   }
                                 }}
                                 title={titleStr}
+                                style={cellStyle}
                                 className={`p-1.5 text-center border-r border-gray-200 transition-all ${cellBg} ${isClickable ? 'cursor-pointer select-none font-extrabold' : ''}`}
                               >
                                 {cellText}

@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { type User, onAuthStateChanged } from 'firebase/auth';
-import { collection, doc, addDoc, deleteDoc, getDocs, getDoc } from 'firebase/firestore';
+import { collection, doc, addDoc, deleteDoc, getDoc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
 
 const DEFAULT_ADMINS = ['aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it'];
@@ -15,6 +15,7 @@ export interface Dipendente {
   ivaRate?: number;
   raRate?: number;
   oreContratto?: number;
+  macroArea?: 'Disegnatori' | 'Ingegneria' | 'Sicurezza Cantieri' | 'Consulenza Sicurezza' | 'Amministrazione';
 }
 
 export interface Commessa {
@@ -24,12 +25,21 @@ export interface Commessa {
   dataInizio?: string;
   dataFine?: string;
   responsabile?: string;
-  pm?: string;
+  pm?: string | string[];
   codiceCommessa?: string;
   anno?: string;
   tipologia?: string;
   cliente?: string;
   stato?: string;
+  giornateSeniorProject?: number;
+  giornateProject?: number;
+  giornateJuniorProject?: number;
+}
+
+export interface Coordinatore {
+  id: string;
+  email: string;
+  area: string;
 }
 
 interface AuthContextType {
@@ -41,6 +51,16 @@ interface AuthContextType {
   myAssociatedName: string | null;
   dipendenti: Dipendente[];
   commesse: Commessa[];
+  coordinatori: Coordinatore[];
+  clienti: { id: string; codice: string; nome: string }[];
+  assegnazioni: Record<string, any[]>;
+  chiusureAziendali: any[];
+  approvedLeaves: any[];
+  richiesteDisegnatori: any[];
+  pmsEmails: string[];
+  seniorsEmails: string[];
+  commercialiEmails: string[];
+  isCommerciale: boolean;
   refreshData: () => Promise<void>;
 }
 
@@ -56,104 +76,201 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [dynamicAdmins, setDynamicAdmins] = useState<string[]>([]);
   const [dynamicHrs, setDynamicHrs] = useState<string[]>([]);
   const [dynamicSeniors, setDynamicSeniors] = useState<string[]>([]);
+  
   const [dipendenti, setDipendenti] = useState<Dipendente[]>([]);
   const [commesse, setCommesse] = useState<Commessa[]>([]);
+  const [coordinatori, setCoordinatori] = useState<Coordinatore[]>([]);
+  const [clienti, setClienti] = useState<{ id: string; codice: string; nome: string }[]>([]);
+  const [assegnazioni, setAssegnazioni] = useState<Record<string, any[]>>({});
+  const [chiusureAziendali, setChiusureAziendali] = useState<any[]>([]);
+  const [approvedLeaves, setApprovedLeaves] = useState<any[]>([]);
+  const [richiesteDisegnatori, setRichiesteDisegnatori] = useState<any[]>([]);
+  const [pmsEmails, setPmsEmails] = useState<string[]>([]);
+  const [seniorsEmails, setSeniorsEmails] = useState<string[]>([]);
+  const [dynamicCommerciali, setDynamicCommerciali] = useState<string[]>([]);
 
-  // Funzione per caricare/aggiornare i dati on-demand
-  const refreshData = async (currentUser?: User | null) => {
-    const activeUser = currentUser !== undefined ? currentUser : user;
-    if (!activeUser) {
-      setDynamicAdmins([]);
-      setDynamicHrs([]);
-      setDynamicSeniors([]);
-      setDipendenti([]);
-      setCommesse([]);
-      return;
-    }
 
-    try {
-      const [adminsSnap, seniorsSnap, hrSnap, dipendentiSnap, commesseSnap, legacyHrSnap] = await Promise.all([
-        getDocs(collection(db, 'admins')),
-        getDocs(collection(db, 'seniors')),
-        getDocs(collection(db, 'hr')),
-        getDocs(collection(db, 'dipendenti')),
-        getDocs(collection(db, 'catalogo_commesse')),
-        getDoc(doc(db, 'configurazione_sistema', 'hr'))
-      ]);
-
-      setDynamicAdmins(adminsSnap.docs.map(doc => doc.data().email?.toLowerCase()));
-      setDynamicSeniors(seniorsSnap.docs.map(doc => doc.data().email?.toLowerCase()));
-      setDynamicHrs(hrSnap.docs.map(doc => doc.data().email?.toLowerCase()).filter(Boolean));
-
-      // Automatic migration from legacy hr document to new 'hr' collection
-      if (legacyHrSnap.exists()) {
-        const legacyEmail = legacyHrSnap.data().email?.toLowerCase();
-        if (legacyEmail) {
-          try {
-            await addDoc(collection(db, 'hr'), { email: legacyEmail });
-            await deleteDoc(doc(db, 'configurazione_sistema', 'hr'));
-          } catch (err) {
-            console.error("Migration error:", err);
-          }
-        }
-      }
-
-      const deps = dipendentiSnap.docs.map(doc => ({
-        id: doc.id,
-        nome: doc.data().nome,
-        email: doc.data().email || "",
-        tipo: doc.data().tipo,
-        dailyRate: doc.data().dailyRate,
-        inpsRate: doc.data().inpsRate,
-        ivaRate: doc.data().ivaRate,
-        raRate: doc.data().raRate,
-        oreContratto: doc.data().oreContratto,
-      }));
-      setDipendenti(deps.sort((a, b) => a.nome.localeCompare(b.nome)));
-
-      const comms = commesseSnap.docs.map(doc => ({
-        id: doc.id,
-        nome: doc.data().nome,
-        colore: doc.data().colore || '#3b82f6',
-        dataInizio: doc.data().dataInizio || '',
-        dataFine: doc.data().dataFine || '',
-        responsabile: doc.data().responsabile || '',
-        pm: doc.data().pm || '',
-        codiceCommessa: doc.data().codiceCommessa || '',
-        anno: doc.data().anno || '',
-        tipologia: doc.data().tipologia || '',
-        cliente: doc.data().cliente || '',
-        stato: doc.data().stato || 'Aperta'
-      }));
-      setCommesse(comms.sort((a, b) => a.nome.localeCompare(b.nome)));
-
-    } catch (error) {
-      console.error("Error refreshing auth context data:", error);
-    }
+  // Funzione mock retrocompatibile
+  const refreshData = async () => {
+    return Promise.resolve();
   };
 
-  // Ascolto stato utente Firebase e caricamento dati iniziali
+  // Gestione ascoltatori real-time persistenti
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+    let unsubs: (() => void)[] = [];
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
+      
+      // Pulisci ascoltatori precedenti
+      unsubs.forEach(unsub => unsub());
+      unsubs = [];
+
       if (!currentUser) {
         setDynamicAdmins([]);
         setDynamicHrs([]);
         setDynamicSeniors([]);
         setDipendenti([]);
         setCommesse([]);
+        setCoordinatori([]);
+        setClienti([]);
+        setAssegnazioni({});
+        setChiusureAziendali([]);
+        setApprovedLeaves([]);
+        setRichiesteDisegnatori([]);
+        setPmsEmails([]);
+        setSeniorsEmails([]);
+        setDynamicCommerciali([]);
         setLoading(false);
       } else {
         try {
-          await refreshData(currentUser);
-        } catch (error) {
-          console.error("Error loading initial data:", error);
+          // 1. Admins
+          unsubs.push(onSnapshot(collection(db, 'admins'), (snap) => {
+            const list = snap.docs.map(doc => doc.data().email?.toLowerCase()).filter(Boolean);
+            setDynamicAdmins(list);
+          }));
+
+          // 2. Seniors
+          unsubs.push(onSnapshot(collection(db, 'seniors'), (snap) => {
+            const list = snap.docs.map(doc => doc.data().email?.toLowerCase()).filter(Boolean);
+            setDynamicSeniors(list);
+            setSeniorsEmails(list);
+          }));
+
+          // 3. HR
+          unsubs.push(onSnapshot(collection(db, 'hr'), (snap) => {
+            const list = snap.docs.map(doc => doc.data().email?.toLowerCase()).filter(Boolean);
+            setDynamicHrs(list);
+          }));
+
+          // 4. Dipendenti
+          unsubs.push(onSnapshot(collection(db, 'dipendenti'), (snap) => {
+            const list = snap.docs.map(doc => ({
+              id: doc.id,
+              nome: doc.data().nome || '',
+              email: doc.data().email || '',
+              tipo: doc.data().tipo,
+              dailyRate: doc.data().dailyRate,
+              inpsRate: doc.data().inpsRate,
+              ivaRate: doc.data().ivaRate,
+              raRate: doc.data().raRate,
+              oreContratto: doc.data().oreContratto,
+              macroArea: doc.data().macroArea,
+            }));
+            setDipendenti(list.sort((a, b) => a.nome.localeCompare(b.nome)));
+          }));
+
+          // 5. Coordinatori
+          unsubs.push(onSnapshot(collection(db, 'coordinatori'), (snap) => {
+            const list = snap.docs.map(doc => ({
+              id: doc.id,
+              email: doc.data().email || '',
+              area: doc.data().area || ''
+            }));
+            setCoordinatori(list);
+          }));
+
+          // 6. Commesse
+          unsubs.push(onSnapshot(collection(db, 'catalogo_commesse'), (snap) => {
+            const list = snap.docs.map(doc => ({
+              id: doc.id,
+              nome: doc.data().nome || '',
+              colore: doc.data().colore || '#3b82f6',
+              dataInizio: doc.data().dataInizio || '',
+              dataFine: doc.data().dataFine || '',
+              responsabile: doc.data().responsabile || '',
+              pm: doc.data().pm || '',
+              codiceCommessa: doc.data().codiceCommessa || '',
+              anno: doc.data().anno || '',
+              tipologia: doc.data().tipologia || '',
+              cliente: doc.data().cliente || '',
+              stato: doc.data().stato || 'Aperta',
+              giornateSeniorProject: doc.data().giornateSeniorProject,
+              giornateProject: doc.data().giornateProject,
+              giornateJuniorProject: doc.data().giornateJuniorProject,
+            }));
+            setCommesse(list.sort((a, b) => a.nome.localeCompare(b.nome)));
+          }));
+
+          // 7. Clienti
+          unsubs.push(onSnapshot(collection(db, 'clienti'), (snap) => {
+            const list = snap.docs.map(doc => ({
+              id: doc.id,
+              codice: doc.data().codice || '',
+              nome: doc.data().nome || ''
+            })).sort((a, b) => Number(a.codice) - Number(b.codice));
+            setClienti(list);
+          }));
+
+          // 8. Assegnazioni
+          unsubs.push(onSnapshot(collection(db, 'assegnazioni'), (snap) => {
+            const ass: Record<string, any[]> = {};
+            snap.forEach(docSnap => {
+              ass[docSnap.id] = docSnap.data().lista || [];
+            });
+            setAssegnazioni(ass);
+          }));
+
+          // 9. Chiusure aziendali
+          unsubs.push(onSnapshot(collection(db, 'chiusure_aziendali'), (snap) => {
+            const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setChiusureAziendali(list);
+          }));
+
+          // 10. Richieste disegnatori
+          unsubs.push(onSnapshot(collection(db, 'richieste_disegnatori'), (snap) => {
+            const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setRichiesteDisegnatori(list);
+          }));
+
+          // 11. Project Managers
+          unsubs.push(onSnapshot(collection(db, 'project_managers'), (snap) => {
+            setPmsEmails(snap.docs.map(d => (d.data().email || '').toLowerCase()));
+          }));
+
+          // 13. Commerciali
+          unsubs.push(onSnapshot(collection(db, 'commerciali'), (snap) => {
+            setDynamicCommerciali(snap.docs.map(d => (d.data().email || '').toLowerCase()).filter(Boolean));
+          }));
+
+          // 12. Richieste ferie (approved leaves)
+          unsubs.push(onSnapshot(collection(db, 'richieste_ferie'), (snap) => {
+            const list: any[] = [];
+            snap.forEach(docSnap => {
+              const data = docSnap.data();
+              if (data.stato === 'Approvato') {
+                list.push({ id: docSnap.id, ...data });
+              }
+            });
+            setApprovedLeaves(list);
+          }));
+
+          // Migrazione automatica HR
+          const legacyHrSnap = await getDoc(doc(db, 'configurazione_sistema', 'hr'));
+          if (legacyHrSnap.exists()) {
+            const legacyEmail = legacyHrSnap.data().email?.toLowerCase();
+            if (legacyEmail) {
+              try {
+                await addDoc(collection(db, 'hr'), { email: legacyEmail });
+                await deleteDoc(doc(db, 'configurazione_sistema', 'hr'));
+              } catch (err) {
+                console.error("Migration error:", err);
+              }
+            }
+          }
+
+        } catch (err) {
+          console.error("Error setting up real-time onSnapshot listeners:", err);
         } finally {
           setLoading(false);
         }
       }
     });
-    return () => unsubscribe();
+
+    return () => {
+      unsubscribeAuth();
+      unsubs.forEach(unsub => unsub());
+    };
   }, []);
 
   // Calcolo ruoli derivati
@@ -161,6 +278,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const isAdmin = DEFAULT_ADMINS.includes(userEmail) || dynamicAdmins.includes(userEmail);
   const isHR = dynamicHrs.includes(userEmail);
   const isSenior = dynamicSeniors.includes(userEmail);
+  const isCommerciale = dynamicCommerciali.includes(userEmail);
   
   const myDip = dipendenti.find(d => d.email?.toLowerCase() === userEmail);
   const myAssociatedName = myDip ? myDip.nome : null;
@@ -175,6 +293,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       myAssociatedName,
       dipendenti,
       commesse,
+      coordinatori,
+      clienti,
+      assegnazioni,
+      chiusureAziendali,
+      approvedLeaves,
+      richiesteDisegnatori,
+      pmsEmails,
+      seniorsEmails,
+      commercialiEmails: dynamicCommerciali,
+      isCommerciale,
       refreshData
     }}>
       {children}

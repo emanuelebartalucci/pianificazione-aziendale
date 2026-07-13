@@ -1,8 +1,8 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, query, where, doc, setDoc, addDoc, deleteDoc, getDocs } from 'firebase/firestore';
-import { Briefcase, Printer, ChevronLeft, ChevronRight, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw } from 'lucide-react';
+import { collection, doc, setDoc, addDoc, deleteDoc, getDocs } from 'firebase/firestore';
+import { Briefcase, ChevronLeft, ChevronRight, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays } from '../utils/date';
 import { queueMail } from '../utils/mailSender';
 import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
@@ -40,13 +40,7 @@ const hexToRgba = (hex: string, alpha: number): string => {
 };
 
 
-interface Assegnazione {
-  commessaId: string;
-  commessaName: string;
-  percentuale: number;
-  colore: string;
-  giorni?: string[];
-}
+
 
 interface WeekInfo {
   id: string;
@@ -55,27 +49,27 @@ interface WeekInfo {
   dateObj?: Date;
 }
 
-// Client dictionary for code translation
-const CLIENTI_DICTIONARY: Record<string, string> = {
-  '61': 'GSK',
-  '12': 'Novartis',
-  '33': 'Eli Lilly',
-  '45': 'Pfizer',
-  '01': 'Ingegnoso',
-  '99': 'Cliente di Test'
-};
+// // Client dictionary for code translation
+// const CLIENTI_DICTIONARY: Record<string, string> = {
+//   '61': 'GSK',
+//   '12': 'Novartis',
+//   '33': 'Eli Lilly',
+//   '45': 'Pfizer',
+//   '01': 'Ingegnoso',
+//   '99': 'Cliente di Test'
+// };
 
-const getClientName = (code: string): string => {
-  return CLIENTI_DICTIONARY[code] || `Cliente ${code}`;
-};
+// const getClientName = (code: string): string => {
+//   return CLIENTI_DICTIONARY[code] || `Cliente ${code}`;
+// };
 
-const parseClientCode = (commessaName: string): string => {
-  const match = commessaName.match(/^P-\d+-(\d+)/i);
-  if (match) {
-    return match[1];
-  }
-  return '';
-};
+// const parseClientCode = (commessaName: string): string => {
+//   const match = commessaName.match(/^P-\d+-(\d+)/i);
+//   if (match) {
+//     return match[1];
+//   }
+//   return '';
+// };
 
 const formatDate = (dateStr: string): string => {
   if (!dateStr) return '';
@@ -103,6 +97,47 @@ const getInitials = (name: string): string => {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 };
 
+interface CommessaProgetto {
+  descrizione: string;
+  pm: string;
+  sgq: 'SI' | 'NO';
+  verificatori: string[];
+  compilatore: string;
+  giornateSenior: number;
+  giornateProject: number;
+  giornateJunior: number;
+}
+
+const getNextAvailableLetter = (
+  tipologia: string,
+  anno: string,
+  clientCodice: string,
+  existingCommesse: any[]
+): string => {
+  const paddedClientCode = clientCodice.padStart(4, '0');
+  const prefix = `${tipologia}${anno.slice(-2)}${paddedClientCode}`;
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  
+  for (let i = 0; i < alphabet.length; i++) {
+    const letter = alphabet[i];
+    const candidateCode = `${prefix}${letter}`;
+    if (!existingCommesse.some(c => c.codiceCommessa === candidateCode)) {
+      return letter;
+    }
+  }
+  
+  for (let i = 0; i < alphabet.length; i++) {
+    for (let j = 0; j < alphabet.length; j++) {
+      const letter = alphabet[i] + alphabet[j];
+      const candidateCode = `${prefix}${letter}`;
+      if (!existingCommesse.some(c => c.codiceCommessa === candidateCode)) {
+        return letter;
+      }
+    }
+  }
+  return 'A';
+};
+
 // Custom extended week generator
 const generateWeeksExtended = (baseDate: Date, numWeeks: number): WeekInfo[] => {
   const weeks: WeekInfo[] = [];
@@ -122,13 +157,28 @@ const generateWeeksExtended = (baseDate: Date, numWeeks: number): WeekInfo[] => 
 };
 
 export default function Commesse() {
-  const { isAdmin, isSenior, myAssociatedName, dipendenti, commesse, refreshData } = useAuth();
+  const { 
+    isAdmin, 
+    isSenior, 
+    myAssociatedName, 
+    dipendenti, 
+    commesse, 
+    clienti: clientiList, 
+    assegnazioni: assignments, 
+    approvedLeaves, 
+    coordinatori, 
+    pmsEmails, 
+    isCommerciale,
+    commercialiEmails
+  } = useAuth();
   
   const [baseDate, setBaseDate] = useState<Date>(new Date());
-  const [zoomWeeks, setZoomWeeks] = useState<number>(13); // Default to 3 Months (13 Weeks)
-  const [selectedCommessaFilter, setSelectedCommessaFilter] = useState<string>(''); // Single commessa detail view
+  const [zoomWeeks, setZoomWeeks] = useState<number>(10); // Default to 10 Weeks
+  const [selectedCommessaIdsFilter, setSelectedCommessaIdsFilter] = useState<string[]>([]);
+  const [selectedClientFilter, setSelectedClientFilter] = useState<string>('');
+  const [selectedPMFilter, setSelectedPMFilter] = useState<string>('');
+  const [selectedTipologiaFilter, setSelectedTipologiaFilter] = useState<string>('');
   const [commessaTextQuery, setCommessaTextQuery] = useState('');
-  const [assignments, setAssignments] = useState<Record<string, Assegnazione[]>>({});
 
   // Tab control
   const [activeTab, setActiveTab] = useState<'consultazione' | 'gestione'>('consultazione');
@@ -148,9 +198,6 @@ export default function Commesse() {
     type: 'danger'
   });
 
-  // Clienti & PMS & Seniors Lists
-  const [clientiList, setClientiList] = useState<{ id: string; codice: string; nome: string }[]>([]);
-
   // Commesse form states
   const [newCommessaTipologia, setNewCommessaTipologia] = useState('A');
   const [newCommessaAnno, setNewCommessaAnno] = useState(new Date().getFullYear().toString());
@@ -159,7 +206,31 @@ export default function Commesse() {
   const [newCommessaDataInizio, setNewCommessaDataInizio] = useState('');
   const [newCommessaDataFine, setNewCommessaDataFine] = useState('');
   const [newCommessaResponsabile, setNewCommessaResponsabile] = useState('');
-  const [newCommessaPM, setNewCommessaPM] = useState('');
+
+  // Split in Progetti states
+  const [newCommessaProgetti, setNewCommessaProgetti] = useState<CommessaProgetto[]>([
+    {
+      descrizione: 'FORMAZIONE - Attività formative sulla commessa',
+      pm: '',
+      sgq: 'NO',
+      verificatori: [],
+      compilatore: '',
+      giornateSenior: 0,
+      giornateProject: 0,
+      giornateJunior: 0
+    }
+  ]);
+
+  const handleUpdateProgettoField = (index: number, fields: Partial<CommessaProgetto>) => {
+    setNewCommessaProgetti(prev => prev.map((p, idx) => idx === index ? { ...p, ...fields } : p));
+  };
+
+  // States for Editing Projects Split
+  const [editProgetti, setEditProgetti] = useState<CommessaProgetto[]>([]);
+
+  const handleUpdateEditProgettoField = (index: number, fields: Partial<CommessaProgetto>) => {
+    setEditProgetti(prev => prev.map((p, idx) => idx === index ? { ...p, ...fields } : p));
+  };
 
   // Searchable Client Dropdown States
   const [selectedClient, setSelectedClient] = useState<{ codice: string; nome: string } | null>(null);
@@ -179,26 +250,60 @@ export default function Commesse() {
   const isNarrow = useMemo(() => parseInt(weekColumnMinWidth) < 80, [weekColumnMinWidth]);
   const isUltraNarrow = useMemo(() => parseInt(weekColumnMinWidth) < 50, [weekColumnMinWidth]);
 
-  const [collapsedClients, setCollapsedClients] = useState<Record<string, boolean>>({});
 
-  const toggleClientCollapse = (clientName: string) => {
-    setCollapsedClients(prev => ({
-      ...prev,
-      [clientName]: !prev[clientName]
-    }));
-  };
   
+  const selectableClientiPerFiltro = useMemo(() => {
+    const set = new Set<string>();
+    commesse.forEach(c => {
+      if (c.cliente) set.add(c.cliente.trim());
+    });
+    return Array.from(set).sort();
+  }, [commesse]);
+
+  const selectablePMPerFiltro = useMemo(() => {
+    const set = new Set<string>();
+    commesse.forEach(c => {
+      if (c.responsabile) set.add(c.responsabile.trim());
+    });
+    return Array.from(set).sort();
+  }, [commesse]);
+
+  const selectableTipologiePerFiltro = useMemo(() => {
+    const set = new Set<string>();
+    commesse.forEach(c => {
+      if (c.tipologia) set.add(c.tipologia.trim());
+    });
+    return Array.from(set).sort();
+  }, [commesse]);
+
+  const toggleCommessaIdFilter = (commId: string) => {
+    setSelectedCommessaIdsFilter(prev => {
+      const next = prev.includes(commId) ? prev.filter(id => id !== commId) : [...prev, commId];
+      if (next.length === 1) {
+        const comm = commesse.find(c => c.id === next[0]);
+        if (comm && comm.dataInizio && comm.dataFine) {
+          const start = new Date(comm.dataInizio);
+          const end = new Date(comm.dataFine);
+          const diffTime = Math.abs(end.getTime() - start.getTime());
+          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+          const numWks = Math.max(2, Math.min(52, Math.ceil(diffDays / 7)));
+          setBaseDate(getStartOfWeek(start));
+          setZoomWeeks(numWks);
+        }
+      }
+      return next;
+    });
+  };
+
   // Stati per la modifica dei dettagli della commessa (Responsabile, PM, Date)
   const [editingCommessa, setEditingCommessa] = useState<any | null>(null);
   const [editResponsabile, setEditResponsabile] = useState('');
-  const [editPM, setEditPM] = useState('');
+
   const [editDataInizio, setEditDataInizio] = useState('');
   const [editDataFine, setEditDataFine] = useState('');
   const [editStato, setEditStato] = useState('Aperta');
   const [savingEdit, setSavingEdit] = useState(false);
   
-  const [seniorsEmails, setSeniorsEmails] = useState<string[]>([]);
-  const [pmsEmails, setPmsEmails] = useState<string[]>([]);
   const [isCommessaDropdownOpen, setIsCommessaDropdownOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
 
@@ -209,77 +314,28 @@ export default function Commesse() {
     }, 4500);
   };
 
-  const handleSelectCommessaFilter = (commId: string) => {
-    setSelectedCommessaFilter(commId);
-    if (commId) {
-      const comm = commesse.find(c => c.id === commId);
-      if (comm && comm.dataInizio && comm.dataFine) {
-        const start = new Date(comm.dataInizio);
-        const end = new Date(comm.dataFine);
-        const diffTime = Math.abs(end.getTime() - start.getTime());
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        const numWks = Math.max(2, Math.min(52, Math.ceil(diffDays / 7)));
-        
-        setBaseDate(getStartOfWeek(start));
-        setZoomWeeks(numWks);
-      }
-    } else {
-      setBaseDate(new Date());
-      setZoomWeeks(13); // Reset to default 3 months
-    }
-  };
+  // const handleSelectCommessaFilter = (commId: string) => {
+  //   if (commId) {
+  //     setSelectedCommessaIdsFilter([commId]);
+  //     const comm = commesse.find(c => c.id === commId);
+  //     if (comm && comm.dataInizio && comm.dataFine) {
+  //       const start = new Date(comm.dataInizio);
+  //       const end = new Date(comm.dataFine);
+  //       const diffTime = Math.abs(end.getTime() - start.getTime());
+  //       const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  //       const numWks = Math.max(2, Math.min(52, Math.ceil(diffDays / 7)));
+  //       
+  //       setBaseDate(getStartOfWeek(start));
+  //       setZoomWeeks(numWks);
+  //     }
+  //   } else {
+  //     setSelectedCommessaIdsFilter([]);
+  //     setBaseDate(new Date());
+  //     setZoomWeeks(10); // Reset to default 10 weeks
+  //   }
+  // };
   
-  const [approvedLeaves, setApprovedLeaves] = useState<any[]>([]);
 
-  const loadCommesseData = async () => {
-    try {
-      await refreshData();
-      const [seniorsSnap, pmsSnap, clientiSnap, assegnazioniSnap] = await Promise.all([
-        getDocs(collection(db, 'seniors')),
-        getDocs(collection(db, 'project_managers')),
-        getDocs(collection(db, 'clienti')),
-        getDocs(collection(db, 'assegnazioni'))
-      ]);
-      
-      setSeniorsEmails(seniorsSnap.docs.map(d => (d.data().email || '').toLowerCase()));
-      setPmsEmails(pmsSnap.docs.map(d => (d.data().email || '').toLowerCase()));
-      setClientiList(clientiSnap.docs.map(d => ({
-        id: d.id,
-        codice: d.data().codice || '',
-        nome: d.data().nome || ''
-      })).sort((a, b) => Number(a.codice) - Number(b.codice)));
-
-      const ass: Record<string, Assegnazione[]> = {};
-      assegnazioniSnap.forEach(docSnap => {
-        ass[docSnap.id] = docSnap.data().lista || [];
-      });
-      setAssignments(ass);
-
-      // Fetch approved leaves
-      const sixtyDaysAgo = new Date();
-      sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
-      const limitDate = sixtyDaysAgo.toLocaleDateString('sv-SE');
-      const q = query(
-        collection(db, 'richieste_ferie'),
-        where('dataFine', '>=', limitDate)
-      );
-      const leavesSnap = await getDocs(q);
-      const list: any[] = [];
-      leavesSnap.forEach(docSnap => {
-        const data = docSnap.data();
-        if (data.stato !== 'Approvato') return;
-        list.push({ id: docSnap.id, ...data });
-      });
-      setApprovedLeaves(list);
-    } catch (err) {
-      console.error("Error loading data in Commesse page:", err);
-      showToast("Errore nel caricamento delle commesse.", "error");
-    }
-  };
-
-  useEffect(() => {
-    loadCommesseData();
-  }, []);
 
   const getLeavesForResourceInWeek = (resName: string, wkId: string) => {
     const parts = wkId.split('-W');
@@ -376,16 +432,17 @@ export default function Commesse() {
     csvContent += headers.join(";") + "\n";
 
     // Righe
-    groupedCommesse.forEach(group => {
-      group.commesseList.forEach(comm => {
-        const row = [
-          group.clientName,
-          comm.nome,
-          comm.responsabile || "",
-          comm.pm || "",
-          comm.dataInizio ? formatDate(comm.dataInizio) : "",
-          comm.dataFine ? formatDate(comm.dataFine) : ""
-        ];
+    filteredCommesse.forEach(comm => {
+      const pmArray = Array.isArray(comm.pm) ? comm.pm : (comm.pm ? [comm.pm] : []);
+      const pmStr = pmArray.join(', ');
+      const row = [
+        comm.cliente || "Altri Clienti",
+        comm.nome,
+        comm.responsabile || "",
+        pmStr,
+        comm.dataInizio ? formatDate(comm.dataInizio) : "",
+        comm.dataFine ? formatDate(comm.dataFine) : ""
+      ];
         
         activeWeeks.forEach(wk => {
           const assignedPeople = getAssignmentsForCommessaInWeek(comm.id, wk.id);
@@ -397,7 +454,6 @@ export default function Commesse() {
         });
         
         csvContent += row.map(val => `"${val.replace(/"/g, '""')}"`).join(";") + "\n";
-      });
     });
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -410,12 +466,29 @@ export default function Commesse() {
     document.body.removeChild(link);
   };
 
-  // Group commesse by client
-  const groupedCommesse = useMemo(() => {
-    // Filter commesse if a single one is selected in detail
-    let list = selectedCommessaFilter 
-      ? commesse.filter(c => c.id === selectedCommessaFilter)
-      : commesse;
+  // Filtra commesse con filtri avanzati ed in ordine alfabetico
+  const filteredCommesse = useMemo(() => {
+    let list = commesse;
+
+    // Filtro per multi-selezione commesse
+    if (selectedCommessaIdsFilter.length > 0) {
+      list = list.filter(c => selectedCommessaIdsFilter.includes(c.id));
+    }
+
+    // Filtro per Cliente
+    if (selectedClientFilter) {
+      list = list.filter(c => c.cliente === selectedClientFilter);
+    }
+
+    // Filtro per Responsabile
+    if (selectedPMFilter) {
+      list = list.filter(c => areNamesEqual(c.responsabile, selectedPMFilter));
+    }
+
+    // Filtro per Tipologia
+    if (selectedTipologiaFilter) {
+      list = list.filter(c => c.tipologia === selectedTipologiaFilter);
+    }
 
     if (commessaTextQuery.trim()) {
       const query = commessaTextQuery.toLowerCase().trim();
@@ -425,7 +498,8 @@ export default function Commesse() {
         const titolo = ((c as any).titolo || '').toLowerCase();
         const cliente = ((c as any).cliente || '').toLowerCase();
         const resp = (c.responsabile || '').toLowerCase();
-        const pm = (c.pm || '').toLowerCase();
+        const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
+        const pm = pmArray.join(', ').toLowerCase();
         return name.includes(query) ||
                code.includes(query) ||
                titolo.includes(query) ||
@@ -435,7 +509,7 @@ export default function Commesse() {
       });
     }
 
-    // Filter for standard employees
+    // Filtro per standard employees (che vedono solo quelle a cui sono assegnati)
     if (!isAdmin && !isSenior && myAssociatedName) {
       const assignedCommessaIds = new Set<string>();
       Object.entries(assignments).forEach(([key, listAss]) => {
@@ -448,27 +522,18 @@ export default function Commesse() {
         }
       });
 
-      list = list.filter(c => 
-        assignedCommessaIds.has(c.id) ||
-        areNamesEqual(c.responsabile, myAssociatedName) ||
-        areNamesEqual(c.pm, myAssociatedName)
-      );
+      list = list.filter(c => {
+        const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
+        const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
+        return assignedCommessaIds.has(c.id) ||
+               areNamesEqual(c.responsabile, myAssociatedName) ||
+               isPM;
+      });
     }
 
-    const groups: Record<string, { clientName: string; commesseList: typeof commesse }> = {};
-    
-    list.forEach(c => {
-      const clientName = c.cliente ? c.cliente.trim() : (parseClientCode(c.nome) ? getClientName(parseClientCode(c.nome)) : 'Altri Clienti');
-      const clientKey = clientName.toUpperCase() || 'ALTRI CLIENTI';
-      
-      if (!groups[clientKey]) {
-        groups[clientKey] = { clientName, commesseList: [] };
-      }
-      groups[clientKey].commesseList.push(c);
-    });
-    
-    return Object.values(groups).sort((a, b) => a.clientName.localeCompare(b.clientName));
-  }, [commesse, selectedCommessaFilter, commessaTextQuery, isAdmin, isSenior, myAssociatedName, assignments]);
+    // Ordine alfabetico
+    return [...list].sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+  }, [commesse, selectedCommessaIdsFilter, selectedClientFilter, selectedPMFilter, selectedTipologiaFilter, commessaTextQuery, isAdmin, isSenior, myAssociatedName, assignments]);
 
   // Get people allocated to a commessa in a specific week
   const getAssignmentsForCommessaInWeek = (commId: string, wkId: string) => {
@@ -491,8 +556,34 @@ export default function Commesse() {
     const respDip = dipendenti.find(d => areNamesEqual(d.nome, comm.responsabile));
     setEditResponsabile(respDip ? respDip.nome : (comm.responsabile || ''));
     
-    const pmDip = dipendenti.find(d => areNamesEqual(d.nome, comm.pm));
-    setEditPM(pmDip ? pmDip.nome : (comm.pm || ''));
+
+    // Inizializzazione progetti split in modifica
+    const initialProgetti = (comm.progetti || [
+      {
+        descrizione: 'FORMAZIONE - Attività formative sulla commessa',
+        pm: '',
+        sgq: 'NO',
+        verificatori: [],
+        compilatore: '',
+        giornateSenior: Number(comm.giornateSeniorProject) || 0,
+        giornateProject: Number(comm.giornateProject) || 0,
+        giornateJunior: Number(comm.giornateJuniorProject) || 0
+      }
+    ]).map((p: any) => {
+      let vArr: string[] = [];
+      if (p.verificatori) {
+        if (Array.isArray(p.verificatori)) {
+          vArr = p.verificatori;
+        } else {
+          vArr = [p.verificatori];
+        }
+      }
+      return {
+        ...p,
+        verificatori: vArr
+      };
+    });
+    setEditProgetti(initialProgetti);
     
     setEditDataInizio(comm.dataInizio || '');
     setEditDataFine(comm.dataFine || '');
@@ -511,16 +602,26 @@ export default function Commesse() {
     setSavingEdit(true);
     try {
       const docRef = doc(db, 'catalogo_commesse', editingCommessa.id);
+
+      // Calcolo dinamico dei totali dai progetti in modifica
+      const totalSeniorDays = editProgetti.reduce((acc, p) => acc + (p.sgq === 'NO' ? Number(p.giornateSenior) || 0 : 0), 0);
+      const totalProjectDays = editProgetti.reduce((acc, p) => acc + (p.sgq === 'NO' ? Number(p.giornateProject) || 0 : 0), 0);
+      const totalJuniorDays = editProgetti.reduce((acc, p) => acc + (p.sgq === 'NO' ? Number(p.giornateJunior) || 0 : 0), 0);
+      const pmsUnivoci = Array.from(new Set(editProgetti.map(p => p.pm).filter(name => name !== '')));
+
       const updates = {
         responsabile: editResponsabile,
-        pm: editPM,
+        pm: pmsUnivoci,
+        giornateSeniorProject: totalSeniorDays,
+        giornateProject: totalProjectDays,
+        giornateJuniorProject: totalJuniorDays,
         dataInizio: editDataInizio,
         dataFine: editDataFine,
-        stato: editStato
+        stato: editStato,
+        progetti: editProgetti
       };
 
       await setDoc(docRef, updates, { merge: true });
-      await loadCommesseData();
 
       // Invia notifiche email se sono state fatte assegnazioni
       if (editResponsabile && editResponsabile !== editingCommessa.responsabile) {
@@ -538,17 +639,23 @@ export default function Commesse() {
         }
       }
 
-      if (editPM && editPM !== editingCommessa.pm && editPM !== editResponsabile) {
-        const pmDip = dipendenti.find(d => d.nome === editPM);
+      // Notifica ai PM aggiunti
+      const oldPMs = Array.isArray(editingCommessa.pm) 
+        ? editingCommessa.pm 
+        : (editingCommessa.pm ? [editingCommessa.pm] : []);
+      const addedPMs = pmsUnivoci.filter((p: string) => !oldPMs.includes(p));
+
+      for (const addedPM of addedPMs) {
+        const pmDip = dipendenti.find(d => d.nome === addedPM);
         if (pmDip && pmDip.email) {
           const subject = `[Notifica] Abilitazione Funzioni PM - Commessa ${editingCommessa.nome}`;
           const htmlBody = `
-            <p>Ciao <strong>${editPM}</strong>,</p>
+            <p>Ciao <strong>${addedPM}</strong>,</p>
             <p>Sei stato assegnato come <strong>Project Manager (PM)</strong> per la commessa <strong>${editingCommessa.nome}</strong>.</p>
             ${editDataInizio ? `<p>Periodo previsto: dal <strong>${formatDate(editDataInizio)}</strong> al <strong>${formatDate(editDataFine)}</strong>.</p>` : ''}
             <p>Puoi procedere al monitoraggio e pianificazione delle risorse per questa commessa dall'applicazione.</p>
           `;
-          const plainText = `Ciao ${editPM},\n\nSei stato assegnato come Project Manager (PM) per la commessa ${editingCommessa.nome}.\n\nPuoi procedere alla pianificazione dall'applicazione.\n\nQuesta è una notifica automatica.`;
+          const plainText = `Ciao ${addedPM},\n\nSei stato assegnato come Project Manager (PM) per la commessa ${editingCommessa.nome}.\n\nPuoi procedere alla pianificazione dall'applicazione.\n\nQuesta è una notifica automatica.`;
           await queueMail(pmDip.email.toLowerCase(), subject, htmlBody, plainText);
         }
       }
@@ -592,13 +699,44 @@ export default function Commesse() {
     return commesse.some(c => c.codiceCommessa === generatedCodiceCommessa);
   }, [generatedCodiceCommessa, commesse]);
 
-  const seniorsList = useMemo(() => {
-    return dipendenti.filter(d => d.email && seniorsEmails.includes(d.email.toLowerCase()));
-  }, [dipendenti, seniorsEmails]);
+  useEffect(() => {
+    if (selectedClient && newCommessaAnno) {
+      const nextLetter = getNextAvailableLetter(
+        newCommessaTipologia,
+        newCommessaAnno,
+        selectedClient.codice,
+        commesse
+      );
+      setNewCommessaLettera(nextLetter);
+    }
+  }, [selectedClient, newCommessaTipologia, newCommessaAnno, commesse]);
+
+  const responsabiliMacroAreeList = useMemo(() => {
+    const coordEmails = new Set(coordinatori.map(c => c.email.toLowerCase()));
+    return dipendenti.filter(d => d.email && coordEmails.has(d.email.toLowerCase()));
+  }, [dipendenti, coordinatori]);
+
 
   const pmsList = useMemo(() => {
     return dipendenti.filter(d => d.email && pmsEmails.includes(d.email.toLowerCase()));
   }, [dipendenti, pmsEmails]);
+
+  const isResponsabileDiQualcheCommessa = useMemo(() => {
+    return commesse.some(c => {
+      const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
+      const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
+      return areNamesEqual(c.responsabile, myAssociatedName) || isPM;
+    });
+  }, [commesse, myAssociatedName]);
+
+  const commesseGestibili = useMemo(() => {
+    if (isAdmin || isSenior) return commesse;
+    return commesse.filter(c => {
+      const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
+      const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
+      return areNamesEqual(c.responsabile, myAssociatedName) || isPM;
+    });
+  }, [commesse, isAdmin, isSenior, myAssociatedName]);
 
   const handleAddCommessa = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -622,6 +760,12 @@ export default function Commesse() {
 
     const calculatedColor = TIPOLOGIA_COLORS[newCommessaTipologia] || '#64748b';
 
+    // Calcolo totali giornate e elenco PM univoci
+    const totalSeniorDays = newCommessaProgetti.reduce((acc, p) => acc + (p.sgq === 'NO' ? Number(p.giornateSenior) || 0 : 0), 0);
+    const totalProjectDays = newCommessaProgetti.reduce((acc, p) => acc + (p.sgq === 'NO' ? Number(p.giornateProject) || 0 : 0), 0);
+    const totalJuniorDays = newCommessaProgetti.reduce((acc, p) => acc + (p.sgq === 'NO' ? Number(p.giornateJunior) || 0 : 0), 0);
+    const pmsUnivoci = Array.from(new Set(newCommessaProgetti.map(p => p.pm).filter(name => name !== '')));
+
     try {
       const payload = {
         nome: `${codiceCommessa} - ${newCommessaTitolo}`,
@@ -635,11 +779,75 @@ export default function Commesse() {
         dataInizio: newCommessaDataInizio || '',
         dataFine: newCommessaDataFine || '',
         responsabile: newCommessaResponsabile || '',
-        pm: newCommessaPM || ''
+        pm: pmsUnivoci,
+        giornateSeniorProject: totalSeniorDays,
+        giornateProject: totalProjectDays,
+        giornateJuniorProject: totalJuniorDays,
+        progetti: newCommessaProgetti
       };
       
       await addDoc(collection(db, 'catalogo_commesse'), payload);
-      await loadCommesseData();
+      
+      // Invio notifica e-mail ai Commerciali configurati
+      if (!isCommerciale && commercialiEmails && commercialiEmails.length > 0) {
+        const mailSubject = `[Nuova Commessa] Aperta commessa: ${payload.nome}`;
+        
+        let progettiHtml = '';
+        payload.progetti.forEach((p, index) => {
+          let sgqInfo = '';
+          if (p.sgq === 'SI') {
+            const vList = Array.isArray(p.verificatori) ? p.verificatori.join(', ') : (p.verificatori || '-');
+            sgqInfo = `<strong>SGQ:</strong> Sì<br/><strong>Verif./Valid.:</strong> ${vList || '-'}<br/><strong>Compilatore:</strong> ${p.compilatore || '-'}`;
+          } else {
+            sgqInfo = `<strong>SGQ:</strong> No<br/><strong>Giornate:</strong> Senior: ${p.giornateSenior} gg | Project: ${p.giornateProject} gg | Junior: ${p.giornateJunior} gg`;
+          }
+          const formattedDesc = (p.descrizione || '').replace(/\n/g, '<br/>');
+          progettiHtml += `
+            <tr style="background-color: ${index % 2 === 0 ? '#f9fafb' : '#ffffff'};">
+              <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-weight: 600; font-size: 13px; line-height: 1.45;">${formattedDesc || '(Nessuna descrizione)'}</td>
+              <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 13px; vertical-align: top;">${p.pm || 'Non assegnato'}</td>
+              <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 12px; line-height: 1.5; vertical-align: top;">${sgqInfo}</td>
+            </tr>
+          `;
+        });
+
+        const mailBody = `
+          <p>Gentile Commerciale,</p>
+          <p>Ti informiamo che è stata aperta una nuova commessa sulla piattaforma di pianificazione con i seguenti dettagli:</p>
+          <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 15px 0;" />
+          <table border="0" cellpadding="5" cellspacing="0" style="font-size: 14px; color: #374151; width: 100%;">
+            <tr><td style="font-weight: bold; width: 180px;">Codice Commessa:</td><td>${payload.codiceCommessa}</td></tr>
+            <tr><td style="font-weight: bold;">Titolo:</td><td>${payload.titolo}</td></tr>
+            <tr><td style="font-weight: bold;">Cliente:</td><td>${payload.cliente}</td></tr>
+            <tr><td style="font-weight: bold;">Tipologia:</td><td>${TIPOLOGIE_COMMESSE[payload.tipologia] || payload.tipologia}</td></tr>
+            <tr><td style="font-weight: bold;">Anno:</td><td>${payload.anno}</td></tr>
+            <tr><td style="font-weight: bold;">Data Inizio:</td><td>${payload.dataInizio ? new Date(payload.dataInizio).toLocaleDateString('it-IT') : 'Non specificata'}</td></tr>
+            <tr><td style="font-weight: bold;">Data Fine:</td><td>${payload.dataFine ? new Date(payload.dataFine).toLocaleDateString('it-IT') : 'Non specificata'}</td></tr>
+            <tr><td style="font-weight: bold;">Responsabile Commessa:</td><td>${payload.responsabile || 'Non assegnato'}</td></tr>
+            <tr><td style="font-weight: bold;">Giornate Totali Stimate (No SGQ):</td><td>Senior: ${payload.giornateSeniorProject} gg | Project: ${payload.giornateProject} gg | Junior: ${payload.giornateJuniorProject} gg</td></tr>
+          </table>
+          
+          <h3 style="color: #065f46; font-size: 16px; margin-top: 25px; margin-bottom: 10px;">Split in Progetti</h3>
+          <table border="0" cellpadding="0" cellspacing="0" style="width: 100%; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; font-family: inherit;">
+            <thead style="background-color: #f3f4f6;">
+              <tr>
+                <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Descrizione Progetto</th>
+                <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Project Manager</th>
+                <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Configurazione / SGQ</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${progettiHtml}
+            </tbody>
+          </table>
+          <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 25px 0;" />
+          <p>Puoi ora procedere all'apertura di questa commessa sul gestionale separato aziendale.</p>
+        `;
+
+        for (const email of commercialiEmails) {
+          await queueMail(email, mailSubject, mailBody);
+        }
+      }
       
       setSelectedClient(null);
       setClientSearchText('');
@@ -648,7 +856,18 @@ export default function Commesse() {
       setNewCommessaDataFine('');
       setNewCommessaLettera('A');
       setNewCommessaResponsabile('');
-      setNewCommessaPM('');
+      setNewCommessaProgetti([
+        {
+          descrizione: 'FORMAZIONE - Attività formative sulla commessa',
+          pm: '',
+          sgq: 'NO',
+          verificatori: [],
+          compilatore: '',
+          giornateSenior: 0,
+          giornateProject: 0,
+          giornateJunior: 0
+        }
+      ]);
       
       showToast("Commessa salvata nel catalogo con successo!", "success");
     } catch (err) {
@@ -683,7 +902,7 @@ export default function Commesse() {
               }
             }
           }
-          await loadCommesseData();
+
           showToast("Commessa e relative assegnazioni rimosse con successo!", "success");
         } catch (err) {
           console.error("Errore rimozione commessa:", err);
@@ -695,92 +914,6 @@ export default function Commesse() {
     });
   };
 
-  const handlePrintCommesse = () => {
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
-
-    const htmlContent = `
-      <html>
-        <head>
-          <title>Anagrafica Clienti / Commesse</title>
-          <style>
-            body {
-              font-family: Arial, sans-serif;
-              margin: 30px;
-              color: #333;
-            }
-            h1 {
-              text-align: center;
-              margin-bottom: 30px;
-              font-size: 24px;
-            }
-            table {
-              width: 100%;
-              border-collapse: collapse;
-              margin-top: 20px;
-            }
-            th, td {
-              border: 1px solid #ccc;
-              padding: 12px 15px;
-              text-align: left;
-            }
-            th {
-              background-color: #f3f4f6;
-              font-weight: bold;
-            }
-            .color-indicator {
-              display: inline-block;
-              width: 16px;
-              height: 16px;
-              border-radius: 50%;
-              vertical-align: middle;
-              margin-right: 10px;
-              border: 1px solid #ccc;
-              -webkit-print-color-adjust: exact !important;
-              print-color-adjust: exact !important;
-            }
-          </style>
-        </head>
-        <body>
-          <h1>Anagrafica Clienti / Commesse</h1>
-          <table>
-            <thead>
-              <tr>
-                <th style="width: 15%;">#</th>
-                <th style="width: 85%;">Nome Commessa / Cliente</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${commesse.map((c, index) => {
-                const computedTipologia = getParsedField(c, 'tipologia');
-                const computedColor = TIPOLOGIA_COLORS[computedTipologia] || c.colore || '#64748b';
-                return `
-                  <tr>
-                    <td>${index + 1}</td>
-                    <td>
-                      <span class="color-indicator" style="background-color: ${computedColor}"></span>
-                      <strong>${c.nome}</strong>
-                    </td>
-                  </tr>
-                `;
-              }).join('')}
-            </tbody>
-          </table>
-          <script>
-            window.onload = function() {
-              window.print();
-              window.onafterprint = function() {
-                window.close();
-              };
-            };
-          </script>
-        </body>
-      </html>
-    `;
-
-    printWindow.document.write(htmlContent);
-    printWindow.document.close();
-  };
 
   return (
     <div className="flex flex-col gap-6">
@@ -812,7 +945,7 @@ export default function Commesse() {
           <div className="flex items-center gap-3">
             <span>Pianificazione Avanzamento Commesse</span>
             <button 
-              onClick={loadCommesseData}
+              onClick={() => window.location.reload()}
               title="Aggiorna Dati"
               className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 border border-transparent hover:border-blue-100 rounded-xl transition-all cursor-pointer hover:rotate-180 duration-500"
             >
@@ -822,14 +955,14 @@ export default function Commesse() {
         </h2>
         
         <div className={`flex items-center gap-2 text-xs font-bold px-4 py-2 rounded-xl border ${
-          (isAdmin || isSenior) ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-blue-50 text-blue-700 border-blue-100'
+          (isAdmin || isSenior || isResponsabileDiQualcheCommessa || isCommerciale) ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-blue-50 text-blue-700 border-blue-100'
         }`}>
-          {(isAdmin || isSenior) ? 'Vista Amministrazione e Assegnazione' : 'Vista di Sola Consultazione'}
+          {(isAdmin || isSenior || isResponsabileDiQualcheCommessa || isCommerciale) ? 'Vista Amministrazione e Assegnazione' : 'Vista di Sola Consultazione'}
         </div>
       </div>
       
-      {/* TAB BAR (Solo per Admin e Responsabili/Seniors) */}
-      {(isAdmin || isSenior) && (
+      {/* TAB BAR (Solo per Admin, Seniors, Responsabili e Commerciali) */}
+      {(isAdmin || isSenior || isResponsabileDiQualcheCommessa || isCommerciale) && (
         <div className="flex border-b border-gray-200 gap-2 no-print">
           <button
             type="button"
@@ -857,64 +990,108 @@ export default function Commesse() {
       )}
 
       {/* TAB 1: CONSULTAZIONE COMMESSE */}
-      {(activeTab === 'consultazione' || (!isAdmin && !isSenior)) && (
+      {activeTab === 'consultazione' && (
         <>
           {/* TIMELINE TABLE CARD */}
           <div className="bg-white rounded-[2rem] shadow-xl border relative mb-10 flex flex-col max-h-[750px] pb-4">
             
-            {/* TOOLBAR */}
-            <div className="p-4 border-b border-gray-200 flex flex-col md:flex-row md:items-center justify-between gap-4 no-print bg-gray-50/50 rounded-t-[2rem] shrink-0 md:h-20">
+                        {/* TOOLBAR */}
+            <div className="p-4 border-b border-gray-200 flex flex-col lg:flex-row lg:items-center justify-between gap-4 no-print bg-gray-50/50 rounded-t-[2rem] shrink-0 py-4">
               <div className="flex flex-wrap items-center justify-between gap-4 w-full">
                 
-                {/* Filters and Zoom */}
-                <div className="flex flex-wrap items-center gap-4 flex-1">
-                  
-                  {/* Zoom Temporale magnifier buttons */}
+                {/* Filters and Zoom - Filtri Avanzati */}
+                <div className="flex flex-wrap items-end gap-3 flex-1">
+                  {/* Zoom Temporale */}
                   <div className="flex flex-col">
-                    <label className="text-[10px] font-extrabold text-gray-400 uppercase tracking-wider ml-1 mb-1">Zoom Temporale</label>
+                    <label className="text-[10px] font-extrabold text-gray-455 uppercase tracking-wider ml-1 mb-1">Zoom</label>
                     <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-gray-200 shadow-sm h-[38px]">
                       <button 
                         type="button"
                         onClick={() => setZoomWeeks(prev => Math.max(2, prev - 2))} 
-                        className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-650 transition flex items-center justify-center cursor-pointer"
-                        title="Zoom In (Vedi meno settimane, più dettaglio)"
+                        className="p-1 hover:bg-gray-100 rounded-lg text-gray-655 transition flex items-center justify-center cursor-pointer"
+                        title="Zoom In"
                       >
                         <ZoomIn className="w-4 h-4 text-blue-600" />
                       </button>
-                      <span className="text-xs font-bold text-gray-750 min-w-[50px] text-center select-none">{zoomWeeks} Sett.</span>
+                      <span className="text-xs font-bold text-gray-750 min-w-[45px] text-center select-none">{zoomWeeks} Sett.</span>
                       <button 
                         type="button"
                         onClick={() => setZoomWeeks(prev => Math.min(52, prev + 2))} 
-                        className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-650 transition flex items-center justify-center cursor-pointer"
-                        title="Zoom Out (Vedi più settimane, panoramica)"
+                        className="p-1 hover:bg-gray-100 rounded-lg text-gray-655 transition flex items-center justify-center cursor-pointer"
+                        title="Zoom Out"
                       >
                         <ZoomOut className="w-4 h-4 text-blue-600" />
                       </button>
                     </div>
                   </div>
 
-                  {/* Combined Searchable Commessa Dropdown */}
+                  {/* Filtro Cliente */}
+                  <div className="flex flex-col">
+                    <label className="text-[10px] font-extrabold text-gray-455 uppercase tracking-wider ml-1 mb-1">Cliente</label>
+                    <select
+                      value={selectedClientFilter}
+                      onChange={e => setSelectedClientFilter(e.target.value)}
+                      className="p-2 border bg-white rounded-xl font-bold text-gray-700 text-xs outline-none focus:ring-2 focus:ring-blue-400 w-44 shadow-sm cursor-pointer h-[38px]"
+                    >
+                      <option value="">Tutti i Clienti</option>
+                      {selectableClientiPerFiltro.map(client => (
+                        <option key={client} value={client}>{client}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Filtro Responsabile */}
+                  <div className="flex flex-col">
+                    <label className="text-[10px] font-extrabold text-gray-455 uppercase tracking-wider ml-1 mb-1">Responsabile</label>
+                    <select
+                      value={selectedPMFilter}
+                      onChange={e => setSelectedPMFilter(e.target.value)}
+                      className="p-2 border bg-white rounded-xl font-bold text-gray-700 text-xs outline-none focus:ring-2 focus:ring-blue-400 w-44 shadow-sm cursor-pointer h-[38px]"
+                    >
+                      <option value="">Tutti i Responsabili</option>
+                      {selectablePMPerFiltro.map(pm => (
+                        <option key={pm} value={pm}>{pm}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Filtro Tipologia */}
+                  <div className="flex flex-col">
+                    <label className="text-[10px] font-extrabold text-gray-455 uppercase tracking-wider ml-1 mb-1">Tipo</label>
+                    <select
+                      value={selectedTipologiaFilter}
+                      onChange={e => setSelectedTipologiaFilter(e.target.value)}
+                      className="p-2 border bg-white rounded-xl font-bold text-gray-700 text-xs outline-none focus:ring-2 focus:ring-blue-400 w-32 shadow-sm cursor-pointer h-[38px]"
+                    >
+                      <option value="">Tutte le Tipologie</option>
+                      {selectableTipologiePerFiltro.map(t => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Filtro Commessa Multi-selezione */}
                   <div className="relative flex flex-col">
-                    <label className="text-[10px] font-extrabold text-gray-400 uppercase tracking-wider ml-1 mb-1">Cerca Commessa</label>
+                    <label className="text-[10px] font-extrabold text-gray-455 uppercase tracking-wider ml-1 mb-1">Commesse</label>
                     <div className="relative">
                       <button
                         type="button"
                         onClick={() => setIsCommessaDropdownOpen(!isCommessaDropdownOpen)}
-                        className="p-2.5 border bg-white rounded-xl font-bold text-gray-700 text-xs text-left outline-none focus:ring-2 focus:ring-blue-400 w-80 shadow-sm flex justify-between items-center cursor-pointer"
+                        className="p-2.5 border bg-white rounded-xl font-bold text-gray-700 text-xs text-left outline-none focus:ring-2 focus:ring-blue-400 w-52 shadow-sm flex justify-between items-center cursor-pointer h-[38px]"
                       >
                         <span className="truncate mr-4 text-gray-700">
-                          {selectedCommessaFilter 
-                            ? (commesse.find(c => c.id === selectedCommessaFilter)?.nome || 'Commessa selezionata') 
-                            : 'Tutte le Commesse'}
+                          {selectedCommessaIdsFilter.length === 0 
+                            ? 'Tutte le Commesse' 
+                            : `${selectedCommessaIdsFilter.length} Selezionate`}
                         </span>
-                        <span className="text-gray-400 ml-auto shrink-0 text-[10px]">▼</span>
+                        <span className="text-gray-455 ml-auto shrink-0 text-[10px]">▼</span>
                       </button>
-                      {selectedCommessaFilter && (
+                      {selectedCommessaIdsFilter.length > 0 && (
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleSelectCommessaFilter('');
+                            setSelectedCommessaIdsFilter([]);
                             setCommessaTextQuery('');
                           }}
                           className="absolute right-8 top-1/2 -translate-y-1/2 text-red-500 hover:text-red-700 font-extrabold text-[10px] bg-red-50 px-2 py-1 rounded-lg transition"
@@ -929,42 +1106,58 @@ export default function Commesse() {
                           setIsCommessaDropdownOpen(false);
                           setCommessaTextQuery('');
                         }}></div>
-                        <div className="absolute left-0 mt-12 w-96 max-h-80 bg-white border border-gray-150 rounded-2xl shadow-2xl z-50 p-3 flex flex-col gap-2 animate-in fade-in slide-in-from-top-2 duration-150">
+                        <div className="absolute left-0 mt-12 w-80 max-h-80 bg-white border border-gray-150 rounded-2xl shadow-2xl z-50 p-3 flex flex-col gap-2 animate-in fade-in slide-in-from-top-2 duration-150">
                           <div className="relative shrink-0">
                             <input
                               type="text"
-                              placeholder="Cerca per codice, titolo, cliente..."
+                              placeholder="Cerca commessa..."
                               value={commessaTextQuery}
                               onChange={e => setCommessaTextQuery(e.target.value)}
-                              className="w-full p-2.5 pl-3 border border-gray-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-400 bg-gray-50/50 text-gray-700"
+                              className="w-full p-2 border border-gray-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-400 bg-gray-50/50 text-gray-700"
                               autoFocus
                             />
                             {commessaTextQuery && (
                               <button
                                 type="button"
                                 onClick={() => setCommessaTextQuery('')}
-                                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs font-black"
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-650 text-xs font-black"
                               >
                                 ✕
                               </button>
                             )}
                           </div>
-                          <div className="overflow-y-auto max-h-56 divide-y divide-gray-50 pr-1 scrollbar-thin">
+                          
+                          <div className="flex justify-between items-center text-[10px] font-bold text-blue-600 border-b pb-1.5 shrink-0 px-1">
                             <button
                               type="button"
                               onClick={() => {
-                                handleSelectCommessaFilter('');
-                                setCommessaTextQuery('');
-                                setIsCommessaDropdownOpen(false);
+                                const filteredComms = commesse.filter(c => {
+                                  const query = commessaTextQuery.toLowerCase().trim();
+                                  if (!query) return true;
+                                  return (c.nome || '').toLowerCase().includes(query) || (c.cliente || '').toLowerCase().includes(query);
+                                });
+                                setSelectedCommessaIdsFilter(filteredComms.map(c => c.id));
                               }}
-                              className="w-full text-left p-2.5 hover:bg-blue-50 text-xs font-bold text-blue-600 transition-colors cursor-pointer rounded-lg"
+                              className="hover:underline cursor-pointer"
                             >
-                              -- Mostra Tutte le Commesse --
+                              Seleziona tutti filtrati
                             </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedCommessaIdsFilter([]);
+                              }}
+                              className="hover:underline text-red-655 cursor-pointer"
+                            >
+                              Deseleziona tutti
+                            </button>
+                          </div>
+
+                          <div className="overflow-y-auto max-h-48 divide-y divide-gray-50 pr-1 scrollbar-thin">
                             {(() => {
                               const search = commessaTextQuery.toLowerCase().trim();
-                              let allowedCommesse = commesse;
                               
+                              let listToDisplay = commesse;
                               if (!isAdmin && !isSenior && myAssociatedName) {
                                 const assignedCommessaIds = new Set<string>();
                                 Object.entries(assignments).forEach(([key, listAss]) => {
@@ -976,79 +1169,83 @@ export default function Commesse() {
                                     });
                                   }
                                 });
-                                allowedCommesse = commesse.filter(c => 
-                                  assignedCommessaIds.has(c.id) ||
-                                  areNamesEqual(c.responsabile, myAssociatedName) ||
-                                  areNamesEqual(c.pm, myAssociatedName)
-                                );
+                                listToDisplay = commesse.filter(c => {
+                                  const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
+                                  const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
+                                  return assignedCommessaIds.has(c.id) ||
+                                         areNamesEqual(c.responsabile, myAssociatedName) ||
+                                         isPM;
+                                });
                               }
 
-                              const filtered = allowedCommesse.filter(c => {
+                              const filtered = listToDisplay.filter(c => {
                                 const name = (c.nome || '').toLowerCase();
-                                const code = (c.codiceCommessa || '').toLowerCase();
                                 const client = (c.cliente || '').toLowerCase();
-                                const resp = (c.responsabile || '').toLowerCase();
-                                const pm = (c.pm || '').toLowerCase();
-                                const tipologia = (c.tipologia || '').toLowerCase();
-                                const anno = (c.anno || '').toLowerCase();
-                                return name.includes(search) ||
-                                       code.includes(search) ||
-                                       client.includes(search) ||
-                                       resp.includes(search) ||
-                                       pm.includes(search) ||
-                                       tipologia.includes(search) ||
-                                       anno.includes(search);
-                              });
+                                return name.includes(search) || client.includes(search);
+                              }).sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
 
                               if (filtered.length === 0) {
                                 return <div className="p-3 text-xs text-gray-400 italic font-bold">Nessuna commessa trovata</div>;
                               }
 
-                              return filtered.map(c => (
-                                <button
-                                  key={c.id}
-                                  type="button"
-                                  onClick={() => {
-                                    handleSelectCommessaFilter(c.id);
-                                    setCommessaTextQuery('');
-                                    setIsCommessaDropdownOpen(false);
-                                  }}
-                                  className="w-full text-left p-2.5 hover:bg-blue-50 text-xs font-semibold text-gray-700 transition-colors flex flex-col gap-0.5 cursor-pointer rounded-lg"
-                                >
-                                  <div className="flex items-center gap-2">
-                                    <span className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor: TIPOLOGIA_COLORS[c.tipologia || ''] || c.colore || '#64748b'}}></span>
-                                    <span className="font-bold text-gray-800 truncate">{c.nome}</span>
-                                  </div>
-                                  {c.cliente && (
-                                    <span className="text-[10px] text-gray-400 font-bold ml-4">Cliente: {c.cliente}</span>
-                                  )}
-                                </button>
-                              ));
+                              return filtered.map(c => {
+                                const isChecked = selectedCommessaIdsFilter.includes(c.id);
+                                return (
+                                  <label
+                                    key={c.id}
+                                    className="flex items-center gap-2.5 p-2 hover:bg-blue-50/50 text-xs font-semibold text-gray-700 transition-colors cursor-pointer rounded-lg select-none"
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={isChecked}
+                                      onChange={() => toggleCommessaIdFilter(c.id)}
+                                      className="rounded text-blue-600 focus:ring-blue-400 border-gray-300 w-3.5 h-3.5"
+                                    />
+                                    <span className="truncate" title={c.nome}>{c.nome}</span>
+                                  </label>
+                                );
+                              });
                             })()}
                           </div>
                         </div>
                       </>
                     )}
                   </div>
+
+                  {/* Pulsante Azzera Tutti i Filtri */}
+                  {(selectedClientFilter || selectedPMFilter || selectedTipologiaFilter || selectedCommessaIdsFilter.length > 0) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedClientFilter('');
+                        setSelectedPMFilter('');
+                        setSelectedTipologiaFilter('');
+                        setSelectedCommessaIdsFilter([]);
+                      }}
+                      className="px-3 py-2 text-xs font-bold text-red-655 hover:text-red-705 bg-red-50 hover:bg-red-100 rounded-xl transition border border-red-100 shadow-sm shrink-0 h-[38px] active:scale-95 cursor-pointer"
+                    >
+                      Azzera Filtri
+                    </button>
+                  )}
                   
                   {/* Show timeline info */}
-                  {selectedCommessaFilter && (
+                  {selectedCommessaIdsFilter.length === 1 && (
                     <div className="flex flex-col justify-end h-[38px]">
-                      <div className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-3 py-2 rounded-xl flex items-center gap-1.5 h-full">
+                      <div className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-3.5 py-2 rounded-xl flex items-center gap-1.5 h-full">
                         <Calendar className="w-3.5 h-3.5" />
-                        Mostrato intero arco temporale della commessa.
+                        Arco temporale commessa attivo.
                       </div>
                     </div>
                   )}
                 </div>
 
                 {/* Navigation Controls */}
-                {!selectedCommessaFilter && (
+                {selectedCommessaIdsFilter.length !== 1 && (
                   <div className="flex items-center gap-3">
                     <div className="flex items-center gap-1 bg-white p-1.5 rounded-xl border border-gray-200 shadow-sm">
-                      <button onClick={() => shiftPeriod(-zoomWeeks)} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-600 transition" title="Indietro"><ChevronLeft className="w-4 h-4" /></button>
+                      <button onClick={() => shiftPeriod(-zoomWeeks)} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-655 transition" title="Indietro"><ChevronLeft className="w-4 h-4" /></button>
                       <button onClick={resetToToday} className="px-3 py-1.5 text-xs font-extrabold text-gray-700 hover:bg-gray-100 rounded-lg transition">Oggi</button>
-                      <button onClick={() => shiftPeriod(zoomWeeks)} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-600 transition" title="Avanti"><ChevronRight className="w-4 h-4" /></button>
+                      <button onClick={() => shiftPeriod(zoomWeeks)} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-655 transition" title="Avanti"><ChevronRight className="w-4 h-4" /></button>
                       <div className="h-5 w-px bg-gray-200 mx-1"></div>
                       <input 
                         type="date" 
@@ -1061,16 +1258,11 @@ export default function Commesse() {
                     <button onClick={handleExportToExcel} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition shadow-md active:scale-95">
                       <Download className="w-4 h-4" /> Esporta Excel
                     </button>
-
-                    <button onClick={() => window.print()} className="flex items-center gap-2 bg-gray-900 text-white hover:bg-gray-800 px-4 py-2.5 rounded-xl text-sm font-bold transition shadow-md active:scale-95">
-                      <Printer className="w-4 h-4" /> Stampa
-                    </button>
                   </div>
                 )}
               </div>
             </div>
-
-            {/* Load Grid Wrapper with clipping for rounded corners */}
+{/* Load Grid Wrapper with clipping for rounded corners */}
             <div className="w-full flex-1 overflow-hidden rounded-b-2xl flex flex-col">
               <div className="w-full overflow-auto scrollbar-thin flex-1">
                 <table className="w-full text-left border-separate border-spacing-0 text-xs">
@@ -1079,7 +1271,7 @@ export default function Commesse() {
                   <tr className="bg-gray-50 border-b text-[11px] font-black text-gray-500 text-center uppercase tracking-wider" style={{ height: '40px' }}>
                     <th 
                       className="p-0 pl-2.5 text-left sticky left-0 top-0 z-35 bg-gray-50 shadow-[1px_0_0_0_#e5e7eb] font-black truncate"
-                      style={{ width: '180px', minWidth: '180px', maxWidth: '180px', height: '40px', lineHeight: '40px' }}
+                      style={{ width: '240px', minWidth: '240px', maxWidth: '240px', height: '40px', lineHeight: '40px' }}
                     >
                       Mesi
                     </th>
@@ -1093,7 +1285,7 @@ export default function Commesse() {
                   <tr className="h-12">
                     <th 
                       className="p-4 font-extrabold text-gray-900 sticky left-0 z-35 bg-white shadow-[1px_0_0_0_#e5e7eb] h-12 truncate"
-                      style={{ width: '180px', minWidth: '180px', maxWidth: '180px', top: '39px' }}
+                      style={{ width: '240px', minWidth: '240px', maxWidth: '240px', top: '39px' }}
                     >
                       Commesse e Clienti
                     </th>
@@ -1108,181 +1300,171 @@ export default function Commesse() {
                           <div className="font-extrabold text-gray-900 text-xs truncate" title={wk.label}>
                             {isNarrow ? wk.label.replace('Sett. ', 'S') : wk.label}
                           </div>
-                          {!isNarrow && (
-                            <div className="text-[10px] font-bold text-gray-400 mt-0.5 truncate">{wk.sub}</div>
-                          )}
+                          {(() => {
+                            const [d1, d2] = wk.sub.split(' - ');
+                            return (
+                              <div className="text-[9.5px] font-bold text-gray-400 mt-0.5 flex flex-col items-center leading-none select-none">
+                                <span>{d1}</span>
+                                <span className="text-[8px] my-0.5 opacity-60">↓</span>
+                                <span>{d2}</span>
+                              </div>
+                            );
+                          })()}
                         </th>
                       );
                     })}
                   </tr>
                 </thead>
                 
-                {groupedCommesse.length === 0 ? (
+                                {filteredCommesse.length === 0 ? (
                   <tbody className="divide-y divide-gray-100 font-medium">
                     <tr>
                       <td colSpan={activeWeeks.length + 1} className="p-12 text-center text-gray-400 font-bold italic">
-                        {!isAdmin && !isSenior ? "Non sei assegnato a nessuna commessa in questo periodo." : "Nessuna commessa registrata a catalogo."}
+                        {!isAdmin && !isSenior ? "Non sei assegnato a nessuna commessa in questo periodo." : "Nessuna commessa trovata con i filtri selezionati."}
                       </td>
                     </tr>
                   </tbody>
                 ) : (
-                  groupedCommesse.map(group => {
-                    return (
-                      <tbody key={group.clientName} className="divide-y divide-gray-105 font-medium">
-                        {/* CLIENT HEADER ROW */}
-                        {group.clientName && group.clientName.toUpperCase() !== 'ALTRI CLIENTI' && group.clientName.toUpperCase() !== 'VARI' && (
-                          <tr 
-                            onClick={() => toggleClientCollapse(group.clientName)}
-                            className="bg-gray-50 font-black text-gray-800 text-xs select-none cursor-pointer hover:bg-gray-100 transition-colors"
+                  <tbody className="divide-y divide-gray-105 font-medium bg-white">
+                    {filteredCommesse.map(comm => {
+                      return (
+                        <tr key={comm.id} className="hover:bg-blue-50/20 transition-colors bg-white">
+                          <td 
+                            className="p-3 font-bold text-gray-800 bg-white sticky left-0 z-10 shadow-[1px_0_0_0_#f3f4f6] border-b align-middle text-left"
+                            style={{ width: '240px', minWidth: '240px', maxWidth: '240px' }}
                           >
-                            <td colSpan={activeWeeks.length + 1} className="p-3.5 pl-6 text-left border-b border-gray-200 uppercase bg-gray-100 sticky left-0 z-20" style={{ top: '87px' }}>
-                              <div className="flex items-center gap-2">
-                                <span className="text-[10px] text-gray-500 w-3 text-center">{collapsedClients[group.clientName] ? '▶' : '▼'}</span>
-                                <span className="text-[13px] font-black">Cliente: {group.clientName}</span>
-                                <span className="text-[11px] text-gray-450 font-bold ml-1">({group.commesseList.length} {group.commesseList.length === 1 ? 'commessa' : 'commesse'})</span>
-                              </div>
-                            </td>
-                          </tr>
-                        )}
-                        {group.commesseList.map(comm => {
-                          if (collapsedClients[group.clientName]) return null;
-                          return (
-                            <tr key={comm.id} className="hover:bg-blue-50/20 transition-colors bg-white">
-                            <td 
-                              className="p-4 font-bold text-gray-800 bg-white sticky left-0 z-10 shadow-[1px_0_0_0_#f3f4f6] border-b align-middle text-left truncate"
-                              style={{ width: '180px', minWidth: '180px', maxWidth: '180px' }}
-                            >
-                              <div className="flex items-center gap-3">
-                                <span className="w-3.5 h-3.5 rounded-full shadow-inner shrink-0" style={{backgroundColor: (comm.tipologia && TIPOLOGIA_COLORS[comm.tipologia]) || comm.colore || '#64748b'}}></span>
-                                <div className="min-w-0 flex-1 text-left">
-                                  <div className="flex items-center gap-1.5 justify-between">
-                                    <div className="truncate font-extrabold text-sm text-gray-800" title={comm.nome}>{comm.nome}</div>
-                                    {(isAdmin || isSenior) && (
+                            <div className="flex items-center gap-2">
+                              <span className="w-3 h-3 rounded-full shadow-inner shrink-0" style={{backgroundColor: (comm.tipologia && TIPOLOGIA_COLORS[comm.tipologia]) || comm.colore || '#64748b'}}></span>
+                              <div className="min-w-0 flex-1 text-left">
+                                <div className="flex items-center gap-1.5 justify-between">
+                                  <div className="whitespace-normal break-words font-extrabold text-xs text-gray-800" title={comm.nome}>{comm.nome}</div>
+                                  {(() => {
+                                    const pmArray = Array.isArray(comm.pm) ? comm.pm : (comm.pm ? [comm.pm] : []);
+                                    const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
+                                    const isResp = areNamesEqual(comm.responsabile, myAssociatedName);
+                                    const canEdit = isAdmin || isSenior || isPM || isResp;
+                                    
+                                    return canEdit && (
                                       <button 
                                         onClick={() => handleOpenEditModal(comm)}
                                         className="text-gray-400 hover:text-blue-600 p-1 rounded transition-colors shrink-0 cursor-pointer"
                                         title="Modifica dettagli (Responsabile, PM, Date)"
                                       >
-                                        <Pencil className="w-3.5 h-3.5" />
+                                        <Pencil className="w-3 h-3" />
                                       </button>
-                                    )}
-                                  </div>
-                                  {comm.dataInizio && comm.dataFine ? (
-                                    <div className="text-[10px] text-gray-400 font-bold mt-0.5 truncate" title={`${formatDate(comm.dataInizio)} - ${formatDate(comm.dataFine)}`}>
-                                      Periodo: {formatDate(comm.dataInizio)} - {formatDate(comm.dataFine)}
-                                    </div>
-                                  ) : (
-                                    <div className="text-[10px] text-orange-500 font-bold mt-0.5 truncate">
-                                      Nessun periodo impostato
-                                    </div>
-                                  )}
-                                  {(comm.responsabile || comm.pm) ? (
-                                    <div className="text-[9.5px] text-gray-500 font-semibold mt-1 truncate" title={`${comm.responsabile ? `Resp: ${comm.responsabile}` : ''}${comm.pm ? ` | PM: ${comm.pm}` : ''}`}>
-                                      {comm.responsabile && `Resp: ${comm.responsabile}`} {comm.pm && ` | PM: ${comm.pm}`}
-                                    </div>
-                                  ) : (
-                                    <div className="text-[9.5px] text-gray-455 font-medium mt-1 italic truncate">
-                                      Resp/PM non assegnati
-                                    </div>
-                                  )}
+                                    );
+                                  })()}
                                 </div>
+                                <div className="text-[9.5px] text-indigo-655 font-bold italic mt-0.5">
+                                  💼 Cliente: {comm.cliente || 'Nessun cliente'}
+                                </div>
+                                {comm.dataInizio && comm.dataFine ? (
+                                  <div className="text-[9.5px] text-gray-400 font-bold mt-0.5 truncate" title={`${formatDate(comm.dataInizio)} - ${formatDate(comm.dataFine)}`}>
+                                    Periodo: {formatDate(comm.dataInizio)} - {formatDate(comm.dataFine)}
+                                  </div>
+                                ) : (
+                                  <div className="text-[9.5px] text-orange-500 font-bold mt-0.5 truncate">
+                                    Nessun periodo impostato
+                                  </div>
+                                )}
+                                {(comm.responsabile || comm.pm) ? (
+                                  <div className="text-[9px] text-gray-500 font-semibold mt-1 truncate" title={`${comm.responsabile ? `Resp: ${comm.responsabile}` : ''}${comm.pm ? ` | PM: ${comm.pm}` : ''}`}>
+                                    {comm.responsabile && `Resp: ${comm.responsabile}`} {comm.pm && ` | PM: ${comm.pm}`}
+                                  </div>
+                                ) : (
+                                  <div className="text-[9px] text-gray-455 font-medium mt-1 italic truncate">
+                                    Resp/PM non assegnati
+                                  </div>
+                                )}
                               </div>
-                            </td>
-                            {activeWeeks.map((wk, wIndex) => {
-                              const assignedPeople = getAssignmentsForCommessaInWeek(comm.id, wk.id);
-                              const isCurrentWeek = wk.id === `${new Date().getFullYear()}-W${getWeekNumber(new Date())}`;
-                              const isWithinRange = isWeekWithinRange(wk.dateObj, comm.dataInizio, comm.dataFine);
-                              const commColor = (comm.tipologia && TIPOLOGIA_COLORS[comm.tipologia]) || comm.colore || '#3b82f6';
-                              const cellBg = isWithinRange ? hexToRgba(commColor, 0.08) : undefined;
-                              return (
-                                <td 
-                                  key={wIndex} 
-                                  className={`${isUltraNarrow ? 'p-1' : isNarrow ? 'p-1.5' : 'p-3'} border-l border-b border-gray-100 align-top ${isCurrentWeek ? 'ring-2 ring-inset ring-blue-300' : ''}`}
-                                  style={{ backgroundColor: cellBg, minWidth: weekColumnMinWidth, width: weekColumnMinWidth }}
+                            </div>
+                          </td>
+                          {activeWeeks.map((wk, wIndex) => {
+                            const assignedPeople = getAssignmentsForCommessaInWeek(comm.id, wk.id);
+                            const isCurrentWeek = wk.id === `${new Date().getFullYear()}-W${getWeekNumber(new Date())}`;
+                            const isWithinRange = isWeekWithinRange(wk.dateObj, comm.dataInizio, comm.dataFine);
+                            const commColor = (comm.tipologia && TIPOLOGIA_COLORS[comm.tipologia]) || comm.colore || '#3b82f6';
+                            const cellBg = isWithinRange ? hexToRgba(commColor, 0.08) : undefined;
+                            return (
+                              <td 
+                                key={wIndex} 
+                                className={`${isUltraNarrow ? 'p-1' : 'p-2'} border-l border-b border-gray-100 align-top ${isCurrentWeek ? 'ring-2 ring-inset ring-blue-300' : ''}`}
+                                style={{ backgroundColor: cellBg, minWidth: weekColumnMinWidth, width: weekColumnMinWidth }}
+                              >
+                                <div 
+                                  className="flex flex-col"
+                                      style={{ 
+                                    minHeight: isNarrow ? '30px' : '40px', 
+                                    gap: '4px' 
+                                  }}
                                 >
-                                  <div 
-                                    className="flex flex-col"
-                                    style={{ 
-                                      minHeight: isNarrow ? '40px' : '66px', 
-                                      gap: isUltraNarrow ? '2px' : isNarrow ? '4px' : '6px' 
-                                    }}
-                                  >
-                                    {assignedPeople.map((person, pIdx) => {
-                                      const daysDesc = person.giorni ? ` (${person.giorni.length === 5 ? 'Sett' : person.giorni.join(',')})` : '';
-                                      const leaves = getLeavesForResourceInWeek(person.name, wk.id);
-                                      const hasLeaves = leaves.length > 0;
-                                      const tooltipText = `${person.name} - Impegno: ${person.pct}%${daysDesc}${hasLeaves ? `\nAssenze: ${leaves.map(l => `${l.giorno} (${l.dettagli})`).join(', ')}` : ''}`;
+                                  {assignedPeople.map((person, pIdx) => {
+                                    const dip = dipendenti.find(d => areNamesEqual(d.nome, person.name));
+                                    const dailyContractHours = dip?.oreContratto ?? 8;
+                                    const weeklyContractHours = dailyContractHours * 5;
+                                    const hours = Math.round(person.pct * weeklyContractHours / 100);
+                                    const leaves = getLeavesForResourceInWeek(person.name, wk.id);
+                                    const hasLeaves = leaves.length > 0;
+                                    const leavesStr = leaves.map(l => `${l.giorno}: ${l.tipo === 'ferie' ? 'Ferie' : l.tipo === 'malattia' ? 'Malattia' : l.tipo === 'permesso' ? 'Permesso' : 'Assenza'}${l.dettagli ? ` (${l.dettagli})` : ''}`).join(', ');
+                                    const tooltipText = `${person.name} - Impegno: ${person.pct}% (${hours}h)${hasLeaves ? `\nAssenze: ${leavesStr}` : ''}`;
 
-                                      if (isUltraNarrow) {
-                                        return (
-                                          <div 
-                                            key={pIdx} 
-                                            className={`text-[9px] font-black text-center py-1 px-0.5 rounded-md border flex items-center justify-center shadow-sm select-none ${
-                                              hasLeaves 
-                                                ? 'bg-rose-50 text-rose-800 border-rose-200 ring-1 ring-rose-300' 
-                                                : 'bg-indigo-50 text-indigo-900 border-indigo-150'
-                                            }`}
-                                            title={tooltipText}
-                                          >
-                                            {person.pct}%
-                                          </div>
-                                        );
-                                      }
-
-                                      if (isNarrow) {
-                                        const initials = getInitials(person.name);
-                                        return (
-                                          <div 
-                                            key={pIdx} 
-                                            className={`text-[10px] font-bold text-center py-1 px-1 rounded-md border flex items-center justify-center gap-0.5 shadow-sm truncate select-none ${
-                                              hasLeaves 
-                                                ? 'bg-rose-50 text-rose-800 border-rose-200' 
-                                                : 'bg-indigo-50 text-indigo-900 border-indigo-150'
-                                            }`}
-                                            title={tooltipText}
-                                          >
-                                            <span className="truncate">{initials}</span>
-                                            <span className="font-extrabold text-[9px] text-indigo-600 shrink-0">{person.pct}%</span>
-                                            {hasLeaves && <span className="text-[8px] text-red-500 shrink-0">⚠️</span>}
-                                          </div>
-                                        );
-                                      }
-
+                                    if (isUltraNarrow) {
                                       return (
                                         <div 
                                           key={pIdx} 
-                                          className="text-[11px] bg-indigo-50/80 text-indigo-950 p-2 rounded-lg border border-indigo-100/60 flex flex-col shadow-sm gap-0.5"
+                                          className={`text-[9px] font-black text-center py-1 px-0.5 rounded-md border flex items-center justify-center shadow-sm select-none ${
+                                            hasLeaves 
+                                              ? 'bg-rose-50 text-rose-800 border-rose-200 ring-1 ring-rose-300' 
+                                              : 'bg-indigo-50 text-indigo-900 border-indigo-150'
+                                          }`}
                                           title={tooltipText}
                                         >
-                                          <div className="flex justify-between items-center font-bold">
-                                            <span className="truncate pr-1">{person.name}</span>
-                                            <span className="text-indigo-600 font-black">{person.pct}%</span>
-                                          </div>
-                                          {person.giorni && person.giorni.length > 0 && person.giorni.length < 5 && (
-                                            <span className="text-[9.5px] text-indigo-500 font-black tracking-tight">{person.giorni.join(',')}</span>
-                                          )}
-                                          {leaves.length > 0 && (
-                                            <div className="mt-1 pt-1 border-t border-red-100 text-[9.5px] text-red-600 font-bold flex flex-col gap-0.5">
-                                              {leaves.map((l, lIdx) => (
-                                                <span key={lIdx} className="flex items-center gap-0.5 truncate" title={`${l.giorno}: ${l.dettagli}`}>
-                                                  ⚠️ {l.giorno}: {l.tipo === 'ferie' ? 'F' : (l.tipo === 'malattia' || l.tipo === 'maternita') ? 'M' : l.tipo === 'permesso' ? 'P' : 'A'}
-                                                </span>
-                                              ))}
-                                            </div>
-                                          )}
+                                          {person.pct}%
                                         </div>
                                       );
-                                    })}
-                                  </div>
-                                </td>
-                              );
-                            })}
-                          </tr>
-                          );
-                        })}
-                      </tbody>
-                    );
-                  })
+                                    }
+
+                                    if (isNarrow) {
+                                      const initials = getInitials(person.name);
+                                      return (
+                                        <div 
+                                          key={pIdx} 
+                                          className={`text-[10px] font-bold py-1 px-1.5 rounded-md border flex items-center justify-between gap-1 shadow-sm truncate select-none w-full ${
+                                            hasLeaves 
+                                              ? 'bg-rose-50 text-rose-800 border-rose-200' 
+                                              : 'bg-indigo-50 text-indigo-900 border-indigo-150'
+                                          }`}
+                                          title={tooltipText}
+                                        >
+                                          <span className="truncate text-left">{initials}</span>
+                                          <span className="font-extrabold text-[9px] text-indigo-655 shrink-0 text-right">{person.pct}% ({hours}h)</span>
+                                          {hasLeaves && <span className="text-[8px] text-red-500 shrink-0 ml-0.5">⚠️</span>}
+                                        </div>
+                                      );
+                                    }
+
+                                    return (
+                                      <div 
+                                        key={pIdx} 
+                                        className="text-[11px] bg-indigo-50/80 text-indigo-950 p-1.5 rounded-lg border border-indigo-100/60 flex items-center justify-between gap-1 shadow-sm w-full select-none"
+                                        title={tooltipText}
+                                      >
+                                        <div className="flex items-center gap-1 min-w-0 flex-1">
+                                          {hasLeaves && <span className="text-[11px] shrink-0 text-amber-500" title={`Assenze: ${leavesStr}`}>⚠️</span>}
+                                          <span className="truncate font-bold text-left">{person.name}</span>
+                                        </div>
+                                        <span className="text-indigo-650 font-black shrink-0 text-right text-[10px]">{person.pct}% ({hours}h)</span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
                 )}
               </table>
             </div>
@@ -1292,24 +1474,19 @@ export default function Commesse() {
         </>
       )}
 
-      {/* TAB 2: GESTIONE CATALOGO (Solo per Admin e Responsabili/Seniors) */}
-      {(activeTab === 'gestione' && (isAdmin || isSenior)) && (
+      {/* TAB 2: GESTIONE CATALOGO (Per Admin, Seniors, Responsabili e Commerciali) */}
+      {(activeTab === 'gestione' && (isAdmin || isSenior || isResponsabileDiQualcheCommessa || isCommerciale)) && (
         <div className="space-y-8">
           <section className="bg-gradient-to-br from-emerald-50 to-teal-50 p-6 rounded-3xl border border-emerald-100 shadow-sm">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-xl font-bold text-emerald-900 flex items-center gap-2">
                 <Briefcase className="w-6 h-6 text-emerald-600" /> Catalogo Commesse
               </h3>
-              <button 
-                onClick={handlePrintCommesse}
-                className="flex items-center gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 px-3.5 py-1.5 rounded-xl text-xs font-bold transition shadow-sm active:scale-95 cursor-pointer animate-in fade-in"
-              >
-                <Printer className="w-3.5 h-3.5" /> Stampa Lista
-              </button>
             </div>
             
-            <div className="mb-6 bg-white/50 p-5 rounded-2xl border border-emerald-100/50 shadow-inner">
-              <form onSubmit={handleAddCommessa} className="space-y-4">
+            {(isAdmin || isSenior || isCommerciale) && (
+              <div className="mb-6 bg-white/50 p-5 rounded-2xl border border-emerald-100/50 shadow-inner">
+                <form onSubmit={handleAddCommessa} className="space-y-4">
                 
                 {/* Selettore Cliente Ricercabile */}
                 <div className="relative">
@@ -1422,24 +1599,165 @@ export default function Commesse() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3">
                   <div>
-                    <label className="block text-[10px] font-bold text-emerald-950 mb-1 ml-1">Responsabile (Opzionale)</label>
+                    <label className="block text-[10px] font-bold text-emerald-950 mb-1 ml-1">Responsabile (Selezionato tra i Coordinatori)</label>
                     <select value={newCommessaResponsabile} onChange={e => setNewCommessaResponsabile(e.target.value)} className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs">
                       <option value="">-- Nessuno --</option>
-                      {seniorsList.map(s => (
-                        <option key={s.id} value={s.nome}>{s.nome}</option>
+                      {responsabiliMacroAreeList.map(r => (
+                        <option key={r.id} value={r.nome}>{r.nome}</option>
                       ))}
                     </select>
                   </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-emerald-950 mb-1 ml-1">Project Manager (PM - Opzionale)</label>
-                    <select value={newCommessaPM} onChange={e => setNewCommessaPM(e.target.value)} className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs">
-                      <option value="">-- Nessuno --</option>
-                      {pmsList.map(p => (
-                        <option key={p.id} value={p.nome}>{p.nome}</option>
-                      ))}
-                    </select>
+                </div>
+
+                {/* Sezione Dettagli Progetto & SGQ */}
+                <div className="bg-gradient-to-br from-indigo-50/50 to-emerald-50/50 p-5 rounded-2xl border border-indigo-100/60 space-y-4">
+                  <div className="flex justify-between items-center">
+                    <h4 className="text-xs font-black text-indigo-950 uppercase tracking-wide flex items-center gap-1.5">
+                      🔀 Dettagli Progetto & SGQ
+                    </h4>
+                  </div>
+
+                  <div className="space-y-4">
+                    {newCommessaProgetti.map((progetto, idx) => (
+                      <div key={idx} className="bg-white p-4 rounded-xl border border-gray-150 space-y-3 relative shadow-sm">
+                        <div>
+                          <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Descrizione Progetto</label>
+                          <textarea
+                            required
+                            rows={3}
+                            placeholder="Inserisci la descrizione o l'identificativo del progetto (puoi andare a capo)..."
+                            value={progetto.descrizione}
+                            onChange={e => handleUpdateProgettoField(idx, { descrizione: e.target.value })}
+                            className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-semibold text-gray-700 text-xs resize-y"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Project Manager</label>
+                            <select
+                              required
+                              value={progetto.pm}
+                              onChange={e => handleUpdateProgettoField(idx, { pm: e.target.value })}
+                              className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
+                            >
+                              <option value="">-- Seleziona PM --</option>
+                              {pmsList.map(pm => (
+                                <option key={pm.id} value={pm.nome}>{pm.nome}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Abilitato SGQ</label>
+                            <select
+                              value={progetto.sgq}
+                              onChange={e => handleUpdateProgettoField(idx, { sgq: e.target.value as 'SI' | 'NO' })}
+                              className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
+                            >
+                              <option value="NO">NO</option>
+                              <option value="SI">SI</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {progetto.sgq === 'SI' ? (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-indigo-50/30 p-3 rounded-lg border border-indigo-100/50">
+                            <div>
+                              <label className="block text-[9px] font-bold text-indigo-900 mb-1.5 ml-1">Verificatori / Validatori</label>
+                              <div className="flex flex-wrap gap-1 mb-2">
+                                {(!progetto.verificatori || progetto.verificatori.length === 0) ? (
+                                  <span className="text-[10px] text-gray-400 italic ml-1">Nessun validatore</span>
+                                ) : (
+                                  progetto.verificatori.map(vName => (
+                                    <div key={vName} className="flex items-center gap-1.5 bg-indigo-100 border border-indigo-200 px-2 py-0.5 rounded-lg text-[10px] font-bold text-indigo-900 shadow-sm animate-in fade-in zoom-in-95 duration-150">
+                                      <span>{vName}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const updatedList = progetto.verificatori.filter(x => x !== vName);
+                                          handleUpdateProgettoField(idx, { verificatori: updatedList });
+                                        }}
+                                        className="text-indigo-450 hover:text-indigo-700 transition cursor-pointer"
+                                      >
+                                        ✕
+                                      </button>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                              <select
+                                value=""
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  if (val && !progetto.verificatori.includes(val)) {
+                                    handleUpdateProgettoField(idx, { verificatori: [...progetto.verificatori, val] });
+                                  }
+                                }}
+                                className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
+                              >
+                                <option value="">+ Aggiungi Validatore...</option>
+                                {dipendenti.filter(d => !progetto.verificatori.includes(d.nome)).map(d => (
+                                  <option key={d.id} value={d.nome}>{d.nome}</option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <div>
+                              <label className="block text-[9px] font-bold text-indigo-900 mb-1 ml-1">Compilatore (Facoltativo)</label>
+                              <select
+                                value={progetto.compilatore}
+                                onChange={e => handleUpdateProgettoField(idx, { compilatore: e.target.value })}
+                                className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
+                              >
+                                <option value="">-- Nessuno --</option>
+                                {dipendenti.map(d => (
+                                  <option key={d.id} value={d.nome}>{d.nome}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-3 gap-2 bg-emerald-50/30 p-3 rounded-lg border border-emerald-100/50">
+                            <div>
+                              <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1 text-center">Senior Project</label>
+                              <input
+                                type="number"
+                                min={0}
+                                placeholder="0"
+                                value={progetto.giornateSenior || ''}
+                                onChange={e => handleUpdateProgettoField(idx, { giornateSenior: Number(e.target.value) || 0 })}
+                                className="w-full p-2 border border-emerald-100 rounded-lg bg-white text-center font-bold text-gray-700 text-xs outline-none focus:ring-1 focus:ring-emerald-400"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1 text-center">Project</label>
+                              <input
+                                type="number"
+                                min={0}
+                                placeholder="0"
+                                value={progetto.giornateProject || ''}
+                                onChange={e => handleUpdateProgettoField(idx, { giornateProject: Number(e.target.value) || 0 })}
+                                className="w-full p-2 border border-emerald-100 rounded-lg bg-white text-center font-bold text-gray-700 text-xs outline-none focus:ring-1 focus:ring-emerald-400"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1 text-center">Junior Project</label>
+                              <input
+                                type="number"
+                                min={0}
+                                placeholder="0"
+                                value={progetto.giornateJunior || ''}
+                                onChange={e => handleUpdateProgettoField(idx, { giornateJunior: Number(e.target.value) || 0 })}
+                                className="w-full p-2 border border-emerald-100 rounded-lg bg-white text-center font-bold text-gray-700 text-xs outline-none focus:ring-1 focus:ring-emerald-400"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 </div>
 
@@ -1448,6 +1766,7 @@ export default function Commesse() {
                 </button>
               </form>
             </div>
+          )}
 
             {/* Box di ricerca commesse */}
             <div className="mb-3">
@@ -1477,25 +1796,26 @@ export default function Commesse() {
                 </thead>
                 <tbody className="divide-y divide-emerald-50/60 font-medium text-emerald-950">
                   {(() => {
-                    const filtered = commesse.filter(c => {
+                    const filtered = commesseGestibili.filter(c => {
                       const queryStr = searchCommessaQuery.toLowerCase();
                       const codice = (c as any).codiceCommessa || '';
                       const titolo = (c as any).titolo || c.nome || '';
                       const cliente = (c as any).cliente || '';
                       const resp = c.responsabile || '';
-                      const pm = c.pm || '';
+                      const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
+                      const pmStr = pmArray.join(', ');
                       return codice.toLowerCase().includes(queryStr) ||
                              titolo.toLowerCase().includes(queryStr) ||
                              cliente.toLowerCase().includes(queryStr) ||
                              resp.toLowerCase().includes(queryStr) ||
-                             pm.toLowerCase().includes(queryStr) ||
+                             pmStr.toLowerCase().includes(queryStr) ||
                              c.nome.toLowerCase().includes(queryStr);
                     });
 
                     if (filtered.length === 0) {
                       return (
                         <tr>
-                          <td colSpan={9} className="p-8 text-center text-gray-400 font-bold italic">
+                          <td colSpan={8} className="p-8 text-center text-gray-400 font-bold italic">
                             Nessuna commessa trovata.
                           </td>
                         </tr>
@@ -1527,7 +1847,7 @@ export default function Commesse() {
                             </span>
                           </td>
                           <td className="p-2.5 truncate max-w-[100px]" title={c.responsabile || ''}>{c.responsabile || ''}</td>
-                          <td className="p-2.5 truncate max-w-[100px]" title={c.pm || ''}>{c.pm || ''}</td>
+                          <td className="p-2.5 truncate max-w-[120px]" title={(() => { const arr = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []); return arr.join(', '); })()}>{(() => { const arr = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []); return arr.join(', '); })() || ''}</td>
                           <td className="p-2.5 text-center">
                             <div className="flex items-center justify-center gap-1.5">
                               <button 
@@ -1559,94 +1879,235 @@ export default function Commesse() {
 
       {editingCommessa && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2rem] shadow-2xl max-w-md w-full border border-gray-150 p-6 flex flex-col gap-6 animate-in fade-in zoom-in-95 duration-200">
-            <div className="flex justify-between items-center">
+          <div className="bg-white rounded-[2rem] shadow-2xl max-w-5xl w-full border border-gray-150 p-6 flex flex-col gap-6 animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center shrink-0">
               <h3 className="text-xl font-black text-gray-900 flex items-center gap-2">
                 <Briefcase className="w-6 h-6 text-blue-600" />
-                <span>Assegna Resp/PM & Date</span>
+                <span>Modifica Commessa e Split Progetti</span>
               </h3>
               <button onClick={() => setEditingCommessa(null)} className="text-gray-400 hover:text-gray-600 p-1.5 rounded-xl hover:bg-gray-100 transition">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="bg-blue-50 border border-blue-100 p-4 rounded-2xl">
+            <div className="bg-blue-50 border border-blue-100 p-4 rounded-2xl shrink-0">
               <div className="text-[11px] font-bold uppercase tracking-wider text-blue-500">Commessa in modifica</div>
               <div className="font-extrabold text-blue-900 text-sm mt-0.5">{editingCommessa.nome}</div>
             </div>
 
-            <form onSubmit={handleSaveCommessaDetails} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Responsabile</label>
-                <select 
-                  value={editResponsabile} 
-                  onChange={e => setEditResponsabile(e.target.value)}
-                  className="w-full p-3 border-none bg-gray-50 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-bold text-gray-700"
-                >
-                  <option value="">-- Nessuno --</option>
-                  {(() => {
-                    const list = dipendenti.filter(d => d.email && seniorsEmails.includes(d.email.toLowerCase()));
-                    if (editResponsabile && !list.some(d => d.nome === editResponsabile)) {
-                      const current = dipendenti.find(d => d.nome === editResponsabile);
-                      if (current) list.push(current);
-                    }
-                    return list.map(d => <option key={d.id} value={d.nome}>{d.nome}</option>);
-                  })()}
-                </select>
+            <form onSubmit={handleSaveCommessaDetails} className="flex-1 flex flex-col gap-6 min-h-0">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start overflow-y-auto pr-1">
+                {/* COLONNA SINISTRA: Informazioni Generali */}
+                <div className="space-y-4 md:col-span-1 md:border-r md:pr-6 md:border-gray-150">
+                  <h4 className="text-xs font-black text-gray-900 uppercase tracking-wide">Dettagli Commessa</h4>
+                  
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Responsabile</label>
+                    <select 
+                      value={editResponsabile} 
+                      onChange={e => setEditResponsabile(e.target.value)}
+                      className="w-full p-3 border-none bg-gray-50 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-bold text-gray-700"
+                    >
+                      <option value="">-- Nessuno --</option>
+                      {(() => {
+                        const list = [...responsabiliMacroAreeList];
+                        if (editResponsabile && !list.some(d => d.nome === editResponsabile)) {
+                          const current = dipendenti.find(d => d.nome === editResponsabile);
+                          if (current) list.push(current);
+                        }
+                        return list.map(d => <option key={d.id} value={d.nome}>{d.nome}</option>);
+                      })()}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Stato</label>
+                    <select 
+                      value={editStato} 
+                      onChange={e => setEditStato(e.target.value)}
+                      className="w-full p-3 border-none bg-gray-50 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-bold text-gray-700"
+                    >
+                      <option value="Aperta">Aperta</option>
+                      <option value="Chiusa">Chiusa</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Data Inizio (Opzionale)</label>
+                    <input 
+                      type="date" 
+                      value={editDataInizio} 
+                      onChange={e => setEditDataInizio(e.target.value)}
+                      className="w-full p-3 border-none bg-gray-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-semibold text-gray-650"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Data Fine (Opzionale)</label>
+                    <input 
+                      type="date" 
+                      value={editDataFine} 
+                      onChange={e => setEditDataFine(e.target.value)}
+                      className="w-full p-3 border-none bg-gray-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-semibold text-gray-650"
+                    />
+                  </div>
+                </div>
+
+                {/* COLONNA DESTRA: Dettagli Progetto & SGQ */}
+                <div className="space-y-4 md:col-span-2">
+                  <div className="bg-gradient-to-br from-indigo-50/50 to-emerald-50/50 p-5 rounded-2xl border border-indigo-100/60 space-y-4">
+                    <div className="flex justify-between items-center">
+                      <h4 className="text-xs font-black text-indigo-950 uppercase tracking-wide flex items-center gap-1.5">
+                        🔀 Dettagli Progetto & SGQ
+                      </h4>
+                    </div>
+
+                    <div className="space-y-4">
+                      {editProgetti.map((progetto, idx) => (
+                        <div key={idx} className="bg-white p-4 rounded-xl border border-gray-150 space-y-3 relative shadow-sm">
+                          <div>
+                            <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Descrizione Progetto</label>
+                            <textarea
+                              required
+                              rows={3}
+                              placeholder="Inserisci la descrizione o l'identificativo del progetto (puoi andare a capo)..."
+                              value={progetto.descrizione}
+                              onChange={e => handleUpdateEditProgettoField(idx, { descrizione: e.target.value })}
+                              className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-semibold text-gray-700 text-xs resize-y"
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Project Manager</label>
+                              <select
+                                required
+                                value={progetto.pm}
+                                onChange={e => handleUpdateEditProgettoField(idx, { pm: e.target.value })}
+                                className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
+                              >
+                                <option value="">-- Seleziona PM --</option>
+                                {pmsList.map(pm => (
+                                  <option key={pm.id} value={pm.nome}>{pm.nome}</option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <div>
+                              <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Abilitato SGQ</label>
+                              <select
+                                value={progetto.sgq}
+                                onChange={e => handleUpdateEditProgettoField(idx, { sgq: e.target.value as 'SI' | 'NO' })}
+                                className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
+                              >
+                                <option value="NO">NO</option>
+                                <option value="SI">SI</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          {progetto.sgq === 'SI' ? (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-indigo-50/30 p-3 rounded-lg border border-indigo-100/50">
+                              <div>
+                                <label className="block text-[9px] font-bold text-indigo-900 mb-1.5 ml-1">Verificatori / Validatori</label>
+                                <div className="flex flex-wrap gap-1 mb-2">
+                                  {(!progetto.verificatori || progetto.verificatori.length === 0) ? (
+                                    <span className="text-[10px] text-gray-400 italic ml-1">Nessun validatore</span>
+                                  ) : (
+                                    progetto.verificatori.map(vName => (
+                                      <div key={vName} className="flex items-center gap-1.5 bg-indigo-100 border border-indigo-200 px-2 py-0.5 rounded-lg text-[10px] font-bold text-indigo-900 shadow-sm animate-in fade-in zoom-in-95 duration-150">
+                                        <span>{vName}</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const updatedList = (progetto.verificatori || []).filter(x => x !== vName);
+                                            handleUpdateEditProgettoField(idx, { verificatori: updatedList });
+                                          }}
+                                          className="text-indigo-455 hover:text-indigo-700 transition cursor-pointer"
+                                        >
+                                          ✕
+                                        </button>
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
+                                <select
+                                  value=""
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    const currentList = progetto.verificatori || [];
+                                    if (val && !currentList.includes(val)) {
+                                      handleUpdateEditProgettoField(idx, { verificatori: [...currentList, val] });
+                                    }
+                                  }}
+                                  className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
+                                >
+                                  <option value="">+ Aggiungi Validatore...</option>
+                                  {dipendenti.filter(d => !(progetto.verificatori || []).includes(d.nome)).map(d => (
+                                    <option key={d.id} value={d.nome}>{d.nome}</option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div>
+                                <label className="block text-[9px] font-bold text-indigo-900 mb-1 ml-1">Compilatore (Facoltativo)</label>
+                                <select
+                                  value={progetto.compilatore || ''}
+                                  onChange={e => handleUpdateEditProgettoField(idx, { compilatore: e.target.value })}
+                                  className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
+                                >
+                                  <option value="">-- Nessuno --</option>
+                                  {dipendenti.map(d => (
+                                    <option key={d.id} value={d.nome}>{d.nome}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-3 gap-2 bg-emerald-50/30 p-3 rounded-lg border border-emerald-100/50">
+                              <div>
+                                <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1 text-center">Senior Project</label>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  placeholder="0"
+                                  value={progetto.giornateSenior || ''}
+                                  onChange={e => handleUpdateEditProgettoField(idx, { giornateSenior: Number(e.target.value) || 0 })}
+                                  className="w-full p-2 border border-emerald-100 rounded-lg bg-white text-center font-bold text-gray-700 text-xs outline-none focus:ring-1 focus:ring-emerald-400"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1 text-center">Project</label>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  placeholder="0"
+                                  value={progetto.giornateProject || ''}
+                                  onChange={e => handleUpdateEditProgettoField(idx, { giornateProject: Number(e.target.value) || 0 })}
+                                  className="w-full p-2 border border-emerald-100 rounded-lg bg-white text-center font-bold text-gray-700 text-xs outline-none focus:ring-1 focus:ring-emerald-400"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1 text-center">Junior Project</label>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  placeholder="0"
+                                  value={progetto.giornateJunior || ''}
+                                  onChange={e => handleUpdateEditProgettoField(idx, { giornateJunior: Number(e.target.value) || 0 })}
+                                  className="w-full p-2 border border-emerald-100 rounded-lg bg-white text-center font-bold text-gray-700 text-xs outline-none focus:ring-1 focus:ring-emerald-400"
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Project Manager (PM)</label>
-                <select 
-                  value={editPM} 
-                  onChange={e => setEditPM(e.target.value)}
-                  className="w-full p-3 border-none bg-gray-50 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-bold text-gray-700"
-                >
-                  <option value="">-- Nessuno --</option>
-                  {(() => {
-                    const list = dipendenti.filter(d => d.email && pmsEmails.includes(d.email.toLowerCase()));
-                    if (editPM && !list.some(d => d.nome === editPM)) {
-                      const current = dipendenti.find(d => d.nome === editPM);
-                      if (current) list.push(current);
-                    }
-                    return list.map(d => <option key={d.id} value={d.nome}>{d.nome}</option>);
-                  })()}
-                </select>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Stato</label>
-                  <select 
-                    value={editStato} 
-                    onChange={e => setEditStato(e.target.value)}
-                    className="w-full p-3 border-none bg-gray-50 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-bold text-gray-700"
-                  >
-                    <option value="Aperta">Aperta</option>
-                    <option value="Chiusa">Chiusa</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Data Inizio (Opzionale)</label>
-                  <input 
-                    type="date" 
-                    value={editDataInizio} 
-                    onChange={e => setEditDataInizio(e.target.value)}
-                    className="w-full p-3 border-none bg-gray-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-semibold text-gray-650"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Data Fine (Opzionale)</label>
-                  <input 
-                    type="date" 
-                    value={editDataFine} 
-                    onChange={e => setEditDataFine(e.target.value)}
-                    className="w-full p-3 border-none bg-gray-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-semibold text-gray-650"
-                  />
-                </div>
-              </div>
-
-              <div className="flex gap-3 pt-4">
+              <div className="flex gap-3 pt-4 border-t border-gray-150 shrink-0">
                 <button 
                   type="button" 
                   onClick={() => setEditingCommessa(null)} 
