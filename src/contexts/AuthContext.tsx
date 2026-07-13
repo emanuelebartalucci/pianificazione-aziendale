@@ -16,6 +16,7 @@ export interface Dipendente {
   raRate?: number;
   oreContratto?: number;
   macroArea?: 'Disegnatori' | 'Ingegneria' | 'Sicurezza Cantieri' | 'Consulenza Sicurezza' | 'Amministrazione';
+  dataCessazione?: string;
 }
 
 export interface Commessa {
@@ -156,6 +157,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
               raRate: doc.data().raRate,
               oreContratto: doc.data().oreContratto,
               macroArea: doc.data().macroArea,
+              dataCessazione: doc.data().dataCessazione || '',
             }));
             setDipendenti(list.sort((a, b) => a.nome.localeCompare(b.nome)));
           }));

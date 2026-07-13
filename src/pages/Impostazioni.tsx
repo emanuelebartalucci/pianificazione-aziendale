@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, addDoc, doc, setDoc, deleteDoc, onSnapshot, updateDoc } from 'firebase/firestore';
-import { Shield, UserCheck, Star, Users, Plus, Trash2, Settings, Printer, Building2, Search, ArrowRightLeft, Pencil, X } from 'lucide-react';
+import { Shield, UserCheck, Star, Users, Plus, Trash2, Settings, Printer, Building2, Search, Pencil, X } from 'lucide-react';
 import ConfirmModal from '../components/ConfirmModal';
 
 
@@ -118,6 +118,20 @@ export default function Impostazioni() {
   const [newCollabNome, setNewCollabNome] = useState('');
   const [newCollabEmail, setNewCollabEmail] = useState('');
   const [newCollabMacroArea, setNewCollabMacroArea] = useState('');
+
+  // Edit Employee Modal States
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editingDip, setEditingDip] = useState<any>(null);
+  const [editNome, setEditNome] = useState('');
+  const [editEmail, setEditEmail] = useState('');
+  const [editTipo, setEditTipo] = useState<'dipendente' | 'collaboratore'>('dipendente');
+  const [editMacroArea, setEditMacroArea] = useState('');
+  const [editDataCessazione, setEditDataCessazione] = useState('');
+  const [editDailyRate, setEditDailyRate] = useState('');
+  const [editInpsRate, setEditInpsRate] = useState('');
+  const [editIvaRate, setEditIvaRate] = useState('');
+  const [editRaRate, setEditRaRate] = useState('');
+  const [editOreContratto, setEditOreContratto] = useState('');
 
   // Nuovi stati per Clienti e Project Manager
   const [newClientNome, setNewClientNome] = useState('');
@@ -279,6 +293,64 @@ export default function Impostazioni() {
     }
   };
 
+  const handleOpenEditModal = (dip: any) => {
+    setEditingDip(dip);
+    setEditNome(dip.nome);
+    setEditEmail(dip.email || '');
+    setEditTipo(isCollaboratore(dip.nome, dip.tipo) ? 'collaboratore' : 'dipendente');
+    setEditMacroArea(dip.macroArea || '');
+    setEditDataCessazione(dip.dataCessazione || '');
+    setEditDailyRate(dip.dailyRate !== undefined && dip.dailyRate !== null ? dip.dailyRate.toString() : '');
+    setEditInpsRate(dip.inpsRate !== undefined && dip.inpsRate !== null ? dip.inpsRate.toString() : '');
+    setEditIvaRate(dip.ivaRate !== undefined && dip.ivaRate !== null ? dip.ivaRate.toString() : '');
+    setEditRaRate(dip.raRate !== undefined && dip.raRate !== null ? dip.raRate.toString() : '');
+    setEditOreContratto(dip.oreContratto !== undefined && dip.oreContratto !== null ? dip.oreContratto.toString() : '');
+    setIsEditModalOpen(true);
+  };
+
+  const handleSaveEmployee = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingDip) return;
+
+    if (isSoci(editingDip.nome) && editTipo !== 'dipendente') {
+      showToast("Non è possibile modificare la tipologia di un socio proprietario.", "warning");
+      return;
+    }
+
+    try {
+      const docRef = doc(db, 'dipendenti', editingDip.id);
+      const payload: any = {
+        nome: editNome.trim(),
+        email: editEmail.trim().toLowerCase(),
+        tipo: editTipo,
+        macroArea: editMacroArea || null,
+        dataCessazione: editDataCessazione || null,
+        oreContratto: editOreContratto ? Number(editOreContratto) : null,
+      };
+
+      if (editTipo === 'collaboratore') {
+        payload.dailyRate = editDailyRate ? Number(editDailyRate) : null;
+        payload.inpsRate = editInpsRate ? Number(editInpsRate) : null;
+        payload.ivaRate = editIvaRate ? Number(editIvaRate) : null;
+        payload.raRate = editRaRate ? Number(editRaRate) : null;
+      } else {
+        payload.dailyRate = null;
+        payload.inpsRate = null;
+        payload.ivaRate = null;
+        payload.raRate = null;
+      }
+
+      await updateDoc(docRef, payload);
+      await refreshData();
+      showToast("Risorsa aggiornata con successo!", "success");
+      setIsEditModalOpen(false);
+      setEditingDip(null);
+    } catch (err) {
+      console.error("Errore aggiornamento risorsa:", err);
+      showToast("Errore durante l'aggiornamento.", "error");
+    }
+  };
+
   const handleAddPM = async (e: React.FormEvent) => {
     e.preventDefault();
     if(newPmEmail) {
@@ -343,32 +415,6 @@ export default function Impostazioni() {
     );
   };
 
-  const handleMoveEmployeeType = (id: string, newTipo: 'dipendente' | 'collaboratore') => {
-    const target = dipendenti.find(d => d.id === id);
-    if (target && isSoci(target.nome)) {
-      showToast("Non è possibile modificare il ruolo di un socio proprietario.", "warning");
-      return;
-    }
-
-    triggerConfirm(
-      "Cambia Ruolo Risorsa",
-      `Sei sicuro di voler spostare ${target ? target.nome : 'questa risorsa'} in ${newTipo === 'collaboratore' ? 'Collaboratori P. IVA' : 'Dipendenti'}? Lo storico di ferie, presenze e allocazioni verrà conservato.`,
-      async () => {
-        try {
-          await updateDoc(doc(db, 'dipendenti', id), {
-            tipo: newTipo
-          });
-          await refreshData();
-          showToast(`Risorsa spostata in ${newTipo === 'collaboratore' ? 'Collaboratori P. IVA' : 'Dipendenti'} con successo!`, "success");
-        } catch (err) {
-          console.error("Errore nello spostamento della risorsa:", err);
-          showToast("Si è verificato un errore durante lo spostamento.", "error");
-        }
-      },
-      'info'
-    );
-  };
-
   const handleRemoveDipendente = (id: string) => {
     const target = dipendenti.find(d => d.id === id);
     if (target && isSoci(target.nome)) {
@@ -377,14 +423,18 @@ export default function Impostazioni() {
     }
 
     triggerConfirm(
-      "Rimuovi Dipendente",
-      "Sei sicuro di voler rimuovere questo dipendente? Questa azione non cancellerà i suoi rapportini esistenti, ma non potrà più accedere.",
+      "Rimuovi Risorsa",
+      `Sei sicuro di voler eliminare definitivamente ${target ? target.nome : 'questa risorsa'}? Questa azione non può essere annullata.`,
       async () => {
         try {
           await deleteDoc(doc(db, 'dipendenti', id));
           await refreshData();
+          setIsEditModalOpen(false);
+          setEditingDip(null);
+          showToast("Risorsa rimossa con successo.", "success");
         } catch (err) {
-          console.error("Errore nella rimozione del dipendente:", err);
+          console.error("Errore nella rimozione della risorsa:", err);
+          showToast("Errore durante l'eliminazione.", "error");
         }
       },
       'danger'
@@ -813,7 +863,7 @@ export default function Impostazioni() {
               </div>
               <p className="text-sm text-indigo-700/80 mb-4">Solo i dipendenti in questa lista possono registrarsi all'app.</p>
               <form onSubmit={handleAddDipendente} className="flex flex-col gap-3 mb-5">
-                <input required type="text" placeholder="Nome Completo (es. Rossi Mario)" value={newDipNome} onChange={e => setNewDipNome(e.target.value)} className="w-full p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition shadow-inner font-bold text-gray-700 text-xs" />
+                <input required type="text" placeholder="Cognome e Nome" value={newDipNome} onChange={e => setNewDipNome(e.target.value)} className="w-full p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition shadow-inner font-bold text-gray-700 text-xs" />
                 <input required type="email" placeholder="Email Aziendale" value={newDipEmail} onChange={e => setNewDipEmail(e.target.value)} className="w-full p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition shadow-inner font-bold text-gray-700 text-xs" />
                 <div className="flex gap-2">
                   <select 
@@ -833,33 +883,20 @@ export default function Impostazioni() {
               </form>
               <div className="max-h-[350px] overflow-y-auto bg-white/50 rounded-xl divide-y border border-indigo-100">
                 {dipendenti.filter(d => !isCollaboratore(d.nome, d.tipo) && !isSoci(d.nome)).map(d => (
-                  <div key={d.id} className="p-3 flex justify-between items-center text-sm gap-2">
+                  <div key={d.id} className="p-4 flex justify-between items-center text-sm gap-2">
                     <div className="flex-1 min-w-0">
                       <div className="font-bold text-indigo-900 truncate">{d.nome}</div>
                       <div className="text-xs text-indigo-600/70 truncate">{d.email || 'Nessuna email'}</div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <select 
-                        value={d.macroArea || ''} 
-                        onChange={e => handleUpdateMacroArea(d.id, e.target.value)}
-                        className="text-[10px] p-1.5 border border-indigo-200 rounded-lg bg-white/80 font-semibold outline-none focus:ring-1 focus:ring-indigo-500 text-gray-700"
-                      >
-                        <option value="">Nessuna Area</option>
-                        <option value="Disegnatori">Disegnatori</option>
-                        <option value="Ingegneria">Ingegneria</option>
-                        <option value="Sicurezza Cantieri">Sicurezza Cantieri</option>
-                        <option value="Consulenza Sicurezza">Consulenza Sicurezza</option>
-                        <option value="Amministrazione">Amministr.</option>
-                      </select>
                       <button 
                         type="button"
-                        onClick={() => handleMoveEmployeeType(d.id, 'collaboratore')} 
-                        className="text-indigo-600 hover:text-indigo-850 p-2 bg-indigo-50 hover:bg-indigo-150 rounded-lg transition-colors cursor-pointer"
-                        title="Sposta in Collaboratori P. IVA"
+                        onClick={() => handleOpenEditModal(d)} 
+                        className="p-2 text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors cursor-pointer"
+                        title="Modifica risorsa"
                       >
-                        <ArrowRightLeft className="w-4 h-4"/>
+                        <Pencil className="w-4 h-4"/>
                       </button>
-                      <button onClick={() => handleRemoveDipendente(d.id)} className="text-indigo-400 hover:text-red-600 p-2 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors cursor-pointer"><Trash2 className="w-4 h-4"/></button>
                     </div>
                   </div>
                 ))}
@@ -879,7 +916,7 @@ export default function Impostazioni() {
               </div>
               <p className="text-sm text-amber-700/80 mb-4">Solo i collaboratori in questa lista possono registrarsi all'app.</p>
               <form onSubmit={handleAddCollaboratore} className="flex flex-col gap-3 mb-5">
-                <input required type="text" placeholder="Nome Completo (es. Rossi Mario)" value={newCollabNome} onChange={e => setNewCollabNome(e.target.value)} className="w-full p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-amber-400 transition shadow-inner font-bold text-gray-700 text-xs" />
+                <input required type="text" placeholder="Cognome e Nome" value={newCollabNome} onChange={e => setNewCollabNome(e.target.value)} className="w-full p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-amber-400 transition shadow-inner font-bold text-gray-700 text-xs" />
                 <input required type="email" placeholder="Email Aziendale" value={newCollabEmail} onChange={e => setNewCollabEmail(e.target.value)} className="w-full p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-amber-400 transition shadow-inner font-bold text-gray-700 text-xs" />
                 <div className="flex gap-2">
                   <select 
@@ -899,33 +936,20 @@ export default function Impostazioni() {
               </form>
               <div className="max-h-[350px] overflow-y-auto bg-white/50 rounded-xl divide-y border border-amber-100">
                 {dipendenti.filter(d => isCollaboratore(d.nome, d.tipo) && !isSoci(d.nome)).map(d => (
-                  <div key={d.id} className="p-3 flex justify-between items-center text-sm gap-2">
+                  <div key={d.id} className="p-4 flex justify-between items-center text-sm gap-2">
                     <div className="flex-1 min-w-0">
                       <div className="font-bold text-amber-900 truncate">{d.nome}</div>
                       <div className="text-xs text-amber-600/70 truncate">{d.email || 'Nessuna email'}</div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <select 
-                        value={d.macroArea || ''} 
-                        onChange={e => handleUpdateMacroArea(d.id, e.target.value)}
-                        className="text-[10px] p-1.5 border border-amber-200 rounded-lg bg-white/80 font-semibold outline-none focus:ring-1 focus:ring-amber-500 text-gray-700"
-                      >
-                        <option value="">Nessuna Area</option>
-                        <option value="Disegnatori">Disegnatori</option>
-                        <option value="Ingegneria">Ingegneria</option>
-                        <option value="Sicurezza Cantieri">Sicurezza Cantieri</option>
-                        <option value="Consulenza Sicurezza">Consulenza Sicurezza</option>
-                        <option value="Amministrazione">Amministr.</option>
-                      </select>
                       <button 
                         type="button"
-                        onClick={() => handleMoveEmployeeType(d.id, 'dipendente')} 
-                        className="text-amber-600 hover:text-amber-850 p-2 bg-amber-50 hover:bg-amber-150 rounded-lg transition-colors cursor-pointer"
-                        title="Sposta in Dipendenti"
+                        onClick={() => handleOpenEditModal(d)} 
+                        className="p-2 text-amber-600 hover:text-amber-850 bg-amber-50 hover:bg-amber-100 rounded-lg transition-colors cursor-pointer"
+                        title="Modifica risorsa"
                       >
-                        <ArrowRightLeft className="w-4 h-4"/>
+                        <Pencil className="w-4 h-4"/>
                       </button>
-                      <button onClick={() => handleRemoveDipendente(d.id)} className="text-amber-400 hover:text-red-600 p-2 bg-amber-50 hover:bg-amber-100 rounded-lg transition-colors cursor-pointer"><Trash2 className="w-4 h-4"/></button>
                     </div>
                   </div>
                 ))}
@@ -1113,7 +1137,7 @@ export default function Impostazioni() {
                       <h4 className="font-extrabold text-sm text-indigo-955 border-b pb-2 mb-3 uppercase tracking-wider flex justify-between items-center shrink-0">
                         <span>{areaName}</span>
                         <span className="bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full text-[10px] font-bold">
-                          {areaMembers.length}
+                          {areaMembers.length + areaCoordinators.length}
                         </span>
                       </h4>
                       
@@ -1416,6 +1440,196 @@ export default function Impostazioni() {
             >
               ✕
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Sleek Edit Employee Modal */}
+      {isEditModalOpen && editingDip && (
+        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-md flex items-center justify-center z-50 p-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xl overflow-hidden border border-gray-100 flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="p-6 bg-gradient-to-r from-indigo-600 to-indigo-800 text-white flex justify-between items-center shrink-0">
+              <div>
+                <h3 className="text-xl font-bold">Modifica Risorsa</h3>
+                <p className="text-xs text-indigo-200/90 font-medium">Aggiorna le informazioni di {editingDip.nome}</p>
+              </div>
+              <button 
+                type="button"
+                onClick={() => { setIsEditModalOpen(false); setEditingDip(null); }}
+                className="p-1.5 bg-white/10 hover:bg-white/20 rounded-xl transition text-white hover:text-gray-100 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body / Form */}
+            <form onSubmit={handleSaveEmployee} className="flex-1 overflow-y-auto p-6 space-y-5">
+              {/* Nome e Cognome */}
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1 ml-1">Nome e Cognome</label>
+                <input
+                  required
+                  type="text"
+                  value={editNome}
+                  onChange={e => setEditNome(e.target.value)}
+                  className="w-full p-3 border border-gray-200 rounded-xl bg-gray-50 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition font-bold text-gray-705 text-xs"
+                />
+              </div>
+
+              {/* Email */}
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1 ml-1">Email Aziendale</label>
+                <input
+                  required
+                  type="email"
+                  value={editEmail}
+                  onChange={e => setEditEmail(e.target.value)}
+                  className="w-full p-3 border border-gray-200 rounded-xl bg-gray-50 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition font-bold text-gray-705 text-xs"
+                />
+              </div>
+
+              {/* Tipo di Risorsa */}
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1.5 ml-1">Tipologia Risorsa</label>
+                <div className="grid grid-cols-2 gap-2 bg-gray-50 p-1 rounded-xl border border-gray-200">
+                  <button
+                    type="button"
+                    onClick={() => !isSoci(editingDip.nome) && setEditTipo('dipendente')}
+                    disabled={isSoci(editingDip.nome)}
+                    className={`p-2.5 rounded-lg text-xs font-bold transition-all ${
+                      editTipo === 'dipendente'
+                        ? 'bg-white text-indigo-700 shadow-sm border border-indigo-100'
+                        : 'text-gray-500 hover:text-gray-700'
+                    } ${isSoci(editingDip.nome) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                  >
+                    Dipendente
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => !isSoci(editingDip.nome) && setEditTipo('collaboratore')}
+                    disabled={isSoci(editingDip.nome)}
+                    className={`p-2.5 rounded-lg text-xs font-bold transition-all ${
+                      editTipo === 'collaboratore'
+                        ? 'bg-white text-amber-700 shadow-sm border border-amber-100'
+                        : 'text-gray-500 hover:text-gray-700'
+                    } ${isSoci(editingDip.nome) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                  >
+                    Collaboratore P. IVA
+                  </button>
+                </div>
+              </div>
+
+              {/* Macro Area */}
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1 ml-1">Macro Area</label>
+                <select
+                  value={editMacroArea}
+                  onChange={e => setEditMacroArea(e.target.value)}
+                  className="w-full p-3 border border-gray-200 rounded-xl bg-gray-50 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition font-bold text-gray-705 text-xs"
+                >
+                  <option value="">Nessuna Area</option>
+                  <option value="Disegnatori">Disegnatori</option>
+                  <option value="Ingegneria">Ingegneria</option>
+                  <option value="Sicurezza Cantieri">Sicurezza Cantieri</option>
+                  <option value="Consulenza Sicurezza">Consulenza Sicurezza</option>
+                  <option value="Amministrazione">Amministrazione</option>
+                </select>
+              </div>
+
+              {/* Data Cessazione */}
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1 ml-1">Data Cessazione</label>
+                <input
+                  type="date"
+                  value={editDataCessazione}
+                  onChange={e => setEditDataCessazione(e.target.value)}
+                  className="w-full p-3 border border-gray-200 rounded-xl bg-gray-50 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition font-bold text-gray-705 text-xs"
+                />
+              </div>
+
+              {/* Ore Contratto */}
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1 ml-1">Ore contratto (giornaliere)</label>
+                <input
+                  type="number"
+                  placeholder="es. 8 o 4"
+                  value={editOreContratto}
+                  onChange={e => setEditOreContratto(e.target.value)}
+                  className="w-full p-3 border border-gray-200 rounded-xl bg-gray-50 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition font-bold text-gray-755 text-xs"
+                />
+              </div>
+
+              {/* Dati specifici Collaboratore */}
+              {editTipo === 'collaboratore' && (
+                <div className="bg-amber-50/50 p-4 rounded-2xl border border-amber-100 space-y-4 animate-in slide-in-from-top duration-150">
+                  <h4 className="text-xs font-bold text-amber-800 uppercase tracking-wider mb-2">Dettagli Fiscali Collaboratore</h4>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-500 mb-1 ml-1">Tariffa Giornaliera (€/gg)</label>
+                      <input
+                        type="number"
+                        placeholder="0"
+                        value={editDailyRate}
+                        onChange={e => setEditDailyRate(e.target.value)}
+                        className="w-full p-2.5 border border-gray-200 rounded-xl bg-white outline-none focus:ring-2 focus:ring-amber-400 transition font-semibold text-gray-700 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-500 mb-1 ml-1">Aliquota Cassa INPS (%)</label>
+                      <input
+                        type="number"
+                        placeholder="0"
+                        value={editInpsRate}
+                        onChange={e => setEditInpsRate(e.target.value)}
+                        className="w-full p-2.5 border border-gray-200 rounded-xl bg-white outline-none focus:ring-2 focus:ring-amber-400 transition font-semibold text-gray-700 text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-500 mb-1 ml-1">Aliquota IVA (%)</label>
+                      <input
+                        type="number"
+                        placeholder="0"
+                        value={editIvaRate}
+                        onChange={e => setEditIvaRate(e.target.value)}
+                        className="w-full p-2.5 border border-gray-200 rounded-xl bg-white outline-none focus:ring-2 focus:ring-amber-400 transition font-semibold text-gray-700 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-500 mb-1 ml-1">Ritenuta d'Acconto (%)</label>
+                      <input
+                        type="number"
+                        placeholder="0"
+                        value={editRaRate}
+                        onChange={e => setEditRaRate(e.target.value)}
+                        className="w-full p-2.5 border border-gray-200 rounded-xl bg-white outline-none focus:ring-2 focus:ring-amber-400 transition font-semibold text-gray-700 text-xs"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Modal Actions */}
+              <div className="flex gap-3 pt-4 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => handleRemoveDipendente(editingDip.id)}
+                  className="flex-1 bg-red-600 text-white font-bold px-4 py-3 rounded-xl hover:bg-red-700 transition active:scale-95 text-xs cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <Trash2 className="w-4 h-4"/> Elimina Risorsa
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 bg-indigo-600 text-white font-bold px-4 py-3 rounded-xl hover:bg-indigo-750 transition active:scale-95 text-xs cursor-pointer"
+                >
+                  Salva Modifiche
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

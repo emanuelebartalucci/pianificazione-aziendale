@@ -172,7 +172,7 @@ export default function Presenze() {
 
   // Stati per autorizzazione weekend/chiusure
   const [approvedWeekends, setApprovedWeekends] = useState<Record<string, boolean>>({});
-  const [approvedLeaves, setApprovedLeaves] = useState<Record<string, { tipo: string; oraInizio?: string; oraFine?: string }>>({});
+  const [approvedLeaves, setApprovedLeaves] = useState<Record<string, { tipo: string; frazioneTipo?: string; oraInizio?: string; oraFine?: string }>>({});
   const [reqWeekendData, setReqWeekendData] = useState('');
   const [reqWeekendMotivo, setReqWeekendMotivo] = useState('');
   const [reqWeekendLoading, setReqWeekendLoading] = useState(false);
@@ -238,6 +238,17 @@ export default function Presenze() {
     if (outOfMonth) return { className: "bg-gray-200/30 text-gray-400", style: {} };
 
     const dateStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+
+    const currentEmpName = reviewingRapportino ? reviewingRapportino.dipendenteNome : myAssociatedName;
+    const profile = currentEmpName ? dipendenti.find(d => d.nome.trim().toLowerCase() === currentEmpName.trim().toLowerCase()) : null;
+    const isCessato = profile?.dataCessazione && dateStr > profile.dataCessazione;
+    if (isCessato) {
+      return {
+        className: "text-white text-center font-bold bg-gray-500",
+        style: { background: 'linear-gradient(135deg, #4b5563 0%, #374151 100%)' }
+      };
+    }
+
     const isWk = isWeekend(dayNum);
     const isHoliday = isItalianHoliday(dateStr);
     const isChiusura = isInChiusuraAziendaleLocal(dateStr);
@@ -259,6 +270,12 @@ export default function Presenze() {
   const isCellDisabled = (dayNum: number, fieldType: 'lavoro' | 'assenza') => {
     if (dayNum > daysInMonth) return true;
     const dateStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+
+    const currentEmpName = reviewingRapportino ? reviewingRapportino.dipendenteNome : myAssociatedName;
+    const profile = currentEmpName ? dipendenti.find(d => d.nome.trim().toLowerCase() === currentEmpName.trim().toLowerCase()) : null;
+    const isCessato = profile?.dataCessazione && dateStr > profile.dataCessazione;
+    if (isCessato) return true;
+
     const isWk = isWeekend(dayNum);
     const isHoliday = isItalianHoliday(dateStr);
     const isSpecialDay = isWk || isHoliday; // weekend o festivo
@@ -280,6 +297,12 @@ export default function Presenze() {
 
   const isDayLockedForUser = (dNum: number) => {
     const dateStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`;
+
+    const currentEmpName = reviewingRapportino ? reviewingRapportino.dipendenteNome : myAssociatedName;
+    const profile = currentEmpName ? dipendenti.find(d => d.nome.trim().toLowerCase() === currentEmpName.trim().toLowerCase()) : null;
+    const isCessato = profile?.dataCessazione && dateStr > profile.dataCessazione;
+    if (isCessato) return true;
+
     if (approvedLeaves[dateStr]) {
       return true;
     }
@@ -307,7 +330,7 @@ export default function Presenze() {
       );
 
       const querySnap = await getDocs(qRichieste);
-      const approvedAbsences: Record<string, { tipo: string; oraInizio?: string; oraFine?: string }> = {}; // YYYY-MM-DD -> data
+      const approvedAbsences: Record<string, { tipo: string; frazioneTipo?: string; oraInizio?: string; oraFine?: string }> = {}; // YYYY-MM-DD -> data
       
       querySnap.forEach(docSnap => {
         const d = docSnap.data();
@@ -330,6 +353,7 @@ export default function Presenze() {
             if (dateStr.startsWith(`${selectedYear}-${String(selectedMonth).padStart(2, '0')}`)) {
               approvedAbsences[dateStr] = {
                 tipo: d.tipo,
+                frazioneTipo: d.frazioneTipo,
                 oraInizio: d.oraInizio,
                 oraFine: d.oraFine
               };
@@ -364,8 +388,10 @@ export default function Presenze() {
         const dayOfWeek = dateObj.getDay();
         const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
         const isHoliday = isItalianHoliday(dateStr);
+        const isCessato = profile?.dataCessazione && dateStr > profile.dataCessazione;
 
-        let ore = (isWknd || isHoliday) ? 0 : contractHours;
+        let dayContractHours = isCessato ? 0 : ((isWknd || isHoliday) ? 0 : contractHours);
+        let ore = dayContractHours;
         let straordinari = 0;
         let ferie = 0;
         let permessi = 0;
@@ -376,7 +402,7 @@ export default function Presenze() {
         let permessoElettorale = 0;
 
         // Apply approved absences (only on working days)
-        if (approvedAbsences[dateStr] && !isWknd && !isHoliday && !isInChiusuraAziendaleLocal(dateStr)) {
+        if (!isCessato && approvedAbsences[dateStr] && !isWknd && !isHoliday && !isInChiusuraAziendaleLocal(dateStr)) {
           const abs = approvedAbsences[dateStr];
           if (abs.tipo === 'ferie') {
             ore = 0;
@@ -400,7 +426,17 @@ export default function Presenze() {
             permessoElettorale = contractHours;
           } else if (abs.tipo === 'permesso') {
             let hrs = contractHours / 2;
-            if (abs.oraInizio && abs.oraFine) {
+            if (abs.frazioneTipo === 'giornata') {
+              hrs = contractHours;
+            } else if (abs.frazioneTipo === 'mattina' || abs.frazioneTipo === 'pomeriggio') {
+              hrs = contractHours / 2;
+            } else if (abs.frazioneTipo === 'orario' && abs.oraInizio && abs.oraFine) {
+              const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
+              const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
+              const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
+              hrs = Math.round(diffMs / 3600000);
+            } else if (abs.oraInizio && abs.oraFine) {
+              // fallback per permessi legacy senza frazioneTipo
               const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
               const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
               const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
@@ -418,7 +454,7 @@ export default function Presenze() {
           permessi,
           malattia,
           trasferta,
-          oreContratto: contractHours,
+          oreContratto: dayContractHours,
           permessoStudio,
           permessoDonazione,
           permessoElettorale
@@ -430,7 +466,6 @@ export default function Presenze() {
       const docRef = doc(db, 'presenze', docId);
 
       const isCollab = isCollaboratore(myAssociatedName, dipendenti);
-      const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === myAssociatedName.trim().toLowerCase());
       const dailyRate = profile?.dailyRate ?? 0;
       const inpsRate = profile?.inpsRate ?? 0;
       const ivaRate = profile?.ivaRate ?? 0;
@@ -588,7 +623,7 @@ export default function Presenze() {
           })
         ]);
 
-        const leaves: Record<string, { tipo: string; oraInizio?: string; oraFine?: string }> = {};
+        const leaves: Record<string, { tipo: string; frazioneTipo?: string; oraInizio?: string; oraFine?: string }> = {};
         if (leavesSnap) {
           leavesSnap.forEach(docSnap => {
             const d = docSnap.data();
@@ -609,6 +644,7 @@ export default function Presenze() {
                 if (dateStr.startsWith(`${selectedYear}-${String(selectedMonth).padStart(2, '0')}`)) {
                   leaves[dateStr] = {
                     tipo: d.tipo,
+                    frazioneTipo: d.frazioneTipo,
                     oraInizio: d.oraInizio,
                     oraFine: d.oraFine
                   };
@@ -752,13 +788,47 @@ export default function Presenze() {
                 if (day > numDays) continue;
 
                 const dateStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+                const currentDay = updatedGiorni[String(day)];
+                if (!currentDay) continue;
+
+                const isCessato = profile?.dataCessazione && dateStr > profile.dataCessazione;
+
+                if (isCessato) {
+                  if (
+                    currentDay.oreContratto !== 0 ||
+                    currentDay.ore !== 0 ||
+                    currentDay.ferie !== 0 ||
+                    currentDay.permessi !== 0 ||
+                    currentDay.malattia !== false ||
+                    currentDay.trasferta !== false ||
+                    currentDay.permessoStudio !== 0 ||
+                    currentDay.permessoDonazione !== 0 ||
+                    currentDay.permessoElettorale !== 0 ||
+                    currentDay.straordinari !== 0
+                  ) {
+                    updatedGiorni[String(day)] = {
+                      ...currentDay,
+                      oreContratto: 0,
+                      ore: 0,
+                      ferie: 0,
+                      permessi: 0,
+                      malattia: false,
+                      trasferta: false,
+                      permessoStudio: 0,
+                      permessoDonazione: 0,
+                      permessoElettorale: 0,
+                      straordinari: 0
+                    };
+                    hasChanges = true;
+                  }
+                  continue;
+                }
+
                 const dateObj = new Date(selectedYear, selectedMonth - 1, day);
                 const dayOfWeek = dateObj.getDay();
                 const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
                 const isHoliday = isItalianHoliday(dateStr);
-
-                const currentDay = updatedGiorni[String(day)];
-                if (!currentDay) continue;
 
                 // Ricava le ore di contratto specifiche di questa giornata (con fallback alle ore del profilo)
                 const dayContractHours = currentDay.oreContratto ?? contractHours;
@@ -1609,6 +1679,8 @@ export default function Presenze() {
       ];
 
       const activeList = dipendenti.filter(dip => {
+        const firstDayOfMonthStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-01`;
+        if (dip.dataCessazione && dip.dataCessazione < firstDayOfMonthStr) return false;
         const isCollab = isCollaboratore(dip.nome, dipendenti);
         return isCollabExport ? isCollab : !isCollab;
       });
@@ -1756,6 +1828,10 @@ export default function Presenze() {
 
       activeList.forEach(dip => {
         for (let m = 1; m <= 12; m++) {
+          const firstDayOfMStr = `${selectedYear}-${String(m).padStart(2, '0')}-01`;
+          if (dip.dataCessazione && dip.dataCessazione < firstDayOfMStr) {
+            continue;
+          }
           const docId = `${dip.nome}-${selectedYear}-${String(m).padStart(2, '0')}`;
           const sheet = annualRapportini[docId];
           const status = sheet ? sheet.stato : 'Non Iniziato';
@@ -2127,6 +2203,8 @@ export default function Presenze() {
     }
     if (viewMode === 'hr') {
       const filtered = dipendenti.filter(dip => {
+        const firstDayOfMonthStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-01`;
+        if (dip.dataCessazione && dip.dataCessazione < firstDayOfMonthStr) return false;
         const isCollab = isCollaboratore(dip.nome, dipendenti);
         const matchesTab = hrTab === 'collaboratori' ? isCollab : !isCollab;
         return matchesTab;
@@ -2198,6 +2276,8 @@ export default function Presenze() {
   // Calcolo dei conteggi per i badge interni (Dipendenti / Collaboratori) del mese selezionato
   const pendingDipCount = useMemo(() => {
     return dipendenti.filter(dip => {
+      const firstDayOfMonthStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-01`;
+      if (dip.dataCessazione && dip.dataCessazione < firstDayOfMonthStr) return false;
       const isCollab = isCollaboratore(dip.nome, dipendenti);
       if (isCollab) return false;
       const docId = `${dip.nome}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
@@ -2208,6 +2288,8 @@ export default function Presenze() {
 
   const pendingCollabCount = useMemo(() => {
     return dipendenti.filter(dip => {
+      const firstDayOfMonthStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-01`;
+      if (dip.dataCessazione && dip.dataCessazione < firstDayOfMonthStr) return false;
       const isCollab = isCollaboratore(dip.nome, dipendenti);
       if (!isCollab) return false;
       const docId = `${dip.nome}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
@@ -2335,7 +2417,7 @@ export default function Presenze() {
                 className="p-2.5 border-none bg-gray-100 rounded-xl font-bold text-gray-700 text-sm outline-none focus:ring-2 focus:ring-indigo-400 max-w-[200px]"
               >
                 <option value="">Tutti i dipendenti</option>
-                {dipendenti.map(d => (
+                {dipendenti.filter(d => !d.dataCessazione || d.dataCessazione >= `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-01`).map(d => (
                   <option key={d.id} value={d.nome}>{d.nome}</option>
                 ))}
               </select>
@@ -2456,7 +2538,7 @@ export default function Presenze() {
                     className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-indigo-400 outline-none text-xs text-gray-750 font-semibold"
                   >
                     <option value="">Seleziona una risorsa...</option>
-                    {dipendenti.filter(d => d.nome).map(d => (
+                    {dipendenti.filter(d => d.nome && (!d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE'))).map(d => (
                       <option key={d.id} value={d.nome}>{d.nome}</option>
                     ))}
                   </select>
@@ -2560,6 +2642,9 @@ export default function Presenze() {
                 <tbody className="divide-y divide-gray-100">
                   {dipendenti
                     .filter(dip => {
+                      const firstDayOfMonthStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-01`;
+                      if (dip.dataCessazione && dip.dataCessazione < firstDayOfMonthStr) return false;
+
                       const isCollab = isCollaboratore(dip.nome, dipendenti);
                       const matchesTab = hrTab === 'collaboratori' ? isCollab : !isCollab;
                       const matchesSearch = !selectedDipFilter || dip.nome === selectedDipFilter;

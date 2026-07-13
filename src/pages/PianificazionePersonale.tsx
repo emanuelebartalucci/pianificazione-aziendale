@@ -198,11 +198,15 @@ export default function PianificazionePersonale() {
   const [searchQuery, setSearchQuery] = useState('');
 
   const filteredDipendenti = useMemo(() => {
-    const list = dipendenti.filter(d => {
+    let list = dipendenti.filter(d => {
       const clean = d.nome.toLowerCase().trim();
       const isSocio = clean === 'corbellini matteo' || clean === 'profeti andrea' || clean === 'matteo corbellini' || clean === 'andrea profeti';
       return !isSocio;
     });
+    // Esclude risorse cessate in passato
+    const todayStr = new Date().toLocaleDateString('sv-SE');
+    list = list.filter(d => !d.dataCessazione || d.dataCessazione >= todayStr);
+
     if (!searchQuery) return list;
     return list.filter(d => d.nome.toLowerCase().includes(searchQuery.toLowerCase()));
   }, [dipendenti, searchQuery]);
@@ -1375,9 +1379,17 @@ export default function PianificazionePersonale() {
 
 
   const filteredGridDipendenti = useMemo(() => {
-    if (!gridSearchQuery) return dipendenti;
-    return dipendenti.filter(d => d.nome.toLowerCase().includes(gridSearchQuery.toLowerCase()));
-  }, [dipendenti, gridSearchQuery]);
+    const timelineStart = timelineWeeks[0]?.dateObj;
+    const timelineStartStr = timelineStart ? timelineStart.toLocaleDateString('sv-SE') : '';
+    
+    let list = dipendenti;
+    if (timelineStartStr) {
+      list = list.filter(d => !d.dataCessazione || d.dataCessazione >= timelineStartStr);
+    }
+    
+    if (!gridSearchQuery) return list;
+    return list.filter(d => d.nome.toLowerCase().includes(gridSearchQuery.toLowerCase()));
+  }, [dipendenti, gridSearchQuery, timelineWeeks]);
 
   const employees = useMemo(() => {
     return filteredGridDipendenti.filter(d => !isCollaboratore(d.nome, d.tipo));
@@ -1547,11 +1559,16 @@ export default function PianificazionePersonale() {
             return listStr !== dbListStr;
           })();
 
+          const weekStartStr = wk.dateObj ? wk.dateObj.toLocaleDateString('sv-SE') : '';
+          const isWeekCessato = dip.dataCessazione && weekStartStr && weekStartStr > dip.dataCessazione;
+
           // I Disegnatori possono essere modificati solo da Romanello (coordinatore) o admin
           const isDisegnatore = parentAreaName === 'Disegnatori';
-          const canDirectlyEditCell = (isEditable || isPMOrResponsabile) && (!isDisegnatore || isAdmin || isCoordinatoreArea);
+          const canDirectlyEditCell = !isWeekCessato && (isEditable || isPMOrResponsabile) && (!isDisegnatore || isAdmin || isCoordinatoreArea);
 
-          let bgClass = "bg-slate-50/50 text-slate-400 font-bold";
+          let bgClass = isWeekCessato 
+            ? "bg-slate-400/90 text-white font-bold text-center" 
+            : "bg-slate-50/50 text-slate-400 font-bold";
           if (canDirectlyEditCell) bgClass += " hover:bg-slate-100/60";
           let indicatorColor = "bg-slate-400"; // Grigio scuro per 0%
 
@@ -1601,73 +1618,79 @@ export default function PianificazionePersonale() {
                   gap: isUltraNarrow ? '1px' : '2px'
                 }}
               >
-                <span className={`${isUltraNarrow ? 'text-[10px]' : 'text-xs'} font-black`}>{totalLoad}%</span>
-                
-                {!isUltraNarrow && (
-                  <span className={`w-1.5 h-1.5 rounded-full shadow-sm no-print ${indicatorColor}`}></span>
-                )}
-
-                {leaves.length > 0 && (
-                  <div className="flex gap-0.5 justify-center mt-0.5 w-full flex-wrap">
-                    {isUltraNarrow ? (
-                      <span className="text-[9px]" title="Assenze presenti">⚠️</span>
-                    ) : isNarrow ? (
-                      <span className="text-[9px] font-extrabold px-1 rounded bg-orange-100 text-orange-750" title={`${leaves.length} assenze`}>
-                        ⚠️ {leaves.length}g
-                      </span>
-                    ) : (
-                      <>
-                        {ferieCount > 0 && (
-                          <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-orange-100 text-orange-700 border border-orange-200" title="Ferie">
-                            🌴 {ferieCount}g
-                          </span>
-                        )}
-                        {malattiaCount > 0 && (
-                          <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-red-100 text-red-700 border border-red-200" title="Malattia">
-                            🤒 {malattiaCount}g
-                          </span>
-                        )}
-                        {maternitaCount > 0 && (
-                          <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-pink-100 text-pink-700 border border-pink-200" title="Maternità">
-                            🍼 {maternitaCount}g
-                          </span>
-                        )}
-                        {permessoCount > 0 && (
-                          <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-purple-100 text-purple-700 border border-purple-200" title="Permessi / Ass. parziale">
-                            ⏱️ {permessoCount}g
-                          </span>
-                        )}
-                        {smartCount > 0 && (
-                          <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-indigo-100 text-indigo-700 border border-indigo-200" title="Smart Working">
-                            🏠 {smartCount}g
-                          </span>
-                        )}
-                      </>
+                {isWeekCessato ? (
+                  <span className={`${isUltraNarrow ? 'text-[10px]' : 'text-xs'} font-black text-white/95`}>X</span>
+                ) : (
+                  <>
+                    <span className={`${isUltraNarrow ? 'text-[10px]' : 'text-xs'} font-black`}>{totalLoad}%</span>
+                    
+                    {!isUltraNarrow && (
+                      <span className={`w-1.5 h-1.5 rounded-full shadow-sm no-print ${indicatorColor}`}></span>
                     )}
-                  </div>
-                )}
-                
-                {(list.length > 0 || leaves.length > 0) && (
-                  <div className="hidden group-hover/cell:flex absolute bottom-full mb-1 bg-gray-900 text-white text-[11px] rounded-lg p-2.5 flex-col gap-1 z-50 shadow-md min-w-[170px] pointer-events-none text-left">
-                    <div className="font-bold text-[10px] text-indigo-300 border-b border-gray-800 pb-0.5 mb-1">{dip.nome} ({wk.label})</div>
-                    {list.map((a, idx) => (
-                      <div key={idx} className="flex justify-between items-center gap-2 border-b border-gray-800 pb-1 last:border-none last:pb-0">
-                        <span className="truncate">{a.commessaName}</span>
-                        <span className="font-extrabold text-indigo-400">{a.percentuale}%</span>
-                      </div>
-                    ))}
+
                     {leaves.length > 0 && (
-                      <div className="border-t border-gray-700 pt-1.5 mt-1 flex flex-col gap-1">
-                        <span className="text-[9.5px] font-bold text-orange-400">Assenze/Ferie:</span>
-                        {leaves.map((l, idx) => (
-                          <div key={idx} className="flex justify-between items-center text-[9.5px] gap-2">
-                            <span>{l.giorno}</span>
-                            <span className="font-bold text-gray-300">{l.dettagli}</span>
+                      <div className="flex gap-0.5 justify-center mt-0.5 w-full flex-wrap">
+                        {isUltraNarrow ? (
+                          <span className="text-[9px]" title="Assenze presenti">⚠️</span>
+                        ) : isNarrow ? (
+                          <span className="text-[9px] font-extrabold px-1 rounded bg-orange-100 text-orange-750" title={`${leaves.length} assenze`}>
+                            ⚠️ {leaves.length}g
+                          </span>
+                        ) : (
+                          <>
+                            {ferieCount > 0 && (
+                              <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-orange-100 text-orange-700 border border-orange-200" title="Ferie">
+                                🌴 {ferieCount}g
+                              </span>
+                            )}
+                            {malattiaCount > 0 && (
+                              <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-red-100 text-red-700 border border-red-200" title="Malattia">
+                                🤒 {malattiaCount}g
+                              </span>
+                            )}
+                            {maternitaCount > 0 && (
+                              <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-pink-100 text-pink-700 border border-pink-200" title="Maternità">
+                                🍼 {maternitaCount}g
+                              </span>
+                            )}
+                            {permessoCount > 0 && (
+                              <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-purple-100 text-purple-700 border border-purple-200" title="Permessi / Ass. parziale">
+                                ⏱️ {permessoCount}g
+                              </span>
+                            )}
+                            {smartCount > 0 && (
+                              <span className="text-[9.5px] font-extrabold px-1.5 py-0.5 rounded leading-none bg-indigo-100 text-indigo-700 border border-indigo-200" title="Smart Working">
+                                🏠 {smartCount}g
+                              </span>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
+                    
+                    {(list.length > 0 || leaves.length > 0) && (
+                      <div className="hidden group-hover/cell:flex absolute bottom-full mb-1 bg-gray-900 text-white text-[11px] rounded-lg p-2.5 flex-col gap-1 z-50 shadow-md min-w-[170px] pointer-events-none text-left">
+                        <div className="font-bold text-[10px] text-indigo-300 border-b border-gray-800 pb-0.5 mb-1">{dip.nome} ({wk.label})</div>
+                        {list.map((a, idx) => (
+                          <div key={idx} className="flex justify-between items-center gap-2 border-b border-gray-800 pb-1 last:border-none last:pb-0">
+                            <span className="truncate">{a.commessaName}</span>
+                            <span className="font-extrabold text-indigo-400">{a.percentuale}%</span>
                           </div>
                         ))}
+                        {leaves.length > 0 && (
+                          <div className="border-t border-gray-700 pt-1.5 mt-1 flex flex-col gap-1">
+                            <span className="text-[9.5px] font-bold text-orange-400">Assenze/Ferie:</span>
+                            {leaves.map((l, idx) => (
+                              <div key={idx} className="flex justify-between items-center text-[9.5px] gap-2">
+                                <span>{l.giorno}</span>
+                                <span className="font-bold text-gray-300">{l.dettagli}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
-                  </div>
+                  </>
                 )}
               </div>
             </td>

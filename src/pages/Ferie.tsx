@@ -20,6 +20,7 @@ interface RichiestaFerie {
   data: string;
   tipo: string;
   stato: 'In attesa' | 'Approvato' | 'Rifiutato';
+  frazioneTipo?: 'mattina' | 'pomeriggio' | 'giornata' | 'orario';
   dataInizio?: string;
   dataFine?: string;
   oraInizio?: string;
@@ -56,6 +57,8 @@ export default function Ferie() {
   const [oraInizio, setOraInizio] = useState('09:00');
   const [oraFine, setOraFine] = useState('18:00');
   const [tipoRichiesta, setTipoRichiesta] = useState('ferie');
+  const [frazioneTipo, setFrazioneTipo] = useState<'mattina' | 'pomeriggio' | 'giornata' | 'orario'>('giornata');
+  const [approvedWeekends, setApprovedWeekends] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (myAssociatedName && !dipendenteSelezionato) {
@@ -114,6 +117,7 @@ export default function Ferie() {
             data: data.data || '',
             tipo: data.tipo,
             stato: data.stato || 'In attesa',
+            frazioneTipo: data.frazioneTipo,
             dataInizio: data.dataInizio,
             dataFine: data.dataFine,
             oraInizio: data.oraInizio,
@@ -141,6 +145,7 @@ export default function Ferie() {
             data: data.data || '',
             tipo: data.tipo,
             stato: data.stato || 'In attesa',
+            frazioneTipo: data.frazioneTipo,
             dataInizio: data.dataInizio,
             dataFine: data.dataFine,
             oraInizio: data.oraInizio,
@@ -172,6 +177,7 @@ export default function Ferie() {
             data: data.data || '',
             tipo: data.tipo,
             stato: data.stato || 'In attesa',
+            frazioneTipo: data.frazioneTipo,
             dataInizio: data.dataInizio,
             dataFine: data.dataFine,
             oraInizio: data.oraInizio,
@@ -183,6 +189,25 @@ export default function Ferie() {
         });
         setOthersApprovedRichieste(listOthers);
       }
+
+      // Carica autorizzazioni weekend approvate per tutti
+      const wkSnap = await getDocs(query(
+        collection(db, 'richieste_weekend'),
+        where('stato', '==', 'Approvato')
+      )).catch(err => {
+        console.error("Errore query weekend:", err);
+        return null;
+      });
+      const wkMap: Record<string, boolean> = {};
+      if (wkSnap) {
+        wkSnap.forEach(docSnap => {
+          const d = docSnap.data();
+          if (d.dipendenteName && d.data) {
+            wkMap[`${d.dipendenteName}_${d.data}`] = true;
+          }
+        });
+      }
+      setApprovedWeekends(wkMap);
     } catch (err) {
       console.error("Error loading ferie data:", err);
       showToast("Errore nel caricamento delle ferie.", "error");
@@ -258,7 +283,7 @@ export default function Ferie() {
       return;
     }
 
-    if (tipoRichiesta === 'permesso') {
+    if (tipoRichiesta === 'permesso' && frazioneTipo === 'orario') {
       if (!oraInizio || !oraFine) {
         showToast("Inserisci l'ora di inizio e di fine del permesso.", "warning");
         return;
@@ -287,6 +312,15 @@ export default function Ferie() {
       }
     }
 
+    const targetDipObj = dipendenti.find(d => d.nome === targetDipName);
+    if (targetDipObj && targetDipObj.dataCessazione) {
+      const invalidDate = datesToCheck.find(dStr => dStr > targetDipObj.dataCessazione!);
+      if (invalidDate) {
+        showToast(`Impossibile inserire la richiesta: la risorsa cessa il rapporto lavorativo il ${formatDate(targetDipObj.dataCessazione)}.`, "warning");
+        return;
+      }
+    }
+
     setLoading(true);
     try {
       // 1. Recupera le richieste esistenti per questo dipendente con stato 'Approvato' o 'In attesa'
@@ -311,28 +345,27 @@ export default function Ferie() {
           let hasConflict = false;
           let conflictReason = '';
 
-          const isExistFullDay = ['ferie', 'malattia', 'maternita', 'smart'].includes(exist.tipo);
-          const isNewFullDay = ['ferie', 'malattia', 'maternita', 'smart'].includes(tipoRichiesta);
+          const isExistFullDay = ['ferie', 'malattia', 'maternita', 'smart'].includes(exist.tipo) || (exist.tipo === 'permesso' && exist.frazioneTipo === 'giornata');
+          const isNewFullDay = ['ferie', 'malattia', 'maternita', 'smart'].includes(tipoRichiesta) || (tipoRichiesta === 'permesso' && frazioneTipo === 'giornata');
 
           if (isExistFullDay || isNewFullDay) {
             hasConflict = true;
-            conflictReason = `La risorsa risulta già assente/impegnata il ${formatDate(dStr)} (tipo: "${exist.tipo}", stato: "${exist.stato}").`;
-          } else if (exist.tipo === tipoRichiesta) {
-            hasConflict = true;
-            conflictReason = `La risorsa risulta già assente/impegnata il ${formatDate(dStr)} (tipo: "${exist.tipo}", stato: "${exist.stato}").`;
-          } else if (exist.tipo === 'permesso' && tipoRichiesta === 'permesso') {
-            const existStart = exist.oraInizio || '00:00';
-            const existEnd = exist.oraFine || '23:59';
-            if (oraInizio < existEnd && oraFine > existStart) {
+            conflictReason = `La risorsa risulta già assente/impegnata il ${formatDate(dStr)} (stato: "${exist.stato}").`;
+          } else {
+            // Entrambi sono frazioni di giornata (mattina, pomeriggio, o orari)
+            const getSlot = (reqObj: any) => {
+              if (reqObj.tipo === 'mattina' || reqObj.frazioneTipo === 'mattina') return { start: '09:00', end: '13:00' };
+              if (reqObj.tipo === 'pomeriggio' || reqObj.frazioneTipo === 'pomeriggio') return { start: '14:00', end: '18:00' };
+              return { start: reqObj.oraInizio || '09:00', end: reqObj.oraFine || '18:00' };
+            };
+
+            const slotExist = getSlot(exist);
+            const slotNew = getSlot({ tipo: tipoRichiesta, frazioneTipo, oraInizio, oraFine });
+
+            if (slotNew.start < slotExist.end && slotNew.end > slotExist.start) {
               hasConflict = true;
-              conflictReason = `La risorsa ha già un permesso sovrapposto dalle ${existStart} alle ${existEnd} il ${formatDate(dStr)}.`;
+              conflictReason = `La risorsa ha già un permesso/assenza sovrapposto il ${formatDate(dStr)} (dalle ${slotExist.start} alle ${slotExist.end}, stato: "${exist.stato}").`;
             }
-          } else if ((exist.tipo === 'mattina' || exist.tipo === 'pomeriggio') && tipoRichiesta === 'permesso') {
-            hasConflict = true;
-            conflictReason = `La risorsa risulta già assente il ${formatDate(dStr)} (tipo: "${exist.tipo}", stato: "${exist.stato}").`;
-          } else if (exist.tipo === 'permesso' && (tipoRichiesta === 'mattina' || tipoRichiesta === 'pomeriggio')) {
-            hasConflict = true;
-            conflictReason = `La risorsa ha già un permesso di tipo "${exist.tipo}" il ${formatDate(dStr)}.`;
           }
 
           if (hasConflict) {
@@ -355,8 +388,11 @@ export default function Ferie() {
         payload.dataInizio = dataRichiesta;
         payload.dataFine = dataRichiesta;
         if (tipoRichiesta === 'permesso') {
-          payload.oraInizio = oraInizio;
-          payload.oraFine = oraFine;
+          payload.frazioneTipo = frazioneTipo;
+          if (frazioneTipo === 'orario') {
+            payload.oraInizio = oraInizio;
+            payload.oraFine = oraFine;
+          }
         }
       } else {
         payload.data = dataInizio; // legacy fallback
@@ -371,6 +407,7 @@ export default function Ferie() {
       setDataFine('');
       setOraInizio('09:00');
       setOraFine('18:00');
+      setFrazioneTipo('giornata');
       showToast("Richiesta inviata con successo!");
       loadFerieData();
     } catch (err) {
@@ -393,11 +430,20 @@ export default function Ferie() {
       // Invia notifica e-mail al dipendente
       const targetDip = dipendenti.find(d => d.nome === req.dipendenteName);
       if (targetDip && targetDip.email) {
-        const dateDesc = req.tipo === 'permesso' && req.oraInizio && req.oraFine
-          ? `il ${formatDate(req.dataInizio || req.data)} dalle ${req.oraInizio} alle ${req.oraFine}`
-          : req.dataInizio && req.dataFine && req.dataInizio !== req.dataFine 
-            ? `dal ${formatDate(req.dataInizio)} al ${formatDate(req.dataFine)}` 
-            : `il ${formatDate(req.dataInizio || req.data)}`;
+        let dateDesc = req.dataInizio && req.dataFine && req.dataInizio !== req.dataFine 
+          ? `dal ${formatDate(req.dataInizio)} al ${formatDate(req.dataFine)}` 
+          : `il ${formatDate(req.dataInizio || req.data)}`;
+        
+        if (req.tipo === 'permesso') {
+          if (req.frazioneTipo === 'mattina') dateDesc += ' (mattina)';
+          else if (req.frazioneTipo === 'pomeriggio') dateDesc += ' (pomeriggio)';
+          else if (req.frazioneTipo === 'giornata') dateDesc += ' (giornata intera)';
+          else if (req.oraInizio && req.oraFine) dateDesc += ` dalle ${req.oraInizio} alle ${req.oraFine}`;
+        } else if (req.tipo === 'mattina') {
+          dateDesc += ' (mattina)';
+        } else if (req.tipo === 'pomeriggio') {
+          dateDesc += ' (pomeriggio)';
+        }
         
         const typeLabels: Record<string, string> = {
           ferie: 'Ferie',
@@ -437,11 +483,20 @@ export default function Ferie() {
       // 2. Invia e-mail di notifica di annullamento al dipendente
       const targetDip = dipendenti.find(d => d.nome === req.dipendenteName);
       if (targetDip && targetDip.email) {
-        const dateDesc = req.tipo === 'permesso' && req.oraInizio && req.oraFine
-          ? `il ${formatDate(req.dataInizio || req.data)} dalle ${req.oraInizio} alle ${req.oraFine}`
-          : req.dataInizio && req.dataFine && req.dataInizio !== req.dataFine 
-            ? `dal ${formatDate(req.dataInizio)} al ${formatDate(req.dataFine)}` 
-            : `il ${formatDate(req.dataInizio || req.data)}`;
+        let dateDesc = req.dataInizio && req.dataFine && req.dataInizio !== req.dataFine 
+          ? `dal ${formatDate(req.dataInizio)} al ${formatDate(req.dataFine)}` 
+          : `il ${formatDate(req.dataInizio || req.data)}`;
+        
+        if (req.tipo === 'permesso') {
+          if (req.frazioneTipo === 'mattina') dateDesc += ' (mattina)';
+          else if (req.frazioneTipo === 'pomeriggio') dateDesc += ' (pomeriggio)';
+          else if (req.frazioneTipo === 'giornata') dateDesc += ' (giornata intera)';
+          else if (req.oraInizio && req.oraFine) dateDesc += ` dalle ${req.oraInizio} alle ${req.oraFine}`;
+        } else if (req.tipo === 'mattina') {
+          dateDesc += ' (mattina)';
+        } else if (req.tipo === 'pomeriggio') {
+          dateDesc += ' (pomeriggio)';
+        }
         
         const typeLabels: Record<string, string> = {
           ferie: 'Ferie',
@@ -487,24 +542,33 @@ export default function Ferie() {
     }
   };
 
-  const getTipoData = (tipo: string) => {
+  const getTipoData = (tipo: string, frazioneTipo?: string) => {
     const tipi: Record<string, {label: string, color: string}> = {
       ferie: {label: 'Ferie', color: 'bg-red-500'},
       malattia: {label: 'Malattia', color: 'bg-purple-600'},
       maternita: {label: 'Maternità', color: 'bg-pink-500'},
       permesso: {label: 'Permesso', color: 'bg-amber-500'},
       smart: {label: 'Lavora da Casa', color: 'bg-blue-500'},
-      mattina: {label: 'Assenza Mattina', color: 'bg-yellow-400'},
-      pomeriggio: {label: 'Assenza Pomeriggio', color: 'bg-orange-400'},
+      mattina: {label: 'Assenza Mattina', color: 'bg-amber-500'},
+      pomeriggio: {label: 'Assenza Pomeriggio', color: 'bg-amber-500'},
       studio: {label: 'Permesso Studio', color: 'bg-violet-600'},
       donazione: {label: 'Permesso Donazione', color: 'bg-teal-500'},
       elettorale: {label: 'Permesso Elettorale', color: 'bg-indigo-500'}
     };
-    return tipi[tipo] || {label: tipo, color: 'bg-gray-500'};
+    const base = tipi[tipo] || {label: tipo, color: 'bg-gray-500'};
+    if (tipo === 'permesso' && frazioneTipo) {
+      const copy = { ...base };
+      if (frazioneTipo === 'mattina') copy.label = 'Permesso Mattina';
+      if (frazioneTipo === 'pomeriggio') copy.label = 'Permesso Pomeriggio';
+      if (frazioneTipo === 'giornata') copy.label = 'Permesso Giornata Intera';
+      if (frazioneTipo === 'orario') copy.label = 'Permesso Orario';
+      return copy;
+    }
+    return base;
   };
 
-  const getTipoLabel = (tipo: string) => {
-    const t = getTipoData(tipo);
+  const getTipoLabel = (tipo: string, frazioneTipo?: string) => {
+    const t = getTipoData(tipo, frazioneTipo);
     return (
       <span className="text-xs sm:text-sm font-bold text-gray-600 bg-gray-100 px-2 py-1 rounded-lg capitalize">
         {t.label}
@@ -518,9 +582,12 @@ export default function Ferie() {
     const monthLabel = currentMonth.toLocaleString('it-IT', { month: 'long' }).toUpperCase();
     const numDays = new Date(year, month + 1, 0).getDate();
 
-    const sortedDipendenti = [...dipendenti].sort((a, b) => a.nome.trim().localeCompare(b.nome.trim()));
+    const firstDayOfMonthStr = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+    const sortedDipendenti = dipendenti
+      .filter(d => !d.dataCessazione || d.dataCessazione >= firstDayOfMonthStr)
+      .sort((a, b) => a.nome.trim().localeCompare(b.nome.trim()));
 
-    const statusMap: Record<string, Record<number, string>> = {};
+    const statusMap: Record<string, Record<number, RichiestaFerie>> = {};
     sortedDipendenti.forEach(dip => {
       statusMap[dip.nome] = {};
     });
@@ -544,7 +611,7 @@ export default function Ferie() {
         if (y === year && m === month) {
           const dipName = req.dipendenteName;
           if (statusMap[dipName]) {
-            statusMap[dipName][d] = req.tipo;
+            statusMap[dipName][d] = req;
           }
         }
         curr.setDate(curr.getDate() + 1);
@@ -569,13 +636,24 @@ export default function Ferie() {
         const dayOfWeek = dateObj.getDay();
         const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
         const isHoliday = isItalianHoliday(dateStr);
+        const isUnlocked = approvedWeekends[`${dip.nome}_${dateStr}`];
+        const isSpecialDay = (isWknd || isHoliday) && !isUnlocked;
+        const isCessato = dip.dataCessazione && dateStr > dip.dataCessazione;
 
-        const tipo = statusMap[dip.nome]?.[day];
+        const reqObj = statusMap[dip.nome]?.[day];
+        const tipo = reqObj?.tipo;
         let cellBg = '';
         let cellText = '';
         let textColor = '#000000';
 
-        if (tipo) {
+        if (isCessato) {
+          cellBg = '#4b5563';
+          cellText = 'X';
+          textColor = '#ffffff';
+        } else if (isSpecialDay) {
+          cellBg = '#f3f4f6'; // Grigio weekend
+          textColor = '#9ca3af';
+        } else if (tipo) {
           if (tipo === 'ferie') {
             cellBg = '#38bdf8'; // Sky Blue (Ferie)
             textColor = '#ffffff';
@@ -588,8 +666,23 @@ export default function Ferie() {
             textColor = '#ffffff';
           } else if (['mattina', 'pomeriggio', 'permesso'].includes(tipo)) {
             cellBg = '#facc15'; // Giallo
-            cellText = tipo === 'mattina' ? 'AM' : tipo === 'pomeriggio' ? 'PM' : 'P';
             textColor = '#713f12';
+            
+            if (tipo === 'mattina' || reqObj.frazioneTipo === 'mattina') {
+              cellText = 'AM';
+            } else if (tipo === 'pomeriggio' || reqObj.frazioneTipo === 'pomeriggio') {
+              cellText = 'PM';
+            } else if (reqObj.frazioneTipo === 'giornata') {
+              cellText = 'GI';
+            } else if (reqObj.oraInizio && reqObj.oraFine) {
+              const [hStart, mStart] = reqObj.oraInizio.split(':').map(Number);
+              const [hEnd, mEnd] = reqObj.oraFine.split(':').map(Number);
+              const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
+              const hrs = Math.round(diffMs / 3600000);
+              cellText = `${hrs}h`;
+            } else {
+              cellText = 'P';
+            }
           } else if (tipo === 'studio') {
             cellBg = '#c084fc'; // Purple
             cellText = 'S';
@@ -603,9 +696,6 @@ export default function Ferie() {
             cellText = 'E';
             textColor = '#312e81';
           }
-        } else if (isWknd || isHoliday) {
-          cellBg = '#f3f4f6'; // Grigio weekend
-          textColor = '#9ca3af';
         }
 
         const styleAttr = cellBg ? ` style="background-color: ${cellBg} !important; color: ${textColor} !important;"` : '';
@@ -662,96 +752,135 @@ export default function Ferie() {
               height: 100%;
               justify-content: space-between;
             }
-            .title-box {
-              font-weight: 800;
-              font-size: 13px;
-              text-align: left;
-              padding-bottom: 6px;
-              border-bottom: 1.5px solid #111827;
-              margin-bottom: 8px;
-              text-transform: uppercase;
-              letter-spacing: 0.05em;
+            .header-container {
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-end;
+              border-bottom: 2px solid #111827;
+              padding-bottom: 8px;
+              margin-bottom: 12px;
+            }
+            .header-left {
+              display: flex;
+              flex-direction: column;
+            }
+            .title-main {
+              font-weight: 900;
+              font-size: 16px;
+              letter-spacing: -0.02em;
               color: #111827;
+              text-transform: uppercase;
+            }
+            .title-sub {
+              font-weight: 700;
+              font-size: 8px;
+              color: #6b7280;
+              text-transform: uppercase;
+              letter-spacing: 0.08em;
+              margin-top: 1px;
+            }
+            .logo-img {
+              height: 26px;
+              object-fit: contain;
+              filter: drop-shadow(0px 1px 1px rgba(0,0,0,0.1));
             }
             table {
               width: 100%;
               border-collapse: collapse;
               table-layout: fixed;
-              border: 0.5px solid #e5e7eb;
+              border: 0.5px solid #d1d5db;
+            }
+            tr {
+              background-color: #ffffff !important;
             }
             th, td {
               border: 0.5px solid #e5e7eb;
-              padding: 3px 0;
+              padding: 3.5px 0;
               text-align: center;
               font-size: 6px;
-              height: 13px;
+              height: 14px;
             }
             th {
-              background-color: #f9fafb !important;
-              color: #4b5563;
-              font-weight: 700;
+              background-color: #f3f4f6 !important;
+              color: #374151;
+              font-weight: 800;
+              border-bottom: 1px solid #9ca3af;
             }
             .name-cell {
               text-align: left;
               padding-left: 5px;
-              font-weight: 700;
+              font-weight: 750;
               font-size: 6.5px;
               color: #111827;
               border-right: 1px solid #d1d5db;
               white-space: nowrap;
               overflow: hidden;
               text-overflow: ellipsis;
+              background-color: #ffffff !important;
             }
+
             .wknd-hdr {
-              background-color: #f3f4f6 !important;
+              background-color: #e5e7eb !important;
               color: #4b5563;
             }
             .empty-cell {
               background-color: #f9fafb !important;
             }
             .legend-box {
-              margin-top: 15px;
+              margin-top: 12px;
               border-top: 1px solid #e5e7eb;
-              padding-top: 8px;
+              padding-top: 6px;
             }
             .legend-title {
-              font-weight: 800;
+              font-weight: 850;
               text-transform: uppercase;
               letter-spacing: 0.05em;
-              margin-bottom: 6px;
-              font-size: 7.5px;
+              margin-bottom: 5px;
+              font-size: 7px;
               color: #374151;
             }
             .legend-items {
               display: flex;
               flex-wrap: wrap;
-              gap: 6px 14px;
+              gap: 4px 10px;
             }
             .legend-item {
               display: flex;
               align-items: center;
-              gap: 5px;
-              font-size: 7px;
-              font-weight: 600;
+              gap: 4px;
+              font-size: 6px;
+              font-weight: 700;
               color: #4b5563;
+              background-color: #f9fafb !important;
+              border: 0.5px solid #e5e7eb;
+              padding: 2.5px 5px;
+              border-radius: 4px;
             }
             .color-block {
-              width: 22px;
-              height: 10px;
+              width: 18px;
+              height: 9px;
               border-radius: 2px;
               border: 0.5px solid #d1d5db;
               display: inline-flex;
               align-items: center;
               justify-content: center;
-              font-size: 6px;
-              font-weight: bold;
+              font-size: 5px;
+              font-weight: 900;
             }
           </style>
         </head>
         <body>
           <div class="container">
             <div>
-              <div class="title-box">${monthLabel} ${year}</div>
+              <div class="header-container">
+                <div class="header-left">
+                  <div class="title-main">${monthLabel} ${year}</div>
+                  <div class="title-sub">Pianificazione Ferie & Assenze</div>
+                </div>
+                <div class="header-right">
+                  <img src="${window.location.origin}/Logo.png" alt="Logo Ingegno" class="logo-img" />
+                </div>
+              </div>
               <table>
                 <colgroup>
                   <col style="width: 18%;" />
@@ -781,8 +910,8 @@ export default function Ferie() {
                   <span>MALATTIA/MATERNITÀ</span>
                 </div>
                 <div class="legend-item">
-                  <div class="color-block" style="background-color: #facc15 !important; color: #713f12 !important;">AM/PM</div>
-                  <span>ASSENZA MATTINA/ASSENZA POMERIGGIO</span>
+                  <div class="color-block" style="background-color: #facc15 !important;"></div>
+                  <span>PERMESSO</span>
                 </div>
                 <div class="legend-item">
                   <div class="color-block" style="background-color: #84cc16 !important;"></div>
@@ -800,15 +929,19 @@ export default function Ferie() {
                   <div class="color-block" style="background-color: #818cf8 !important; color: #312e81 !important;">E</div>
                   <span>PERMESSO ELETTORALE</span>
                 </div>
+                <div class="legend-item">
+                  <div class="color-block" style="background-color: #4b5563 !important; color: #ffffff !important;">X</div>
+                  <span>CESSATO / INATTIVO</span>
+                </div>
               </div>
             </div>
           </div>
           <script>
             window.onload = function() {
-              window.print();
-              window.onafterprint = function() {
+              setTimeout(function() {
+                window.print();
                 window.close();
-              };
+              }, 300);
             };
           </script>
         </body>
@@ -841,9 +974,10 @@ export default function Ferie() {
   for (let day = 1; day <= daysInMonth; day++) {
     const dateStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     const dayRequests = richieste.filter(r => {
+      if (r.stato === 'Rifiutato') return false;
       const start = r.dataInizio || r.data;
       const end = r.dataFine || r.data;
-      return dateStr >= start && dateStr <= end;
+      return start && end && dateStr >= start && dateStr <= end;
     });
 
     // Dividiamo le chiusure aziendali dalle altre richieste
@@ -893,7 +1027,7 @@ export default function Ferie() {
 
           {/* Mappa delle altre richieste ordinate alfabeticamente */}
           {displayOthers.map(req => {
-            const t = getTipoData(req.tipo);
+            const t = getTipoData(req.tipo, req.frazioneTipo);
             let bg = 'bg-gray-100 border-gray-200 text-gray-800';
             let dotBg = 'bg-gray-400';
             if(req.stato === 'Approvato') {
@@ -909,7 +1043,13 @@ export default function Ferie() {
               dotBg = 'bg-yellow-300';
             }
 
-            const hourSuffix = req.tipo === 'permesso' && req.oraInizio && req.oraFine ? ` (${req.oraInizio}-${req.oraFine})` : '';
+            let hourSuffix = '';
+            if (req.tipo === 'permesso') {
+              if (req.frazioneTipo === 'mattina') hourSuffix = ' AM';
+              else if (req.frazioneTipo === 'pomeriggio') hourSuffix = ' PM';
+              else if (req.frazioneTipo === 'giornata') hourSuffix = ' GI';
+              else if (req.oraInizio && req.oraFine) hourSuffix = ` (${req.oraInizio}-${req.oraFine})`;
+            }
 
             const isPowerUser = isHR || isAdmin;
             return (
@@ -1013,14 +1153,14 @@ export default function Ferie() {
                       className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900"
                     >
                       <option value="">-- Seleziona Dipendente --</option>
-                      {dipendenti.map(d => (
+                      {dipendenti.filter(d => !d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')).map(d => (
                         <option key={d.id} value={d.nome}>{d.nome}</option>
                       ))}
                     </select>
                   </div>
                 )}
                 
-                {tipoRichiesta !== 'permesso' && tipoRichiesta !== 'mattina' && tipoRichiesta !== 'pomeriggio' ? (
+                {tipoRichiesta !== 'permesso' ? (
                   <div className="flex bg-white/50 p-1 rounded-xl shadow-inner border border-green-100/50">
                     <button
                       type="button"
@@ -1039,11 +1179,11 @@ export default function Ferie() {
                   </div>
                 ) : (
                   <div className="bg-white/40 p-3 rounded-xl border border-green-100 text-xs font-bold text-green-800/80">
-                    Modalità: Giorno Singolo (obbligatorio per permessi orari o frazioni di giornata)
+                    Modalità: Giorno Singolo (obbligatorio per permessi o frazioni di giornata)
                   </div>
                 )}
 
-                {requestMode === 'singolo' || tipoRichiesta === 'permesso' || tipoRichiesta === 'mattina' || tipoRichiesta === 'pomeriggio' ? (
+                {requestMode === 'singolo' || tipoRichiesta === 'permesso' ? (
                   <div>
                     <label className="block text-sm font-bold text-green-900 mb-1.5 ml-1">Giorno di assenza</label>
                     <input 
@@ -1079,30 +1219,7 @@ export default function Ferie() {
                   </div>
                 )}
 
-                {tipoRichiesta === 'permesso' && (
-                  <div className="grid grid-cols-2 gap-4 animate-in fade-in">
-                    <div>
-                      <label className="block text-xs font-bold text-green-900 mb-1.5 ml-1">Ora Inizio</label>
-                      <input 
-                        type="time" 
-                        required 
-                        value={oraInizio}
-                        onChange={e => setOraInizio(e.target.value)}
-                        className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900 text-xs sm:text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-green-900 mb-1.5 ml-1">Ora Fine</label>
-                      <input 
-                        type="time" 
-                        required 
-                        value={oraFine}
-                        onChange={e => setOraFine(e.target.value)}
-                        className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900 text-xs sm:text-sm"
-                      />
-                    </div>
-                  </div>
-                )}
+
                 
                 <div>
                   <label className="block text-sm font-bold text-green-900 mb-1.5 ml-1">Tipo di assenza</label>
@@ -1111,28 +1228,75 @@ export default function Ferie() {
                     onChange={e => {
                       const val = e.target.value;
                       setTipoRichiesta(val);
-                      if (val === 'permesso' || val === 'mattina' || val === 'pomeriggio') {
+                      if (val === 'permesso') {
                         setRequestMode('singolo');
                       }
                     }}
                     className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900"
                   >
                     <option value="ferie">Ferie</option>
+                    <option value="permesso">Permesso</option>
                     <option value="malattia">Malattia</option>
                     <option value="maternita">Maternità</option>
                     <option value="smart">Lavora da Casa</option>
                     <option value="studio">Permesso Studio</option>
                     <option value="donazione">Permesso Donazione</option>
                     <option value="elettorale">Permesso Elettorale</option>
-                    {requestMode === 'singolo' && (
-                      <>
-                        <option value="permesso">Permesso (Frazione di giornata)</option>
-                        <option value="mattina">Assenza Mattina</option>
-                        <option value="pomeriggio">Assenza Pomeriggio</option>
-                      </>
-                    )}
                   </select>
                 </div>
+
+                {tipoRichiesta === 'permesso' && (
+                  <div className="bg-white/40 p-4 rounded-2xl border border-green-150 space-y-4 animate-in fade-in duration-200">
+                    <label className="block text-xs font-black text-green-950 uppercase tracking-wider">Frazionamento Permesso</label>
+                    <div className="grid grid-cols-2 gap-2.5">
+                      {[
+                        { value: 'giornata', label: 'Giornata Intera' },
+                        { value: 'mattina', label: 'Solo Mattina (AM)' },
+                        { value: 'pomeriggio', label: 'Solo Pomeriggio (PM)' },
+                        { value: 'orario', label: 'Orario Specifico' }
+                      ].map((item) => (
+                        <button
+                          key={item.value}
+                          type="button"
+                          onClick={() => setFrazioneTipo(item.value as any)}
+                          className={`p-3 rounded-xl border text-xs font-bold text-center transition-all ${
+                            frazioneTipo === item.value
+                              ? 'bg-green-600 text-white border-transparent shadow-sm'
+                              : 'bg-white/60 text-green-900 border-green-100 hover:bg-white'
+                          }`}
+                        >
+                          {item.value === frazioneTipo && <span className="mr-1">✓</span>}
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {frazioneTipo === 'orario' && (
+                      <div className="grid grid-cols-2 gap-4 pt-2 border-t border-green-100 animate-in slide-in-from-top-2 duration-200">
+                        <div>
+                          <label className="block text-xs font-bold text-green-900 mb-1 ml-1">Ora Inizio</label>
+                          <input 
+                            type="time" 
+                            required 
+                            value={oraInizio}
+                            onChange={e => setOraInizio(e.target.value)}
+                            className="w-full p-3 border-none rounded-xl bg-white/70 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900 text-xs"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-green-900 mb-1 ml-1">Ora Fine</label>
+                          <input 
+                            type="time" 
+                            required 
+                            value={oraFine}
+                            onChange={e => setOraFine(e.target.value)}
+                            className="w-full p-3 border-none rounded-xl bg-white/70 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900 text-xs"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
                 
                 <button 
                   type="submit" 
@@ -1231,7 +1395,6 @@ export default function Ferie() {
               <div className="text-sm font-bold text-gray-500 mr-2">Legenda Colori:</div>
               <div className="flex items-center gap-2 text-xs font-bold text-gray-700"><span className="w-3 h-3 rounded-full bg-yellow-300 shadow-sm"></span> In attesa</div>
               <div className="flex items-center gap-2 text-xs font-bold text-gray-700"><span className="w-3 h-3 rounded-full bg-green-400 shadow-sm"></span> Approvato</div>
-              <div className="flex items-center gap-2 text-xs font-bold text-gray-700"><span className="w-3 h-3 rounded-full bg-red-400 shadow-sm"></span> Rifiutato</div>
             </div>
           </>
         ) : (
@@ -1279,7 +1442,10 @@ export default function Ferie() {
                 </thead>
                 <tbody className="divide-y divide-gray-100 font-medium text-gray-900 text-xs">
                   {(() => {
-                    const sortedDipendenti = [...dipendenti].sort((a, b) => a.nome.trim().localeCompare(b.nome.trim()));
+                    const firstDayOfMonthStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-01`;
+                    const sortedDipendenti = dipendenti
+                      .filter(d => !d.dataCessazione || d.dataCessazione >= firstDayOfMonthStr)
+                      .sort((a, b) => a.nome.trim().localeCompare(b.nome.trim()));
                     return sortedDipendenti.map(dip => {
                       return (
                         <tr key={dip.id} className="hover:bg-gray-50/40 transition-colors">
@@ -1293,28 +1459,40 @@ export default function Ferie() {
                             const dateStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                             const isWknd = isWeekend(dateStr);
                             const isHoliday = isItalianHoliday(dateStr);
-                            const isChiusura = isInChiusuraAziendaleLocal(dateStr);
-                            const isSpecialDay = isWknd || isHoliday;
+
+                            const isUnlocked = approvedWeekends[`${dip.nome}_${dateStr}`];
+                            const isSpecialDay = (isWknd || isHoliday) && !isUnlocked;
 
                             const req = richieste.find(r => {
-                              const start = r.dataInizio || r.data;
-                              const end = r.dataFine || r.data;
-                              return start && end && dateStr >= start && dateStr <= end && r.dipendenteName === dip.nome;
-                            });
+                               if (r.stato === 'Rifiutato') return false;
+                               const start = r.dataInizio || r.data;
+                               const end = r.dataFine || r.data;
+                               return start && end && dateStr >= start && dateStr <= end && r.dipendenteName === dip.nome;
+                             });
 
                             let cellBg = '';
                             let cellStyle: React.CSSProperties = {};
                             let cellText = '';
                             let titleStr = `${dip.nome} - ${day}/${currentMonth.getMonth() + 1}`;
 
-                            if (isSpecialDay) {
+                            const isCessato = dip.dataCessazione && dateStr > dip.dataCessazione;
+
+                            if (isCessato) {
+                              cellBg = 'text-white text-center font-bold bg-gray-500';
+                              cellStyle = { background: 'linear-gradient(135deg, #4b5563 0%, #374151 100%)' };
+                              cellText = 'X';
+                              titleStr += '\nRisorsa cessata / inattiva';
+                            } else if (isSpecialDay) {
                               cellBg = 'text-gray-400';
                               cellStyle = { background: 'linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%)' };
                             } else if (req) {
                               const isApproved = req.stato === 'Approvato';
                               const isRejected = req.stato === 'Rifiutato';
 
-                              titleStr += `\nStato: ${req.stato}\nTipo: ${getTipoData(req.tipo).label}`;
+                              titleStr += `\nStato: ${req.stato}\nTipo: ${getTipoData(req.tipo, req.frazioneTipo).label}`;
+                              if (req.tipo === 'permesso' && req.oraInizio && req.oraFine && req.frazioneTipo !== 'mattina' && req.frazioneTipo !== 'pomeriggio' && req.frazioneTipo !== 'giornata') {
+                                titleStr += `\nOrario: dalle ${req.oraInizio} alle ${req.oraFine}`;
+                              }
                               if (req.note) titleStr += `\nNote: ${req.note}`;
 
                               if (isRejected) {
@@ -1336,7 +1514,22 @@ export default function Ferie() {
                                 cellBg = isApproved 
                                   ? 'bg-amber-400 hover:bg-amber-500 border-amber-500 text-amber-950 font-extrabold shadow-sm' 
                                   : 'bg-yellow-50 border-yellow-250 text-yellow-750 opacity-60';
-                                cellText = req.tipo === 'mattina' ? 'AM' : req.tipo === 'pomeriggio' ? 'PM' : 'P';
+                                
+                                if (req.tipo === 'mattina' || req.frazioneTipo === 'mattina') {
+                                  cellText = 'AM';
+                                } else if (req.tipo === 'pomeriggio' || req.frazioneTipo === 'pomeriggio') {
+                                  cellText = 'PM';
+                                } else if (req.frazioneTipo === 'giornata') {
+                                  cellText = 'GI';
+                                } else if (req.oraInizio && req.oraFine) {
+                                  const [hStart, mStart] = req.oraInizio.split(':').map(Number);
+                                  const [hEnd, mEnd] = req.oraFine.split(':').map(Number);
+                                  const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
+                                  const hrs = Math.round(diffMs / 3600000);
+                                  cellText = `${hrs}h`;
+                                } else {
+                                  cellText = 'P';
+                                }
                               } else if (req.tipo === 'studio') {
                                 cellBg = isApproved 
                                   ? 'bg-purple-500 hover:bg-purple-600 border-purple-600 text-white font-extrabold shadow-sm' 
@@ -1353,12 +1546,9 @@ export default function Ferie() {
                                   : 'bg-yellow-50 border-yellow-250 text-yellow-750 opacity-60';
                                 cellText = 'E';
                               }
-                            } else if (isChiusura) {
-                              cellBg = 'text-indigo-400';
-                              cellStyle = { background: 'linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%)' };
                             }
 
-                            const isClickable = !!req && (isHR || isAdmin) && !isSpecialDay;
+                            const isClickable = !!req && (isHR || isAdmin) && !isSpecialDay && !isCessato;
 
                             return (
                               <td 
@@ -1395,10 +1585,10 @@ export default function Ferie() {
                 <span className="w-6 h-4 rounded border border-red-600 bg-red-500 flex items-center justify-center text-[10px] font-black text-white">M</span> Malattia/Maternità
               </div>
               <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
-                <span className="w-6 h-4 rounded border border-amber-500 bg-amber-400 flex items-center justify-center text-[9px] font-black text-amber-955">AM/PM</span> Assenza M/P
+                <span className="w-6 h-4 rounded border border-amber-500 bg-amber-400"></span> Permesso
               </div>
               <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
-                <span className="w-6 h-4 rounded border border-emerald-600 bg-emerald-500"></span> Smart Working
+                <span className="w-6 h-4 rounded border border-emerald-600 bg-emerald-500"></span> Lavoro da casa
               </div>
               <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
                 <span className="w-6 h-4 rounded border border-purple-600 bg-purple-500 flex items-center justify-center text-[10px] font-black text-white">S</span> Permesso Studio
@@ -1411,9 +1601,6 @@ export default function Ferie() {
               </div>
               <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
                 <span className="w-6 h-4 rounded border border-yellow-250 bg-yellow-50 opacity-60"></span> In attesa (trasparente)
-              </div>
-              <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
-                <span className="w-6 h-4 rounded border border-red-200 bg-red-50 text-red-800 line-through opacity-50"></span> Rifiutati
               </div>
             </div>
           </>
@@ -1430,14 +1617,21 @@ export default function Ferie() {
 
             <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100/50 text-xs text-gray-700 space-y-2 font-medium">
               <div><strong>Dipendente:</strong> {cancellationRequest.dipendenteName}</div>
-              <div><strong>Tipo Assenza:</strong> <span className="capitalize">{getTipoData(cancellationRequest.tipo).label}</span></div>
+              <div><strong>Tipo Assenza:</strong> <span className="capitalize">{getTipoData(cancellationRequest.tipo, cancellationRequest.frazioneTipo).label}</span></div>
               <div>
                 <strong>Periodo:</strong> {
-                  cancellationRequest.tipo === 'permesso' && cancellationRequest.oraInizio && cancellationRequest.oraFine
-                    ? `Il ${formatDate(cancellationRequest.dataInizio || cancellationRequest.data)} dalle ${cancellationRequest.oraInizio} alle ${cancellationRequest.oraFine}`
-                    : cancellationRequest.dataInizio && cancellationRequest.dataFine && cancellationRequest.dataInizio !== cancellationRequest.dataFine 
+                  (() => {
+                    let cancelPeriod = cancellationRequest.dataInizio && cancellationRequest.dataFine && cancellationRequest.dataInizio !== cancellationRequest.dataFine 
                       ? `Dal ${formatDate(cancellationRequest.dataInizio)} al ${formatDate(cancellationRequest.dataFine)}` 
-                      : `Il ${formatDate(cancellationRequest.dataInizio || cancellationRequest.data)}`
+                      : `Il ${formatDate(cancellationRequest.dataInizio || cancellationRequest.data)}`;
+                    if (cancellationRequest.tipo === 'permesso') {
+                      if (cancellationRequest.frazioneTipo === 'mattina') cancelPeriod += ' (mattina)';
+                      else if (cancellationRequest.frazioneTipo === 'pomeriggio') cancelPeriod += ' (pomeriggio)';
+                      else if (cancellationRequest.frazioneTipo === 'giornata') cancelPeriod += ' (giornata intera)';
+                      else if (cancellationRequest.oraInizio && cancellationRequest.oraFine) cancelPeriod += ` dalle ${cancellationRequest.oraInizio} alle ${cancellationRequest.oraFine}`;
+                    }
+                    return cancelPeriod;
+                  })()
                 }
               </div>
               <div><strong>Stato Attuale:</strong> <span className="font-bold">{cancellationRequest.stato}</span></div>
