@@ -118,7 +118,6 @@ export default function PianificazionePersonale() {
     coordinatori, 
     user, 
     myAssociatedName, 
-    refreshData,
     assegnazioni: globalAssignments,
 
     approvedLeaves,
@@ -363,46 +362,6 @@ export default function PianificazionePersonale() {
 
 
 
-  // Migrazione automatica delle macro aree per i dipendenti esistenti a database
-  useEffect(() => {
-    if (dipendenti.length === 0) return;
-    
-    const runMacroAreasMigration = async () => {
-      const disegnatoriNames = ["Gori Matteo", "Matteoli Sergio", "Ostuni Riccardo", "Pranzile Daniele", "Rocchini Carlotta", "Romanello Andrea", "Signorini Leonardo", "Stefanelli Luca", "Stefanelli Alessandro"];
-      const ingegneriaNames = ["Badalassi Federico", "Calugi Marta", "Cappelli Marco", "Critelli Federica", "Menichetti Giulia", "Menichetti Lorenzo", "Orsi Giovanni", "Rossi Niccolò", "Sabatini Thomas", "Taddei Paolo", "Turi Francesca"];
-      const cantieriNames = ["Attanasio Daniele", "Biagioni Matteo", "Boni Serena", "Mancini Marco", "Marchetti Davide", "Menciassi Simone", "Minosi Roberto", "Papi Mattia", "Panchetti Paolo", "Ulivieri Christian"];
-      const amministrazioneNames = ["Cecca Antonella", "Fasano Lara", "Parenti Enrico", "Votino Federica", "Ballerini Chiara", "Bartalucci Emanuele", "Brotini Lucrezia", "Giusti Lorenzo", "Lapi Lucia", "Lucchesi Paolo", "Mannucci Valentina", "Tempone Giulia"];
-      
-      const batch = writeBatch(db);
-      let updatedCount = 0;
-      
-      dipendenti.forEach(d => {
-        let area: string | null = null;
-        if (disegnatoriNames.includes(d.nome)) area = 'Disegnatori';
-        else if (ingegneriaNames.includes(d.nome)) area = 'Ingegneria';
-        else if (cantieriNames.includes(d.nome)) area = 'Sicurezza Cantieri';
-        else if (amministrazioneNames.includes(d.nome)) area = 'Amministrazione';
-        
-        if (area && d.macroArea !== area) {
-          const docRef = doc(db, 'dipendenti', d.id);
-          batch.update(docRef, { macroArea: area });
-          updatedCount++;
-        }
-      });
-      
-      if (updatedCount > 0) {
-        try {
-          await batch.commit();
-          await refreshData();
-          console.log(`[MIGRAZIONE] Popolate macro-aree per ${updatedCount} dipendenti.`);
-        } catch (err) {
-          console.error("Errore durante la migrazione delle macro aree:", err);
-        }
-      }
-    };
-    
-    runMacroAreasMigration();
-  }, [dipendenti, refreshData]);
 
 
 
