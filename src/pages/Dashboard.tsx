@@ -583,6 +583,34 @@ export default function Dashboard() {
     const parts = myAssociatedName.trim().split(/\s+/);
     return parts.length > 1 ? parts[parts.length - 1] : myAssociatedName;
   })();
+
+  const welcomePhrase = useMemo(() => {
+    const phrases = [
+      "Felici di collaborare con te anche oggi.",
+      "Ti auguriamo una splendida giornata di lavoro.",
+      "Il tuo spazio di lavoro è pronto.",
+      "Ti diamo il benvenuto nel tuo portale aziendale.",
+      "Buon lavoro e buona giornata da parte nostra.",
+      "Felici di ritrovarti, ti auguriamo una buona giornata.",
+      "Ti auguriamo il meglio per le attività di oggi.",
+      "Grazie per il tuo prezioso contributo quotidiano."
+    ];
+    const randomIndex = Math.floor(Math.random() * phrases.length);
+    return phrases[randomIndex];
+  }, []);
+
+  const currentDateString = useMemo(() => {
+    const date = new Date();
+    const capitalizeFirstLetter = (string: string) => {
+      return string.charAt(0).toUpperCase() + string.slice(1);
+    };
+    const dayName = capitalizeFirstLetter(date.toLocaleDateString('it-IT', { weekday: 'long' }));
+    const dayNum = date.getDate();
+    const monthName = capitalizeFirstLetter(date.toLocaleDateString('it-IT', { month: 'long' }));
+    const year = date.getFullYear();
+    return `${dayName} ${dayNum} ${monthName} ${year}`;
+  }, []);
+
   const showAdminSettings = isAdmin || isHR;
   const canPublish = isAdmin || isHR;
 
@@ -593,9 +621,12 @@ export default function Dashboard() {
       <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-sm p-6 sm:p-8 border border-white/50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div className="flex items-center gap-4">
           <h1 className="text-2xl font-extrabold text-indigo-600 tracking-tight">
-            Ciao, {welcomeName}! Benvenuto nel tuo portale di lavoro.
+            Ciao, {welcomeName}! {welcomePhrase}
           </h1>
-
+        </div>
+        <div className="text-xs sm:text-sm font-extrabold text-indigo-500/80 bg-indigo-50/50 border border-indigo-100/50 px-4 py-2 rounded-2xl shadow-inner shrink-0 self-start md:self-auto flex items-center gap-2">
+          <Calendar className="w-4 h-4 text-indigo-500" />
+          <span>{currentDateString}</span>
         </div>
       </div>
 
