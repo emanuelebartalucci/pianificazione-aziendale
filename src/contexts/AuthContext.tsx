@@ -17,6 +17,7 @@ export interface Dipendente {
   oreContratto?: number;
   macroArea?: 'Disegnatori' | 'Ingegneria' | 'Sicurezza Cantieri' | 'Consulenza Sicurezza' | 'Amministrazione';
   dataCessazione?: string;
+  orarioSettimanale?: { lun: number; mar: number; mer: number; gio: number; ven: number };
 }
 
 export interface Commessa {

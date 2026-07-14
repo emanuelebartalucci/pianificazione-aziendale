@@ -131,7 +131,7 @@ export default function Impostazioni() {
   const [editInpsRate, setEditInpsRate] = useState('');
   const [editIvaRate, setEditIvaRate] = useState('');
   const [editRaRate, setEditRaRate] = useState('');
-  const [editOreContratto, setEditOreContratto] = useState('');
+  const [editOrarioSettimanale, setEditOrarioSettimanale] = useState<Record<string, number | ''>>({ lun: 8, mar: 8, mer: 8, gio: 8, ven: 8 });
 
   // Nuovi stati per Clienti e Project Manager
   const [newClientNome, setNewClientNome] = useState('');
@@ -304,7 +304,13 @@ export default function Impostazioni() {
     setEditInpsRate(dip.inpsRate !== undefined && dip.inpsRate !== null ? dip.inpsRate.toString() : '');
     setEditIvaRate(dip.ivaRate !== undefined && dip.ivaRate !== null ? dip.ivaRate.toString() : '');
     setEditRaRate(dip.raRate !== undefined && dip.raRate !== null ? dip.raRate.toString() : '');
-    setEditOreContratto(dip.oreContratto !== undefined && dip.oreContratto !== null ? dip.oreContratto.toString() : '');
+    setEditOrarioSettimanale(dip.orarioSettimanale || {
+      lun: dip.oreContratto ?? 8,
+      mar: dip.oreContratto ?? 8,
+      mer: dip.oreContratto ?? 8,
+      gio: dip.oreContratto ?? 8,
+      ven: dip.oreContratto ?? 8
+    });
     setIsEditModalOpen(true);
   };
 
@@ -319,13 +325,24 @@ export default function Impostazioni() {
 
     try {
       const docRef = doc(db, 'dipendenti', editingDip.id);
+      const cleanOrario = {
+        lun: editOrarioSettimanale.lun === '' ? 0 : editOrarioSettimanale.lun,
+        mar: editOrarioSettimanale.mar === '' ? 0 : editOrarioSettimanale.mar,
+        mer: editOrarioSettimanale.mer === '' ? 0 : editOrarioSettimanale.mer,
+        gio: editOrarioSettimanale.gio === '' ? 0 : editOrarioSettimanale.gio,
+        ven: editOrarioSettimanale.ven === '' ? 0 : editOrarioSettimanale.ven,
+      };
+      const totalWeekly = Object.values(cleanOrario).reduce((a, b) => a + b, 0);
+      const avgDaily = totalWeekly / 5;
+
       const payload: any = {
         nome: editNome.trim(),
         email: editEmail.trim().toLowerCase(),
         tipo: editTipo,
         macroArea: editMacroArea || null,
         dataCessazione: editDataCessazione || null,
-        oreContratto: editTipo === 'collaboratore' ? null : (editOreContratto ? Number(editOreContratto) : null),
+        orarioSettimanale: editTipo === 'collaboratore' ? null : cleanOrario,
+        oreContratto: editTipo === 'collaboratore' ? null : avgDaily,
       };
 
       if (editTipo === 'collaboratore') {
@@ -1548,17 +1565,32 @@ export default function Impostazioni() {
                 />
               </div>
 
-              {/* Ore Contratto */}
+              {/* Ore Contratto (Griglia Settimanale) */}
               {editTipo !== 'collaboratore' && (
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 mb-1 ml-1">Ore contratto (giornaliere)</label>
-                  <input
-                    type="number"
-                    placeholder="es. 8 o 4"
-                    value={editOreContratto}
-                    onChange={e => setEditOreContratto(e.target.value)}
-                    className="w-full p-3 border border-gray-200 rounded-xl bg-gray-50 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition font-bold text-gray-755 text-xs"
-                  />
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold text-gray-500 ml-1">Orario di Contratto Settimanale (ore giornaliere)</label>
+                  <div className="grid grid-cols-5 gap-2 bg-gray-50 p-3 rounded-2xl border border-gray-150">
+                    {['lun', 'mar', 'mer', 'gio', 'ven'].map(day => (
+                      <div key={day} className="flex flex-col items-center gap-1">
+                        <span className="text-[10px] font-bold text-gray-500 uppercase">{day}</span>
+                        <input 
+                          type="number"
+                          step="any"
+                          min={0}
+                          max={24}
+                          value={editOrarioSettimanale[day as keyof typeof editOrarioSettimanale] ?? ''}
+                          onChange={(e) => {
+                            const val = e.target.value === '' ? '' : Number(e.target.value);
+                            setEditOrarioSettimanale(prev => ({ ...prev, [day]: val }));
+                          }}
+                          className="w-full p-2 border border-gray-250 rounded-xl bg-white text-center font-bold text-gray-805 text-xs outline-none focus:ring-2 focus:ring-indigo-400"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <div className="text-[11px] font-bold text-indigo-700 bg-indigo-50 px-3 py-1 rounded-xl w-fit">
+                    Totale settimanale: {Object.values(editOrarioSettimanale).reduce((a: number, b) => a + (b === '' ? 0 : (b as number)), 0)} ore
+                  </div>
                 </div>
               )}
 

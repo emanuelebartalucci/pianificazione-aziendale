@@ -143,13 +143,16 @@ export default function Presenze() {
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [decorrenzaGiorno, setDecorrenzaGiorno] = useState<number>(1);
-  const [localOreContratto, setLocalOreContratto] = useState<number>(8);
+  const [localOrarioSettimanale, setLocalOrarioSettimanale] = useState<Record<string, number | ''>>({ lun: 8, mar: 8, mer: 8, gio: 8, ven: 8 });
 
   useEffect(() => {
-    if (profile?.oreContratto !== undefined) {
-      setLocalOreContratto(profile.oreContratto);
+    if (profile?.orarioSettimanale) {
+      setLocalOrarioSettimanale(profile.orarioSettimanale);
+    } else if (profile?.oreContratto !== undefined) {
+      const h = profile.oreContratto;
+      setLocalOrarioSettimanale({ lun: h, mar: h, mer: h, gio: h, ven: h });
     }
-  }, [profile?.oreContratto]);
+  }, [profile]);
   const [activeTab, setActiveTab] = useState<'ore' | 'spese' | 'weekend'>('ore');
   const [chiusureAziendali, setChiusureAziendali] = useState<Array<{ dataInizio: string; dataFine: string }>>([]);
 
@@ -319,7 +322,6 @@ export default function Presenze() {
     if (!myAssociatedName || !user?.email) return;
 
     const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === myAssociatedName.trim().toLowerCase());
-    const contractHours = profile?.oreContratto ?? 8;
 
     try {
       // 1. Fetch approved requests from 'richieste_ferie'
@@ -382,15 +384,24 @@ export default function Presenze() {
           };
           continue;
         }
-
-        const dateStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const dateStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
         const dateObj = new Date(selectedYear, selectedMonth - 1, day);
         const dayOfWeek = dateObj.getDay();
         const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
         const isHoliday = isItalianHoliday(dateStr);
         const isCessato = profile?.dataCessazione && dateStr > profile.dataCessazione;
 
-        let dayContractHours = isCessato ? 0 : ((isWknd || isHoliday) ? 0 : contractHours);
+        let dayContractHours = 0;
+        if (!isCessato && !isWknd && !isHoliday) {
+          if (profile?.orarioSettimanale) {
+            const weekdayKeys = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
+            const key = weekdayKeys[dayOfWeek];
+            dayContractHours = profile.orarioSettimanale[key as 'lun' | 'mar' | 'mer' | 'gio' | 'ven'] ?? 8;
+          } else {
+            dayContractHours = profile?.oreContratto ?? 8;
+          }
+        }
+
         let ore = dayContractHours;
         let straordinari = 0;
         let ferie = 0;
@@ -406,30 +417,30 @@ export default function Presenze() {
           const abs = approvedAbsences[dateStr];
           if (abs.tipo === 'ferie') {
             ore = 0;
-            ferie = contractHours;
+            ferie = dayContractHours;
           } else if (abs.tipo === 'malattia' || abs.tipo === 'maternita') {
             ore = 0;
             malattia = true;
           } else if (abs.tipo === 'mattina' || abs.tipo === 'pomeriggio') {
-            ore = contractHours / 2;
-            permessi = contractHours / 2;
+            ore = dayContractHours / 2;
+            permessi = dayContractHours / 2;
           } else if (abs.tipo === 'smart') {
-            ore = contractHours;
+            ore = dayContractHours;
           } else if (abs.tipo === 'studio') {
             ore = 0;
-            permessoStudio = contractHours;
+            permessoStudio = dayContractHours;
           } else if (abs.tipo === 'donazione') {
             ore = 0;
-            permessoDonazione = contractHours;
+            permessoDonazione = dayContractHours;
           } else if (abs.tipo === 'elettorale') {
             ore = 0;
-            permessoElettorale = contractHours;
+            permessoElettorale = dayContractHours;
           } else if (abs.tipo === 'permesso') {
-            let hrs = contractHours / 2;
+            let hrs = dayContractHours / 2;
             if (abs.frazioneTipo === 'giornata') {
-              hrs = contractHours;
+              hrs = dayContractHours;
             } else if (abs.frazioneTipo === 'mattina' || abs.frazioneTipo === 'pomeriggio') {
-              hrs = contractHours / 2;
+              hrs = dayContractHours / 2;
             } else if (abs.frazioneTipo === 'orario' && abs.oraInizio && abs.oraFine) {
               const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
               const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
@@ -442,8 +453,7 @@ export default function Presenze() {
               const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
               hrs = Math.round(diffMs / 3600000);
             }
-            ore = Math.max(0, contractHours - hrs);
-            permessi = hrs;
+            ore = Math.max(0, dayContractHours - hrs);
           }
         }
 
@@ -2757,24 +2767,34 @@ export default function Presenze() {
                   <div className="space-y-1">
                     <h4 className="font-extrabold text-gray-900 flex items-center gap-2">
                       <Clock className="w-5 h-5 text-indigo-600" />
-                      Ore Giornaliere da Contratto (Part-time / Full-time)
+                      Ore da Contratto
                     </h4>
                     <p className="text-xs text-gray-500 font-semibold leading-relaxed">
-                      Imposta le tue ore giornaliere da contratto. Puoi indicare una decorrenza per i cambi contratto a metà mese.
+                      Imposta le tue ore settimanali da contratto. Puoi indicare una decorrenza per i cambi contratto a metà mese.
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-4 bg-gray-50 p-3 rounded-2xl border border-gray-100">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Ore:</span>
-                      <input 
-                        type="number"
-                        min={1}
-                        max={24}
-                        value={localOreContratto}
-                        onChange={(e) => setLocalOreContratto(e.target.value === '' ? 8 : Number(e.target.value))}
-                        className="w-16 text-center border border-gray-300 rounded-xl p-1.5 font-bold outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900 bg-white"
-                      />
-                      <span className="text-[11px] font-bold text-gray-700">ore/g</span>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      {['lun', 'mar', 'mer', 'gio', 'ven'].map(day => (
+                        <div key={day} className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-bold text-gray-500 uppercase">{day}</span>
+                          <input 
+                            type="number"
+                            step="any"
+                            min={0}
+                            max={24}
+                            value={localOrarioSettimanale[day] ?? ''}
+                            onChange={(e) => {
+                              const val = e.target.value === '' ? '' : Number(e.target.value);
+                              setLocalOrarioSettimanale(prev => ({ ...prev, [day]: val }));
+                            }}
+                            className="w-12 text-center border border-gray-300 rounded-xl p-1 font-bold outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900 bg-white text-xs"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg shrink-0">
+                      Tot: {Object.values(localOrarioSettimanale).reduce((a: number, b) => a + (b === '' ? 0 : (b as number)), 0)}h/sett
                     </div>
 
                     <div className="w-[1px] h-6 bg-gray-200" />
@@ -2799,12 +2819,21 @@ export default function Presenze() {
                       onClick={async () => {
                         if (profile) {
                           try {
-                            const val = localOreContratto;
+                            const newOrario = {
+                              lun: localOrarioSettimanale.lun === '' ? 0 : localOrarioSettimanale.lun,
+                              mar: localOrarioSettimanale.mar === '' ? 0 : localOrarioSettimanale.mar,
+                              mer: localOrarioSettimanale.mer === '' ? 0 : localOrarioSettimanale.mer,
+                              gio: localOrarioSettimanale.gio === '' ? 0 : localOrarioSettimanale.gio,
+                              ven: localOrarioSettimanale.ven === '' ? 0 : localOrarioSettimanale.ven,
+                            };
+                            const totalWeeklyHours = Object.values(newOrario).reduce((a, b) => a + b, 0);
+                            const avgDailyHours = totalWeeklyHours / 5;
                             const oldContractHours = profile.oreContratto ?? 8;
                             
                             // 1. Aggiorna anagrafica dipendente
                             await updateDoc(doc(db, 'dipendenti', profile.id), {
-                              oreContratto: val
+                              orarioSettimanale: newOrario,
+                              oreContratto: avgDailyHours
                             });
 
                             // 2. Se c'è un rapportino correntemente caricato ed è modificabile, aggiorna le ore della tabella a partire dalla data di decorrenza
@@ -2819,8 +2848,15 @@ export default function Presenze() {
                                   const appliesToThisDay = d >= decorrenzaGiorno;
 
                                   if (appliesToThisDay) {
-                                    let dayChanged = false;
+                                    const dateObj = new Date(selectedYear, selectedMonth - 1, d);
+                                    const dayOfWeek = dateObj.getDay();
+                                    const weekdayKeys = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
+                                    const key = weekdayKeys[dayOfWeek];
+                                    const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
                                     
+                                    const val = isWknd ? 0 : (newOrario[key as keyof typeof newOrario] ?? 8);
+                                    
+                                    let dayChanged = false;
                                     const oldDayContractHours = g.oreContratto ?? oldContractHours;
                                     g.oreContratto = val;
 
