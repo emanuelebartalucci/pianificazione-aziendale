@@ -3,7 +3,7 @@ import { Briefcase, Calendar, Settings, FileText, MessageSquare, Plus, Trash2, M
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, addDoc, doc, deleteDoc, query, orderBy, where, getDoc, getDocs, updateDoc } from 'firebase/firestore';
+import { collection, addDoc, doc, deleteDoc, query, orderBy, where, getDoc, getDocs, updateDoc, onSnapshot } from 'firebase/firestore';
 import ConfirmModal from '../components/ConfirmModal';
 import ClimaModal from '../components/ClimaModal';
 import QuestionnaireModal from '../components/QuestionnaireModal';
@@ -584,8 +584,10 @@ export default function Dashboard() {
     return parts.length > 1 ? parts[parts.length - 1] : myAssociatedName;
   })();
 
-  const welcomePhrase = useMemo(() => {
-    const phrases = [
+  const [welcomePhrase, setWelcomePhrase] = useState('');
+
+  useEffect(() => {
+    const defaultPhrases = [
       "Felici di collaborare con te anche oggi.",
       "Ti auguriamo una splendida giornata di lavoro.",
       "Il tuo spazio di lavoro è pronto.",
@@ -595,8 +597,18 @@ export default function Dashboard() {
       "Ti auguriamo il meglio per le attività di oggi.",
       "Grazie per il tuo prezioso contributo quotidiano."
     ];
-    const randomIndex = Math.floor(Math.random() * phrases.length);
-    return phrases[randomIndex];
+
+    const unsub = onSnapshot(collection(db, 'dashboard_greetings'), (snap) => {
+      const list: string[] = [];
+      snap.forEach(docSnap => {
+        const t = docSnap.data().testo;
+        if (t) list.push(t);
+      });
+      const finalPhrases = list.length > 0 ? list : defaultPhrases;
+      const randomIndex = Math.floor(Math.random() * finalPhrases.length);
+      setWelcomePhrase(finalPhrases[randomIndex]);
+    });
+    return () => unsub();
   }, []);
 
   const currentDateString = useMemo(() => {

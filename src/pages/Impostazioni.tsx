@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, addDoc, doc, setDoc, deleteDoc, onSnapshot, updateDoc } from 'firebase/firestore';
-import { Shield, UserCheck, Star, Users, Plus, Trash2, Settings, Printer, Building2, Search, Pencil, X } from 'lucide-react';
+import { Shield, UserCheck, Star, Users, Plus, Trash2, Settings, Printer, Building2, Search, Pencil, X, MessageSquare, Edit } from 'lucide-react';
 import ConfirmModal from '../components/ConfirmModal';
 
 
@@ -133,6 +133,24 @@ export default function Impostazioni() {
   const [editRaRate, setEditRaRate] = useState('');
   const [editOrarioSettimanale, setEditOrarioSettimanale] = useState<Record<string, number | ''>>({ lun: 8, mar: 8, mer: 8, gio: 8, ven: 8 });
 
+  // Stati per la gestione delle frasi di benvenuto in dashboard
+  const [greetingsList, setGreetingsList] = useState<{ id: string; testo: string }[]>([]);
+  const [newGreetingText, setNewGreetingText] = useState('');
+  const [editingGreetingId, setEditingGreetingId] = useState<string | null>(null);
+  const [editingGreetingText, setEditingGreetingText] = useState('');
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    const unsub = onSnapshot(collection(db, 'dashboard_greetings'), (snap) => {
+      const list: { id: string; testo: string }[] = [];
+      snap.forEach(docSnap => {
+        list.push({ id: docSnap.id, testo: docSnap.data().testo });
+      });
+      setGreetingsList(list);
+    });
+    return () => unsub();
+  }, [isAdmin]);
+
   // Nuovi stati per Clienti e Project Manager
   const [newClientNome, setNewClientNome] = useState('');
   const [searchClientQuery, setSearchClientQuery] = useState('');
@@ -244,6 +262,75 @@ export default function Impostazioni() {
         } catch (err) {
           console.error("Errore rimozione cliente:", err);
           showToast("Si è verificato un errore durante la rimozione.", "error");
+        }
+      }
+    );
+  };
+
+  const handleAddGreeting = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newGreetingText.trim()) return;
+    try {
+      await addDoc(collection(db, 'dashboard_greetings'), {
+        testo: newGreetingText.trim()
+      });
+      setNewGreetingText('');
+      showToast("Frase aggiunta con successo!", "success");
+    } catch (err) {
+      console.error(err);
+      showToast("Errore durante l'aggiunta", "error");
+    }
+  };
+
+  const handlePopulateDefaultGreetings = async () => {
+    const defaultPhrases = [
+      "Felici di collaborare con te anche oggi.",
+      "Ti auguriamo una splendida giornata di lavoro.",
+      "Il tuo spazio di lavoro è pronto.",
+      "Ti diamo il benvenuto nel tuo portale aziendale.",
+      "Buon lavoro e buona giornata da parte nostra.",
+      "Felici di ritrovarti, ti auguriamo una buona giornata.",
+      "Ti auguriamo il meglio per le attività di oggi.",
+      "Grazie per il tuo prezioso contributo quotidiano."
+    ];
+    try {
+      for (const phrase of defaultPhrases) {
+        await addDoc(collection(db, 'dashboard_greetings'), {
+          testo: phrase
+        });
+      }
+      showToast("Frasi predefinite caricate con successo!", "success");
+    } catch (err) {
+      console.error(err);
+      showToast("Errore durante il caricamento delle frasi", "error");
+    }
+  };
+
+  const handleSaveEditGreeting = async (id: string) => {
+    if (!editingGreetingText.trim()) return;
+    try {
+      await setDoc(doc(db, 'dashboard_greetings', id), {
+        testo: editingGreetingText.trim()
+      });
+      setEditingGreetingId(null);
+      showToast("Frase modificata con successo!", "success");
+    } catch (err) {
+      console.error(err);
+      showToast("Errore durante il salvataggio", "error");
+    }
+  };
+
+  const handleDeleteGreeting = async (id: string) => {
+    triggerConfirm(
+      "Rimuovi Frase di Benvenuto",
+      "Sei sicuro di voler rimuovere questa frase di benvenuto?",
+      async () => {
+        try {
+          await deleteDoc(doc(db, 'dashboard_greetings', id));
+          showToast("Frase rimossa con successo!", "success");
+        } catch (err) {
+          console.error(err);
+          showToast("Errore durante la rimozione", "error");
         }
       }
     );
@@ -1433,6 +1520,100 @@ export default function Impostazioni() {
                     }`}
                   />
                 </button>
+              </div>
+            </section>
+
+            {/* Frasi di Benvenuto */}
+            <section className="bg-gradient-to-br from-indigo-50 to-indigo-100 p-6 rounded-3xl border border-indigo-200 shadow-sm">
+              <h3 className="text-xl font-bold text-indigo-900 mb-2 flex items-center gap-2">
+                <MessageSquare className="w-6 h-6 text-indigo-600" /> Frasi di Benvenuto Dashboard
+              </h3>
+              <p className="text-xs text-indigo-755 mb-4">
+                Gestisci le frasi accoglienti visualizzate casualmente nella dashboard. Il sistema userà il formato: <em>"Ciao, Nome! [Frase]"</em>.
+              </p>
+              
+              {/* Form per aggiungere una nuova frase */}
+              <form onSubmit={handleAddGreeting} className="flex gap-2 mb-4">
+                <input 
+                  type="text"
+                  required
+                  placeholder="Es. Felici di collaborare con te anche oggi."
+                  value={newGreetingText}
+                  onChange={e => setNewGreetingText(e.target.value)}
+                  className="flex-1 p-3 border-none rounded-xl bg-white/80 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition shadow-inner font-semibold text-xs text-indigo-950"
+                />
+                <button 
+                  type="submit"
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold px-4 py-3 rounded-xl transition shadow active:scale-95 text-xs flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" /> Aggiungi
+                </button>
+              </form>
+
+              {/* Lista delle frasi esistenti */}
+              <div className="space-y-2 max-h-60 overflow-y-auto pr-1 scrollbar-thin">
+                {greetingsList.length === 0 ? (
+                  <div className="text-center py-6 bg-white/40 border border-indigo-200/50 border-dashed rounded-2xl p-4 flex flex-col items-center gap-3">
+                    <p className="text-xs text-indigo-500 font-semibold italic">Nessuna frase di benvenuto caricata.</p>
+                    <button
+                      type="button"
+                      onClick={handlePopulateDefaultGreetings}
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-[10px] rounded-xl transition shadow active:scale-95 flex items-center gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Carica Frasi Predefinite
+                    </button>
+                  </div>
+                ) : (
+                  greetingsList.map((g) => (
+                    <div key={g.id} className="flex items-center justify-between gap-3 bg-white/60 p-3 rounded-xl border border-indigo-200/30 text-xs">
+                      {editingGreetingId === g.id ? (
+                        <div className="flex-1 flex gap-2">
+                          <input 
+                            type="text"
+                            value={editingGreetingText}
+                            onChange={e => setEditingGreetingText(e.target.value)}
+                            className="flex-1 p-1.5 border border-indigo-300 rounded bg-white font-semibold text-xs text-indigo-950"
+                          />
+                          <button 
+                            onClick={() => handleSaveEditGreeting(g.id)}
+                            className="bg-emerald-600 text-white font-bold px-2.5 py-1 rounded hover:bg-emerald-700 transition cursor-pointer text-[10px]"
+                          >
+                            Salva
+                          </button>
+                          <button 
+                            onClick={() => setEditingGreetingId(null)}
+                            className="bg-gray-400 text-white font-bold px-2.5 py-1 rounded hover:bg-gray-500 transition cursor-pointer text-[10px]"
+                          >
+                            Annulla
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <span className="font-semibold text-indigo-950 flex-1 break-all leading-normal">{g.testo}</span>
+                          <div className="flex gap-1.5 shrink-0">
+                            <button 
+                              onClick={() => {
+                                setEditingGreetingId(g.id);
+                                setEditingGreetingText(g.testo);
+                              }}
+                              className="text-indigo-600 hover:text-indigo-800 p-1 hover:bg-indigo-50/50 rounded transition cursor-pointer"
+                              title="Modifica"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                            <button 
+                              onClick={() => handleDeleteGreeting(g.id)}
+                              className="text-red-500 hover:text-red-750 p-1 hover:bg-red-50/50 rounded transition cursor-pointer"
+                              title="Elimina"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))
+                )}
               </div>
             </section>
           </div>
