@@ -173,7 +173,7 @@ export default function Commesse() {
   } = useAuth();
   
   const [baseDate, setBaseDate] = useState<Date>(new Date());
-  const [zoomWeeks, setZoomWeeks] = useState<number>(10); // Default to 10 Weeks
+  const [zoomWeeks, setZoomWeeks] = useState<number>(8); // Default to 8 Weeks
   const [selectedCommessaIdsFilter, setSelectedCommessaIdsFilter] = useState<string[]>([]);
   const [selectedClientFilter, setSelectedClientFilter] = useState<string>('');
   const [selectedPMFilter, setSelectedPMFilter] = useState<string>('');
@@ -509,8 +509,8 @@ export default function Commesse() {
       });
     }
 
-    // Filtro per standard employees (che vedono solo quelle a cui sono assegnati)
-    if (!isAdmin && !isSenior && myAssociatedName) {
+    // Filtro per standard employees e coordinatori (che vedono solo quelle a cui sono assegnati)
+    if (!isAdmin && myAssociatedName) {
       const assignedCommessaIds = new Set<string>();
       Object.entries(assignments).forEach(([key, listAss]) => {
         if (key.startsWith(`${myAssociatedName}-`)) {
@@ -730,13 +730,13 @@ export default function Commesse() {
   }, [commesse, myAssociatedName]);
 
   const commesseGestibili = useMemo(() => {
-    if (isAdmin || isSenior) return commesse;
+    if (isAdmin) return commesse;
     return commesse.filter(c => {
       const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
       const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
       return areNamesEqual(c.responsabile, myAssociatedName) || isPM;
     });
-  }, [commesse, isAdmin, isSenior, myAssociatedName]);
+  }, [commesse, isAdmin, myAssociatedName]);
 
   const handleAddCommessa = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -955,14 +955,14 @@ export default function Commesse() {
         </h2>
         
         <div className={`flex items-center gap-2 text-xs font-bold px-4 py-2 rounded-xl border ${
-          (isAdmin || isSenior || isResponsabileDiQualcheCommessa || isCommerciale) ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-blue-50 text-blue-700 border-blue-100'
+          (isAdmin || isResponsabileDiQualcheCommessa || isCommerciale) ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-blue-50 text-blue-700 border-blue-100'
         }`}>
-          {(isAdmin || isSenior || isResponsabileDiQualcheCommessa || isCommerciale) ? 'Vista Amministrazione e Assegnazione' : 'Vista di Sola Consultazione'}
+          {(isAdmin || isResponsabileDiQualcheCommessa || isCommerciale) ? 'Vista Amministrazione e Assegnazione' : 'Vista di Sola Consultazione'}
         </div>
       </div>
       
-      {/* TAB BAR (Solo per Admin, Seniors, Responsabili e Commerciali) */}
-      {(isAdmin || isSenior || isResponsabileDiQualcheCommessa || isCommerciale) && (
+      {/* TAB BAR (Solo per Admin, Responsabili e Commerciali) */}
+      {(isAdmin || isResponsabileDiQualcheCommessa || isCommerciale) && (
         <div className="flex border-b border-gray-200 gap-2 no-print">
           <button
             type="button"
@@ -1158,7 +1158,7 @@ export default function Commesse() {
                               const search = commessaTextQuery.toLowerCase().trim();
                               
                               let listToDisplay = commesse;
-                              if (!isAdmin && !isSenior && myAssociatedName) {
+                              if (!isAdmin && myAssociatedName) {
                                 const assignedCommessaIds = new Set<string>();
                                 Object.entries(assignments).forEach(([key, listAss]) => {
                                   if (key.startsWith(`${myAssociatedName}-`)) {
@@ -1320,7 +1320,7 @@ export default function Commesse() {
                   <tbody className="divide-y divide-gray-100 font-medium">
                     <tr>
                       <td colSpan={activeWeeks.length + 1} className="p-12 text-center text-gray-400 font-bold italic">
-                        {!isAdmin && !isSenior ? "Non sei assegnato a nessuna commessa in questo periodo." : "Nessuna commessa trovata con i filtri selezionati."}
+                        {!isAdmin ? "Non sei assegnato a nessuna commessa in questo periodo." : "Nessuna commessa trovata con i filtri selezionati."}
                       </td>
                     </tr>
                   </tbody>
@@ -1342,7 +1342,7 @@ export default function Commesse() {
                                     const pmArray = Array.isArray(comm.pm) ? comm.pm : (comm.pm ? [comm.pm] : []);
                                     const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
                                     const isResp = areNamesEqual(comm.responsabile, myAssociatedName);
-                                    const canEdit = isAdmin || isSenior || isPM || isResp;
+                                    const canEdit = isAdmin || isPM || isResp;
                                     
                                     return canEdit && (
                                       <button 
@@ -1400,7 +1400,7 @@ export default function Commesse() {
                                 >
                                   {assignedPeople.map((person, pIdx) => {
                                     const dip = dipendenti.find(d => areNamesEqual(d.nome, person.name));
-                                    const dailyContractHours = dip?.oreContratto ?? 8;
+                                    const dailyContractHours = dip?.tipo === 'collaboratore' ? 8 : (dip?.oreContratto ?? 8);
                                     const weeklyContractHours = dailyContractHours * 5;
                                     const hours = Math.round(person.pct * weeklyContractHours / 100);
                                     const leaves = getLeavesForResourceInWeek(person.name, wk.id);
@@ -1474,8 +1474,8 @@ export default function Commesse() {
         </>
       )}
 
-      {/* TAB 2: GESTIONE CATALOGO (Per Admin, Seniors, Responsabili e Commerciali) */}
-      {(activeTab === 'gestione' && (isAdmin || isSenior || isResponsabileDiQualcheCommessa || isCommerciale)) && (
+      {/* TAB 2: GESTIONE CATALOGO (Per Admin, Responsabili e Commerciali) */}
+      {(activeTab === 'gestione' && (isAdmin || isResponsabileDiQualcheCommessa || isCommerciale)) && (
         <div className="space-y-8">
           <section className="bg-gradient-to-br from-emerald-50 to-teal-50 p-6 rounded-3xl border border-emerald-100 shadow-sm">
             <div className="flex justify-between items-center mb-4">
@@ -1484,7 +1484,7 @@ export default function Commesse() {
               </h3>
             </div>
             
-            {(isAdmin || isSenior || isCommerciale) && (
+            {(isAdmin || isCommerciale) && (
               <div className="mb-6 bg-white/50 p-5 rounded-2xl border border-emerald-100/50 shadow-inner">
                 <form onSubmit={handleAddCommessa} className="space-y-4">
                 

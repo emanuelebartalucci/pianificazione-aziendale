@@ -15,6 +15,7 @@ import Prenotazioni from './pages/Prenotazioni';
 
 // Components
 import Navbar from './components/Navbar';
+import DevImpersonator from './components/DevImpersonator';
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -40,6 +41,7 @@ function App() {
         <div className="bg-gray-100 text-gray-900 font-sans min-h-screen flex flex-col justify-between">
           <div className="flex-1">
             <Navbar />
+            <DevImpersonator />
             <main className="max-w-[1400px] mx-auto px-4 py-8">
               <Routes>
                 <Route path="/" element={<Dashboard />} />

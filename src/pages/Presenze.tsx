@@ -1250,9 +1250,12 @@ export default function Presenze() {
 
   const handleSubmitToHR = () => {
     if (!rapportino) return;
+    const isCollab = isCollaboratore(myAssociatedName, dipendenti);
     triggerConfirm(
-      "Invio Rapportino",
-      "Confermi l'invio del foglio presenze all'HR? Una volta inviato non potrai più modificarlo, a meno che non ti venga richiesto.",
+      isCollab ? "Invio Bozza Fattura" : "Invio Rapportino",
+      isCollab 
+        ? "Confermi l'invio della bozza fattura all'HR? Una volta inviata non potrai più modificarla, a meno che non ti venga richiesto."
+        : "Confermi l'invio del foglio presenze all'HR? Una volta inviato non potrai più modificarlo, a meno che non ti venga richiesto.",
       async () => {
         setSubmitting(true);
         try {
@@ -1270,7 +1273,7 @@ export default function Presenze() {
           }
 
           setRapportino(updated);
-          showToast("Foglio presenze inviato con successo all'HR!");
+          showToast(isCollab ? "Bozza fattura inviata con successo all'HR!" : "Foglio presenze inviato con successo all'HR!");
           loadPresenzeData();
         } catch (err) {
           console.error("Errore invio rapportino:", err);
@@ -1484,13 +1487,16 @@ export default function Presenze() {
 
   const handleHRApprove = () => {
     if (!reviewingRapportino) return;
+    const isCollab = isCollaboratore(reviewingRapportino.dipendenteNome, dipendenti);
     if (reviewingRapportino.stato === 'Bozza') {
-      showToast("Impossibile approvare un rapportino in stato Bozza.", "warning");
+      showToast(isCollab ? "Impossibile approvare una bozza fattura in stato Bozza." : "Impossibile approvare un rapportino in stato Bozza.", "warning");
       return;
     }
     triggerConfirm(
-      "Approva Rapportino",
-      `Approvare il foglio presenze di ${reviewingRapportino.dipendenteNome}?`,
+      isCollab ? "Approva Bozza Fattura" : "Approva Rapportino",
+      isCollab 
+        ? `Approvare la bozza fattura di ${reviewingRapportino.dipendenteNome}?`
+        : `Approvare il foglio presenze di ${reviewingRapportino.dipendenteNome}?`,
       async () => {
         try {
           const docRef = doc(db, 'presenze', reviewingRapportino.id);
@@ -1502,13 +1508,12 @@ export default function Presenze() {
           };
           await setDoc(docRef, updated);
 
-          const isCollab = isCollaboratore(reviewingRapportino.dipendenteNome, dipendenti);
           if (isCollab && reviewingRapportino.collaboratoreData) {
             await saveCollabProfileRates(reviewingRapportino.collaboratoreData, reviewingRapportino.dipendenteNome);
           }
 
           setReviewingRapportino(null);
-          showToast("Rapportino approvato!");
+          showToast(isCollab ? "Bozza fattura approvata!" : "Rapportino approvato!");
           loadPresenzeData();
 
           // Invia notifica al dipendente
@@ -1516,10 +1521,12 @@ export default function Presenze() {
             const meseNome = MESI[selectedMonth - 1];
             await queueMail(
               updated.dipendenteEmail,
-              `[Pianificazione] Rapportino Presenze Approvato - ${meseNome} ${selectedYear}`,
+              isCollab 
+                ? `[Pianificazione] Bozza Fattura Approvata - ${meseNome} ${selectedYear}`
+                : `[Pianificazione] Rapportino Presenze Approvato - ${meseNome} ${selectedYear}`,
               `
                 <p>Ciao <strong>${updated.dipendenteNome}</strong>,</p>
-                <p>Il tuo rapportino presenze per il mese di <strong>${meseNome} ${selectedYear}</strong> è stato verificato ed <strong>approvato</strong> dall'amministrazione.</p>
+                <p>La tua ${isCollab ? 'bozza fattura' : 'bozza di rapportino presenze'} per il mese di <strong>${meseNome} ${selectedYear}</strong> è stata verificata ed <strong>approvata</strong> dall'amministrazione.</p>
                 <p>Grazie per la collaborazione.</p>
               `
             );
@@ -2225,14 +2232,14 @@ export default function Presenze() {
   const handlePrint = () => {
     const sheets = getSheetsToPrint();
     if (sheets.length === 0) {
-      showToast("Nessun foglio presenze registrato da stampare per questo mese.", "warning");
+      showToast("Nessun documento registrato da stampare per questo mese.", "warning");
       return;
     }
     if (selectedDipFilter) {
       const docId = `${selectedDipFilter}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
       const sheet = allRapportini[docId];
       if (!sheet) {
-        showToast(`Nessun foglio presenze registrato per ${selectedDipFilter} in questo mese.`, "warning");
+        showToast(hrTab === 'collaboratori' ? `Nessuna bozza fattura registrata per ${selectedDipFilter} in questo mese.` : `Nessun foglio presenze registrato per ${selectedDipFilter} in questo mese.`, "warning");
         return;
       }
       setPrintTargetSheet(sheet);
@@ -2318,7 +2325,7 @@ export default function Presenze() {
                 <RefreshCw className="w-4 h-4" />
               </button>
             </div>
-            <p className="text-xs text-gray-500 font-semibold mt-0.5">Gestione foglio ore e riepilogo mensile per amministrazione</p>
+            <p className="text-xs text-gray-500 font-semibold mt-0.5">Gestione foglio ore / bozze fattura e riepilogo mensile per amministrazione</p>
           </div>
         </div>
 
@@ -2387,7 +2394,7 @@ export default function Presenze() {
                 onClick={() => setActiveTab('ore')}
                 className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'ore' ? 'bg-white text-indigo-600 shadow-sm font-extrabold' : 'text-gray-500 hover:text-gray-700'}`}
               >
-                📋 Foglio Ore
+                📋 {isCollaboratore(myAssociatedName, dipendenti) ? 'Bozza Fattura' : 'Foglio Ore'}
               </button>
               {!isCollaboratore(myAssociatedName, dipendenti) && (
                 <button
@@ -2431,7 +2438,7 @@ export default function Presenze() {
               onClick={handlePrint} 
               className="flex items-center gap-2 bg-gray-950 hover:bg-gray-900 text-white font-bold px-4 py-2.5 rounded-xl text-sm transition shadow-md active:scale-95"
             >
-              <Printer className="w-4 h-4" /> {selectedDipFilter ? "Stampa Foglio Ore" : "Stampa Tutti i Fogli"}
+              <Printer className="w-4 h-4" /> {selectedDipFilter ? (hrTab === 'collaboratori' ? "Stampa Bozza Fattura" : "Stampa Foglio Ore") : (hrTab === 'collaboratori' ? "Stampa Tutte le Bozze" : "Stampa Tutti i Fogli")}
             </button>
             <button 
               onClick={handleExportMonthlyClick} 
@@ -2609,7 +2616,7 @@ export default function Presenze() {
 
           <div className="w-full overflow-x-auto">
             {loadingHR ? (
-              <div className="p-12 text-center text-gray-500 font-bold">Caricamento presenze in corso...</div>
+              <div className="p-12 text-center text-gray-500 font-bold">Caricamento in corso...</div>
             ) : dipendenti.length === 0 ? (
               <div className="p-12 text-center text-gray-400 font-medium">Nessun utente censito in anagrafica.</div>
             ) : (
@@ -2728,7 +2735,7 @@ export default function Presenze() {
           
           {/* STATO E NOTIFICHE DEL RAPPORTINO */}
           {loadingSheet ? (
-            <div className="bg-white p-10 rounded-[2rem] border text-center text-gray-500 font-bold">Caricamento foglio presenze in corso...</div>
+            <div className="bg-white p-10 rounded-[2rem] border text-center text-gray-500 font-bold">Caricamento in corso...</div>
           ) : !myAssociatedName ? (
             <div className="bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200 p-8 rounded-[2rem] text-center flex flex-col items-center gap-4">
               <ShieldAlert className="w-12 h-12 text-amber-600" />
@@ -3971,6 +3978,7 @@ export default function Presenze() {
       {reviewingRapportino && (() => {
         const reviewProfile = dipendenti.find(d => d.nome.trim().toLowerCase() === reviewingRapportino.dipendenteNome.trim().toLowerCase());
         const reviewContractHours = reviewProfile?.oreContratto ?? 8;
+        const isCollab = isCollaboratore(reviewingRapportino.dipendenteNome, dipendenti);
         return (
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 no-print overflow-y-auto">
           <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-6xl xl:max-w-7xl overflow-hidden flex flex-col my-4 max-h-[92vh]">
@@ -3980,7 +3988,7 @@ export default function Presenze() {
               <div>
                 <h3 className="font-extrabold text-lg flex items-center gap-2">
                   <FileText className="w-5 h-5" /> 
-                  Esamina Rapportino: {reviewingRapportino.dipendenteNome}
+                  {isCollab ? 'Esamina Bozza Fattura' : 'Esamina Rapportino'}: {reviewingRapportino.dipendenteNome}
                 </h3>
                 <p className="text-[11px] opacity-80 font-bold mt-0.5">Mese: {MESI[selectedMonth-1]} {selectedYear} | Email: {reviewingRapportino.dipendenteEmail}</p>
               </div>
@@ -4799,9 +4807,9 @@ export default function Presenze() {
                           ? 'bg-gray-300 text-gray-500 cursor-not-allowed shadow-none'
                           : 'bg-green-600 hover:bg-green-700 text-white shadow-md'
                       }`}
-                      title={reviewingRapportino.stato === 'Bozza' ? "Non è possibile approvare un rapportino in stato Bozza" : undefined}
+                      title={reviewingRapportino.stato === 'Bozza' ? (isCollab ? "Non è possibile approvare una bozza fattura in stato Bozza" : "Non è possibile approvare un rapportino in stato Bozza") : undefined}
                     >
-                      Approva Rapportino
+                      {isCollab ? "Approva Bozza Fattura" : "Approva Rapportino"}
                     </button>
                   </>
                 )}
@@ -4825,13 +4833,13 @@ export default function Presenze() {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60] p-4 no-print">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden transform scale-100 transition-all">
             <div className="bg-orange-600 p-4 text-white font-extrabold flex justify-between items-center">
-              <span>Nota di correzione presenze</span>
+              <span>{isCollaboratore(reviewingRapportino.dipendenteNome, dipendenti) ? 'Richiesta Modifica Bozza Fattura' : 'Nota di correzione presenze'}</span>
               <button onClick={() => setIsFeedbackModalOpen(false)} className="hover:bg-white/20 p-1 rounded-full"><X className="w-5 h-5"/></button>
             </div>
             <form onSubmit={handleHRRequestChanges} className="p-5 space-y-4">
               <div>
                 <label className="block text-xs font-bold text-gray-500 mb-2">
-                  Specifica quali correzioni o documenti mancano (sarà visibile al dipendente):
+                  {isCollaboratore(reviewingRapportino.dipendenteNome, dipendenti) ? 'Specifica quali correzioni o dati mancano (sarà visibile al collaboratore):' : 'Specifica quali correzioni o documenti mancano (sarà visibile al dipendente):'}
                 </label>
                 <textarea
                   required
@@ -4898,7 +4906,7 @@ export default function Presenze() {
         {(() => {
           const sheets = getSheetsToPrint();
           if (sheets.length === 0) {
-            return <div className="text-center p-8 text-gray-400">Nessun foglio presenze da stampare per questo mese.</div>;
+            return <div className="text-center p-8 text-gray-400">Nessun documento da stampare per questo mese.</div>;
           }
 
           return sheets.map((sheetToPrint) => {
@@ -4915,11 +4923,11 @@ export default function Presenze() {
                   <div className="flex items-center gap-2 pb-0.5">
                     <img src="/Logo.png" alt="Logo Ingegno" className="h-6 w-auto object-contain" />
                     <div className="border-l border-gray-300 pl-2 py-0.5">
-                      <div className="text-[7.5px] text-gray-500 font-bold leading-none">Presenze ed Ore Lavorate</div>
+                      <div className="text-[7.5px] text-gray-500 font-bold leading-none">{isCollab ? "Dettaglio per Bozza Fattura" : "Presenze ed Ore Lavorate"}</div>
                     </div>
                   </div>
                   <div className="text-right">
-                    <div className="text-xs font-extrabold text-gray-900">SCHEMA PRESENZE</div>
+                    <div className="text-xs font-extrabold text-gray-900">{isCollab ? "BOZZA FATTURA" : "SCHEMA PRESENZE"}</div>
                     <div className="text-[8.5px] font-bold text-gray-800">
                       Mese: {MESI[selectedMonth - 1].toUpperCase()} {selectedYear}
                     </div>
@@ -4929,7 +4937,7 @@ export default function Presenze() {
                 {/* Dettagli Anagrafici */}
                 <div className="grid grid-cols-2 gap-2 border border-gray-300 p-2 bg-gray-50 rounded text-[8px]">
                   <div>
-                    <span className="font-extrabold text-gray-600">DIPENDENTE:</span>{' '}
+                    <span className="font-extrabold text-gray-600">{isCollab ? "COLLABORATORE:" : "DIPENDENTE:"}</span>{' '}
                     <span className="font-extrabold text-gray-900 uppercase">{sheetToPrint.dipendenteNome}</span>
                   </div>
                   <div className="text-right">

@@ -325,7 +325,7 @@ export default function Impostazioni() {
         tipo: editTipo,
         macroArea: editMacroArea || null,
         dataCessazione: editDataCessazione || null,
-        oreContratto: editOreContratto ? Number(editOreContratto) : null,
+        oreContratto: editTipo === 'collaboratore' ? null : (editOreContratto ? Number(editOreContratto) : null),
       };
 
       if (editTipo === 'collaboratore') {
@@ -1028,7 +1028,7 @@ export default function Impostazioni() {
             {/* HR */}
             <section className="bg-gradient-to-br from-fuchsia-50 to-pink-50 p-6 rounded-3xl border border-fuchsia-100 shadow-sm h-fit">
               <h3 className="text-xl font-bold text-fuchsia-900 mb-2 flex items-center gap-2"><UserCheck className="w-6 h-6 text-fuchsia-600" /> Responsabili HR</h3>
-              <p className="text-sm text-fuchsia-750 mb-4">Gestiscono le richieste di ferie e i rapportini presenze.</p>
+              <p className="text-sm text-fuchsia-750 mb-4">Gestiscono le richieste di ferie, i rapportini presenze e le bozze fattura.</p>
               <form onSubmit={handleAddHR} className="flex gap-2 mb-4">
                 <select required value={newHrEmail} onChange={e => setNewHrEmail(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-fuchsia-400 transition shadow-inner font-medium text-fuchsia-900">
                   <option value="">Seleziona dipendente</option>
@@ -1549,16 +1549,18 @@ export default function Impostazioni() {
               </div>
 
               {/* Ore Contratto */}
-              <div>
-                <label className="block text-xs font-bold text-gray-500 mb-1 ml-1">Ore contratto (giornaliere)</label>
-                <input
-                  type="number"
-                  placeholder="es. 8 o 4"
-                  value={editOreContratto}
-                  onChange={e => setEditOreContratto(e.target.value)}
-                  className="w-full p-3 border border-gray-200 rounded-xl bg-gray-50 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition font-bold text-gray-755 text-xs"
-                />
-              </div>
+              {editTipo !== 'collaboratore' && (
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1 ml-1">Ore contratto (giornaliere)</label>
+                  <input
+                    type="number"
+                    placeholder="es. 8 o 4"
+                    value={editOreContratto}
+                    onChange={e => setEditOreContratto(e.target.value)}
+                    className="w-full p-3 border border-gray-200 rounded-xl bg-gray-50 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition font-bold text-gray-755 text-xs"
+                  />
+                </div>
+              )}
 
               {/* Dati specifici Collaboratore */}
               {editTipo === 'collaboratore' && (

@@ -118,6 +118,7 @@ export default function PianificazionePersonale() {
     coordinatori, 
     user, 
     myAssociatedName, 
+    userEmail,
     assegnazioni: globalAssignments,
 
     approvedLeaves,
@@ -128,7 +129,7 @@ export default function PianificazionePersonale() {
   const [isCommessaDropdownOpen, setIsCommessaDropdownOpen] = useState(false);
   const [timelineWeeks, setTimelineWeeks] = useState<WeekInfo[]>([]); // weeks for the load grid
   const [gridBaseDate, setGridBaseDate] = useState<Date>(new Date());
-  const [zoomWeeks, setZoomWeeks] = useState<number>(13);
+  const [zoomWeeks, setZoomWeeks] = useState<number>(8);
   
   const weekColumnMinWidth = useMemo(() => {
     // Estimating remaining width of a container on standard screen (approx 900px)
@@ -410,8 +411,8 @@ export default function PianificazionePersonale() {
         dataFine: reqDataFine,
         percentuale: Number(reqPercentuale),
         nota: reqNota,
-        richiedenteNome: myAssociatedName || user?.displayName || user?.email || '',
-        richiedenteEmail: user?.email?.toLowerCase() || '',
+        richiedenteNome: myAssociatedName || user?.displayName || userEmail || '',
+        richiedenteEmail: userEmail,
         stato: 'in_attesa'
       });
       
@@ -1358,12 +1359,12 @@ export default function PianificazionePersonale() {
     return filteredGridDipendenti.filter(d => isCollaboratore(d.nome, d.tipo));
   }, [filteredGridDipendenti]);
   const myCoordinatedAreas = useMemo(() => {
-    const email = user?.email?.toLowerCase();
+    const email = userEmail;
     if (!email) return [];
     return coordinatori
       .filter(c => c.email.toLowerCase() === email)
       .map(c => c.area);
-  }, [user, coordinatori]);
+  }, [userEmail, coordinatori]);
 
   const isCoordinatoreQualsiasi = useMemo(() => {
     return myCoordinatedAreas.length > 0;
@@ -1470,7 +1471,7 @@ export default function PianificazionePersonale() {
   };
 
   const renderEmployeeRow = (dip: Dipendente, parentAreaName: string) => {
-    const isCoordinatoreArea = coordinatori.some(c => c.email.toLowerCase() === user?.email?.toLowerCase() && c.area === parentAreaName);
+    const isCoordinatoreArea = coordinatori.some(c => c.email.toLowerCase() === userEmail && c.area === parentAreaName);
     const isEditable = isAdmin || isCoordinatoreArea;
     const isResponsabileDiQuestArea = coordinatori.some(c => c.email.toLowerCase() === dip.email?.toLowerCase() && c.area === parentAreaName);
 
@@ -1628,7 +1629,7 @@ export default function PianificazionePersonale() {
                     )}
                     
                     {(list.length > 0 || leaves.length > 0) && (
-                      <div className="hidden group-hover/cell:flex absolute bottom-full mb-1 bg-gray-900 text-white text-[11px] rounded-lg p-2.5 flex-col gap-1 z-50 shadow-md min-w-[170px] pointer-events-none text-left">
+                      <div className="hidden group-hover/cell:flex absolute top-full mt-1 bg-gray-900 text-white text-[11px] rounded-lg p-2.5 flex-col gap-1 z-50 shadow-md min-w-[170px] pointer-events-none text-left">
                         <div className="font-bold text-[10px] text-indigo-300 border-b border-gray-800 pb-0.5 mb-1">{dip.nome} ({wk.label})</div>
                         {list.map((a, idx) => (
                           <div key={idx} className="flex justify-between items-center gap-2 border-b border-gray-800 pb-1 last:border-none last:pb-0">
@@ -1661,7 +1662,7 @@ export default function PianificazionePersonale() {
 
   const renderAreaRow = (areaName: string, members: Dipendente[]) => {
     const isMyCoordinatedArea = myCoordinatedAreas.includes(areaName);
-    const canExpand = isAdmin || isSenior || isMyCoordinatedArea;
+    const canExpand = isAdmin || isMyCoordinatedArea;
     const isExpanded = expandedAreas[areaName];
 
     const toggleExpand = () => {
@@ -1825,7 +1826,7 @@ export default function PianificazionePersonale() {
           <div className="p-3 bg-indigo-100 rounded-2xl"><Users className="text-indigo-600 w-8 h-8" /></div>
           <div className="flex items-center gap-3">
             <span>Pianificazione del Personale e Carichi</span>
-            {(isAdmin || isSoci(myAssociatedName) || coordinatori.some(c => c.email.toLowerCase() === user?.email?.toLowerCase() && c.area === 'Disegnatori')) && richiesteDisegnatori.filter(r => r.stato === 'in_attesa').length > 0 && (
+            {(isAdmin || isSoci(myAssociatedName) || coordinatori.some(c => c.email.toLowerCase() === userEmail && c.area === 'Disegnatori')) && richiesteDisegnatori.filter(r => r.stato === 'in_attesa').length > 0 && (
               <span className="bg-red-500 text-white text-[10px] font-black px-2 py-1 rounded-full shadow-sm animate-pulse ml-2">
                 {richiesteDisegnatori.filter(r => r.stato === 'in_attesa').length} RICHIESTE IN ATTESA
               </span>
@@ -1842,7 +1843,7 @@ export default function PianificazionePersonale() {
       </div>
 
       {/* SEZIONE BLINDATA: GESTIONE RICHIESTE DISEGNATORI */}
-      {(isAdmin || coordinatori.some(c => c.email.toLowerCase() === user?.email?.toLowerCase() && c.area === 'Disegnatori') || isSoci(myAssociatedName)) && (
+      {(isAdmin || coordinatori.some(c => c.email.toLowerCase() === userEmail && c.area === 'Disegnatori') || isSoci(myAssociatedName)) && (
         (() => {
           const pendingReqs = richiesteDisegnatori.filter(r => r.stato === 'in_attesa');
           if (pendingReqs.length === 0) return null;
@@ -2677,7 +2678,7 @@ export default function PianificazionePersonale() {
 
         {/* Load Grid with clipping for rounded corners */}
         <div className="w-full flex-1 overflow-hidden flex flex-col">
-          <div className="w-full overflow-auto scrollbar-thin flex-1">
+          <div className="w-full overflow-auto scrollbar-thin flex-1 min-h-[320px]">
             <table className="w-full text-center border-separate border-spacing-0 text-xs">
             <thead className="sticky top-0 z-30 bg-gray-100 border-b border-gray-200 font-bold text-gray-600 shadow-sm">
               <tr className="h-14">
@@ -2734,7 +2735,7 @@ export default function PianificazionePersonale() {
               </tbody>
             ) : isDipendenteNormale ? (
               (() => {
-                const currentDip = dipendenti.find(d => d.email.toLowerCase() === user?.email?.toLowerCase());
+                const currentDip = dipendenti.find(d => d.email.toLowerCase() === userEmail);
                 return (
                   <tbody className="divide-y divide-gray-100 font-medium bg-white">
                     {currentDip ? (

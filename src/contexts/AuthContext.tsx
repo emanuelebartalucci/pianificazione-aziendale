@@ -63,6 +63,12 @@ interface AuthContextType {
   commercialiEmails: string[];
   isCommerciale: boolean;
   refreshData: () => Promise<void>;
+
+  // Impersonificazione
+  impersonateUser: (email: string | null) => void;
+  isRealDev: boolean;
+  impersonatedEmail: string | null;
+  userEmail: string;
 }
 
 const AuthContext = createContext<AuthContextType>({} as AuthContextType);
@@ -72,6 +78,7 @@ export const useAuth = () => useContext(AuthContext);
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [impersonatedEmail, setImpersonatedEmailState] = useState<string | null>(null);
   
   // Dati da Firestore
   const [dynamicAdmins, setDynamicAdmins] = useState<string[]>([]);
@@ -276,7 +283,29 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   // Calcolo ruoli derivati
-  const userEmail = user?.email?.toLowerCase() || '';
+  const realEmail = user?.email?.toLowerCase() || '';
+  const isRealDev = realEmail === 'ebartalucci@ingegno06.it';
+
+  useEffect(() => {
+    if (isRealDev) {
+      setImpersonatedEmailState(localStorage.getItem('dev_impersonated_email'));
+    } else {
+      setImpersonatedEmailState(null);
+    }
+  }, [user, isRealDev]);
+
+  const impersonateUser = (email: string | null) => {
+    if (!isRealDev) return;
+    if (email) {
+      localStorage.setItem('dev_impersonated_email', email.toLowerCase());
+      setImpersonatedEmailState(email.toLowerCase());
+    } else {
+      localStorage.removeItem('dev_impersonated_email');
+      setImpersonatedEmailState(null);
+    }
+  };
+
+  const userEmail = impersonatedEmail || realEmail;
   const isAdmin = DEFAULT_ADMINS.includes(userEmail) || dynamicAdmins.includes(userEmail);
   const isHR = dynamicHrs.includes(userEmail);
   const isSenior = dynamicSeniors.includes(userEmail);
@@ -305,7 +334,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       seniorsEmails,
       commercialiEmails: dynamicCommerciali,
       isCommerciale,
-      refreshData
+      refreshData,
+      impersonateUser,
+      isRealDev,
+      impersonatedEmail,
+      userEmail
     }}>
       {children}
     </AuthContext.Provider>
