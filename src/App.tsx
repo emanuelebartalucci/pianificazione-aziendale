@@ -30,6 +30,24 @@ function ScrollToTop() {
 function App() {
   const { user, loading } = useAuth();
 
+  useEffect(() => {
+    const handleWheel = (e: WheelEvent) => {
+      const activeEl = document.activeElement;
+      if (
+        activeEl instanceof HTMLInputElement &&
+        activeEl.type === 'number' &&
+        (activeEl === e.target || activeEl.contains(e.target as Node))
+      ) {
+        activeEl.blur();
+      }
+    };
+
+    document.addEventListener('wheel', handleWheel, { passive: true });
+    return () => {
+      document.removeEventListener('wheel', handleWheel);
+    };
+  }, []);
+
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center bg-gray-100">Caricamento...</div>;
   }
