@@ -24,6 +24,13 @@
     size: landscape;
     margin: 0.3cm !important;
   }
+  @page portrait-page {
+    size: portrait;
+    margin: 1cm !important;
+  }
+  .print-portrait-page {
+    page: portrait-page;
+  }
   .no-print { display: none !important; }
   body { 
     background-color: white !important; 
@@ -129,6 +136,23 @@
   .sheet-break:last-child {
     page-break-after: avoid !important;
     break-after: avoid !important;
+  }
+
+  /* Overrides specific to the portrait page of collaborators */
+  .print-container .print-portrait-page {
+    font-size: 10px !important;
+    line-height: 1.4 !important;
+  }
+  .print-container .print-portrait-page table {
+    font-size: 9.5px !important;
+  }
+  .print-container .print-portrait-page th,
+  .print-container .print-portrait-page td {
+    padding: 8px 10px !important;
+    border-color: #e5e7eb !important;
+  }
+  .print-container .print-portrait-page .bg-gray-50 {
+    background-color: #f9fafb !important;
   }
 }
 

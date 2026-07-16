@@ -257,7 +257,9 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       });
     }
     // For regular users, show only their own requests in the list (approved of others are calendar-only)
-    return richieste.filter(r => r.dipendenteName === myAssociatedName && r.note !== 'Chiusure Aziendali');
+    return richieste
+      .filter(r => r.dipendenteName === myAssociatedName && r.note !== 'Chiusure Aziendali')
+      .slice(0, 10);
   }, [richieste, isHR, myAssociatedName]);
 
   const pendingCount = useMemo(() => {
@@ -1015,6 +1017,11 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       cellClass += " bg-white";
     }
 
+    const isToday = dateStr === new Date().toLocaleDateString('sv-SE');
+    if (isToday) {
+      cellClass += " ring-2 ring-green-600 z-10";
+    }
+
     // Se è un giorno festivo o weekend, non mostriamo le richieste individuali di assenza
     const displayOthers = isSpecialDay ? [] : sortedOthers;
     // Se c'è chiusura aziendale, mostriamo il badge Chiusura solo se non è weekend/festivo
@@ -1619,9 +1626,6 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
               </div>
               <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
                 <span className="w-6 h-4 rounded border border-indigo-600 bg-indigo-500 flex items-center justify-center text-[10px] font-black text-white">E</span> Permesso Elettorale
-              </div>
-              <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
-                <span className="w-6 h-4 rounded border border-yellow-250 bg-yellow-50 opacity-60"></span> In attesa (trasparente)
               </div>
             </div>
           </>
