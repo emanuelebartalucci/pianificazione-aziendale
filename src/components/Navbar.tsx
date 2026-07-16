@@ -7,7 +7,7 @@ import { useState } from 'react';
 
 export default function Navbar() {
   const navigate = useNavigate();
-  const { user, isAdmin, isHR, isSenior, myAssociatedName } = useAuth();
+  const { user, isAdmin, isHR, myAssociatedName } = useAuth();
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -119,7 +119,6 @@ export default function Navbar() {
               <div className="hidden sm:flex gap-1">
                 {isAdmin && <span className="text-[10px] font-bold bg-red-100 text-red-700 px-2 py-0.5 rounded-full uppercase tracking-wider">Admin</span>}
                 {!isAdmin && isHR && <span className="text-[10px] font-bold bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full uppercase tracking-wider">HR</span>}
-                {!isAdmin && isSenior && <span className="text-[10px] font-bold bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full uppercase tracking-wider">Senior</span>}
               </div>
             )}
 

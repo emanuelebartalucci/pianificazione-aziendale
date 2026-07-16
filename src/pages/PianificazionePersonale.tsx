@@ -9,6 +9,10 @@ import ConfirmModal from '../components/ConfirmModal';
 import { addPendingNotification, getPendingNotifications, clearPendingNotifications, sendAllPendingNotifications } from '../utils/pendingNotifications';
 import { isCollaboratore, isSoci } from './Impostazioni';
 import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
+import { queueMail } from '../utils/mailSender';
+
+const MACRO_AREE = ['Disegnatori', 'Ingegneria', 'Sicurezza Cantieri', 'Consulenza Sicurezza', 'Amministrazione'] as const;
+type MacroArea = typeof MACRO_AREE[number];
 
 const areNamesEqual = (n1?: string | null, n2?: string | null): boolean => {
   if (!n1 || !n2) return false;
@@ -112,7 +116,6 @@ const formatCommDate = (dateStr?: string): string => {
 export default function PianificazionePersonale() {
   const { 
     isAdmin, 
-    isSenior, 
     dipendenti, 
     commesse, 
     coordinatori, 
@@ -194,8 +197,24 @@ export default function PianificazionePersonale() {
   const [addPercentage, setAddPercentage] = useState<string>('100');
   const [assignPercentageMap, setAssignPercentageMap] = useState<Record<string, string>>({});
 
-  // Search filter for allocator (spostato in alto)
+  // Aree coordinate dall'utente loggato (fonte autorevole: collezione coordinatori)
+  // NB: spostato qui in alto perché serve a filteredDipendenti e selectableCommesse
+  const myCoordinatedAreas = useMemo((): string[] => {
+    if (!userEmail) return [];
+    return coordinatori
+      .filter(c => c.email.toLowerCase() === userEmail)
+      .map(c => c.area);
+  }, [userEmail, coordinatori]);
+
+  // Search filter for allocator
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Macro area del dipendente loggato (fallback per PM non coordinatori)
+  const myMacroArea = useMemo((): MacroArea | null => {
+    if (isAdmin || isSoci(myAssociatedName)) return null; // admin/soci vedono tutto
+    const myDip = dipendenti.find(d => d.email?.toLowerCase() === userEmail);
+    return (myDip?.macroArea as MacroArea) || null;
+  }, [isAdmin, myAssociatedName, dipendenti, userEmail]);
 
   const filteredDipendenti = useMemo(() => {
     let list = dipendenti.filter(d => {
@@ -207,9 +226,19 @@ export default function PianificazionePersonale() {
     const todayStr = new Date().toLocaleDateString('sv-SE');
     list = list.filter(d => !d.dataCessazione || d.dataCessazione >= todayStr);
 
+    // Coordinatori e PM vedono solo le risorse della propria macro area
+    // Admin e Soci vedono tutto; isSenior non è più un bypass
+    if (!isAdmin && !isSoci(myAssociatedName)) {
+      if (myCoordinatedAreas.length > 0) {
+        list = list.filter(d => myCoordinatedAreas.includes(d.macroArea || ''));
+      } else if (myMacroArea) {
+        list = list.filter(d => d.macroArea === myMacroArea);
+      }
+    }
+
     if (!searchQuery) return list;
     return list.filter(d => d.nome.toLowerCase().includes(searchQuery.toLowerCase()));
-  }, [dipendenti, searchQuery]);
+  }, [dipendenti, searchQuery, myMacroArea, myCoordinatedAreas, isAdmin, myAssociatedName]);
 
   const isPMOrResponsabile = useMemo(() => {
     return commesse.some(c => {
@@ -221,13 +250,15 @@ export default function PianificazionePersonale() {
 
   const selectableCommesse = useMemo(() => {
     const openCommesse = commesse.filter(c => c.stato !== 'Chiusa');
-    if (isAdmin || isSenior) return openCommesse;
+    // Solo Admin e Soci vedono tutte le commesse
+    if (isAdmin || isSoci(myAssociatedName)) return openCommesse;
+    // Coordinatori, PM e tutti gli altri: solo le commesse in cui sono PM o Responsabile
     return openCommesse.filter(c => {
       const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
       const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
       return isPM || areNamesEqual(c.responsabile, myAssociatedName);
     });
-  }, [commesse, isAdmin, isSenior, myAssociatedName]);
+  }, [commesse, isAdmin, myAssociatedName]);
 
   const assignedCommesseForSelected = useMemo(() => {
     if (allocAction !== 'rimuovi' || selectedResourceNames.length === 0 || !allocDataInizio || !allocDataFine) {
@@ -366,17 +397,19 @@ export default function PianificazionePersonale() {
 
 
 
-  // Stati per richieste disegnatori
+  // Stati per richieste personale (generalizzate per tutte le aree)
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
+  const [reqAreaTarget, setReqAreaTarget] = useState<MacroArea>('Disegnatori');
   const [reqCommessaId, setReqCommessaId] = useState('');
   const [reqDataInizio, setReqDataInizio] = useState('');
   const [reqDataFine, setReqDataFine] = useState('');
   const [reqPercentuale, setReqPercentuale] = useState(100);
   const [reqNota, setReqNota] = useState('');
   const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
-  const [selectedDisegnatoriPerRichiesta, setSelectedDisegnatoriPerRichiesta] = useState<Record<string, string>>({});
+  const [selectedRisorsePerRichiesta, setSelectedRisorsePerRichiesta] = useState<Record<string, string>>({});
 
-  const openRequestModalWithSelection = () => {
+  const openRequestModalForArea = (area: MacroArea) => {
+    setReqAreaTarget(area);
     setReqCommessaId(selectedCommessaId);
     setReqDataInizio(allocDataInizio);
     setReqDataFine(allocDataFine);
@@ -413,10 +446,36 @@ export default function PianificazionePersonale() {
         nota: reqNota,
         richiedenteNome: myAssociatedName || user?.displayName || userEmail || '',
         richiedenteEmail: userEmail,
-        stato: 'in_attesa'
+        stato: 'in_attesa',
+        area: reqAreaTarget
       });
+
+      // Invia email ai coordinatori dell'area richiesta
+      const coordAreaEmails = coordinatori
+        .filter(c => c.area === reqAreaTarget && c.email)
+        .map(c => c.email.toLowerCase());
       
-      showToast("Richiesta disegnatore inviata con successo!", "success");
+      if (coordAreaEmails.length > 0) {
+        const richiedente = myAssociatedName || userEmail;
+        const subject = `[Richiesta Personale] Richiesta risorsa ${reqAreaTarget} per commessa ${commName}`;
+        const htmlBody = `
+          <p>Gentile Coordinatore,</p>
+          <p>È stata ricevuta una nuova richiesta di personale dall'area <strong>${reqAreaTarget}</strong>.</p>
+          <table border="0" cellpadding="6" cellspacing="0" style="font-size:13px;color:#374151;width:100%">
+            <tr><td style="font-weight:bold;width:180px">Commessa:</td><td>${commName}</td></tr>
+            <tr><td style="font-weight:bold">Richiedente:</td><td>${richiedente} (${userEmail})</td></tr>
+            <tr><td style="font-weight:bold">Periodo:</td><td>${reqDataInizio} → ${reqDataFine}</td></tr>
+            <tr><td style="font-weight:bold">Carico Richiesto:</td><td>${reqPercentuale}%</td></tr>
+            ${reqNota ? `<tr><td style="font-weight:bold">Nota:</td><td><em>${reqNota}</em></td></tr>` : ''}
+          </table>
+          <p style="margin-top:16px">Accedi alla <strong>Pianificazione del Personale e Carichi</strong> per gestire questa richiesta e assegnare la risorsa più adeguata.</p>
+        `;
+        for (const email of coordAreaEmails) {
+          await queueMail(email, subject, htmlBody);
+        }
+      }
+      
+      showToast(`Richiesta ${reqAreaTarget} inviata con successo!`, "success");
       setIsRequestModalOpen(false);
       setReqCommessaId('');
       setReqDataInizio('');
@@ -432,9 +491,9 @@ export default function PianificazionePersonale() {
   };
 
   const handleApproveRequest = async (req: any) => {
-    const disegnatoreNome = selectedDisegnatoriPerRichiesta[req.id];
-    if (!disegnatoreNome) {
-      showToast("Seleziona un disegnatore da assegnare.", "warning");
+    const risorsaNome = selectedRisorsePerRichiesta[req.id];
+    if (!risorsaNome) {
+      showToast("Seleziona una risorsa da assegnare.", "warning");
       return;
     }
     try {
@@ -457,7 +516,7 @@ export default function PianificazionePersonale() {
       const colore = commObj ? (TIPOLOGIA_COLORS[commObj.tipologia || ''] || commObj.colore || '#64748b') : '#64748b';
 
       for (const wkId of weekIds) {
-        const docId = `${disegnatoreNome}-${wkId}`;
+        const docId = `${risorsaNome}-${wkId}`;
         const currentList = [...(assignments[docId] || [])];
         const filtered = currentList.filter(c => c.commessaId !== req.commessaId);
         filtered.push({
@@ -474,11 +533,25 @@ export default function PianificazionePersonale() {
       const reqRef = doc(db, 'richieste_disegnatori', req.id);
       batch.update(reqRef, {
         stato: 'approvata',
-        disegnatoreAssegnato: disegnatoreNome
+        risorseAssegnata: risorsaNome
       });
       
       await batch.commit();
-      showToast("Richiesta approvata e disegnatore assegnato con successo!", "success");
+
+      // Notifica al richiedente dell'approvazione
+      if (req.richiedenteEmail) {
+        const areaLabel = req.area || 'Disegnatori';
+        const subject = `[Approvata] Richiesta ${areaLabel} per ${req.commessaName}`;
+        const htmlBody = `
+          <p>Gentile ${req.richiedenteNome || req.richiedenteEmail},</p>
+          <p>La tua richiesta di personale dell'area <strong>${areaLabel}</strong> per la commessa <strong>${req.commessaName}</strong> è stata <strong style="color:#059669">approvata</strong>.</p>
+          <p>Risorsa assegnata: <strong>${risorsaNome}</strong></p>
+          <p>Periodo: ${req.dataInizio} → ${req.dataFine} | Carico: ${req.percentuale}%</p>
+        `;
+        await queueMail(req.richiedenteEmail, subject, htmlBody);
+      }
+
+      showToast("Richiesta approvata e risorsa assegnata con successo!", "success");
     } catch (err) {
       console.error("Errore approvazione richiesta:", err);
       showToast("Errore durante l'approvazione.", "error");
@@ -489,7 +562,7 @@ export default function PianificazionePersonale() {
     setConfirmConfig({
       isOpen: true,
       title: "Rifiuta Richiesta",
-      message: "Sei sicuro di voler rifiutare questa richiesta di disegnatore?",
+      message: "Sei sicuro di voler rifiutare questa richiesta?",
       type: "warning",
       onConfirm: async () => {
         try {
@@ -704,13 +777,13 @@ export default function PianificazionePersonale() {
     if (commObj) {
       const pmArray = Array.isArray(commObj.pm) ? commObj.pm : (commObj.pm ? [commObj.pm] : []);
       const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
-      const isUserAllowed = isAdmin || isSenior || areNamesEqual(commObj.responsabile, myAssociatedName) || isPM;
+      const isUserAllowed = isAdmin || isSoci(myAssociatedName) || areNamesEqual(commObj.responsabile, myAssociatedName) || isPM;
       if (!isUserAllowed) {
         showToast("Non hai i permessi per questa commessa.", "error");
         return;
       }
     } else {
-      if (!isAdmin && !isSenior) {
+      if (!isAdmin && !isSoci(myAssociatedName)) {
         showToast("Non hai i permessi per questa operazione globale.", "error");
         return;
       }
@@ -774,7 +847,7 @@ export default function PianificazionePersonale() {
 
     const pmArray = Array.isArray(commObj.pm) ? commObj.pm : (commObj.pm ? [commObj.pm] : []);
     const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
-    const isUserAllowed = isAdmin || isSenior || areNamesEqual(commObj.responsabile, myAssociatedName) || isPM;
+    const isUserAllowed = isAdmin || isSoci(myAssociatedName) || areNamesEqual(commObj.responsabile, myAssociatedName) || isPM;
     if (!isUserAllowed) {
       showToast("Non hai i permessi per questa commessa (PM/Responsabile o Admin richiesto).", "error");
       return;
@@ -990,15 +1063,15 @@ export default function PianificazionePersonale() {
     if (commObj) {
       const pmArray = Array.isArray(commObj.pm) ? commObj.pm : (commObj.pm ? [commObj.pm] : []);
       const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
-      const isUserAllowed = isAdmin || isSenior || areNamesEqual(commObj.responsabile, myAssociatedName) || isPM;
+      const isUserAllowed = isAdmin || isSoci(myAssociatedName) || areNamesEqual(commObj.responsabile, myAssociatedName) || isPM;
       if (!isUserAllowed) {
-        showToast("Non hai i permessi per pianificare risorse su questa commessa (solo Amministratori, Responsabili Senior o il PM/Responsabile specifico della commessa sono autorizzati).", "error");
+        showToast("Non hai i permessi per pianificare risorse su questa commessa (solo Amministratori, Soci o il PM/Responsabile specifico della commessa sono autorizzati).", "error");
         return;
       }
     } else {
-      // Global removal: only Admin or Senior
-      if (!isAdmin && !isSenior) {
-        showToast("Non hai i permessi per eseguire questa operazione globale (solo Amministratori o Responsabili Senior possono liberare risorse o rimuovere commesse globalmente).", "error");
+      // Operazione globale: solo Admin o Soci
+      if (!isAdmin && !isSoci(myAssociatedName)) {
+        showToast("Non hai i permessi per eseguire questa operazione globale (solo Amministratori o Soci possono liberare risorse o rimuovere commesse globalmente).", "error");
         return;
       }
     }
@@ -1358,21 +1431,17 @@ export default function PianificazionePersonale() {
   const collaborators = useMemo(() => {
     return filteredGridDipendenti.filter(d => isCollaboratore(d.nome, d.tipo));
   }, [filteredGridDipendenti]);
-  const myCoordinatedAreas = useMemo(() => {
-    const email = userEmail;
-    if (!email) return [];
-    return coordinatori
-      .filter(c => c.email.toLowerCase() === email)
-      .map(c => c.area);
-  }, [userEmail, coordinatori]);
+
+  // myCoordinatedAreas è ora definito in cima (riga ~201) per poter essere usato in filteredDipendenti
 
   const isCoordinatoreQualsiasi = useMemo(() => {
     return myCoordinatedAreas.length > 0;
   }, [myCoordinatedAreas]);
 
+  // Un dipendente normale: non è admin, non è socio, non è coordinatore, non è PM
   const isDipendenteNormale = useMemo(() => {
-    return !isAdmin && !isSenior && !isCoordinatoreQualsiasi;
-  }, [isAdmin, isSenior, isCoordinatoreQualsiasi]);
+    return !isAdmin && !isSoci(myAssociatedName) && !isCoordinatoreQualsiasi && !isPMOrResponsabile;
+  }, [isAdmin, myAssociatedName, isCoordinatoreQualsiasi, isPMOrResponsabile]);
   const disegnatori = useMemo(() => {
     return filteredGridDipendenti.filter(d => !isSoci(d.nome) && d.macroArea === 'Disegnatori');
   }, [filteredGridDipendenti]);
@@ -1472,7 +1541,8 @@ export default function PianificazionePersonale() {
 
   const renderEmployeeRow = (dip: Dipendente, parentAreaName: string) => {
     const isCoordinatoreArea = coordinatori.some(c => c.email.toLowerCase() === userEmail && c.area === parentAreaName);
-    const isEditable = isAdmin || isCoordinatoreArea;
+    // Può modificare la cella se è admin/socio, o coordinatore di quest'area
+    const isEditable = isAdmin || isSoci(myAssociatedName) || isCoordinatoreArea;
     const isResponsabileDiQuestArea = coordinatori.some(c => c.email.toLowerCase() === dip.email?.toLowerCase() && c.area === parentAreaName);
 
     let areaColorClass = "border-l-4 border-slate-350 bg-slate-50/20 text-slate-900";
@@ -1524,7 +1594,10 @@ export default function PianificazionePersonale() {
 
           // I Disegnatori possono essere modificati solo da Romanello (coordinatore) o admin
           const isDisegnatore = parentAreaName === 'Disegnatori';
-          const canDirectlyEditCell = !isWeekCessato && (isEditable || isPMOrResponsabile) && (!isDisegnatore || isAdmin || isCoordinatoreArea);
+          // Admin/Soci e coordinatori dell'area possono sempre editare;
+          // PM possono editare le celle delle risorse delle proprie commesse
+          // Disegnatori: solo coordinatore dell'area o admin/soci
+          const canDirectlyEditCell = !isWeekCessato && (isEditable || isPMOrResponsabile) && (!isDisegnatore || isAdmin || isSoci(myAssociatedName) || isCoordinatoreArea);
 
           let bgClass = isWeekCessato 
             ? "bg-slate-400/90 text-white font-bold text-center" 
@@ -1662,7 +1735,9 @@ export default function PianificazionePersonale() {
 
   const renderAreaRow = (areaName: string, members: Dipendente[]) => {
     const isMyCoordinatedArea = myCoordinatedAreas.includes(areaName);
-    const canExpand = isAdmin || isMyCoordinatedArea;
+    // PM possono espandere la loro area di appartenenza
+    const isPMInThisArea = isPMOrResponsabile && (myMacroArea === areaName || isMyCoordinatedArea);
+    const canExpand = isAdmin || isSoci(myAssociatedName) || isMyCoordinatedArea || isPMInThisArea;
     const isExpanded = expandedAreas[areaName];
 
     const toggleExpand = () => {
@@ -1826,9 +1901,18 @@ export default function PianificazionePersonale() {
           <div className="p-3 bg-indigo-100 rounded-2xl"><Users className="text-indigo-600 w-8 h-8" /></div>
           <div className="flex items-center gap-3">
             <span>Pianificazione del Personale e Carichi</span>
-            {(isAdmin || isSoci(myAssociatedName) || coordinatori.some(c => c.email.toLowerCase() === userEmail && c.area === 'Disegnatori')) && richiesteDisegnatori.filter(r => r.stato === 'in_attesa').length > 0 && (
+            {(isAdmin || isSoci(myAssociatedName) || myCoordinatedAreas.length > 0) &&
+              richiesteDisegnatori.filter(r => {
+                const rArea = r.area || 'Disegnatori';
+                if (isAdmin || isSoci(myAssociatedName)) return r.stato === 'in_attesa';
+                return r.stato === 'in_attesa' && myCoordinatedAreas.includes(rArea);
+              }).length > 0 && (
               <span className="bg-red-500 text-white text-[10px] font-black px-2 py-1 rounded-full shadow-sm animate-pulse ml-2">
-                {richiesteDisegnatori.filter(r => r.stato === 'in_attesa').length} RICHIESTE IN ATTESA
+                {richiesteDisegnatori.filter(r => {
+                  const rArea = r.area || 'Disegnatori';
+                  if (isAdmin || isSoci(myAssociatedName)) return r.stato === 'in_attesa';
+                  return r.stato === 'in_attesa' && myCoordinatedAreas.includes(rArea);
+                }).length} RICHIESTE IN ATTESA
               </span>
             )}
             <button 
@@ -1842,64 +1926,93 @@ export default function PianificazionePersonale() {
         </h2>
       </div>
 
-      {/* SEZIONE BLINDATA: GESTIONE RICHIESTE DISEGNATORI */}
-      {(isAdmin || coordinatori.some(c => c.email.toLowerCase() === userEmail && c.area === 'Disegnatori') || isSoci(myAssociatedName)) && (
-        (() => {
-          const pendingReqs = richiesteDisegnatori.filter(r => r.stato === 'in_attesa');
-          if (pendingReqs.length === 0) return null;
-          
+      {/* SEZIONE GESTIONE RICHIESTE PERSONALE (per tutte le aree) */}
+      {(() => {
+        // Determina quali richieste deve vedere l'utente loggato
+        const visibleReqs = richiesteDisegnatori.filter(r => {
+          if (r.stato !== 'in_attesa') return false;
+          const rArea = r.area || 'Disegnatori';
+          if (isAdmin || isSoci(myAssociatedName)) return true;
+          return myCoordinatedAreas.includes(rArea);
+        });
+
+        if (visibleReqs.length === 0) return null;
+
+        // Raggruppa per area
+        const byArea: Record<string, typeof visibleReqs> = {};
+        visibleReqs.forEach(req => {
+          const a = req.area || 'Disegnatori';
+          if (!byArea[a]) byArea[a] = [];
+          byArea[a].push(req);
+        });
+
+        const areaColors: Record<string, { bg: string; border: string; heading: string; badge: string; btn: string; select: string }> = {
+          'Disegnatori':          { bg: 'from-teal-50 to-emerald-50', border: 'border-teal-100', heading: 'text-teal-900', badge: 'bg-teal-100 text-teal-800', btn: 'bg-teal-600 hover:bg-teal-700', select: 'border-teal-200 focus:ring-teal-500' },
+          'Ingegneria':           { bg: 'from-indigo-50 to-blue-50', border: 'border-indigo-100', heading: 'text-indigo-900', badge: 'bg-indigo-100 text-indigo-800', btn: 'bg-indigo-600 hover:bg-indigo-700', select: 'border-indigo-200 focus:ring-indigo-500' },
+          'Sicurezza Cantieri':   { bg: 'from-emerald-50 to-green-50', border: 'border-emerald-100', heading: 'text-emerald-900', badge: 'bg-emerald-100 text-emerald-800', btn: 'bg-emerald-600 hover:bg-emerald-700', select: 'border-emerald-200 focus:ring-emerald-500' },
+          'Consulenza Sicurezza': { bg: 'from-amber-50 to-yellow-50', border: 'border-amber-100', heading: 'text-amber-900', badge: 'bg-amber-100 text-amber-800', btn: 'bg-amber-600 hover:bg-amber-700', select: 'border-amber-200 focus:ring-amber-500' },
+          'Amministrazione':      { bg: 'from-blue-50 to-sky-50', border: 'border-blue-100', heading: 'text-blue-900', badge: 'bg-blue-100 text-blue-800', btn: 'bg-blue-600 hover:bg-blue-700', select: 'border-blue-200 focus:ring-blue-500' },
+        };
+
+        const getMembersForArea = (areaName: string): Dipendente[] => {
+          return filteredGridDipendenti.filter(d => !isSoci(d.nome) && d.macroArea === areaName);
+        };
+
+        return Object.entries(byArea).map(([areaName, areaReqs]) => {
+          const colors = areaColors[areaName] || areaColors['Disegnatori'];
+          const areaMembers = getMembersForArea(areaName);
+
           return (
-            <div className="bg-gradient-to-br from-teal-50 to-emerald-50 rounded-[2rem] p-6 border border-teal-100 shadow-sm space-y-4 no-print animate-in fade-in duration-300">
-              <h3 className="text-xl font-bold text-teal-900 flex items-center gap-2">
-                📥 Gestione Richieste Disegnatori in Attesa ({pendingReqs.length})
+            <div key={areaName} className={`bg-gradient-to-br ${colors.bg} rounded-[2rem] p-6 border ${colors.border} shadow-sm space-y-4 no-print animate-in fade-in duration-300`}>
+              <h3 className={`text-xl font-bold ${colors.heading} flex items-center gap-2`}>
+                📥 Richieste Personale — {areaName} ({areaReqs.length} in attesa)
               </h3>
-              <p className="text-xs text-teal-700/80">Valuta i carichi di lavoro correnti ed assegna la risorsa definitiva per approvare la richiesta.</p>
-              
+              <p className="text-xs text-gray-600/80">Valuta i carichi di lavoro correnti ed assegna la risorsa definitiva per approvare la richiesta.</p>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {pendingReqs.map(req => {
-                  const selectedDisegnatore = selectedDisegnatoriPerRichiesta[req.id] || '';
-                  
+                {areaReqs.map(req => {
+                  const selectedRisorsa = selectedRisorsePerRichiesta[req.id] || '';
                   return (
-                    <div key={req.id} className="bg-white p-5 rounded-2xl border border-teal-100 shadow-sm flex flex-col justify-between gap-3 text-xs">
+                    <div key={req.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-between gap-3 text-xs">
                       <div>
                         <div className="flex justify-between items-center mb-1">
-                          <span className="font-extrabold text-teal-950 text-sm">{req.commessaName}</span>
-                          <span className="bg-teal-100 text-teal-800 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider text-[9px]">In Attesa</span>
+                          <span className={`font-extrabold ${colors.heading} text-sm`}>{req.commessaName}</span>
+                          <span className={`${colors.badge} px-2 py-0.5 rounded-full font-bold uppercase tracking-wider text-[9px]`}>In Attesa</span>
                         </div>
                         <div className="text-gray-500 mt-1 space-y-1">
                           <div>📅 Periodo: <strong className="text-gray-700">{formatCommDate(req.dataInizio)}</strong> al <strong className="text-gray-700">{formatCommDate(req.dataFine)}</strong></div>
                           <div>⚡ Carico Richiesto: <strong className="text-gray-800">{req.percentuale}%</strong></div>
                           <div>👤 Richiedente: <span className="font-semibold text-gray-700">{req.richiedenteNome}</span> ({req.richiedenteEmail})</div>
                           {req.nota && (
-                            <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 italic text-gray-650 mt-2">
-                              " {req.nota} "
+                            <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 italic text-gray-600 mt-2">
+                              &ldquo;{req.nota}&rdquo;
                             </div>
                           )}
                         </div>
                       </div>
-                      
+
                       <div className="flex flex-col gap-2 mt-3 pt-3 border-t border-gray-100">
-                        <label className="block text-[10px] font-bold text-teal-950 uppercase tracking-wider">Seleziona Disegnatore Definitivo</label>
+                        <label className={`block text-[10px] font-bold ${colors.heading} uppercase tracking-wider`}>Seleziona Risorsa {areaName} da Assegnare</label>
                         <div className="flex gap-2">
-                          <select 
-                            value={selectedDisegnatore}
-                            onChange={e => setSelectedDisegnatoriPerRichiesta(prev => ({ ...prev, [req.id]: e.target.value }))}
-                            className="flex-1 p-2.5 border border-teal-200 rounded-xl bg-slate-50 text-xs font-bold text-gray-750 focus:ring-2 focus:ring-teal-500 outline-none"
+                          <select
+                            value={selectedRisorsa}
+                            onChange={e => setSelectedRisorsePerRichiesta(prev => ({ ...prev, [req.id]: e.target.value }))}
+                            className={`flex-1 p-2.5 border ${colors.select} rounded-xl bg-slate-50 text-xs font-bold text-gray-750 focus:ring-2 outline-none`}
                           >
-                            <option value="">-- Scegli Disegnatore --</option>
-                            {disegnatori.map(d => (
+                            <option value="">-- Scegli Risorsa --</option>
+                            {areaMembers.map(d => (
                               <option key={d.id} value={d.nome}>{d.nome}</option>
                             ))}
                           </select>
-                          
+
                           <button
                             onClick={() => handleApproveRequest(req)}
-                            disabled={!selectedDisegnatore}
-                            className="bg-teal-600 text-white font-extrabold px-4 py-2.5 rounded-xl shadow hover:bg-teal-700 transition active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                            disabled={!selectedRisorsa}
+                            className={`${colors.btn} text-white font-extrabold px-4 py-2.5 rounded-xl shadow transition active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer`}
                           >
                             Approva
                           </button>
-                          
+
                           <button
                             onClick={() => handleRejectRequest(req.id)}
                             className="bg-transparent hover:bg-rose-50 text-rose-600 font-extrabold px-3 py-2.5 rounded-xl border border-rose-200 transition active:scale-95 cursor-pointer"
@@ -1914,8 +2027,8 @@ export default function PianificazionePersonale() {
               </div>
             </div>
           );
-        })()
-      )}
+        });
+      })()}
 
       {/* BOZZA DRAFT BANNER */}
       {isDirty && (
@@ -1974,8 +2087,8 @@ export default function PianificazionePersonale() {
         </div>
       )}
 
-      {/* 1. BULK ALLOCATION PANEL */}
-      {(isAdmin || isSenior || isPMOrResponsabile) && (
+      {/* 1. BULK ALLOCATION PANEL — visibile solo ad Admin, Soci, Coordinatori e PM */}
+      {(isAdmin || isSoci(myAssociatedName) || isCoordinatoreQualsiasi || isPMOrResponsabile) && (
         <div className="bg-gradient-to-br from-indigo-50 to-blue-50 p-6 sm:p-8 rounded-[2rem] border border-indigo-100 shadow-xl no-print">
           <h3 className="text-xl font-extrabold text-indigo-950 mb-4 flex items-center gap-2">
             Pianificatore Risorse
@@ -2020,12 +2133,14 @@ export default function PianificazionePersonale() {
 
           {/* TAB CONTENT: GESTIONE PER COMMESSA */}
           {activeTab === 'commessa' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Colonna 1: Selezione Commessa e Periodo */}
-              <div className="lg:col-span-1 space-y-4 bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col justify-start">
-                <h4 className="font-bold text-sm text-indigo-900 border-b pb-2">1. Commessa & Periodo</h4>
-                
-                <div className="relative">
+            <div className="flex flex-col gap-6">
+
+              {/* Riga 1: Commessa & Periodo – barra compatta orizzontale */}
+              <div className="bg-white/60 p-4 rounded-2xl border border-indigo-100/50 flex flex-wrap gap-4 items-end">
+                <div className="font-bold text-sm text-indigo-900 w-full border-b pb-2 mb-1">1. Commessa &amp; Periodo</div>
+
+                {/* Ricerca commessa */}
+                <div className="relative flex-1 min-w-[220px]">
                   <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Commessa</label>
                   <div className="relative">
                     <input
@@ -2090,190 +2205,208 @@ export default function PianificazionePersonale() {
                   )}
                 </div>
 
+                {/* Data Inizio */}
+                <div className="min-w-[140px]">
+                  <label className="block text-[10px] font-black text-indigo-950 uppercase tracking-wider mb-1 ml-0.5">Data Inizio</label>
+                  <input
+                    type="date"
+                    required
+                    value={allocDataInizio}
+                    onChange={e => setAllocDataInizio(e.target.value)}
+                    className="w-full p-2.5 border-none bg-white rounded-xl text-xs font-bold text-gray-750 outline-none shadow-sm"
+                  />
+                </div>
+
+                {/* Data Fine */}
+                <div className="min-w-[140px]">
+                  <label className="block text-[10px] font-black text-indigo-950 uppercase tracking-wider mb-1 ml-0.5">Data Fine</label>
+                  <input
+                    type="date"
+                    required
+                    value={allocDataFine}
+                    onChange={e => setAllocDataFine(e.target.value)}
+                    className="w-full p-2.5 border-none bg-white rounded-xl text-xs font-bold text-gray-750 outline-none shadow-sm"
+                  />
+                </div>
+
+                {/* Durata commessa (badge) */}
                 {selectedCommessaId && (() => {
                   const comm = commesse.find(c => c.id === selectedCommessaId);
                   if (!comm || (!comm.dataInizio && !comm.dataFine)) return null;
                   return (
-                    <div className="text-xs text-indigo-950/85 font-semibold bg-white/70 p-2.5 rounded-xl border border-indigo-100/50 flex items-center gap-1.5 shadow-sm">
+                    <div className="text-xs text-indigo-950/85 font-semibold bg-white/70 px-3 py-2.5 rounded-xl border border-indigo-100/50 flex items-center gap-1.5 shadow-sm self-end">
                       <span>🗓️</span>
-                      <span>
-                        Durata commessa: <strong className="text-indigo-900">{comm.dataInizio ? formatCommDate(comm.dataInizio) : 'N/D'}</strong> - <strong className="text-indigo-900">{comm.dataFine ? formatCommDate(comm.dataFine) : 'N/D'}</strong>
-                      </span>
+                      <span>Durata: <strong className="text-indigo-900">{comm.dataInizio ? formatCommDate(comm.dataInizio) : 'N/D'}</strong> – <strong className="text-indigo-900">{comm.dataFine ? formatCommDate(comm.dataFine) : 'N/D'}</strong></span>
                     </div>
                   );
                 })()}
+              </div>
 
-                <div className="flex flex-col gap-3 bg-indigo-50/40 p-4 rounded-xl border border-indigo-100/30">
-                  <div>
-                    <label className="block text-[10px] font-black text-indigo-950 uppercase tracking-wider mb-1 ml-0.5">Data Inizio</label>
-                    <input 
-                      type="date"
-                      required
-                      value={allocDataInizio}
-                      onChange={e => setAllocDataInizio(e.target.value)}
-                      className="w-full p-2.5 border-none bg-white rounded-xl text-xs font-bold text-gray-750 outline-none shadow-sm"
-                    />
+              {/* Riga 2: Pannelli risorse – occupano tutto lo spazio */}
+              {!selectedCommessaId || !allocDataInizio || !allocDataFine ? (
+                <div className="bg-white/50 border border-dashed border-indigo-200 rounded-2xl p-8 text-center text-xs font-bold text-indigo-900/60 flex items-center justify-center min-h-[200px]">
+                  ⚠️ Seleziona una commessa e un periodo di date per visualizzare e gestire le risorse assegnate.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Altre Risorse (Non Assegnate) */}
+                  <div className="bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col max-h-[520px]">
+                    <h4 className="font-bold text-sm text-indigo-900 border-b pb-2 mb-3">
+                      ➕ Aggiungi Risorsa ({risorseNonAssegnateAllaCommessa.length})
+                    </h4>
+                    <div className="mb-2 shrink-0">
+                      <input
+                        type="text"
+                        placeholder="Filtra dipendenti..."
+                        value={searchQuery}
+                        onChange={e => setSearchQuery(e.target.value)}
+                        className="w-full p-2 border border-indigo-100 bg-white rounded-xl text-xs outline-none focus:ring-1 focus:ring-indigo-400 shadow-inner font-bold text-gray-700"
+                      />
+                    </div>
+                    <div className="overflow-y-auto flex-1 space-y-2 pr-1 scrollbar-thin">
+                      {risorseNonAssegnateAllaCommessa.length === 0 ? (
+                        <p className="text-xs text-gray-405 italic p-3 text-center">Tutte le risorse sono assegnate.</p>
+                      ) : (
+                        risorseNonAssegnateAllaCommessa.map(r => {
+                          const currentPct = assignPercentageMap[r.nome] || '100';
+                          return (
+                            <div key={r.nome} className="flex justify-between items-center p-2.5 bg-white rounded-xl border border-indigo-50 shadow-sm hover:border-indigo-100 transition-colors">
+                              <span className="font-bold text-xs text-gray-750 truncate pr-2">{r.nome}</span>
+                              <div className="flex items-center gap-2">
+                                <select
+                                  value={currentPct}
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    setAssignPercentageMap(prev => ({ ...prev, [r.nome]: val }));
+                                  }}
+                                  className="p-1 border border-gray-200 rounded-lg bg-white font-bold text-[10px] text-gray-700 outline-none focus:border-indigo-400"
+                                >
+                                  {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
+                                    <option key={pct} value={pct}>{pct}%</option>
+                                  ))}
+                                </select>
+                                <button
+                                  type="button"
+                                  disabled={savingAllocations}
+                                  onClick={async () => {
+                                    await executeAssignResourceToCommessa(r.nome, selectedCommessaId, parseInt(currentPct));
+                                  }}
+                                  className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-[10px] px-2.5 py-1.5 rounded-lg transition shadow-sm active:scale-95 disabled:opacity-50"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                  <span>Assegna</span>
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-[10px] font-black text-indigo-950 uppercase tracking-wider mb-1 ml-0.5">Data Fine</label>
-                    <input 
-                      type="date"
-                      required
-                      value={allocDataFine}
-                      onChange={e => setAllocDataFine(e.target.value)}
-                      className="w-full p-2.5 border-none bg-white rounded-xl text-xs font-bold text-gray-750 outline-none shadow-sm"
-                    />
+
+                  {/* Lista Risorse Assegnate */}
+                  <div className="bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col max-h-[520px]">
+                    <h4 className="font-bold text-sm text-indigo-900 border-b pb-2 mb-3">
+                      👥 Risorse Assegnate ({risorseAssegnateAllaCommessa.length})
+                    </h4>
+                    <div className="overflow-y-auto flex-1 space-y-2 pr-1 scrollbar-thin">
+                      {risorseAssegnateAllaCommessa.length === 0 ? (
+                        <p className="text-xs text-gray-405 italic p-3 text-center">Nessuna risorsa assegnata in questo periodo.</p>
+                      ) : (
+                        risorseAssegnateAllaCommessa.map(r => {
+                          const pcts = Object.values(r.percentuali);
+                          const minPct = Math.min(...pcts);
+                          const maxPct = Math.max(...pcts);
+                          const displayPct = minPct === maxPct ? `${minPct}%` : `${minPct}% - ${maxPct}%`;
+
+                          return (
+                            <div key={r.nome} className="flex justify-between items-center p-2.5 bg-white rounded-xl border border-indigo-50 shadow-sm hover:border-indigo-100 transition-colors">
+                              <div className="flex flex-col gap-0.5 truncate pr-2">
+                                <span className="font-bold text-xs text-gray-850 truncate">{r.nome}</span>
+                                {displayPct && <span className="text-[10px] font-black text-indigo-650">Impegno commessa: {displayPct}</span>}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <select
+                                  value={pcts[0] || 100}
+                                  disabled={savingAllocations}
+                                  onChange={async (e) => {
+                                    await executeAssignResourceToCommessa(r.nome, selectedCommessaId, parseInt(e.target.value));
+                                  }}
+                                  className="p-1 border border-gray-200 rounded-lg bg-white font-bold text-[10px] text-gray-700 outline-none focus:border-indigo-400"
+                                >
+                                  <option value="10">10%</option>
+                                  <option value="20">20%</option>
+                                  <option value="30">30%</option>
+                                  <option value="40">40%</option>
+                                  <option value="50">50%</option>
+                                  <option value="60">60%</option>
+                                  <option value="70">70%</option>
+                                  <option value="80">80%</option>
+                                  <option value="90">90%</option>
+                                  <option value="100">100%</option>
+                                </select>
+                                <button
+                                  type="button"
+                                  disabled={savingAllocations}
+                                  onClick={() => {
+                                    setConfirmConfig({
+                                      isOpen: true,
+                                      title: 'Rimozione Risorsa',
+                                      message: `Sei sicuro di voler rimuovere ${r.nome} da questa commessa per il periodo selezionato?`,
+                                      type: 'danger',
+                                      onConfirm: async () => {
+                                        await executeRemoveResourceFromCommessa(r.nome, selectedCommessaId);
+                                        setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+                                      }
+                                    });
+                                  }}
+                                  className="text-red-500 hover:text-red-750 hover:bg-red-55 p-1.5 rounded-lg transition-colors disabled:opacity-50"
+                                  title="Rimuovi risorsa da questa commessa"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
 
-                            {/* Colonna 2 & 3: Risorse Assegnate & Non Assegnate */}
-              <div className="lg:col-span-2 space-y-6">
-                {!selectedCommessaId || !allocDataInizio || !allocDataFine ? (
-                  <div className="bg-white/50 border border-dashed border-indigo-200 rounded-2xl p-8 text-center text-xs font-bold text-indigo-900/60 flex items-center justify-center h-full min-h-[200px]">
-                    ⚠️ Seleziona una commessa e un periodo di date per visualizzare e gestire le risorse assegnate.
+              {/* Pulsanti Richiesta Personale – centrati sotto, visibili solo quando commessa + periodo selezionati */}
+              {selectedCommessaId && allocDataInizio && allocDataFine && (() => {
+                const areaButtonConfigs: Record<MacroArea, { color: string; label: string }> = {
+                  'Disegnatori':          { color: 'bg-teal-600 hover:bg-teal-700',     label: '✉️ Richiedi Disegnatore' },
+                  'Ingegneria':           { color: 'bg-indigo-600 hover:bg-indigo-700', label: '✉️ Richiedi Ingegnere' },
+                  'Sicurezza Cantieri':   { color: 'bg-emerald-600 hover:bg-emerald-700', label: '✉️ Richiedi Risorsa Sicurezza Cantieri' },
+                  'Consulenza Sicurezza': { color: 'bg-amber-600 hover:bg-amber-700',   label: '✉️ Richiedi Consulente Sicurezza' },
+                  'Amministrazione':      { color: 'bg-blue-600 hover:bg-blue-700',     label: '✉️ Richiedi Risorsa Amministrativa' },
+                };
+                // Nasconde le aree che il coordinatore già gestisce
+                const areasToShow = MACRO_AREE.filter(a => !myCoordinatedAreas.includes(a));
+                if (areasToShow.length === 0) return null;
+                return (
+                  <div className="flex flex-wrap justify-center gap-2 pt-1 border-t border-indigo-100/50">
+                    <span className="w-full text-center text-[10px] font-black text-gray-400 uppercase tracking-wider mb-1">Richiedi personale da altra area</span>
+                    {areasToShow.map(area => {
+                      const cfg = areaButtonConfigs[area];
+                      return (
+                        <button
+                          key={area}
+                          type="button"
+                          onClick={() => openRequestModalForArea(area)}
+                          className={`flex items-center gap-2 ${cfg.color} text-white px-4 py-2.5 rounded-2xl font-bold text-xs shadow-md active:scale-95 transition-all cursor-pointer`}
+                        >
+                          {cfg.label}
+                        </button>
+                      );
+                    })}
                   </div>
-                ) : (
-                  <div className="space-y-6">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {/* Altre Risorse (Non Assegnate) */}
-                      <div className="bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col max-h-[420px]">
-                        <h4 className="font-bold text-sm text-indigo-900 border-b pb-2 mb-3">
-                          ➕ Aggiungi Risorsa ({risorseNonAssegnateAllaCommessa.length})
-                        </h4>
-                        <div className="mb-2 shrink-0">
-                          <input 
-                            type="text" 
-                            placeholder="Filtra dipendenti..." 
-                            value={searchQuery}
-                            onChange={e => setSearchQuery(e.target.value)}
-                            className="w-full p-2 border border-indigo-100 bg-white rounded-xl text-xs outline-none focus:ring-1 focus:ring-indigo-400 shadow-inner font-bold text-gray-700"
-                          />
-                        </div>
-                        <div className="overflow-y-auto flex-1 space-y-2 pr-1 scrollbar-thin">
-                          {risorseNonAssegnateAllaCommessa.length === 0 ? (
-                            <p className="text-xs text-gray-405 italic p-3 text-center">Tutte le risorse sono assegnate.</p>
-                          ) : (
-                            risorseNonAssegnateAllaCommessa.map(r => {
-                              const currentPct = assignPercentageMap[r.nome] || '100';
-                              return (
-                                <div key={r.nome} className="flex justify-between items-center p-2.5 bg-white rounded-xl border border-indigo-50 shadow-sm hover:border-indigo-100 transition-colors">
-                                  <span className="font-bold text-xs text-gray-750 truncate pr-2">{r.nome}</span>
-                                  <div className="flex items-center gap-2">
-                                    <select
-                                      value={currentPct}
-                                      onChange={e => {
-                                        const val = e.target.value;
-                                        setAssignPercentageMap(prev => ({ ...prev, [r.nome]: val }));
-                                      }}
-                                      className="p-1 border border-gray-200 rounded-lg bg-white font-bold text-[10px] text-gray-700 outline-none focus:border-indigo-400"
-                                    >
-                                      {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
-                                        <option key={pct} value={pct}>{pct}%</option>
-                                      ))}
-                                    </select>
-                                    <button
-                                      type="button"
-                                      disabled={savingAllocations}
-                                      onClick={async () => {
-                                        await executeAssignResourceToCommessa(r.nome, selectedCommessaId, parseInt(currentPct));
-                                      }}
-                                      className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-[10px] px-2.5 py-1.5 rounded-lg transition shadow-sm active:scale-95 disabled:opacity-50"
-                                    >
-                                      <Plus className="w-3.5 h-3.5" />
-                                      <span>Assegna</span>
-                                    </button>
-                                  </div>
-                                </div>
-                              );
-                            })
-                          )}
-                        </div>
-                      </div>
+                );
+              })()}
 
-                      {/* Lista Risorse Assegnate */}
-                      <div className="bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col max-h-[420px]">
-                        <h4 className="font-bold text-sm text-indigo-900 border-b pb-2 mb-3">
-                          👥 Risorse Assegnate ({risorseAssegnateAllaCommessa.length})
-                        </h4>
-                        <div className="overflow-y-auto flex-1 space-y-2 pr-1 scrollbar-thin">
-                          {risorseAssegnateAllaCommessa.length === 0 ? (
-                            <p className="text-xs text-gray-405 italic p-3 text-center">Nessuna risorsa assegnata in questo periodo.</p>
-                          ) : (
-                            risorseAssegnateAllaCommessa.map(r => {
-                              const pcts = Object.values(r.percentuali);
-                              const minPct = Math.min(...pcts);
-                              const maxPct = Math.max(...pcts);
-                              const displayPct = minPct === maxPct ? `${minPct}%` : `${minPct}% - ${maxPct}%`;
-                              
-                              return (
-                                <div key={r.nome} className="flex justify-between items-center p-2.5 bg-white rounded-xl border border-indigo-50 shadow-sm hover:border-indigo-100 transition-colors">
-                                  <div className="flex flex-col gap-0.5 truncate pr-2">
-                                    <span className="font-bold text-xs text-gray-850 truncate">{r.nome}</span>
-                                    {displayPct && <span className="text-[10px] font-black text-indigo-650">Impegno commessa: {displayPct}</span>}
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                    <select
-                                      value={pcts[0] || 100}
-                                      disabled={savingAllocations}
-                                      onChange={async (e) => {
-                                        await executeAssignResourceToCommessa(r.nome, selectedCommessaId, parseInt(e.target.value));
-                                      }}
-                                      className="p-1 border border-gray-200 rounded-lg bg-white font-bold text-[10px] text-gray-700 outline-none focus:border-indigo-400"
-                                    >
-                                      <option value="10">10%</option>
-                                      <option value="20">20%</option>
-                                      <option value="30">30%</option>
-                                      <option value="40">40%</option>
-                                      <option value="50">50%</option>
-                                      <option value="60">60%</option>
-                                      <option value="70">70%</option>
-                                      <option value="80">80%</option>
-                                      <option value="90">90%</option>
-                                      <option value="100">100%</option>
-                                    </select>
-                                    <button
-                                      type="button"
-                                      disabled={savingAllocations}
-                                      onClick={() => {
-                                        setConfirmConfig({
-                                          isOpen: true,
-                                          title: 'Rimozione Risorsa',
-                                          message: `Sei sicuro di voler rimuovere ${r.nome} da questa commessa per il periodo selezionato?`,
-                                          type: 'danger',
-                                          onConfirm: async () => {
-                                            await executeRemoveResourceFromCommessa(r.nome, selectedCommessaId);
-                                            setConfirmConfig(prev => ({ ...prev, isOpen: false }));
-                                          }
-                                        });
-                                      }}
-                                      className="text-red-500 hover:text-red-750 hover:bg-red-55 p-1.5 rounded-lg transition-colors disabled:opacity-50"
-                                      title="Rimuovi risorsa da questa commessa"
-                                    >
-                                      <Trash2 className="w-4 h-4" />
-                                    </button>
-                                  </div>
-                                </div>
-                              );
-                            })
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Pulsante Richiedi Disegnatore sotto la griglia */}
-                    <div className="flex justify-end pt-2">
-                      <button
-                        type="button"
-                        onClick={openRequestModalWithSelection}
-                        className="flex items-center gap-2 bg-teal-600 hover:bg-teal-700 text-white px-5 py-2.5 rounded-2xl font-bold text-xs shadow-md active:scale-95 transition-all cursor-pointer animate-in fade-in duration-200"
-                      >
-                        <span>✉️</span> Richiedi Disegnatore per questa Commessa
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
             </div>
           )}
 
@@ -2397,7 +2530,7 @@ export default function PianificazionePersonale() {
                             const commObj = commesse.find(x => x.id === c.id);
                             const pmArray = commObj && commObj.pm ? (Array.isArray(commObj.pm) ? commObj.pm : [commObj.pm]) : [];
                             const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
-                            const hasPermission = isAdmin || isSenior || (commObj && (isPM || areNamesEqual(commObj.responsabile, myAssociatedName)));
+                            const hasPermission = isAdmin || isSoci(myAssociatedName) || (commObj && (isPM || areNamesEqual(commObj.responsabile, myAssociatedName)));
 
                             return (
                               <div key={c.id} className="flex justify-between items-center p-2.5 bg-white rounded-xl border border-indigo-50 shadow-sm hover:border-indigo-100 transition-colors">
@@ -2625,9 +2758,9 @@ export default function PianificazionePersonale() {
           <div>
             <h3 className="font-extrabold text-xl text-gray-900">Carichi di Lavoro Settimanali</h3>
             <p className="text-xs text-gray-400 font-bold mt-0.5">
-              {(isAdmin || isSenior || isPMOrResponsabile) 
+              {(isAdmin || isSoci(myAssociatedName) || isCoordinatoreQualsiasi || isPMOrResponsabile)
                 ? "* Clicca su una cella per aggiungere, rimuovere o modificare i dettagli delle commesse di cui sei PM, Responsabile o Admin per quella settimana."
-                : "* Vista di sola lettura. (Solo Amministratori, Coordinatori o PM/Responsabili possono modificare la pianificazione)"
+                : "* Vista di sola lettura. (Solo Amministratori, Soci, Coordinatori o PM/Responsabili possono modificare la pianificazione)"
               }
             </p>
           </div>
@@ -2858,14 +2991,23 @@ export default function PianificazionePersonale() {
         onCancel={() => setConfirmConfig(prev => ({ ...prev, isOpen: false }))}
       />
 
-      {/* MODALE RICHIESTA DISEGNATORE */}
-      {isRequestModalOpen && (
+      {/* MODALE RICHIESTA PERSONALE (generico per ogni area) */}
+      {isRequestModalOpen && (() => {
+        const areaModalColors: Record<string, { gradient: string; titleColor: string; subtitleColor: string; ring: string }> = {
+          'Disegnatori':          { gradient: 'from-teal-50/50 to-slate-50',   titleColor: 'text-teal-950',   subtitleColor: 'text-teal-700/80',   ring: 'focus:ring-teal-500' },
+          'Ingegneria':           { gradient: 'from-indigo-50/50 to-slate-50', titleColor: 'text-indigo-950', subtitleColor: 'text-indigo-700/80', ring: 'focus:ring-indigo-500' },
+          'Sicurezza Cantieri':   { gradient: 'from-emerald-50/50 to-slate-50',titleColor: 'text-emerald-950',subtitleColor: 'text-emerald-700/80',ring: 'focus:ring-emerald-500' },
+          'Consulenza Sicurezza': { gradient: 'from-amber-50/50 to-slate-50',  titleColor: 'text-amber-950',  subtitleColor: 'text-amber-700/80',  ring: 'focus:ring-amber-500' },
+          'Amministrazione':      { gradient: 'from-blue-50/50 to-slate-50',   titleColor: 'text-blue-950',   subtitleColor: 'text-blue-700/80',   ring: 'focus:ring-blue-500' },
+        };
+        const mc = areaModalColors[reqAreaTarget] || areaModalColors['Disegnatori'];
+        return (
         <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-md flex items-center justify-center z-[9999] p-4 no-print animate-in fade-in duration-200">
           <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-lg border border-gray-100 flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
-            <div className="p-6 sm:p-8 border-b flex justify-between items-center bg-gradient-to-br from-indigo-50/50 to-slate-50 rounded-t-[2rem]">
+            <div className={`p-6 sm:p-8 border-b flex justify-between items-center bg-gradient-to-br ${mc.gradient} rounded-t-[2rem]`}>
               <div>
-                <h3 className="text-xl font-bold text-indigo-950">Richiedi Prenotazione Disegnatore</h3>
-                <p className="text-xs text-indigo-700/80 mt-1">Invia una richiesta al coordinatore dell'area Disegnatore.</p>
+                <h3 className={`text-xl font-bold ${mc.titleColor}`}>Richiedi Personale — {reqAreaTarget}</h3>
+                <p className={`text-xs ${mc.subtitleColor} mt-1`}>Invia una richiesta ai coordinatori dell'area <strong>{reqAreaTarget}</strong>.</p>
               </div>
               <button 
                 onClick={() => setIsRequestModalOpen(false)}
@@ -2876,13 +3018,19 @@ export default function PianificazionePersonale() {
             </div>
             
             <form onSubmit={handleSubmitRequest} className="p-6 sm:p-8 space-y-4 overflow-y-auto flex-1">
+              {/* Campo area (read-only) */}
+              <div className="bg-slate-50 rounded-xl px-4 py-2.5 border border-slate-100 flex items-center gap-2">
+                <span className="text-[10px] font-black text-gray-500 uppercase tracking-wider">Area richiesta:</span>
+                <span className="font-extrabold text-xs text-gray-800">{reqAreaTarget}</span>
+              </div>
+
               <div>
                 <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Seleziona Commessa</label>
                 <select
                   required
                   value={reqCommessaId}
                   onChange={e => setReqCommessaId(e.target.value)}
-                  className="w-full p-3 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner"
+                  className={`w-full p-3 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner`}
                 >
                   <option value="">-- Seleziona Commessa --</option>
                   {selectableCommesse.map(c => (
@@ -2899,7 +3047,7 @@ export default function PianificazionePersonale() {
                     type="date"
                     value={reqDataInizio}
                     onChange={e => setReqDataInizio(e.target.value)}
-                    className="w-full p-3 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner"
+                    className={`w-full p-3 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner`}
                   />
                 </div>
                 <div>
@@ -2909,7 +3057,7 @@ export default function PianificazionePersonale() {
                     type="date"
                     value={reqDataFine}
                     onChange={e => setReqDataFine(e.target.value)}
-                    className="w-full p-3 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner"
+                    className={`w-full p-3 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner`}
                   />
                 </div>
               </div>
@@ -2920,7 +3068,7 @@ export default function PianificazionePersonale() {
                   required
                   value={reqPercentuale}
                   onChange={e => setReqPercentuale(Number(e.target.value))}
-                  className="w-full p-3 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner"
+                  className={`w-full p-3 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner`}
                 >
                   {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
                     <option key={pct} value={pct}>{pct}%</option>
@@ -2931,11 +3079,11 @@ export default function PianificazionePersonale() {
               <div>
                 <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Nota Facoltativa</label>
                 <textarea
-                  placeholder="Es. Mi servirebbe il disegnatore X se libero perché ha seguito la fase preliminare..."
+                  placeholder={`Es. Ho bisogno di una risorsa dell'area ${reqAreaTarget} con esperienza in...`}
                   value={reqNota}
                   onChange={e => setReqNota(e.target.value)}
                   rows={3}
-                  className="w-full p-3 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-semibold text-gray-750 outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner resize-none"
+                  className={`w-full p-3 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-semibold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner resize-none`}
                 />
               </div>
               
@@ -2952,13 +3100,15 @@ export default function PianificazionePersonale() {
                   disabled={isSubmittingRequest}
                   className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold py-3 rounded-xl shadow-md transition active:scale-95 text-xs text-center disabled:opacity-50 cursor-pointer"
                 >
-                  {isSubmittingRequest ? "Invio in corso..." : "Invia Richiesta"}
+                  {isSubmittingRequest ? "Invio in corso..." : `Invia Richiesta ${reqAreaTarget}`}
                 </button>
               </div>
             </form>
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
+

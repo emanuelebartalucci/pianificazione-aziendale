@@ -49,6 +49,7 @@ interface AuthContextType {
   loading: boolean;
   isAdmin: boolean;
   isHR: boolean;
+  // isSenior mantenuto nell'interfaccia per retrocompatibilità (Navbar badge), ma sempre false
   isSenior: boolean;
   myAssociatedName: string | null;
   dipendenti: Dipendente[];
@@ -60,6 +61,7 @@ interface AuthContextType {
   approvedLeaves: any[];
   richiesteDisegnatori: any[];
   pmsEmails: string[];
+  // seniorsEmails deprecato: la collezione Firestore 'seniors' è stata rimossa
   seniorsEmails: string[];
   commercialiEmails: string[];
   isCommerciale: boolean;
@@ -84,8 +86,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   // Dati da Firestore
   const [dynamicAdmins, setDynamicAdmins] = useState<string[]>([]);
   const [dynamicHrs, setDynamicHrs] = useState<string[]>([]);
-  const [dynamicSeniors, setDynamicSeniors] = useState<string[]>([]);
-  
+  // dynamicSeniors rimosso: la raccolta 'seniors' su Firestore è deprecata
+  // isSenior è sempre false; il badge Navbar è gestito separatamente se necessario
+
   const [dipendenti, setDipendenti] = useState<Dipendente[]>([]);
   const [commesse, setCommesse] = useState<Commessa[]>([]);
   const [coordinatori, setCoordinatori] = useState<Coordinatore[]>([]);
@@ -95,7 +98,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [approvedLeaves, setApprovedLeaves] = useState<any[]>([]);
   const [richiesteDisegnatori, setRichiesteDisegnatori] = useState<any[]>([]);
   const [pmsEmails, setPmsEmails] = useState<string[]>([]);
-  const [seniorsEmails, setSeniorsEmails] = useState<string[]>([]);
+  // seniorsEmails: rimosso il fetch Firestore, ora sempre array vuoto per retrocompatibilità
   const [dynamicCommerciali, setDynamicCommerciali] = useState<string[]>([]);
 
 
@@ -118,7 +121,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       if (!currentUser) {
         setDynamicAdmins([]);
         setDynamicHrs([]);
-        setDynamicSeniors([]);
         setDipendenti([]);
         setCommesse([]);
         setCoordinatori([]);
@@ -128,7 +130,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setApprovedLeaves([]);
         setRichiesteDisegnatori([]);
         setPmsEmails([]);
-        setSeniorsEmails([]);
         setDynamicCommerciali([]);
         setLoading(false);
       } else {
@@ -139,12 +140,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             setDynamicAdmins(list);
           }));
 
-          // 2. Seniors
-          unsubs.push(onSnapshot(collection(db, 'seniors'), (snap) => {
-            const list = snap.docs.map(doc => doc.data().email?.toLowerCase()).filter(Boolean);
-            setDynamicSeniors(list);
-            setSeniorsEmails(list);
-          }));
+          // 2. Seniors — RIMOSSO: la raccolta Firestore 'seniors' è deprecata
+          // isSenior è sempre false; usare la collezione 'coordinatori' per i privilegi di area
 
           // 3. HR
           unsubs.push(onSnapshot(collection(db, 'hr'), (snap) => {
@@ -309,7 +306,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const userEmail = impersonatedEmail || realEmail;
   const isAdmin = DEFAULT_ADMINS.includes(userEmail) || dynamicAdmins.includes(userEmail);
   const isHR = dynamicHrs.includes(userEmail);
-  const isSenior = dynamicSeniors.includes(userEmail);
+  // isSenior è deprecato: sempre false. Usare myCoordinatedAreas (dalla collezione coordinatori) per i privilegi di area
+  const isSenior = false;
   const isCommerciale = dynamicCommerciali.includes(userEmail);
   
   const myDip = dipendenti.find(d => d.email?.toLowerCase() === userEmail);
@@ -332,7 +330,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       approvedLeaves,
       richiesteDisegnatori,
       pmsEmails,
-      seniorsEmails,
+      seniorsEmails: [], // deprecato: raccolta Firestore 'seniors' rimossa
       commercialiEmails: dynamicCommerciali,
       isCommerciale,
       refreshData,

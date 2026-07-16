@@ -159,7 +159,6 @@ const generateWeeksExtended = (baseDate: Date, numWeeks: number): WeekInfo[] => 
 export default function Commesse() {
   const { 
     isAdmin, 
-    isSenior, 
     myAssociatedName, 
     dipendenti, 
     commesse, 
@@ -533,7 +532,7 @@ export default function Commesse() {
 
     // Ordine alfabetico
     return [...list].sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
-  }, [commesse, selectedCommessaIdsFilter, selectedClientFilter, selectedPMFilter, selectedTipologiaFilter, commessaTextQuery, isAdmin, isSenior, myAssociatedName, assignments]);
+  }, [commesse, selectedCommessaIdsFilter, selectedClientFilter, selectedPMFilter, selectedTipologiaFilter, commessaTextQuery, isAdmin, myAssociatedName, assignments]);
 
   // Get people allocated to a commessa in a specific week
   const getAssignmentsForCommessaInWeek = (commId: string, wkId: string) => {
