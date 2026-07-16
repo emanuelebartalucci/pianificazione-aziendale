@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, memo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, addDoc, doc, updateDoc, deleteDoc, query, where, getDocs } from 'firebase/firestore';
@@ -30,9 +30,20 @@ interface RichiestaFerie {
   comunicazioneId?: string;
 }
 
-export default function Ferie() {
-  const { isHR, isAdmin, myAssociatedName, dipendenti } = useAuth();
-  
+const TIME_OPTIONS = Array.from({ length: 48 }).map((_, i) => {
+  const h = Math.floor(i / 2);
+  const m = i % 2 === 0 ? '00' : '30';
+  return `${String(h).padStart(2, '0')}:${m}`;
+});
+
+interface FerieContentProps {
+  isHR: boolean;
+  isAdmin: boolean;
+  myAssociatedName: string;
+  dipendenti: any[];
+}
+
+const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: FerieContentProps) => {
   const [viewMode, setViewMode] = useState<'calendario' | 'tabella'>('calendario');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
   const [chiusureAziendali, setChiusureAziendali] = useState<Array<{ dataInizio: string; dataFine: string }>>([]);
@@ -678,8 +689,8 @@ export default function Ferie() {
               const [hStart, mStart] = reqObj.oraInizio.split(':').map(Number);
               const [hEnd, mEnd] = reqObj.oraFine.split(':').map(Number);
               const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
-              const hrs = Math.round(diffMs / 3600000);
-              cellText = `${hrs}h`;
+              const hrs = Math.round((diffMs / 3600000) * 100) / 100;
+              cellText = `${hrs.toString().replace('.', ',')}h`;
             } else {
               cellText = 'P';
             }
@@ -766,23 +777,22 @@ export default function Ferie() {
             }
             .title-main {
               font-weight: 900;
-              font-size: 16px;
+              font-size: 21px;
               letter-spacing: -0.02em;
               color: #111827;
               text-transform: uppercase;
             }
             .title-sub {
               font-weight: 700;
-              font-size: 8px;
+              font-size: 9.5px;
               color: #6b7280;
               text-transform: uppercase;
               letter-spacing: 0.08em;
               margin-top: 1px;
             }
             .logo-img {
-              height: 26px;
+              height: 38px;
               object-fit: contain;
-              filter: drop-shadow(0px 1px 1px rgba(0,0,0,0.1));
             }
             table {
               width: 100%;
@@ -911,7 +921,7 @@ export default function Ferie() {
                 </div>
                 <div class="legend-item">
                   <div class="color-block" style="background-color: #facc15 !important;"></div>
-                  <span>PERMESSO</span>
+                  <span>PERMESSO (AM: Mattina - PM: Pomeriggio - GI: Giornata Intera)</span>
                 </div>
                 <div class="legend-item">
                   <div class="color-block" style="background-color: #84cc16 !important;"></div>
@@ -1095,33 +1105,6 @@ export default function Ferie() {
               </button>
             </div>
           </h2>
-          <div className="flex items-center gap-3">
-            <div className="bg-gray-150 p-1.5 rounded-2xl flex gap-1.5 border border-gray-200 shadow-inner">
-              <button 
-                onClick={() => setViewMode('calendario')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
-                  viewMode === 'calendario' 
-                    ? 'bg-white text-gray-900 shadow-sm border border-gray-200/50' 
-                    : 'text-gray-500 hover:text-gray-800'
-                }`}
-              >
-                Calendario
-              </button>
-              <button 
-                onClick={() => setViewMode('tabella')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
-                  viewMode === 'tabella' 
-                    ? 'bg-white text-gray-900 shadow-sm border border-gray-200/50' 
-                    : 'text-gray-500 hover:text-gray-800'
-                }`}
-              >
-                Griglia Risorse
-              </button>
-            </div>
-            <button onClick={handlePrintFeriePlan} className="hidden md:flex items-center gap-2 bg-gray-900 text-white hover:bg-gray-800 px-5 py-2.5 rounded-xl font-bold transition shadow-lg active:scale-95 cursor-pointer">
-              Stampa
-            </button>
-          </div>
         </div>
         
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
@@ -1275,23 +1258,29 @@ export default function Ferie() {
                       <div className="grid grid-cols-2 gap-4 pt-2 border-t border-green-100 animate-in slide-in-from-top-2 duration-200">
                         <div>
                           <label className="block text-xs font-bold text-green-900 mb-1 ml-1">Ora Inizio</label>
-                          <input 
-                            type="time" 
+                          <select 
                             required 
                             value={oraInizio}
                             onChange={e => setOraInizio(e.target.value)}
-                            className="w-full p-3 border-none rounded-xl bg-white/70 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900 text-xs"
-                          />
+                            className="w-full p-3 border-none rounded-xl bg-white/70 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-bold text-green-900 text-xs cursor-pointer"
+                          >
+                            {TIME_OPTIONS.map(opt => (
+                              <option key={opt} value={opt}>{opt}</option>
+                            ))}
+                          </select>
                         </div>
                         <div>
                           <label className="block text-xs font-bold text-green-900 mb-1 ml-1">Ora Fine</label>
-                          <input 
-                            type="time" 
+                          <select 
                             required 
                             value={oraFine}
                             onChange={e => setOraFine(e.target.value)}
-                            className="w-full p-3 border-none rounded-xl bg-white/70 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900 text-xs"
-                          />
+                            className="w-full p-3 border-none rounded-xl bg-white/70 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-bold text-green-900 text-xs cursor-pointer"
+                          >
+                            {TIME_OPTIONS.map(opt => (
+                              <option key={opt} value={opt}>{opt}</option>
+                            ))}
+                          </select>
                         </div>
                       </div>
                     )}
@@ -1372,10 +1361,42 @@ export default function Ferie() {
       <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl p-6 sm:p-10 border border-white/50 no-print">
         <div className="flex justify-between items-center mb-6">
           <h3 className="font-extrabold text-2xl text-gray-900 capitalize">{monthName}</h3>
-          <div className="flex items-center gap-1 bg-white p-1.5 rounded-xl border border-gray-200 shadow-sm">
-            <button onClick={() => shiftMonth(-1)} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600 transition"><ChevronLeft className="w-5 h-5" /></button>
-            <button onClick={() => setCurrentMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1))} className="px-4 py-2 text-sm font-extrabold text-gray-700 hover:bg-gray-100 rounded-lg transition">Oggi</button>
-            <button onClick={() => shiftMonth(1)} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600 transition"><ChevronRight className="w-5 h-5" /></button>
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Navigatore Mese */}
+            <div className="flex items-center gap-1 bg-white p-1.5 rounded-xl border border-gray-200 shadow-sm">
+              <button onClick={() => shiftMonth(-1)} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600 transition"><ChevronLeft className="w-5 h-5" /></button>
+              <button onClick={() => setCurrentMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1))} className="px-4 py-2 text-sm font-extrabold text-gray-700 hover:bg-gray-100 rounded-lg transition">Oggi</button>
+              <button onClick={() => shiftMonth(1)} className="p-2 hover:bg-gray-100 rounded-lg text-gray-600 transition"><ChevronRight className="w-5 h-5" /></button>
+            </div>
+
+            {/* Selettore Vista */}
+            <div className="bg-gray-150 p-1.5 rounded-2xl flex gap-1.5 border border-gray-200 shadow-inner">
+              <button 
+                onClick={() => setViewMode('calendario')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
+                  viewMode === 'calendario' 
+                    ? 'bg-white text-gray-900 shadow-sm border border-gray-200/50' 
+                    : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                Calendario
+              </button>
+              <button 
+                onClick={() => setViewMode('tabella')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
+                  viewMode === 'tabella' 
+                    ? 'bg-white text-gray-900 shadow-sm border border-gray-200/50' 
+                    : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                Griglia Risorse
+              </button>
+            </div>
+            
+            {/* Bottone Stampa */}
+            <button onClick={handlePrintFeriePlan} className="hidden md:flex items-center gap-2 bg-gray-900 text-white hover:bg-gray-800 px-5 py-2.5 rounded-xl font-bold transition shadow-lg active:scale-95 cursor-pointer">
+              Stampa
+            </button>
           </div>
         </div>
 
@@ -1525,8 +1546,8 @@ export default function Ferie() {
                                   const [hStart, mStart] = req.oraInizio.split(':').map(Number);
                                   const [hEnd, mEnd] = req.oraFine.split(':').map(Number);
                                   const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
-                                  const hrs = Math.round(diffMs / 3600000);
-                                  cellText = `${hrs}h`;
+                                  const hrs = Math.round((diffMs / 3600000) * 100) / 100;
+                                  cellText = `${hrs.toString().replace('.', ',')}h`;
                                 } else {
                                   cellText = 'P';
                                 }
@@ -1585,7 +1606,7 @@ export default function Ferie() {
                 <span className="w-6 h-4 rounded border border-red-600 bg-red-500 flex items-center justify-center text-[10px] font-black text-white">M</span> Malattia/Maternità
               </div>
               <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
-                <span className="w-6 h-4 rounded border border-amber-500 bg-amber-400"></span> Permesso
+                <span className="w-6 h-4 rounded border border-amber-500 bg-amber-400"></span> Permesso (AM: Mattina - PM: Pomeriggio - GI: Giornata Intera)
               </div>
               <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
                 <span className="w-6 h-4 rounded border border-emerald-600 bg-emerald-500"></span> Lavoro da casa
@@ -1691,5 +1712,17 @@ export default function Ferie() {
         </div>
       )}
     </div>
+  );
+});
+
+export default function Ferie() {
+  const { isHR, isAdmin, myAssociatedName, dipendenti } = useAuth();
+  return (
+    <FerieContent 
+      isHR={!!isHR} 
+      isAdmin={!!isAdmin} 
+      myAssociatedName={myAssociatedName || ''} 
+      dipendenti={dipendenti} 
+    />
   );
 }

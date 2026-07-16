@@ -18,23 +18,113 @@
   }
 }
 
-/* Regole per la stampa (ereditate dall'originale) */
+/* Regole per la stampa (ereditate e ottimizzate) */
 @media print {
   @page {
     size: landscape;
-    margin: 0.6cm;
+    margin: 0.3cm !important;
   }
   .no-print { display: none !important; }
-  body { background-color: white !important; font-size: 9px !important; }
+  body { 
+    background-color: white !important; 
+    font-size: 7.5px !important; 
+    line-height: 1.15 !important;
+  }
   * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
   .shadow, .shadow-sm, .shadow-lg, .shadow-xl { box-shadow: none !important; }
   .border { border-color: #374151 !important; }
   .overflow-auto, .overflow-y-auto, .max-h-\[75vh\], .max-h-96, .max-h-\[750px\] { overflow: visible !important; max-height: none !important; }
   table { border-collapse: collapse !important; width: 100% !important; }
   th, td { border-color: #374151 !important; position: static !important; }
+
+  /* Compattazione layout di stampa per foglio singolo per pagina */
+  .print-container {
+    padding: 0 !important;
+    font-size: 7.5px !important;
+    line-height: 1.1 !important;
+  }
+
+  /* Compressione delle spaziature e dei margini Tailwind */
+  .print-container .space-y-3 > :not([hidden]) ~ :not([hidden]) {
+    margin-top: 0.35rem !important;
+    margin-bottom: 0 !important;
+  }
+  .print-container .space-y-2 > :not([hidden]) ~ :not([hidden]) {
+    margin-top: 0.2rem !important;
+    margin-bottom: 0 !important;
+  }
+  .print-container .space-y-1\.5 > :not([hidden]) ~ :not([hidden]) {
+    margin-top: 0.15rem !important;
+  }
+  .print-container .gap-3 {
+    gap: 0.375rem !important;
+  }
+  .print-container .pt-1\.5 {
+    padding-top: 0.25rem !important;
+  }
+  .print-container .pt-3 {
+    padding-top: 0.35rem !important;
+  }
+  .print-container .mt-3 {
+    margin-top: 0.35rem !important;
+  }
+  .print-container .pb-1 {
+    padding-bottom: 0.15rem !important;
+  }
+  .print-container .p-2 {
+    padding: 4px !important;
+  }
+  .print-container .p-1 {
+    padding: 2px !important;
+  }
+  .print-container .p-0\.5 {
+    padding: 1px !important;
+  }
+
+  /* Compattazione tabelle */
+  .print-container table {
+    font-size: 7px !important;
+  }
+  .print-container table th,
+  .print-container table td {
+    padding: 2px 3px !important;
+  }
+  
+  /* Compattazione griglia 1-31 (table-fixed) */
+  .print-container table.table-fixed th,
+  .print-container table.table-fixed td {
+    padding: 1px 1px !important;
+    font-size: 6.5px !important;
+  }
+
+  .print-container h1,
+  .print-container h2,
+  .print-container .text-xs {
+    font-size: 8.5px !important;
+  }
+  .print-container .text-\[10px\] {
+    font-size: 8px !important;
+  }
+  .print-container .text-\[7px\] {
+    font-size: 6.5px !important;
+  }
+  .print-container .text-\[7\.5px\] {
+    font-size: 6.8px !important;
+  }
+  .print-container .text-\[8\.5px\] {
+    font-size: 8px !important;
+  }
+  .print-container .text-\[8px\] {
+    font-size: 7.2px !important;
+  }
+
   .sheet-break {
     page-break-after: always !important;
     break-after: page !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    max-height: 100% !important;
+    box-sizing: border-box !important;
   }
   .sheet-break:last-child {
     page-break-after: avoid !important;

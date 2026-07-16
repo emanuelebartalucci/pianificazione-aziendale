@@ -445,15 +445,16 @@ export default function Presenze() {
               const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
               const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
               const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
-              hrs = Math.round(diffMs / 3600000);
+              hrs = Math.round((diffMs / 3600000) * 100) / 100;
             } else if (abs.oraInizio && abs.oraFine) {
               // fallback per permessi legacy senza frazioneTipo
               const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
               const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
               const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
-              hrs = Math.round(diffMs / 3600000);
+              hrs = Math.round((diffMs / 3600000) * 100) / 100;
             }
             ore = Math.max(0, dayContractHours - hrs);
+            permessi = hrs;
           }
         }
 
@@ -876,11 +877,21 @@ export default function Presenze() {
                       targetOre = dayContractHours;
                     } else if (abs.tipo === 'permesso') {
                       let hrs = dayContractHours / 2;
-                      if (abs.oraInizio && abs.oraFine) {
+                      if (abs.frazioneTipo === 'giornata') {
+                        hrs = dayContractHours;
+                      } else if (abs.frazioneTipo === 'mattina' || abs.frazioneTipo === 'pomeriggio') {
+                        hrs = dayContractHours / 2;
+                      } else if (abs.frazioneTipo === 'orario' && abs.oraInizio && abs.oraFine) {
                         const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
                         const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
                         const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
-                        hrs = Math.round(diffMs / 3600000);
+                        hrs = Math.round((diffMs / 3600000) * 100) / 100;
+                      } else if (abs.oraInizio && abs.oraFine) {
+                        // fallback per permessi legacy senza frazioneTipo
+                        const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
+                        const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
+                        const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
+                        hrs = Math.round((diffMs / 3600000) * 100) / 100;
                       }
                       targetOre = Math.max(0, dayContractHours - hrs);
                       targetPermessi = hrs;
@@ -942,14 +953,47 @@ export default function Presenze() {
                     !currentDay.trasferta;
 
                   const isCleanPermesso = 
-                    currentDay.ore === dayContractHours / 2 &&
-                    currentDay.permessi === dayContractHours / 2 &&
+                    currentDay.permessi > 0 &&
+                    currentDay.ore === Math.max(0, dayContractHours - currentDay.permessi) &&
                     currentDay.straordinari === 0 &&
                     currentDay.ferie === 0 &&
                     !currentDay.malattia &&
                     !currentDay.trasferta;
 
-                  const wasModifiedDueToAbsence = isCleanFerie || isCleanMalattia || isCleanPermesso;
+                  const isCleanStudio = 
+                    currentDay.ore === 0 &&
+                    currentDay.permessoStudio === dayContractHours &&
+                    currentDay.straordinari === 0 &&
+                    currentDay.ferie === 0 &&
+                    currentDay.permessi === 0 &&
+                    !currentDay.malattia &&
+                    !currentDay.trasferta;
+
+                  const isCleanDonazione = 
+                    currentDay.ore === 0 &&
+                    currentDay.permessoDonazione === dayContractHours &&
+                    currentDay.straordinari === 0 &&
+                    currentDay.ferie === 0 &&
+                    currentDay.permessi === 0 &&
+                    !currentDay.malattia &&
+                    !currentDay.trasferta;
+
+                  const isCleanElettorale = 
+                    currentDay.ore === 0 &&
+                    currentDay.permessoElettorale === dayContractHours &&
+                    currentDay.straordinari === 0 &&
+                    currentDay.ferie === 0 &&
+                    currentDay.permessi === 0 &&
+                    !currentDay.malattia &&
+                    !currentDay.trasferta;
+
+                  const wasModifiedDueToAbsence = 
+                    isCleanFerie || 
+                    isCleanMalattia || 
+                    isCleanPermesso || 
+                    isCleanStudio || 
+                    isCleanDonazione || 
+                    isCleanElettorale;
 
                   if (wasModifiedDueToAbsence) {
                     updatedGiorni[String(day)] = {
@@ -957,7 +1001,10 @@ export default function Presenze() {
                       ore: (isWeekend || isHoliday) ? 0 : dayContractHours,
                       ferie: 0,
                       permessi: 0,
-                      malattia: false
+                      malattia: false,
+                      permessoStudio: 0,
+                      permessoDonazione: 0,
+                      permessoElettorale: 0
                     };
                     hasChanges = true;
                   }
@@ -1608,6 +1655,12 @@ export default function Presenze() {
       console.error("Errore salvataggio modifiche HR:", err);
       showToast("Errore durante il salvataggio.", "error");
     }
+  };
+
+  // --- DECIMAL FORMATTING UTILITY ---
+  const formatDec = (val: number | string | undefined | null): string => {
+    if (val === undefined || val === null) return '';
+    return val.toString().replace('.', ',');
   };
 
   // --- CALCULATION TOTALS FOR A SINGLE SHEET ---
@@ -2687,26 +2740,26 @@ export default function Presenze() {
                           </td>
                           {hrTab === 'dipendenti' ? (
                             <>
-                              <td className="p-4 text-right font-semibold text-gray-700">{totals.oreOrd}h</td>
-                              <td className="p-4 text-right font-bold text-amber-600">{totals.oreStra > 0 ? `+${totals.oreStra}h` : '0h'}</td>
-                              <td className="p-4 text-right font-semibold text-gray-700">{totals.oreFerie}h</td>
-                              <td className="p-4 text-right font-semibold text-gray-700">{totals.orePerm}h</td>
-                              <td className="p-4 text-center text-red-600 font-bold">{totals.ggMalattia > 0 ? totals.ggMalattia : '-'}</td>
-                              <td className="p-4 text-center text-blue-600 font-bold">{totals.ggTrasferta > 0 ? totals.ggTrasferta : '-'}</td>
+                              <td className="p-4 text-right font-semibold text-gray-700">{formatDec(totals.oreOrd)}h</td>
+                              <td className="p-4 text-right font-bold text-amber-600">{totals.oreStra > 0 ? `+${formatDec(totals.oreStra)}h` : '0h'}</td>
+                              <td className="p-4 text-right font-semibold text-gray-700">{formatDec(totals.oreFerie)}h</td>
+                              <td className="p-4 text-right font-semibold text-gray-700">{formatDec(totals.orePerm)}h</td>
+                              <td className="p-4 text-center text-red-600 font-bold">{totals.ggMalattia > 0 ? formatDec(totals.ggMalattia) : '-'}</td>
+                              <td className="p-4 text-center text-blue-600 font-bold">{totals.ggTrasferta > 0 ? formatDec(totals.ggTrasferta) : '-'}</td>
                             </>
                           ) : (
                             <>
                               <td className="p-4 text-right font-semibold text-gray-700">
-                                {sheet?.collaboratoreData ? `${sheet.collaboratoreData.giornate} gg` : '-'}
+                                {sheet?.collaboratoreData ? `${formatDec(sheet.collaboratoreData.giornate)} gg` : '-'}
                               </td>
                               <td className="p-4 text-right font-semibold text-gray-700">
-                                {sheet?.collaboratoreData ? `${sheet.collaboratoreData.spese.toFixed(2)} €` : '-'}
+                                {sheet?.collaboratoreData ? `${formatDec(sheet.collaboratoreData.spese.toFixed(2))} €` : '-'}
                               </td>
                               <td className="p-4 text-right font-semibold text-gray-700">
-                                {sheet?.collaboratoreData ? `${sheet.collaboratoreData.rimborsoKm.toFixed(2)} €` : '-'}
+                                {sheet?.collaboratoreData ? `${formatDec(sheet.collaboratoreData.rimborsoKm.toFixed(2))} €` : '-'}
                               </td>
                               <td className="p-4 text-right font-bold text-indigo-600">
-                                {sheet?.collaboratoreData ? `${sheet.collaboratoreData.totaleDovuto.toFixed(2)} €` : '-'}
+                                {sheet?.collaboratoreData ? `${formatDec(sheet.collaboratoreData.totaleDovuto.toFixed(2))} €` : '-'}
                               </td>
                             </>
                           )}
@@ -3062,7 +3115,7 @@ export default function Presenze() {
                             <tr className="bg-amber-50/20 font-bold">
                               <td className="p-3">Compenso Mensile (Giornate × Tariffa)</td>
                               <td className="p-3 text-right">-</td>
-                              <td className="p-3 text-right text-gray-900">{rapportino.collaboratoreData.compensoMensile.toFixed(2)} €</td>
+                              <td className="p-3 text-right text-gray-900">{formatDec(rapportino.collaboratoreData.compensoMensile.toFixed(2))} €</td>
                             </tr>
 
                             {/* SPESE & KM */}
@@ -3079,7 +3132,7 @@ export default function Presenze() {
                                   className="w-24 p-1.5 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
                                 />
                               </td>
-                              <td className="p-3 text-right text-gray-900">{rapportino.collaboratoreData.spese.toFixed(2)} €</td>
+                              <td className="p-3 text-right text-gray-900">{formatDec(rapportino.collaboratoreData.spese.toFixed(2))} €</td>
                             </tr>
                             <tr>
                               <td className="p-3 font-semibold">Chilometri Percorsi</td>
@@ -3114,14 +3167,14 @@ export default function Presenze() {
                             <tr className="bg-amber-50/20 font-bold">
                               <td className="p-3">Rimborso Chilometrico (Km × Tariffa)</td>
                               <td className="p-3 text-right">-</td>
-                              <td className="p-3 text-right text-gray-900">{rapportino.collaboratoreData.rimborsoKm.toFixed(2)} €</td>
+                              <td className="p-3 text-right text-gray-900">{formatDec(rapportino.collaboratoreData.rimborsoKm.toFixed(2))} €</td>
                             </tr>
 
                             {/* TOTAL COMPENSO */}
                             <tr className="bg-amber-100/30 text-sm font-extrabold border-y border-amber-200">
                               <td className="p-3 uppercase">Totale Compenso (Imponibile)</td>
                               <td className="p-3 text-right">-</td>
-                              <td className="p-3 text-right text-amber-900">{rapportino.collaboratoreData.totaleCompenso.toFixed(2)} €</td>
+                              <td className="p-3 text-right text-amber-900">{formatDec(rapportino.collaboratoreData.totaleCompenso.toFixed(2))} €</td>
                             </tr>
 
                             {/* TAX RATES */}
@@ -3138,7 +3191,7 @@ export default function Presenze() {
                                   className="w-24 p-1.5 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
                                 /> %
                               </td>
-                              <td className="p-3 text-right text-gray-900">{rapportino.collaboratoreData.inps.toFixed(2)} €</td>
+                              <td className="p-3 text-right text-gray-900">{formatDec(rapportino.collaboratoreData.inps.toFixed(2))} €</td>
                             </tr>
                             <tr>
                               <td className="p-3 font-semibold">IVA</td>
@@ -3153,7 +3206,7 @@ export default function Presenze() {
                                   className="w-24 p-1.5 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
                                 /> %
                               </td>
-                              <td className="p-3 text-right text-gray-900">{rapportino.collaboratoreData.iva.toFixed(2)} €</td>
+                              <td className="p-3 text-right text-gray-900">{formatDec(rapportino.collaboratoreData.iva.toFixed(2))} €</td>
                             </tr>
                             <tr>
                               <td className="p-3 font-semibold">Ritenuta d'Acconto</td>
@@ -3168,14 +3221,14 @@ export default function Presenze() {
                                   className="w-24 p-1.5 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
                                 /> %
                               </td>
-                              <td className="p-3 text-right text-red-655">- {rapportino.collaboratoreData.ra.toFixed(2)} €</td>
+                              <td className="p-3 text-right text-red-655">- {formatDec(rapportino.collaboratoreData.ra.toFixed(2))} €</td>
                             </tr>
 
                             {/* TOTAL DUE */}
                             <tr className="bg-amber-600/10 text-base font-black border-t-2 border-amber-600">
                               <td className="p-4 uppercase text-amber-950">TOTALE DOVUTO (A PAGARE)</td>
                               <td className="p-4 text-right">-</td>
-                              <td className="p-4 text-right text-amber-900 text-lg font-black">{rapportino.collaboratoreData.totaleDovuto.toFixed(2)} €</td>
+                              <td className="p-4 text-right text-amber-900 text-lg font-black">{formatDec(rapportino.collaboratoreData.totaleDovuto.toFixed(2))} €</td>
                             </tr>
                           </tbody>
                         </table>
@@ -3406,7 +3459,7 @@ export default function Presenze() {
                               );
                             })}
                             <td className="p-3 font-bold text-gray-800 bg-gray-50 border-l-2 border-gray-300 text-sm">
-                              {calculateTotals(rapportino.giorni, daysInMonth).oreOrd}
+                              {formatDec(calculateTotals(rapportino.giorni, daysInMonth).oreOrd)}
                             </td>
                           </tr>
 
@@ -3437,7 +3490,7 @@ export default function Presenze() {
                               );
                             })}
                             <td className="p-3 font-bold text-amber-600 bg-gray-50 border-l-2 border-gray-300 text-sm">
-                              {calculateTotals(rapportino.giorni, daysInMonth).oreStra} ore
+                              {formatDec(calculateTotals(rapportino.giorni, daysInMonth).oreStra)} ore
                             </td>
                           </tr>
 
@@ -3468,7 +3521,7 @@ export default function Presenze() {
                               );
                             })}
                             <td className="p-3 font-bold text-indigo-600 bg-gray-50 border-l-2 border-gray-300 text-sm">
-                              {calculateTotals(rapportino.giorni, daysInMonth).orePerm}
+                              {formatDec(calculateTotals(rapportino.giorni, daysInMonth).orePerm)}
                             </td>
                           </tr>
 
@@ -3501,7 +3554,7 @@ export default function Presenze() {
                               );
                             })}
                             <td className="p-3 font-bold text-green-700 bg-gray-50 border-l-2 border-gray-300 text-sm">
-                              {calculateTotals(rapportino.giorni, daysInMonth).oreFerie} ore
+                              {formatDec(calculateTotals(rapportino.giorni, daysInMonth).oreFerie)} ore
                             </td>
                           </tr>
 
@@ -3567,7 +3620,7 @@ export default function Presenze() {
                               );
                             })}
                             <td className="p-3 font-bold text-purple-700 bg-gray-50 border-l-2 border-gray-300 text-sm">
-                              {calculateTotals(rapportino.giorni, daysInMonth).oreStudio} ore
+                              {formatDec(calculateTotals(rapportino.giorni, daysInMonth).oreStudio)} ore
                             </td>
                           </tr>
 
@@ -3600,7 +3653,7 @@ export default function Presenze() {
                               );
                             })}
                             <td className="p-3 font-bold text-teal-700 bg-gray-50 border-l-2 border-gray-300 text-sm">
-                              {calculateTotals(rapportino.giorni, daysInMonth).oreDonazione} ore
+                              {formatDec(calculateTotals(rapportino.giorni, daysInMonth).oreDonazione)} ore
                             </td>
                           </tr>
 
@@ -3633,7 +3686,7 @@ export default function Presenze() {
                               );
                             })}
                             <td className="p-3 font-bold text-indigo-700 bg-gray-50 border-l-2 border-gray-300 text-sm">
-                              {calculateTotals(rapportino.giorni, daysInMonth).oreElettorale} ore
+                              {formatDec(calculateTotals(rapportino.giorni, daysInMonth).oreElettorale)} ore
                             </td>
                           </tr>
 
@@ -3965,7 +4018,7 @@ export default function Presenze() {
                         </div>
                         <div>
                           <div className="text-[10px] text-gray-500 font-extrabold uppercase">Altre Spese Totali</div>
-                          <div className="text-lg font-black text-indigo-900 mt-1">{totalAltreSpese.toFixed(2)} €</div>
+                          <div className="text-lg font-black text-indigo-900 mt-1">{formatDec(totalAltreSpese.toFixed(2))} €</div>
                         </div>
                         <div className="text-right">
                           <div className="text-[10px] text-indigo-600 font-extrabold uppercase font-mono">Dati Automezzo logs</div>
@@ -4120,7 +4173,7 @@ export default function Presenze() {
                         <tr className="bg-amber-50/20 font-bold">
                           <td className="p-2.5">Compenso Mensile (Giornate × Tariffa)</td>
                           <td className="p-2.5 text-right">-</td>
-                          <td className="p-2.5 text-right text-gray-900">{reviewingRapportino.collaboratoreData.compensoMensile.toFixed(2)} €</td>
+                          <td className="p-2.5 text-right text-gray-900">{formatDec(reviewingRapportino.collaboratoreData.compensoMensile.toFixed(2))} €</td>
                         </tr>
 
                         {/* SPESE & KM */}
@@ -4137,7 +4190,7 @@ export default function Presenze() {
                               className="w-20 p-1 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
                             />
                           </td>
-                          <td className="p-2.5 text-right text-gray-900">{reviewingRapportino.collaboratoreData.spese.toFixed(2)} €</td>
+                          <td className="p-2.5 text-right text-gray-900">{formatDec(reviewingRapportino.collaboratoreData.spese.toFixed(2))} €</td>
                         </tr>
                         <tr>
                           <td className="p-2.5 font-semibold">Chilometri Percorsi</td>
@@ -4172,14 +4225,14 @@ export default function Presenze() {
                         <tr className="bg-amber-50/20 font-bold">
                           <td className="p-2.5">Rimborso Chilometrico (Km × Tariffa)</td>
                           <td className="p-2.5 text-right">-</td>
-                          <td className="p-2.5 text-right text-gray-900">{reviewingRapportino.collaboratoreData.rimborsoKm.toFixed(2)} €</td>
+                          <td className="p-2.5 text-right text-gray-900">{formatDec(reviewingRapportino.collaboratoreData.rimborsoKm.toFixed(2))} €</td>
                         </tr>
 
                         {/* TOTAL COMPENSO */}
                         <tr className="bg-amber-100/30 text-xs font-extrabold border-y border-amber-200">
                           <td className="p-2.5 uppercase">Totale Compenso (Imponibile)</td>
                           <td className="p-2.5 text-right">-</td>
-                          <td className="p-2.5 text-right text-amber-900">{reviewingRapportino.collaboratoreData.totaleCompenso.toFixed(2)} €</td>
+                          <td className="p-2.5 text-right text-amber-900">{formatDec(reviewingRapportino.collaboratoreData.totaleCompenso.toFixed(2))} €</td>
                         </tr>
 
                         {/* TAX RATES */}
@@ -4196,7 +4249,7 @@ export default function Presenze() {
                               className="w-20 p-1 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
                             /> %
                           </td>
-                          <td className="p-2.5 text-right text-gray-900">{reviewingRapportino.collaboratoreData.inps.toFixed(2)} €</td>
+                          <td className="p-2.5 text-right text-gray-900">{formatDec(reviewingRapportino.collaboratoreData.inps.toFixed(2))} €</td>
                         </tr>
                         <tr>
                           <td className="p-2.5 font-semibold">IVA</td>
@@ -4211,7 +4264,7 @@ export default function Presenze() {
                               className="w-20 p-1 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
                             /> %
                           </td>
-                          <td className="p-2.5 text-right text-gray-900">{reviewingRapportino.collaboratoreData.iva.toFixed(2)} €</td>
+                          <td className="p-2.5 text-right text-gray-900">{formatDec(reviewingRapportino.collaboratoreData.iva.toFixed(2))} €</td>
                         </tr>
                         <tr>
                           <td className="p-2.5 font-semibold">Ritenuta d'Acconto</td>
@@ -4226,14 +4279,14 @@ export default function Presenze() {
                               className="w-20 p-1 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
                             /> %
                           </td>
-                          <td className="p-2.5 text-right text-red-655">- {reviewingRapportino.collaboratoreData.ra.toFixed(2)} €</td>
+                          <td className="p-2.5 text-right text-red-655">- {formatDec(reviewingRapportino.collaboratoreData.ra.toFixed(2))} €</td>
                         </tr>
 
                         {/* TOTAL DUE */}
                         <tr className="bg-amber-600/10 text-xs font-black border-t-2 border-amber-600">
                           <td className="p-3 uppercase text-amber-950">TOTALE DOVUTO (A PAGARE)</td>
                           <td className="p-3 text-right">-</td>
-                          <td className="p-3 text-right text-amber-900 text-sm font-black">{reviewingRapportino.collaboratoreData.totaleDovuto.toFixed(2)} €</td>
+                          <td className="p-3 text-right text-amber-900 text-sm font-black">{formatDec(reviewingRapportino.collaboratoreData.totaleDovuto.toFixed(2))} €</td>
                         </tr>
                       </tbody>
                     </table>
@@ -4400,7 +4453,7 @@ export default function Presenze() {
                               );
                             })}
                             <td className="p-2 font-bold bg-gray-50 border-l">
-                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).oreOrd}
+                              {formatDec(calculateTotals(reviewingRapportino.giorni, daysInMonth).oreOrd)}
                             </td>
                           </tr>
 
@@ -4429,7 +4482,7 @@ export default function Presenze() {
                               );
                             })}
                             <td className="p-2 font-bold text-amber-600 bg-gray-50 border-l">
-                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).oreStra}
+                              {formatDec(calculateTotals(reviewingRapportino.giorni, daysInMonth).oreStra)}
                             </td>
                           </tr>
 
@@ -4458,7 +4511,7 @@ export default function Presenze() {
                               );
                             })}
                             <td className="p-2 font-bold text-indigo-600 bg-gray-50 border-l">
-                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).orePerm}
+                              {formatDec(calculateTotals(reviewingRapportino.giorni, daysInMonth).orePerm)}
                             </td>
                           </tr>
 
@@ -4489,7 +4542,7 @@ export default function Presenze() {
                               );
                             })}
                             <td className="p-2 font-bold text-green-700 bg-gray-50 border-l">
-                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).oreFerie} ore
+                              {formatDec(calculateTotals(reviewingRapportino.giorni, daysInMonth).oreFerie)} ore
                             </td>
                           </tr>
 
@@ -4551,7 +4604,7 @@ export default function Presenze() {
                               );
                             })}
                             <td className="p-2 font-bold text-purple-700 bg-gray-50 border-l">
-                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).oreStudio} ore
+                              {formatDec(calculateTotals(reviewingRapportino.giorni, daysInMonth).oreStudio)} ore
                             </td>
                           </tr>
 
@@ -4582,7 +4635,7 @@ export default function Presenze() {
                               );
                             })}
                             <td className="p-2 font-bold text-teal-700 bg-gray-50 border-l">
-                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).oreDonazione} ore
+                              {formatDec(calculateTotals(reviewingRapportino.giorni, daysInMonth).oreDonazione)} ore
                             </td>
                           </tr>
 
@@ -4613,7 +4666,7 @@ export default function Presenze() {
                               );
                             })}
                             <td className="p-2 font-bold text-indigo-700 bg-gray-50 border-l">
-                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).oreElettorale} ore
+                              {formatDec(calculateTotals(reviewingRapportino.giorni, daysInMonth).oreElettorale)} ore
                             </td>
                           </tr>
 
@@ -4795,7 +4848,7 @@ export default function Presenze() {
                       </div>
                       <div>
                         <div className="text-[9px] text-gray-500 font-extrabold uppercase">Altre Spese Totali</div>
-                        <div className="text-base font-black text-indigo-900 mt-0.5">{totalAltreSpese.toFixed(2)} €</div>
+                        <div className="text-base font-black text-indigo-900 mt-0.5">{formatDec(totalAltreSpese.toFixed(2))} €</div>
                       </div>
                       <div className="text-right">
                         <div className="text-[9px] text-indigo-600 font-extrabold uppercase font-mono">Contabilizzazione Rimborsi</div>
@@ -5003,63 +5056,51 @@ export default function Presenze() {
                           </tr>
                           <tr>
                             <td className="p-1 border-r border-gray-900">Giornate Lavorate</td>
-                            <td className="p-1 border-r border-gray-900 text-right">{sheetToPrint.collaboratoreData?.giornate ?? 0} gg</td>
-                            <td className="p-1 text-right">-</td>
+                            <td className="p-1 border-r border-gray-900">Compenso Mensile prestazione professionale</td>
+                            <td className="p-1 border-r border-gray-955 text-right">{formatDec(sheetToPrint.collaboratoreData?.giornate ?? 0)} gg lavorati</td>
+                            <td className="p-1 text-right">{formatDec((sheetToPrint.collaboratoreData?.compensoMensile ?? 0).toFixed(2))} €</td>
                           </tr>
                           <tr>
-                            <td className="p-1 border-r border-gray-900">Tariffa Giornaliera Contratto</td>
-                            <td className="p-1 border-r border-gray-900 text-right">{sheetToPrint.collaboratoreData?.dailyRate ?? 0} €/gg</td>
-                            <td className="p-1 text-right">-</td>
+                            <td className="p-1 border-r border-gray-900">Rimborso spese anticipate per conto del committente</td>
+                            <td className="p-1 border-r border-gray-955 text-right">-</td>
+                            <td className="p-1 text-right">{formatDec((sheetToPrint.collaboratoreData?.spese ?? 0).toFixed(2))} €</td>
                           </tr>
-                          <tr className="bg-gray-50 font-bold">
-                            <td className="p-1 border-r border-gray-900">Compenso Mensile (Giornate × Tariffa)</td>
+                          <tr>
+                            <td className="p-1 border-r border-gray-900">
+                              Rimborso chilometrico per l'utilizzo del proprio automezzo
+                              <div className="text-[6.5px] text-gray-500 font-bold mt-0.5">
+                                Auto: {sheetToPrint.rimborsoSpeseData?.marcaAutomezzo || '_____'} {sheetToPrint.rimborsoSpeseData?.modelloAutomezzo || '_____'}
+                              </div>
+                            </td>
+                            <td className="p-1 border-r border-gray-955 text-right">
+                              {formatDec(sheetToPrint.collaboratoreData?.km ?? 0)} km × {formatDec(sheetToPrint.collaboratoreData?.kmRate ?? 0)} €/km
+                            </td>
+                            <td className="p-1 text-right">{formatDec((sheetToPrint.collaboratoreData?.rimborsoKm ?? 0).toFixed(2))} €</td>
+                          </tr>
+                          <tr className="bg-gray-100 font-extrabold border-t border-gray-900">
+                            <td className="p-1 border-r border-gray-900 uppercase">TOTALE COMPENSO (IMPONIBILE)</td>
+                            <td className="p-1 border-r border-gray-955 text-right">-</td>
+                            <td className="p-1 text-right">{formatDec((sheetToPrint.collaboratoreData?.totaleCompenso ?? 0).toFixed(2))} €</td>
+                          </tr>
+                          <tr>
+                            <td className="p-1 border-r border-gray-900">Contributo Cassa Previdenziale INPS ({formatDec(sheetToPrint.collaboratoreData?.inpsRate ?? 0)}%)</td>
+                            <td className="p-1 border-r border-gray-955 text-right">-</td>
+                            <td className="p-1 text-right">{formatDec((sheetToPrint.collaboratoreData?.inps ?? 0).toFixed(2))} €</td>
+                          </tr>
+                          <tr>
+                            <td className="p-1 border-r border-gray-900">IVA ({formatDec(sheetToPrint.collaboratoreData?.ivaRate ?? 0)}%)</td>
+                            <td className="p-1 border-r border-gray-955 text-right">-</td>
+                            <td className="p-1 text-right">{formatDec((sheetToPrint.collaboratoreData?.iva ?? 0).toFixed(2))} €</td>
+                          </tr>
+                          <tr>
+                            <td className="p-1 border-r border-gray-900">Ritenuta d'Acconto ({formatDec(sheetToPrint.collaboratoreData?.raRate ?? 0)}%)</td>
                             <td className="p-1 border-r border-gray-900 text-right">-</td>
-                            <td className="p-1 text-right">{(sheetToPrint.collaboratoreData?.compensoMensile ?? 0).toFixed(2)} €</td>
-                          </tr>
-                          <tr>
-                            <td className="p-1 border-r border-gray-900">Spese e Altri Rimborsi</td>
-                            <td className="p-1 border-r border-gray-900 text-right">-</td>
-                            <td className="p-1 text-right">{(sheetToPrint.collaboratoreData?.spese ?? 0).toFixed(2)} €</td>
-                          </tr>
-                          <tr>
-                            <td className="p-1 border-r border-gray-900">Chilometri Percorsi</td>
-                            <td className="p-1 border-r border-gray-900 text-right">{sheetToPrint.collaboratoreData?.km ?? 0} km</td>
-                            <td className="p-1 text-right">-</td>
-                          </tr>
-                          <tr>
-                            <td className="p-1 border-r border-gray-900">Tariffa Chilometrica (€/km)</td>
-                            <td className="p-1 border-r border-gray-900 text-right">{sheetToPrint.collaboratoreData?.kmRate ?? 0} €/km</td>
-                            <td className="p-1 text-right">-</td>
-                          </tr>
-                          <tr className="bg-gray-50 font-bold">
-                            <td className="p-1 border-r border-gray-900">Rimborso Chilometrico (Km × Tariffa)</td>
-                            <td className="p-1 border-r border-gray-900 text-right">-</td>
-                            <td className="p-1 text-right">{(sheetToPrint.collaboratoreData?.rimborsoKm ?? 0).toFixed(2)} €</td>
-                          </tr>
-                          <tr className="bg-gray-100 font-extrabold border-y border-gray-900 text-[8px]">
-                            <td className="p-1 border-r border-gray-900 uppercase">Totale Compenso (Imponibile)</td>
-                            <td className="p-1 border-r border-gray-900 text-right">-</td>
-                            <td className="p-1 text-right">{(sheetToPrint.collaboratoreData?.totaleCompenso ?? 0).toFixed(2)} €</td>
-                          </tr>
-                          <tr>
-                            <td className="p-1 border-r border-gray-900">Contributo Cassa INPS ({sheetToPrint.collaboratoreData?.inpsRate ?? 0}%)</td>
-                            <td className="p-1 border-r border-gray-900 text-right">-</td>
-                            <td className="p-1 text-right">{(sheetToPrint.collaboratoreData?.inps ?? 0).toFixed(2)} €</td>
-                          </tr>
-                          <tr>
-                            <td className="p-1 border-r border-gray-900">IVA ({sheetToPrint.collaboratoreData?.ivaRate ?? 0}%)</td>
-                            <td className="p-1 border-r border-gray-950 text-right">-</td>
-                            <td className="p-1 text-right">{(sheetToPrint.collaboratoreData?.iva ?? 0).toFixed(2)} €</td>
-                          </tr>
-                          <tr>
-                            <td className="p-1 border-r border-gray-900">Ritenuta d'Acconto ({sheetToPrint.collaboratoreData?.raRate ?? 0}%)</td>
-                            <td className="p-1 border-r border-gray-900 text-right">-</td>
-                            <td className="p-1 text-right text-red-655">- {(sheetToPrint.collaboratoreData?.ra ?? 0).toFixed(2)} €</td>
+                            <td className="p-1 text-right text-red-655">- {formatDec((sheetToPrint.collaboratoreData?.ra ?? 0).toFixed(2))} €</td>
                           </tr>
                           <tr className="bg-gray-200 font-extrabold text-[8px] border-t-2 border-gray-900">
                             <td className="p-1 border-r border-gray-900 uppercase">TOTALE DOVUTO (A PAGARE)</td>
                             <td className="p-1 border-r border-gray-900 text-right">-</td>
-                            <td className="p-1 text-right">{(sheetToPrint.collaboratoreData?.totaleDovuto ?? 0).toFixed(2)} €</td>
+                            <td className="p-1 text-right">{formatDec((sheetToPrint.collaboratoreData?.totaleDovuto ?? 0).toFixed(2))} €</td>
                           </tr>
                         </tbody>
                       </table>
@@ -5104,11 +5145,11 @@ export default function Presenze() {
                                 className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}
                                 style={hasVal ? { backgroundColor: '#bbf7d0' } : undefined}
                               >
-                                {!out ? (val || 0) : ''}
+                                {!out ? formatDec(val || 0) : ''}
                               </td>
                             );
                           })}
-                          <td className="p-1 font-extrabold bg-gray-100">{totals.oreOrd}</td>
+                          <td className="p-1 font-extrabold bg-gray-100">{formatDec(totals.oreOrd)}</td>
                         </tr>
                         <tr>
                           <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">STRAORDINARI</td>
@@ -5118,11 +5159,11 @@ export default function Presenze() {
                             const out = d > daysInMonth;
                             return (
                               <td key={i} className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
-                                {!out ? (val || 0) : ''}
+                                {!out ? formatDec(val || 0) : ''}
                               </td>
                             );
                           })}
-                          <td className="p-1 font-extrabold bg-gray-100">{totals.oreStra}</td>
+                          <td className="p-1 font-extrabold bg-gray-100">{formatDec(totals.oreStra)}</td>
                         </tr>
                         <tr>
                           <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">PERMESSI</td>
@@ -5137,11 +5178,11 @@ export default function Presenze() {
                                 className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}
                                 style={hasVal ? { backgroundColor: '#c7d2fe' } : undefined}
                               >
-                                {!out ? (val || 0) : ''}
+                                {!out ? formatDec(val || 0) : ''}
                               </td>
                             );
                           })}
-                          <td className="p-1 font-extrabold bg-gray-100">{totals.orePerm}</td>
+                          <td className="p-1 font-extrabold bg-gray-100">{formatDec(totals.orePerm)}</td>
                         </tr>
                         <tr>
                           <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">FERIE (F)</td>
@@ -5160,7 +5201,7 @@ export default function Presenze() {
                               </td>
                             );
                           })}
-                          <td className="p-1 font-extrabold bg-gray-100">{totals.oreFerie} ore</td>
+                          <td className="p-1 font-extrabold bg-gray-100">{formatDec(totals.oreFerie)} ore</td>
                         </tr>
                         <tr>
                           <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">MALATTIA (M)</td>
@@ -5179,7 +5220,7 @@ export default function Presenze() {
                               </td>
                             );
                           })}
-                          <td className="p-1 font-extrabold bg-gray-100">{totals.ggMalattia} gg</td>
+                          <td className="p-1 font-extrabold bg-gray-100">{formatDec(totals.ggMalattia)} gg</td>
                         </tr>
                         <tr>
                           <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">STUDIO (S)</td>
@@ -5198,7 +5239,7 @@ export default function Presenze() {
                               </td>
                             );
                           })}
-                          <td className="p-1 font-extrabold bg-gray-100">{totals.oreStudio} ore</td>
+                          <td className="p-1 font-extrabold bg-gray-100">{formatDec(totals.oreStudio)} ore</td>
                         </tr>
                         <tr>
                           <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">DONAZIONE (D)</td>
@@ -5217,7 +5258,7 @@ export default function Presenze() {
                               </td>
                             );
                           })}
-                          <td className="p-1 font-extrabold bg-gray-100">{totals.oreDonazione} ore</td>
+                          <td className="p-1 font-extrabold bg-gray-100">{formatDec(totals.oreDonazione)} ore</td>
                         </tr>
                         <tr>
                           <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">ELETTORALE (E)</td>
@@ -5236,7 +5277,7 @@ export default function Presenze() {
                               </td>
                             );
                           })}
-                          <td className="p-1 font-extrabold bg-gray-100">{totals.oreElettorale} ore</td>
+                          <td className="p-1 font-extrabold bg-gray-100">{formatDec(totals.oreElettorale)} ore</td>
                         </tr>
                         <tr>
                           <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">TRASFERTA (T)</td>
@@ -5250,7 +5291,7 @@ export default function Presenze() {
                               </td>
                             );
                           })}
-                          <td className="p-1 font-extrabold bg-gray-100">{totals.ggTrasferta} gg</td>
+                          <td className="p-1 font-extrabold bg-gray-100">{formatDec(totals.ggTrasferta)} gg</td>
                         </tr>
                       </tbody>
                     </table>
@@ -5327,37 +5368,37 @@ export default function Presenze() {
                       <tbody className="divide-y divide-gray-900 font-semibold text-gray-800">
                         <tr>
                           <td className="p-1 border-r border-gray-900">Spese di viaggio (aereo, nave, treno)</td>
-                          <td className="p-1 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseViaggio || 0).toFixed(2)} €</td>
+                          <td className="p-1 border-r border-gray-900 text-right">{formatDec((sheetToPrint.rimborsoSpeseData?.speseViaggio || 0).toFixed(2))} €</td>
                           <td className="p-1">-</td>
                         </tr>
                         <tr>
                           <td className="p-1 border-r border-gray-900">Taxi / autobus / noleggio auto</td>
-                          <td className="p-1 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseTaxiBus || 0).toFixed(2)} €</td>
+                          <td className="p-1 border-r border-gray-900 text-right">{formatDec((sheetToPrint.rimborsoSpeseData?.speseTaxiBus || 0).toFixed(2))} €</td>
                           <td className="p-1">-</td>
                         </tr>
                         <tr>
                           <td className="p-1 border-r border-gray-900">Parcheggi</td>
-                          <td className="p-1 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseParcheggi || 0).toFixed(2)} €</td>
+                          <td className="p-1 border-r border-gray-900 text-right">{formatDec((sheetToPrint.rimborsoSpeseData?.speseParcheggi || 0).toFixed(2))} €</td>
                           <td className="p-1">-</td>
                         </tr>
                         <tr>
                           <td className="p-1 border-r border-gray-900">Vitto</td>
-                          <td className="p-1 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseVitto || 0).toFixed(2)} €</td>
+                          <td className="p-1 border-r border-gray-900 text-right">{formatDec((sheetToPrint.rimborsoSpeseData?.speseVitto || 0).toFixed(2))} €</td>
                           <td className="p-1">-</td>
                         </tr>
                         <tr>
                           <td className="p-1 border-r border-gray-900">Alloggio</td>
-                          <td className="p-1 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseAlloggio || 0).toFixed(2)} €</td>
+                          <td className="p-1 border-r border-gray-900 text-right">{formatDec((sheetToPrint.rimborsoSpeseData?.speseAlloggio || 0).toFixed(2))} €</td>
                           <td className="p-1">-</td>
                         </tr>
                         <tr>
                           <td className="p-1 border-r border-gray-900">Pedaggi autostradali</td>
-                          <td className="p-1 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.spesePedaggi || 0).toFixed(2)} €</td>
+                          <td className="p-1 border-r border-gray-900 text-right">{formatDec((sheetToPrint.rimborsoSpeseData?.spesePedaggi || 0).toFixed(2))} €</td>
                           <td className="p-1">-</td>
                         </tr>
                         <tr>
                           <td className="p-1 border-r border-gray-900">Altro (specificare)</td>
-                          <td className="p-1 border-r border-gray-900 text-right">{(sheetToPrint.rimborsoSpeseData?.speseAltro || 0).toFixed(2)} €</td>
+                          <td className="p-1 border-r border-gray-900 text-right">{formatDec((sheetToPrint.rimborsoSpeseData?.speseAltro || 0).toFixed(2))} €</td>
                           <td className="p-1">{sheetToPrint.rimborsoSpeseData?.altroSpecificare || '-'}</td>
                         </tr>
                         <tr className="bg-gray-50 border-t-2 border-gray-900">
@@ -5369,7 +5410,7 @@ export default function Presenze() {
                             </div>
                           </td>
                           <td className="p-1 border-r border-gray-900 text-right bg-gray-150 font-bold">
-                            {Object.values(sheetToPrint.giorni).reduce((sum, g) => sum + (g.kmTrasferta || 0), 0)} Km totali
+                            {formatDec(Object.values(sheetToPrint.giorni).reduce((sum, g) => sum + (g.kmTrasferta || 0), 0))} Km totali
                           </td>
                           <td className="p-1 text-gray-500 italic text-[7.5px] align-middle">
                             -
@@ -5378,13 +5419,13 @@ export default function Presenze() {
                         <tr className="bg-gray-100 font-bold border-t-2 border-gray-900 text-[8px]">
                           <td className="p-1 border-r border-gray-900 uppercase">Totale altre spese sostenute (esclusi Km)</td>
                           <td className="p-1 border-r border-gray-900 text-right">
-                            {((sheetToPrint.rimborsoSpeseData?.speseViaggio || 0) +
+                            {formatDec(((sheetToPrint.rimborsoSpeseData?.speseViaggio || 0) +
                               (sheetToPrint.rimborsoSpeseData?.speseTaxiBus || 0) +
                               (sheetToPrint.rimborsoSpeseData?.speseParcheggi || 0) +
                               (sheetToPrint.rimborsoSpeseData?.speseVitto || 0) +
                               (sheetToPrint.rimborsoSpeseData?.speseAlloggio || 0) +
                               (sheetToPrint.rimborsoSpeseData?.spesePedaggi || 0) +
-                              (sheetToPrint.rimborsoSpeseData?.speseAltro || 0)).toFixed(2)} €
+                              (sheetToPrint.rimborsoSpeseData?.speseAltro || 0)).toFixed(2))} €
                           </td>
                           <td className="p-1 text-[7.5px] font-medium text-gray-500 italic">Si allegano i relativi documenti di spesa.</td>
                         </tr>
@@ -5414,7 +5455,7 @@ export default function Presenze() {
                                   <td className="p-1 border-r border-gray-900">{String(tr.giorno).padStart(2, '0')}/{String(selectedMonth).padStart(2, '0')}/{selectedYear}</td>
                                   <td className="p-1 border-r border-gray-900">{tr.luogo || '-'}</td>
                                   <td className="p-1 border-r border-gray-900">{gPresenza?.itinerarioTrasferta || '-'}</td>
-                                  <td className="p-1 text-right">{gPresenza?.kmTrasferta || 0} km</td>
+                                  <td className="p-1 text-right">{formatDec(gPresenza?.kmTrasferta || 0)} km</td>
                                 </tr>
                               );
                             })}
