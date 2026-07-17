@@ -74,9 +74,9 @@ interface Booking {
 }
 
 export default function Prenotazioni() {
-  const { user, isAdmin, myAssociatedName } = useAuth();
-  const currentUserName = myAssociatedName || user?.email || 'Dipendente';
-  const currentUserEmail = user?.email || '';
+  const { user, isAdmin, myAssociatedName, userEmail } = useAuth();
+  const currentUserName = myAssociatedName || userEmail || 'Dipendente';
+  const currentUserEmail = userEmail || '';
 
   // Tabs: 'pc' | 'room' | 'car' | 'admin'
   const [activeTab, setActiveTab] = useState<'pc' | 'room' | 'car' | 'admin'>('pc');

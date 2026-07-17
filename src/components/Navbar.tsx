@@ -7,7 +7,7 @@ import { useState } from 'react';
 
 export default function Navbar() {
   const navigate = useNavigate();
-  const { user, isAdmin, isHR, myAssociatedName } = useAuth();
+  const { user, isAdmin, isHR, myAssociatedName, userEmail } = useAuth();
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -60,7 +60,7 @@ export default function Navbar() {
 
   const location = useLocation();
   const isSuggerimenti = location.pathname === '/suggerimenti';
-  const userDisplayName = myAssociatedName ? `${myAssociatedName} (${user?.email})` : user?.email;
+  const userDisplayName = myAssociatedName ? `${myAssociatedName} (${userEmail})` : userEmail;
 
   return (
     <>

@@ -101,7 +101,8 @@ export default function Impostazioni() {
       type
     });
   };
-  
+
+
   // States per i form
   const [activeTab, setActiveTab] = useState<'clienti' | 'risorse' | 'ruoli' | 'sistema'>(isAdmin ? 'clienti' : 'risorse');
   const [newAdminEmail, setNewAdminEmail] = useState('');
@@ -131,6 +132,7 @@ export default function Impostazioni() {
   const [editInpsRate, setEditInpsRate] = useState('');
   const [editIvaRate, setEditIvaRate] = useState('');
   const [editRaRate, setEditRaRate] = useState('');
+  const [editImportoFisso, setEditImportoFisso] = useState('');
   const [editOrarioSettimanale, setEditOrarioSettimanale] = useState<Record<string, number | ''>>({ lun: 8, mar: 8, mer: 8, gio: 8, ven: 8 });
 
   // Stati per la gestione delle frasi di benvenuto in dashboard
@@ -391,6 +393,7 @@ export default function Impostazioni() {
     setEditInpsRate(dip.inpsRate !== undefined && dip.inpsRate !== null ? dip.inpsRate.toString() : '');
     setEditIvaRate(dip.ivaRate !== undefined && dip.ivaRate !== null ? dip.ivaRate.toString() : '');
     setEditRaRate(dip.raRate !== undefined && dip.raRate !== null ? dip.raRate.toString() : '');
+    setEditImportoFisso(dip.importoFissoMensile !== undefined && dip.importoFissoMensile !== null ? dip.importoFissoMensile.toString() : '');
     setEditOrarioSettimanale(dip.orarioSettimanale || {
       lun: dip.oreContratto ?? 8,
       mar: dip.oreContratto ?? 8,
@@ -437,11 +440,13 @@ export default function Impostazioni() {
         payload.inpsRate = editInpsRate ? Number(editInpsRate) : null;
         payload.ivaRate = editIvaRate ? Number(editIvaRate) : null;
         payload.raRate = editRaRate ? Number(editRaRate) : null;
+        payload.importoFissoMensile = editImportoFisso ? Number(editImportoFisso) : null;
       } else {
         payload.dailyRate = null;
         payload.inpsRate = null;
         payload.ivaRate = null;
         payload.raRate = null;
+        payload.importoFissoMensile = null;
       }
 
       await updateDoc(docRef, payload);
@@ -1792,7 +1797,7 @@ export default function Impostazioni() {
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold text-gray-500 mb-1 ml-1">Aliquota Cassa INPS (%)</label>
+                      <label className="block text-[10px] font-bold text-gray-500 mb-1 ml-1">Aliquota Cassa Previdenziale (%)</label>
                       <input
                         type="number"
                         placeholder="0"
@@ -1825,6 +1830,26 @@ export default function Impostazioni() {
                       />
                     </div>
                   </div>
+
+                  <div className="pt-3 border-t border-amber-200/60">
+                    <div className="text-[10px] font-bold text-amber-800 uppercase tracking-wider mb-2">Accordo a Canone Fisso Mensile</div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-500 mb-1 ml-1">Importo Fisso Mensile (€, 0 = disabilitato)</label>
+                      <input
+                        type="number"
+                        placeholder="0"
+                        value={editImportoFisso}
+                        onChange={e => {
+                          setEditImportoFisso(e.target.value);
+                          if (e.target.value && Number(e.target.value) > 0) {
+                            setEditDailyRate('0');
+                          }
+                        }}
+                        className="w-full p-2.5 border border-gray-200 rounded-xl bg-white outline-none focus:ring-2 focus:ring-amber-400 transition font-semibold text-gray-700 text-xs"
+                      />
+                      <p className="text-[9px] text-gray-400 mt-1 ml-1">Se valorizzato, il compenso mensile per questo collaboratore sarà pre-compilato con questa cifra fissa invece di calcolare giornate × tariffa.</p>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -1848,6 +1873,7 @@ export default function Impostazioni() {
           </div>
         </div>
       )}
+
 
       <ConfirmModal
         isOpen={confirmConfig.isOpen}

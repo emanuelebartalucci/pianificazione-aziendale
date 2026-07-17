@@ -15,6 +15,7 @@ export interface Dipendente {
   ivaRate?: number;
   raRate?: number;
   oreContratto?: number;
+  importoFissoMensile?: number;
   macroArea?: 'Disegnatori' | 'Ingegneria' | 'Sicurezza Cantieri' | 'Consulenza Sicurezza' | 'Amministrazione';
   dataCessazione?: string;
   orarioSettimanale?: { lun: number; mar: number; mer: number; gio: number; ven: number };
@@ -160,6 +161,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
               inpsRate: doc.data().inpsRate,
               ivaRate: doc.data().ivaRate,
               raRate: doc.data().raRate,
+              importoFissoMensile: doc.data().importoFissoMensile,
               oreContratto: doc.data().oreContratto,
               macroArea: doc.data().macroArea,
               dataCessazione: doc.data().dataCessazione || '',

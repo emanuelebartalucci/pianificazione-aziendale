@@ -23,7 +23,7 @@ interface Announcement {
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { isAdmin, isHR, myAssociatedName, user, dipendenti } = useAuth();
+  const { isAdmin, isHR, myAssociatedName, user, dipendenti, userEmail } = useAuth();
 
   // States per le comunicazioni
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
@@ -579,7 +579,7 @@ export default function Dashboard() {
   }, [announcements, myAssociatedName, dipendenti, myMaternityLeaves]);
 
   const welcomeName = (() => {
-    if (!myAssociatedName) return user?.email || 'Utente';
+    if (!myAssociatedName) return userEmail || 'Utente';
     const parts = myAssociatedName.trim().split(/\s+/);
     return parts.length > 1 ? parts[parts.length - 1] : myAssociatedName;
   })();
@@ -885,7 +885,7 @@ export default function Dashboard() {
       {/* MODALE DI CREAZIONE NEWS */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2rem] shadow-2xl max-w-lg w-full border border-gray-100 p-8 flex flex-col gap-5 animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-white rounded-[2rem] shadow-2xl max-w-2xl w-full border border-gray-100 p-8 flex flex-col gap-5 animate-in fade-in zoom-in-95 duration-200">
             <div className="flex justify-between items-center">
               <h3 className="text-2xl font-black text-gray-900 flex items-center gap-2">
                 <Megaphone className="w-6 h-6 text-indigo-600" />
@@ -899,7 +899,7 @@ export default function Dashboard() {
               </button>
             </div>
 
-            <form onSubmit={handleCreateNotice} className="space-y-3.5 overflow-y-auto max-h-[70vh] pr-1">
+            <form onSubmit={handleCreateNotice} className="space-y-3.5 overflow-y-auto max-h-[70vh] px-2 py-2 pr-3">
               <div>
                 <label className="block text-sm font-extrabold text-gray-700 mb-1.5 ml-1">Formato Comunicazione</label>
                 <select
@@ -936,9 +936,9 @@ export default function Dashboard() {
 
                   <div className="space-y-3">
                     <label className="block text-sm font-extrabold text-gray-700 ml-1">Periodi di Chiusura</label>
-                    <div className="max-h-44 overflow-y-auto space-y-2 pr-1">
+                    <div className="space-y-2">
                       {closurePeriods.map((p, idx) => (
-                        <div key={idx} className="flex gap-2 items-center bg-gray-50 p-2.5 rounded-xl border border-gray-100">
+                        <div key={idx} className="flex gap-2 items-center bg-gray-50 p-2.5 rounded-xl border border-gray-200">
                           <select
                             value={p.tipo}
                             onChange={e => {
