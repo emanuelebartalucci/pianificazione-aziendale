@@ -1010,9 +1010,6 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
     if (isSpecialDay) {
       cellStyle = { background: 'linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%)' };
       cellClass += " bg-gray-100/50 text-gray-500";
-    } else if (isChiusura) {
-      cellStyle = { background: 'linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%)' };
-      cellClass += " bg-indigo-50/50";
     } else {
       cellClass += " bg-white";
     }
@@ -1453,9 +1450,6 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                       if (isSpecialDay) {
                         thStyle = { background: 'linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%)' };
                         thClass += " text-gray-500";
-                      } else if (isChiusura) {
-                        thStyle = { background: 'linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%)' };
-                        thClass += " text-indigo-700";
                       } else {
                         thClass += " text-gray-500";
                       }

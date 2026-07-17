@@ -858,9 +858,7 @@ export default function Commesse() {
           <p>Puoi ora procedere all'apertura di questa commessa sul gestionale separato aziendale.</p>
         `;
 
-        for (const email of commercialiEmails) {
-          await queueMail(email, mailSubject, mailBody);
-        }
+        await queueMail('synergiesflow@ingegno06.it', mailSubject, mailBody);
       }
       
       setSelectedClient(null);

@@ -74,7 +74,7 @@ interface Booking {
 }
 
 export default function Prenotazioni() {
-  const { user, isAdmin, myAssociatedName, userEmail } = useAuth();
+  const { isAdmin, myAssociatedName, userEmail } = useAuth();
   const currentUserName = myAssociatedName || userEmail || 'Dipendente';
   const currentUserEmail = userEmail || '';
 

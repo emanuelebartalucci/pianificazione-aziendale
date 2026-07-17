@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, addDoc, doc, setDoc, deleteDoc, onSnapshot, updateDoc } from 'firebase/firestore';
-import { Shield, UserCheck, Star, Users, Plus, Trash2, Settings, Printer, Building2, Search, Pencil, X, MessageSquare, Edit } from 'lucide-react';
+import { Shield, UserCheck, Star, Users, Plus, Trash2, Settings, Printer, Building2, Search, Pencil, X, MessageSquare, Edit, Mail } from 'lucide-react';
 import ConfirmModal from '../components/ConfirmModal';
 
 
@@ -134,6 +134,7 @@ export default function Impostazioni() {
   const [editRaRate, setEditRaRate] = useState('');
   const [editImportoFisso, setEditImportoFisso] = useState('');
   const [editOrarioSettimanale, setEditOrarioSettimanale] = useState<Record<string, number | ''>>({ lun: 8, mar: 8, mer: 8, gio: 8, ven: 8 });
+  const [emailSearchText, setEmailSearchText] = useState('');
 
   // Stati per la gestione delle frasi di benvenuto in dashboard
   const [greetingsList, setGreetingsList] = useState<{ id: string; testo: string }[]>([]);
@@ -457,6 +458,18 @@ export default function Impostazioni() {
     } catch (err) {
       console.error("Errore aggiornamento risorsa:", err);
       showToast("Errore durante l'aggiornamento.", "error");
+    }
+  };
+
+  const handleToggleEmailNotification = async (dipId: string, currentVal: boolean) => {
+    try {
+      const docRef = doc(db, 'dipendenti', dipId);
+      await updateDoc(docRef, { notificheEmail: !currentVal });
+      await refreshData();
+      showToast("Stato notifiche e-mail aggiornato con successo!", "success");
+    } catch (err) {
+      console.error("Errore aggiornamento notifiche e-mail:", err);
+      showToast("Errore durante l'aggiornamento dello stato.", "error");
     }
   };
 
@@ -1496,35 +1509,72 @@ export default function Impostazioni() {
 
         {/* TAB 5: SISTEMA */}
         {activeTab === 'sistema' && isAdmin && (
-          <div className="space-y-8 max-w-xl">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start w-full">
             {/* Configurazione Email */}
-            <section className="bg-gradient-to-br from-slate-50 to-zinc-100 p-6 rounded-3xl border border-slate-200 shadow-sm">
-              <h3 className="text-xl font-bold text-slate-800 mb-2 flex items-center gap-2">
-                <Settings className="w-6 h-6 text-slate-600" /> Notifiche Email
-              </h3>
-              <p className="text-sm text-slate-500 mb-4">Gestisci lo stato globale delle notifiche e-mail automatiche.</p>
-              <div className="flex items-center justify-between bg-white/60 p-4 rounded-2xl border border-slate-200/50">
-                <div>
-                  <div className="text-sm font-bold text-slate-800">Pausa Notifiche Email</div>
-                  <div className="text-xs text-slate-500 mt-0.5">Sospende temporaneamente l'invio delle e-mail a tutti i dipendenti.</div>
-                </div>
-                <button 
-                  type="button"
-                  onClick={async () => {
-                    const newVal = !emailNotificationsPaused;
-                    setEmailNotificationsPaused(newVal);
-                    await setDoc(doc(db, 'configurazione_sistema', 'email'), { paused: newVal });
-                  }}
-                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${
-                    emailNotificationsPaused ? 'bg-indigo-600' : 'bg-gray-200'
-                  }`}
-                >
-                  <span
-                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                      emailNotificationsPaused ? 'translate-x-5' : 'translate-x-0'
-                    }`}
-                  />
-                </button>
+            <section className="bg-gradient-to-br from-slate-50 to-zinc-100 p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col gap-4">
+              <div>
+                <h3 className="text-xl font-bold text-slate-800 mb-1 flex items-center gap-2">
+                  <Mail className="w-6 h-6 text-indigo-650" /> Notifiche Email
+                </h3>
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  Abilita o disabilita singolarmente le risorse a ricevere e-mail automatiche dal sistema (notifiche ferie, weekend, invio e approvazione foglio ore/fatture, assegnazione commesse, ecc.).
+                </p>
+              </div>
+
+              {/* Filtro Ricerca Risorsa */}
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Cerca risorsa..."
+                  value={emailSearchText}
+                  onChange={e => setEmailSearchText(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2.5 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400 text-xs font-semibold text-slate-700 shadow-sm"
+                />
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+              </div>
+
+              {/* Lista delle Risorse con Scrollbar */}
+              <div className="max-h-80 overflow-y-auto border border-slate-200/60 rounded-2xl bg-white divide-y divide-slate-100 shadow-inner">
+                {(() => {
+                  const filtered = dipendenti.filter(dip => 
+                    dip.nome.toLowerCase().includes(emailSearchText.toLowerCase()) || 
+                    (dip.email || '').toLowerCase().includes(emailSearchText.toLowerCase())
+                  );
+
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="p-8 text-center text-xs text-slate-400 italic font-semibold">
+                        Nessun dipendente trovato.
+                      </div>
+                    );
+                  }
+
+                  return filtered.map(dip => {
+                    const isEmailEnabled = dip.notificheEmail === true;
+
+                    return (
+                      <div key={dip.id} className="flex items-center justify-between p-3.5 hover:bg-slate-50/50 transition-colors">
+                        <div className="min-w-0 pr-4">
+                          <div className="text-xs font-bold text-slate-800 truncate">{dip.nome}</div>
+                          <div className="text-[10px] text-slate-400 font-semibold truncate mt-0.5">{dip.email}</div>
+                        </div>
+                        <button 
+                          type="button"
+                          onClick={() => handleToggleEmailNotification(dip.id, isEmailEnabled)}
+                          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${
+                            isEmailEnabled ? 'bg-indigo-600' : 'bg-gray-200'
+                          }`}
+                        >
+                          <span
+                            className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                              isEmailEnabled ? 'translate-x-4' : 'translate-x-0'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    );
+                  });
+                })()}
               </div>
             </section>
 
@@ -1750,6 +1800,8 @@ export default function Impostazioni() {
                   className="w-full p-3 border border-gray-200 rounded-xl bg-gray-50 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition font-bold text-gray-705 text-xs"
                 />
               </div>
+
+
 
               {/* Ore Contratto (Griglia Settimanale) */}
               {editTipo !== 'collaboratore' && (

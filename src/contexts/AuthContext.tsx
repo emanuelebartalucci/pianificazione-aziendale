@@ -19,6 +19,7 @@ export interface Dipendente {
   macroArea?: 'Disegnatori' | 'Ingegneria' | 'Sicurezza Cantieri' | 'Consulenza Sicurezza' | 'Amministrazione';
   dataCessazione?: string;
   orarioSettimanale?: { lun: number; mar: number; mer: number; gio: number; ven: number };
+  notificheEmail?: boolean;
 }
 
 export interface Commessa {
@@ -165,6 +166,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
               oreContratto: doc.data().oreContratto,
               macroArea: doc.data().macroArea,
               dataCessazione: doc.data().dataCessazione || '',
+              notificheEmail: doc.data().notificheEmail === true,
             }));
             setDipendenti(list.sort((a, b) => a.nome.localeCompare(b.nome)));
           }));

@@ -1,10 +1,10 @@
 import { db } from '../services/firebase';
-import { collection, addDoc, doc, getDoc } from 'firebase/firestore';
+import { collection, addDoc, doc, getDoc, query, where, getDocs } from 'firebase/firestore';
 import { wrapMailTemplate } from './mailTemplate';
 
 /**
  * Accoda un'email in Firestore nella collezione 'mail'.
- * Se la pausa globale delle e-mail è attiva in 'configurazione_sistema/email', l'email viene scartata.
+ * Se l'email appartiene a una risorsa non abilitata in anagrafica, l'email viene scartata (senza accumulare code pendenti).
  */
 export async function queueMail(toEmail: string, subject: string, htmlBody: string, plainText?: string) {
   try {
@@ -14,12 +14,25 @@ export async function queueMail(toEmail: string, subject: string, htmlBody: stri
       return;
     }
 
-    // Controlla lo stato di pausa globale delle notifiche e-mail
-    const emailConfigRef = doc(db, 'configurazione_sistema', 'email');
-    const emailConfigSnap = await getDoc(emailConfigRef);
-    if (emailConfigSnap.exists() && emailConfigSnap.data().paused === true) {
-      console.log(`[PAUSA EMAIL] Notifica a ${toEmail} bloccata (l'invio automatico è disattivato nelle impostazioni).`);
-      return;
+    const normalizedEmail = toEmail.toLowerCase().trim();
+    const bypassedEmails = ['synergiesflow@ingegno06.it'];
+
+    if (!bypassedEmails.includes(normalizedEmail)) {
+      // Controlla se il destinatario ha le notifiche e-mail abilitate nel suo profilo dipendente
+      const dipendentiRef = collection(db, 'dipendenti');
+      const q = query(dipendentiRef, where('email', '==', normalizedEmail));
+      const querySnap = await getDocs(q);
+
+      if (querySnap.empty) {
+        console.log(`[PAUSA EMAIL PER RISORSA] Destinatario ${toEmail} non censito in anagrafica dipendenti. E-mail scartata.`);
+        return;
+      }
+
+      const dipData = querySnap.docs[0].data();
+      if (dipData.notificheEmail !== true) {
+        console.log(`[PAUSA EMAIL PER RISORSA] Notifiche e-mail non abilitate per ${toEmail}. E-mail scartata.`);
+        return;
+      }
     }
 
     const payload: any = {
