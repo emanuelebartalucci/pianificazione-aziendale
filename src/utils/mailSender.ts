@@ -1,5 +1,5 @@
 import { db } from '../services/firebase';
-import { collection, addDoc, doc, getDoc, query, where, getDocs } from 'firebase/firestore';
+import { collection, addDoc, query, where, getDocs } from 'firebase/firestore';
 import { wrapMailTemplate } from './mailTemplate';
 
 /**

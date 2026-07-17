@@ -352,7 +352,6 @@ export default function Presenze() {
 
     const isWk = isWeekend(dayNum);
     const isHoliday = isItalianHoliday(dateStr);
-    const isChiusura = isInChiusuraAziendaleLocal(dateStr);
 
     if (isWk || isHoliday) {
       return {

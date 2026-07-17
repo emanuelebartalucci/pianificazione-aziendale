@@ -1441,7 +1441,6 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                       const dateStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                       const isWknd = isWeekend(dateStr);
                       const isHoliday = isItalianHoliday(dateStr);
-                      const isChiusura = isInChiusuraAziendaleLocal(dateStr);
                       const isSpecialDay = isWknd || isHoliday;
 
                       let thStyle: React.CSSProperties = {};

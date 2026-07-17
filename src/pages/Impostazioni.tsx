@@ -161,7 +161,6 @@ export default function Impostazioni() {
 
   // Liste dinamiche da visualizzare (caricate da context o listener locali per eliminazione)
   const [adminsList, setAdminsList] = useState<{id: string, email: string}[]>([]);
-  const [emailNotificationsPaused, setEmailNotificationsPaused] = useState(false);
   const [newPmEmail, setNewPmEmail] = useState('');
   const [newCommercialeEmail, setNewCommercialeEmail] = useState('');
   const [pmsList, setPmsList] = useState<{id: string, email: string}[]>([]);
@@ -172,9 +171,6 @@ export default function Impostazioni() {
     const unsubA = onSnapshot(collection(db, 'admins'), (snap) => setAdminsList(snap.docs.map(d => ({id: d.id, email: d.data().email}))));
     const unsubH = onSnapshot(collection(db, 'hr'), (snap) => {
       setHrList(snap.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
-    });
-    const unsubEmail = onSnapshot(doc(db, 'configurazione_sistema', 'email'), (docSnap) => {
-      if(docSnap.exists()) setEmailNotificationsPaused(docSnap.data().paused || false);
     });
     const unsubC = onSnapshot(collection(db, 'clienti'), (snap) => {
       setClientiList(snap.docs.map(d => ({
@@ -189,7 +185,7 @@ export default function Impostazioni() {
     const unsubComm = onSnapshot(collection(db, 'commerciali'), (snap) => {
       setCommercialiList(snap.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
     });
-    return () => { unsubA(); unsubH(); unsubEmail(); unsubC(); unsubPM(); unsubComm(); };
+    return () => { unsubA(); unsubH(); unsubC(); unsubPM(); unsubComm(); };
   }, [isAdmin]);
 
   if (!isAuthorized) {
