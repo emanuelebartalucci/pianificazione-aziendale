@@ -170,6 +170,18 @@ export default function Commesse() {
     isCommerciale,
     commercialiEmails
   } = useAuth();
+
+  const getOfficialName = (inputName?: string | null) => {
+    if (!inputName) return '';
+    const found = dipendenti.find(d => areNamesEqual(d.nome, inputName));
+    return found ? found.nome : inputName;
+  };
+
+  const formatPMField = (pmField: any) => {
+    if (!pmField) return '';
+    const arr = Array.isArray(pmField) ? pmField : [pmField];
+    return arr.map(name => getOfficialName(name)).filter(Boolean).join(', ');
+  };
   
   const [baseDate, setBaseDate] = useState<Date>(new Date());
   const [zoomWeeks, setZoomWeeks] = useState<number>(8); // Default to 8 Weeks
@@ -557,10 +569,11 @@ export default function Commesse() {
     
 
     // Inizializzazione progetti split in modifica
+    const defaultPm = Array.isArray(comm.pm) ? (comm.pm[0] || '') : (comm.pm || '');
     const initialProgetti = (comm.progetti || [
       {
         descrizione: 'FORMAZIONE - Attività formative sulla commessa',
-        pm: '',
+        pm: defaultPm,
         sgq: 'NO',
         verificatori: [],
         compilatore: '',
@@ -577,8 +590,10 @@ export default function Commesse() {
           vArr = [p.verificatori];
         }
       }
+      const pmDip = dipendenti.find(d => areNamesEqual(d.nome, p.pm));
       return {
         ...p,
+        pm: pmDip ? pmDip.nome : (p.pm || ''),
         verificatori: vArr
       };
     });
@@ -1367,8 +1382,8 @@ export default function Commesse() {
                                   </div>
                                 )}
                                 {(comm.responsabile || comm.pm) ? (
-                                  <div className="text-[9px] text-gray-500 font-semibold mt-1 truncate" title={`${comm.responsabile ? `Resp: ${comm.responsabile}` : ''}${comm.pm ? ` | PM: ${comm.pm}` : ''}`}>
-                                    {comm.responsabile && `Resp: ${comm.responsabile}`} {comm.pm && ` | PM: ${comm.pm}`}
+                                  <div className="text-[9px] text-gray-500 font-semibold mt-1 truncate" title={`${comm.responsabile ? `Resp: ${getOfficialName(comm.responsabile)}` : ''}${comm.pm ? ` | PM: ${formatPMField(comm.pm)}` : ''}`}>
+                                    {comm.responsabile && `Resp: ${getOfficialName(comm.responsabile)}`} {comm.pm && ` | PM: ${formatPMField(comm.pm)}`}
                                   </div>
                                 ) : (
                                   <div className="text-[9px] text-gray-455 font-medium mt-1 italic truncate">
@@ -1845,8 +1860,8 @@ export default function Commesse() {
                               {(c as any).stato || 'Aperta'}
                             </span>
                           </td>
-                          <td className="p-2.5 truncate max-w-[100px]" title={c.responsabile || ''}>{c.responsabile || ''}</td>
-                          <td className="p-2.5 truncate max-w-[120px]" title={(() => { const arr = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []); return arr.join(', '); })()}>{(() => { const arr = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []); return arr.join(', '); })() || ''}</td>
+                          <td className="p-2.5 truncate max-w-[100px]" title={getOfficialName(c.responsabile) || ''}>{getOfficialName(c.responsabile) || ''}</td>
+                          <td className="p-2.5 truncate max-w-[120px]" title={formatPMField(c.pm) || ''}>{formatPMField(c.pm) || ''}</td>
                           <td className="p-2.5 text-center">
                             <div className="flex items-center justify-center gap-1.5">
                               <button 
