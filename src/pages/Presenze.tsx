@@ -3748,7 +3748,7 @@ export default function Presenze() {
                                 <td key={i} style={dayStyle.style} className={`p-0 border-r border-gray-200 h-10 align-middle text-center ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.permessoStudio ? 'bg-purple-100/70' : '')}`}>
                                   {!outOfMonth && giorno && (
                                     <div className="w-full h-full flex items-center justify-center font-bold text-purple-700 text-xs">
-                                      {giorno.permessoStudio > 0 ? giorno.permessoStudio : '-'}
+                                      {(giorno.permessoStudio ?? 0) > 0 ? giorno.permessoStudio : '-'}
                                     </div>
                                   )}
                                   {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
@@ -3778,7 +3778,7 @@ export default function Presenze() {
                                 <td key={i} style={dayStyle.style} className={`p-0 border-r border-gray-200 h-10 align-middle text-center ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.permessoDonazione ? 'bg-teal-100/70' : '')}`}>
                                   {!outOfMonth && giorno && (
                                     <div className="w-full h-full flex items-center justify-center font-bold text-teal-700 text-xs">
-                                      {giorno.permessoDonazione > 0 ? giorno.permessoDonazione : '-'}
+                                      {(giorno.permessoDonazione ?? 0) > 0 ? giorno.permessoDonazione : '-'}
                                     </div>
                                   )}
                                   {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
@@ -3808,7 +3808,7 @@ export default function Presenze() {
                                 <td key={i} style={dayStyle.style} className={`p-0 border-r border-gray-200 h-10 align-middle text-center ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.permessoElettorale ? 'bg-indigo-100/70' : '')}`}>
                                   {!outOfMonth && giorno && (
                                     <div className="w-full h-full flex items-center justify-center font-bold text-indigo-700 text-xs">
-                                      {giorno.permessoElettorale > 0 ? giorno.permessoElettorale : '-'}
+                                      {(giorno.permessoElettorale ?? 0) > 0 ? giorno.permessoElettorale : '-'}
                                     </div>
                                   )}
                                   {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
