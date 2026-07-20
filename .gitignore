@@ -49,4 +49,13 @@ dist-ssr
 # Cloudflare Wrangler
 .wrangler/
 .wrangler
-/File Utili
+
+# Useful Files folder and subfolders
+/File Utili/
+File Utili/
+
+# Documentation build temporary files
+custom-reference.*
+ref_unpacked/
+Guida_Web_App_temp.md
+*_aggiornata.docx

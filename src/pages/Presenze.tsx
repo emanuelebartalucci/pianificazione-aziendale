@@ -1772,6 +1772,7 @@ export default function Presenze() {
     let oreFerie = 0;
     let orePerm = 0;
     let ggMalattia = 0;
+    let oreMalattia = 0;
     let ggTrasferta = 0;
     let ggIntere = 0;
     let ggMezze = 0;
@@ -1786,7 +1787,10 @@ export default function Presenze() {
         oreStra += Number(g.straordinari || 0);
         oreFerie += Number(g.ferie || 0);
         orePerm += Number(g.permessi || 0);
-        if (g.malattia) ggMalattia++;
+        if (g.malattia) {
+          ggMalattia++;
+          oreMalattia += Number(g.oreContratto || contractHours || 8);
+        }
         if (g.trasferta) ggTrasferta++;
 
         oreStudio += Number(g.permessoStudio || 0);
@@ -1798,7 +1802,7 @@ export default function Presenze() {
       }
     }
 
-    return { oreOrd, oreStra, oreFerie, orePerm, ggMalattia, ggTrasferta, ggIntere, ggMezze, oreStudio, oreDonazione, oreElettorale };
+    return { oreOrd, oreStra, oreFerie, orePerm, ggMalattia, oreMalattia, ggTrasferta, ggIntere, ggMezze, oreStudio, oreDonazione, oreElettorale };
   };
 
   // --- EXPORT TO EXCEL (CSV COMPATIBLE) ---
@@ -2795,7 +2799,7 @@ export default function Presenze() {
                       <th className="p-4 font-bold text-gray-700 text-sm text-right">Straordinari</th>
                       <th className="p-4 font-bold text-gray-700 text-sm text-right">Ferie / Mal.</th>
                       <th className="p-4 font-bold text-gray-700 text-sm text-right">Permessi</th>
-                      <th className="p-4 font-bold text-gray-700 text-sm text-center">Malattia/Maternità (Giorni)</th>
+                      <th className="p-4 font-bold text-gray-700 text-sm text-center">Malattia/Maternità</th>
                       <th className="p-4 font-bold text-gray-700 text-sm text-center">Trasferte (Giorni)</th>
                       <th className="p-4 font-bold text-gray-700 text-sm text-center no-print">Azione</th>
                     </tr>
@@ -2829,7 +2833,7 @@ export default function Presenze() {
                       
                       const totals = sheet 
                         ? calculateTotals(sheet.giorni, daysInMonth)
-                        : { oreOrd: 0, oreStra: 0, oreFerie: 0, orePerm: 0, ggMalattia: 0, ggTrasferta: 0, ggIntere: 0, ggMezze: 0 };
+                        : { oreOrd: 0, oreStra: 0, oreFerie: 0, orePerm: 0, ggMalattia: 0, oreMalattia: 0, ggTrasferta: 0, ggIntere: 0, ggMezze: 0 };
 
                       return (
                         <tr key={dip.id} className="hover:bg-indigo-50/20 transition-colors">
@@ -2846,7 +2850,7 @@ export default function Presenze() {
                               <td className="p-4 text-right font-bold text-amber-600">{totals.oreStra > 0 ? `+${formatDec(totals.oreStra)}h` : '0h'}</td>
                               <td className="p-4 text-right font-semibold text-gray-700">{formatDec(totals.oreFerie)}h</td>
                               <td className="p-4 text-right font-semibold text-gray-700">{formatDec(totals.orePerm)}h</td>
-                              <td className="p-4 text-center text-red-600 font-bold">{totals.ggMalattia > 0 ? formatDec(totals.ggMalattia) : '-'}</td>
+                              <td className="p-4 text-center text-red-600 font-bold">{totals.oreMalattia > 0 ? `${formatDec(totals.oreMalattia)}h` : '-'}</td>
                               <td className="p-4 text-center text-blue-600 font-bold">{totals.ggTrasferta > 0 ? formatDec(totals.ggTrasferta) : '-'}</td>
                             </>
                           ) : (
@@ -3426,11 +3430,12 @@ export default function Presenze() {
                 
                 {/* Legenda rapida */}
                 <div className="px-6 py-4 bg-gray-50 border-b border-gray-100 flex flex-wrap gap-4 items-center justify-between no-print">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="text-xs font-extrabold text-gray-400 uppercase tracking-wider mr-2">Legenda:</span>
-                    <span className="flex items-center gap-1.5 text-xs font-bold text-gray-700 bg-white px-2.5 py-1 rounded-lg border shadow-sm"><span className="w-2.5 h-2.5 rounded-full bg-red-500"></span> Malattia (M)</span>
-                    <span className="flex items-center gap-1.5 text-xs font-bold text-gray-700 bg-white px-2.5 py-1 rounded-lg border shadow-sm"><span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span> Trasferta (T)</span>
-                    <span className="flex items-center gap-1.5 text-xs font-bold text-gray-500 bg-gray-200 px-2 py-0.5 rounded border text-[10px] font-mono">W</span> Fine Settimana
+                    <span className="flex items-center gap-1.5 text-xs font-bold text-gray-700 bg-white px-2.5 py-1 rounded-lg border shadow-sm"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Ore Ordinarie</span>
+                    <span className="flex items-center gap-1.5 text-xs font-bold text-amber-700 bg-white px-2.5 py-1 rounded-lg border shadow-sm"><span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span> Straordinari</span>
+                    <span className="flex items-center gap-1.5 text-xs font-bold text-blue-700 bg-white px-2.5 py-1 rounded-lg border shadow-sm"><span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span> Trasferta (T)</span>
+                    <span className="flex items-center gap-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-100 shadow-sm">ℹ️ Ferie, Permessi e Malattie sono sincronizzati dal Piano Ferie</span>
                   </div>
                   
                   <button onClick={() => window.print()} className="flex items-center gap-1.5 text-gray-700 hover:text-gray-900 font-extrabold text-xs bg-white border px-3 py-1.5 rounded-xl shadow-sm hover:shadow active:scale-95 transition-all">
@@ -3442,8 +3447,8 @@ export default function Presenze() {
                 <div className="w-full overflow-x-auto scrollbar-thin">
                   <table className="w-full text-center border-collapse min-w-[1200px] text-xs">
                     <thead>
-                      <tr className="bg-gray-100 border-b border-gray-200 text-[10px] uppercase font-bold text-gray-600">
-                        <th className="p-3 text-left w-36 font-extrabold text-gray-700 bg-gray-100 sticky left-0 z-10 border-r border-gray-200">Giorno</th>
+                      <tr className="bg-gray-100 border-b border-gray-200 text-[10px] uppercase font-bold text-gray-600 h-10">
+                        <th className="p-2 text-left w-36 font-extrabold text-gray-700 bg-gray-100 sticky left-0 z-10 border-r border-gray-200 h-10 align-middle">Giorno</th>
                         {Array.from({ length: 31 }).map((_, i) => {
                           const dayNum = i + 1;
                           const outOfMonth = dayNum > daysInMonth;
@@ -3453,26 +3458,26 @@ export default function Presenze() {
                             <th 
                               key={i} 
                               style={dayStyle.style}
-                              className={`p-2 border-r border-gray-200 w-[2.8%] min-w-[34px] ${outOfMonth ? 'bg-gray-300/50 text-gray-400' : dayStyle.className || 'text-gray-700'}`}
+                              className={`p-1 border-r border-gray-200 w-[2.8%] min-w-[34px] h-10 align-middle ${outOfMonth ? 'bg-gray-300/50 text-gray-400' : dayStyle.className || 'text-gray-700'}`}
                             >
                               <div>{dayNum}</div>
                               {!outOfMonth && (
-                                <div className="text-[8px] mt-0.5 opacity-60">
+                                <div className="text-[8px] opacity-60 font-semibold">
                                   {new Date(selectedYear, selectedMonth - 1, dayNum).toLocaleDateString('it-IT', { weekday: 'narrow' })}
                                 </div>
                               )}
                             </th>
                           );
                         })}
-                        <th className="p-3 font-extrabold text-gray-800 bg-gray-150 border-l-2 border-gray-300 w-16">TOT</th>
+                        <th className="p-2 font-extrabold text-gray-800 bg-gray-150 border-l-2 border-gray-300 w-16 h-10 align-middle">TOT</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200 font-medium">
                       {isCollaboratore(myAssociatedName, dipendenti) ? (
                         <>
                           {/* COLLABORATORI RIGA 1: GIORNATA INTERA */}
-                          <tr className="hover:bg-gray-50/50 transition-colors">
-                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10">Giornata Intera</td>
+                          <tr className="hover:bg-gray-50/50 transition-colors h-10">
+                            <td className="px-3 py-2 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 whitespace-nowrap h-10 align-middle">Giornata Intera</td>
                             {Array.from({ length: 31 }).map((_, i) => {
                               const d = i + 1;
                               const outOfMonth = d > daysInMonth;
@@ -3480,9 +3485,9 @@ export default function Presenze() {
                               const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} style={dayStyle.style} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || ''} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-0 border-r border-gray-200 h-10 align-middle text-center ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || ''}`}>
                                   {!outOfMonth && giorno && (
-                                    <div className="flex justify-center items-center">
+                                    <div className="w-full h-full flex justify-center items-center">
                                       <input 
                                         type="checkbox"
                                         disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || isCellDisabled(d, 'lavoro')}
@@ -3499,14 +3504,14 @@ export default function Presenze() {
                                 </td>
                               );
                             })}
-                            <td className="p-3 font-bold text-gray-800 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                            <td className="p-2 font-bold text-gray-800 bg-gray-50 border-l-2 border-gray-300 text-xs h-10 align-middle">
                               {calculateTotals(rapportino.giorni, daysInMonth).ggIntere} gg
                             </td>
                           </tr>
 
                           {/* COLLABORATORI RIGA 2: MEZZA GIORNATA */}
-                          <tr className="hover:bg-gray-50/50 transition-colors">
-                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10">Mezza Giornata</td>
+                          <tr className="hover:bg-gray-50/50 transition-colors h-10">
+                            <td className="px-3 py-2 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 whitespace-nowrap h-10 align-middle">Mezza Giornata</td>
                             {Array.from({ length: 31 }).map((_, i) => {
                               const d = i + 1;
                               const outOfMonth = d > daysInMonth;
@@ -3514,9 +3519,9 @@ export default function Presenze() {
                               const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} style={dayStyle.style} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || ''} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-0 border-r border-gray-200 h-10 align-middle text-center ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || ''}`}>
                                   {!outOfMonth && giorno && (
-                                    <div className="flex justify-center items-center">
+                                    <div className="w-full h-full flex justify-center items-center">
                                       <input 
                                         type="checkbox"
                                         disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || isCellDisabled(d, 'lavoro')}
@@ -3533,15 +3538,18 @@ export default function Presenze() {
                                 </td>
                               );
                             })}
-                            <td className="p-3 font-bold text-gray-800 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                            <td className="p-2 font-bold text-gray-800 bg-gray-50 border-l-2 border-gray-300 text-xs h-10 align-middle">
                               {calculateTotals(rapportino.giorni, daysInMonth).ggMezze} gg
                             </td>
                           </tr>
 
                           {/* COLLABORATORI RIGA 3: TRASFERTA */}
-                          <tr className="hover:bg-gray-50/50 transition-colors">
-                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 flex items-center gap-1.5">
-                              Trasferta <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1 py-0.5 rounded font-mono">T</span>
+                          <tr className="hover:bg-gray-50/50 transition-colors h-10">
+                            <td className="px-3 py-2 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 whitespace-nowrap h-10 align-middle">
+                              <div className="flex items-center gap-1.5">
+                                <span>Trasferta</span>
+                                <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1 py-0.5 rounded font-mono">T</span>
+                              </div>
                             </td>
                             {Array.from({ length: 31 }).map((_, i) => {
                               const d = i + 1;
@@ -3550,9 +3558,9 @@ export default function Presenze() {
                               const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} style={dayStyle.style} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || ''} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-0 border-r border-gray-200 h-10 align-middle text-center ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || ''}`}>
                                   {!outOfMonth && giorno && (
-                                    <div className="flex justify-center items-center">
+                                    <div className="w-full h-full flex justify-center items-center">
                                       <input 
                                         type="checkbox"
                                         disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || isCellDisabled(d, 'lavoro')}
@@ -3566,7 +3574,7 @@ export default function Presenze() {
                                 </td>
                               );
                             })}
-                            <td className="p-3 font-bold text-blue-600 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                            <td className="p-2 font-bold text-blue-600 bg-gray-50 border-l-2 border-gray-300 text-xs h-10 align-middle">
                               {calculateTotals(rapportino.giorni, daysInMonth).ggTrasferta} gg
                             </td>
                           </tr>
@@ -3574,8 +3582,10 @@ export default function Presenze() {
                       ) : (
                         <>
                           {/* DIPENDENTI STANDARD RIGA 1: ORE ORDINARIE */}
-                          <tr className="hover:bg-gray-50/50 transition-colors">
-                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10">Ore Ordinarie</td>
+                          <tr className="hover:bg-gray-50/50 transition-colors h-10">
+                            <td className="px-3 py-2 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 whitespace-nowrap h-10 align-middle">
+                              Ore Ordinarie
+                            </td>
                             {Array.from({ length: 31 }).map((_, i) => {
                               const d = i + 1;
                               const outOfMonth = d > daysInMonth;
@@ -3583,30 +3593,26 @@ export default function Presenze() {
                               const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} style={dayStyle.style} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.ore > 0 ? 'bg-emerald-50/70 font-semibold' : '')}`}>
+                                <td key={i} style={dayStyle.style} className={`p-0 border-r border-gray-200 h-10 align-middle text-center ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.ore > 0 ? 'bg-emerald-50/70 font-semibold' : '')}`}>
                                   {!outOfMonth && giorno && (
-                                    <input 
-                                      type="number"
-                                      min={0}
-                                      max={24}
-                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isCellDisabled(d, 'lavoro')}
-                                      value={giorno.ore === 0 ? '' : giorno.ore}
-                                      onChange={e => handleCellChange(dayStr(d), 'ore', e.target.value === '' ? 0 : Number(e.target.value))}
-                                      className="w-full text-center border-none p-1 rounded font-bold outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-transparent disabled:opacity-70 text-gray-900"
-                                    />
+                                    <div className="w-full h-full flex items-center justify-center font-bold text-gray-900 text-xs">
+                                      {giorno.ore > 0 ? giorno.ore : '-'}
+                                    </div>
                                   )}
                                   {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
                                 </td>
                               );
                             })}
-                            <td className="p-3 font-bold text-gray-800 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                            <td className="p-2 font-bold text-gray-800 bg-gray-50 border-l-2 border-gray-300 text-xs h-10 align-middle">
                               {formatDec(calculateTotals(rapportino.giorni, daysInMonth).oreOrd)}
                             </td>
                           </tr>
 
                           {/* DIPENDENTI STANDARD RIGA 2: STRAORDINARI */}
-                          <tr className="hover:bg-gray-50/50 transition-colors">
-                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10">Straordinari</td>
+                          <tr className="hover:bg-gray-50/50 transition-colors h-10">
+                            <td className="px-3 py-2 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 whitespace-nowrap h-10 align-middle">
+                              Straordinari
+                            </td>
                             {Array.from({ length: 31 }).map((_, i) => {
                               const d = i + 1;
                               const outOfMonth = d > daysInMonth;
@@ -3614,30 +3620,34 @@ export default function Presenze() {
                               const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} style={dayStyle.style} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || ''}`}>
+                                <td key={i} style={dayStyle.style} className={`p-0 border-r border-gray-200 h-10 align-middle text-center ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || ''}`}>
                                   {!outOfMonth && giorno && (
-                                    <input 
-                                      type="number"
-                                      min={0}
-                                      max={24}
-                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isCellDisabled(d, 'lavoro')}
-                                      value={giorno.straordinari === 0 ? '' : giorno.straordinari}
-                                      onChange={e => handleCellChange(dayStr(d), 'straordinari', e.target.value === '' ? 0 : Number(e.target.value))}
-                                      className="w-full text-center border-none p-1 rounded font-bold outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-transparent disabled:opacity-70 text-amber-600 font-extrabold"
-                                    />
+                                    <div className="w-full h-full flex items-center justify-center">
+                                      <input 
+                                        type="number"
+                                        min={0}
+                                        max={24}
+                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isCellDisabled(d, 'lavoro')}
+                                        value={giorno.straordinari === 0 ? '' : giorno.straordinari}
+                                        onChange={e => handleCellChange(dayStr(d), 'straordinari', e.target.value === '' ? 0 : Number(e.target.value))}
+                                        className="w-full h-full text-center border-none p-0 bg-transparent font-extrabold text-amber-600 focus:bg-white text-xs outline-none"
+                                      />
+                                    </div>
                                   )}
                                   {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
                                 </td>
                               );
                             })}
-                            <td className="p-3 font-bold text-amber-600 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                            <td className="p-2 font-bold text-amber-600 bg-gray-50 border-l-2 border-gray-300 text-xs h-10 align-middle">
                               {formatDec(calculateTotals(rapportino.giorni, daysInMonth).oreStra)} ore
                             </td>
                           </tr>
 
                           {/* DIPENDENTI STANDARD RIGA 3: PERMESSI */}
-                          <tr className="hover:bg-gray-50/50 transition-colors">
-                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10">Permessi</td>
+                          <tr className="hover:bg-gray-50/50 transition-colors h-10">
+                            <td className="px-3 py-2 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 whitespace-nowrap h-10 align-middle">
+                              Permessi
+                            </td>
                             {Array.from({ length: 31 }).map((_, i) => {
                               const d = i + 1;
                               const outOfMonth = d > daysInMonth;
@@ -3645,31 +3655,28 @@ export default function Presenze() {
                               const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} style={dayStyle.style} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.permessi > 0 ? 'bg-indigo-100' : '')}`}>
+                                <td key={i} style={dayStyle.style} className={`p-0 border-r border-gray-200 h-10 align-middle text-center ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.permessi > 0 ? 'bg-indigo-100/70' : '')}`}>
                                   {!outOfMonth && giorno && (
-                                    <input 
-                                      type="number"
-                                      min={0}
-                                      max={24}
-                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || giorno.ferie === (giorno.oreContratto ?? contractHours) || isCellDisabled(d, 'assenza')}
-                                      value={giorno.permessi === 0 ? '' : giorno.permessi}
-                                      onChange={e => handleCellChange(dayStr(d), 'permessi', e.target.value === '' ? 0 : Number(e.target.value))}
-                                      className="w-full text-center border-none p-1 rounded font-bold outline-none focus:bg-white focus:ring-1 focus:ring-indigo-500 bg-transparent disabled:opacity-70 text-indigo-600"
-                                    />
+                                    <div className="w-full h-full flex items-center justify-center font-bold text-indigo-600 text-xs">
+                                      {giorno.permessi > 0 ? giorno.permessi : '-'}
+                                    </div>
                                   )}
                                   {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
                                 </td>
                               );
                             })}
-                            <td className="p-3 font-bold text-indigo-600 bg-gray-50 border-l-2 border-gray-300 text-sm">
-                              {formatDec(calculateTotals(rapportino.giorni, daysInMonth).orePerm)}
+                            <td className="p-2 font-bold text-indigo-600 bg-gray-50 border-l-2 border-gray-300 text-xs h-10 align-middle">
+                              {formatDec(calculateTotals(rapportino.giorni, daysInMonth).orePerm)} ore
                             </td>
                           </tr>
 
                           {/* DIPENDENTI STANDARD RIGA 4: FERIE */}
-                          <tr className="hover:bg-gray-50/50 transition-colors">
-                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 flex items-center gap-1.5">
-                              Ferie <span className="text-[9px] font-bold bg-green-100 text-green-700 px-1 py-0.5 rounded font-mono">F</span>
+                          <tr className="hover:bg-gray-50/50 transition-colors h-10">
+                            <td className="px-3 py-2 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 whitespace-nowrap h-10 align-middle">
+                              <div className="flex items-center gap-1.5">
+                                <span>Ferie</span>
+                                <span className="text-[9px] font-bold bg-green-100 text-green-700 px-1 py-0.5 rounded font-mono">F</span>
+                              </div>
                             </td>
                             {Array.from({ length: 31 }).map((_, i) => {
                               const d = i + 1;
@@ -3678,31 +3685,28 @@ export default function Presenze() {
                               const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} style={dayStyle.style} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.ferie ? 'bg-amber-100' : '')} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-0 border-r border-gray-200 h-10 align-middle text-center ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.ferie > 0 ? 'bg-green-100/70' : '')}`}>
                                   {!outOfMonth && giorno && (
-                                    <div className="flex justify-center items-center">
-                                      <input 
-                                        type="checkbox"
-                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isCellDisabled(d, 'assenza')}
-                                        checked={!!giorno.ferie}
-                                        onChange={e => handleCellChange(dayStr(d), 'ferie', e.target.checked)}
-                                        className="w-4 h-4 rounded text-green-600 focus:ring-green-400 cursor-pointer"
-                                      />
+                                    <div className="w-full h-full flex items-center justify-center font-bold text-green-700 text-xs">
+                                      {giorno.ferie > 0 ? giorno.ferie : '-'}
                                     </div>
                                   )}
                                   {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
                                 </td>
                               );
                             })}
-                            <td className="p-3 font-bold text-green-700 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                            <td className="p-2 font-bold text-green-700 bg-gray-50 border-l-2 border-gray-300 text-xs h-10 align-middle">
                               {formatDec(calculateTotals(rapportino.giorni, daysInMonth).oreFerie)} ore
                             </td>
                           </tr>
 
-                          {/* DIPENDENTI STANDARD RIGA 5: CONTRASSEGNO MALATTIA */}
-                          <tr className="hover:bg-gray-50/50 transition-colors">
-                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 flex items-center gap-1.5">
-                              Malattia/Maternità <span className="text-[9px] font-bold bg-red-100 text-red-700 px-1 py-0.5 rounded font-mono">M</span>
+                          {/* DIPENDENTI STANDARD RIGA 5: MALATTIA */}
+                          <tr className="hover:bg-gray-50/50 transition-colors h-10">
+                            <td className="px-3 py-2 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 whitespace-nowrap h-10 align-middle">
+                              <div className="flex items-center gap-1.5">
+                                <span>Malattia/Maternità</span>
+                                <span className="text-[9px] font-bold bg-red-100 text-red-700 px-1 py-0.5 rounded font-mono">M</span>
+                              </div>
                             </td>
                             {Array.from({ length: 31 }).map((_, i) => {
                               const d = i + 1;
@@ -3711,31 +3715,28 @@ export default function Presenze() {
                               const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} style={dayStyle.style} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.malattia ? 'bg-red-100' : '')} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-0 border-r border-gray-200 h-10 align-middle text-center ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.malattia ? 'bg-red-100/70' : '')}`}>
                                   {!outOfMonth && giorno && (
-                                    <div className="flex justify-center items-center">
-                                      <input 
-                                        type="checkbox"
-                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || isCellDisabled(d, 'assenza')}
-                                        checked={giorno.malattia || false}
-                                        onChange={e => handleCellChange(dayStr(d), 'malattia', e.target.checked)}
-                                        className="w-4 h-4 rounded text-red-500 focus:ring-red-400 cursor-pointer"
-                                      />
+                                    <div className="w-full h-full flex items-center justify-center font-bold text-red-600 text-xs">
+                                      {giorno.malattia ? 'M' : '-'}
                                     </div>
                                   )}
                                   {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
                                 </td>
                               );
                             })}
-                            <td className="p-3 font-bold text-red-600 bg-gray-50 border-l-2 border-gray-300 text-sm">
-                              {calculateTotals(rapportino.giorni, daysInMonth).ggMalattia} gg
+                            <td className="p-2 font-bold text-red-600 bg-gray-50 border-l-2 border-gray-300 text-xs h-10 align-middle">
+                              {formatDec(calculateTotals(rapportino.giorni, daysInMonth).oreMalattia)} ore
                             </td>
                           </tr>
 
                           {/* DIPENDENTI STANDARD RIGA 5b: PERMESSO STUDIO */}
-                          <tr className="hover:bg-gray-50/50 transition-colors">
-                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 flex items-center gap-1.5">
-                              Permesso Studio <span className="text-[9px] font-bold bg-purple-100 text-purple-700 px-1 py-0.5 rounded font-mono">S</span>
+                          <tr className="hover:bg-gray-50/50 transition-colors h-10">
+                            <td className="px-3 py-2 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 whitespace-nowrap h-10 align-middle">
+                              <div className="flex items-center gap-1.5">
+                                <span>Permesso Studio</span>
+                                <span className="text-[9px] font-bold bg-purple-100 text-purple-700 px-1 py-0.5 rounded font-mono">S</span>
+                              </div>
                             </td>
                             {Array.from({ length: 31 }).map((_, i) => {
                               const d = i + 1;
@@ -3744,31 +3745,28 @@ export default function Presenze() {
                               const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} style={dayStyle.style} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.permessoStudio ? 'bg-purple-100' : '')} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-0 border-r border-gray-200 h-10 align-middle text-center ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.permessoStudio ? 'bg-purple-100/70' : '')}`}>
                                   {!outOfMonth && giorno && (
-                                    <div className="flex justify-center items-center">
-                                      <input 
-                                        type="checkbox"
-                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isCellDisabled(d, 'assenza')}
-                                        checked={!!giorno.permessoStudio}
-                                        onChange={e => handleCellChange(dayStr(d), 'permessoStudio', e.target.checked)}
-                                        className="w-4 h-4 rounded text-purple-600 focus:ring-purple-400 cursor-pointer"
-                                      />
+                                    <div className="w-full h-full flex items-center justify-center font-bold text-purple-700 text-xs">
+                                      {giorno.permessoStudio > 0 ? giorno.permessoStudio : '-'}
                                     </div>
                                   )}
                                   {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
                                 </td>
                               );
                             })}
-                            <td className="p-3 font-bold text-purple-700 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                            <td className="p-2 font-bold text-purple-700 bg-gray-50 border-l-2 border-gray-300 text-xs h-10 align-middle">
                               {formatDec(calculateTotals(rapportino.giorni, daysInMonth).oreStudio)} ore
                             </td>
                           </tr>
 
                           {/* DIPENDENTI STANDARD RIGA 5c: PERMESSO DONAZIONE */}
-                          <tr className="hover:bg-gray-50/50 transition-colors">
-                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 flex items-center gap-1.5">
-                              Permesso Donazione <span className="text-[9px] font-bold bg-teal-100 text-teal-700 px-1 py-0.5 rounded font-mono">D</span>
+                          <tr className="hover:bg-gray-50/50 transition-colors h-10">
+                            <td className="px-3 py-2 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 whitespace-nowrap h-10 align-middle">
+                              <div className="flex items-center gap-1.5">
+                                <span>Permesso Donazione</span>
+                                <span className="text-[9px] font-bold bg-teal-100 text-teal-700 px-1 py-0.5 rounded font-mono">D</span>
+                              </div>
                             </td>
                             {Array.from({ length: 31 }).map((_, i) => {
                               const d = i + 1;
@@ -3777,31 +3775,28 @@ export default function Presenze() {
                               const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} style={dayStyle.style} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.permessoDonazione ? 'bg-teal-100' : '')} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-0 border-r border-gray-200 h-10 align-middle text-center ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.permessoDonazione ? 'bg-teal-100/70' : '')}`}>
                                   {!outOfMonth && giorno && (
-                                    <div className="flex justify-center items-center">
-                                      <input 
-                                        type="checkbox"
-                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isCellDisabled(d, 'assenza')}
-                                        checked={!!giorno.permessoDonazione}
-                                        onChange={e => handleCellChange(dayStr(d), 'permessoDonazione', e.target.checked)}
-                                        className="w-4 h-4 rounded text-teal-600 focus:ring-teal-400 cursor-pointer"
-                                      />
+                                    <div className="w-full h-full flex items-center justify-center font-bold text-teal-700 text-xs">
+                                      {giorno.permessoDonazione > 0 ? giorno.permessoDonazione : '-'}
                                     </div>
                                   )}
                                   {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
                                 </td>
                               );
                             })}
-                            <td className="p-3 font-bold text-teal-700 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                            <td className="p-2 font-bold text-teal-700 bg-gray-50 border-l-2 border-gray-300 text-xs h-10 align-middle">
                               {formatDec(calculateTotals(rapportino.giorni, daysInMonth).oreDonazione)} ore
                             </td>
                           </tr>
 
                           {/* DIPENDENTI STANDARD RIGA 5d: PERMESSO ELETTORALE */}
-                          <tr className="hover:bg-gray-50/50 transition-colors">
-                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 flex items-center gap-1.5">
-                              Permesso Elettorale <span className="text-[9px] font-bold bg-indigo-100 text-indigo-700 px-1 py-0.5 rounded font-mono">E</span>
+                          <tr className="hover:bg-gray-50/50 transition-colors h-10">
+                            <td className="px-3 py-2 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 whitespace-nowrap h-10 align-middle">
+                              <div className="flex items-center gap-1.5">
+                                <span>Permesso Elettorale</span>
+                                <span className="text-[9px] font-bold bg-indigo-100 text-indigo-700 px-1 py-0.5 rounded font-mono">E</span>
+                              </div>
                             </td>
                             {Array.from({ length: 31 }).map((_, i) => {
                               const d = i + 1;
@@ -3810,31 +3805,28 @@ export default function Presenze() {
                               const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} style={dayStyle.style} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.permessoElettorale ? 'bg-indigo-100' : '')} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-0 border-r border-gray-200 h-10 align-middle text-center ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.permessoElettorale ? 'bg-indigo-100/70' : '')}`}>
                                   {!outOfMonth && giorno && (
-                                    <div className="flex justify-center items-center">
-                                      <input 
-                                        type="checkbox"
-                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || giorno.malattia || isCellDisabled(d, 'assenza')}
-                                        checked={!!giorno.permessoElettorale}
-                                        onChange={e => handleCellChange(dayStr(d), 'permessoElettorale', e.target.checked)}
-                                        className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-400 cursor-pointer"
-                                      />
+                                    <div className="w-full h-full flex items-center justify-center font-bold text-indigo-700 text-xs">
+                                      {giorno.permessoElettorale > 0 ? giorno.permessoElettorale : '-'}
                                     </div>
                                   )}
                                   {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
                                 </td>
                               );
                             })}
-                            <td className="p-3 font-bold text-indigo-700 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                            <td className="p-2 font-bold text-indigo-700 bg-gray-50 border-l-2 border-gray-300 text-xs h-10 align-middle">
                               {formatDec(calculateTotals(rapportino.giorni, daysInMonth).oreElettorale)} ore
                             </td>
                           </tr>
 
                           {/* DIPENDENTI STANDARD RIGA 6: CONTRASSEGNO TRASFERTA */}
-                          <tr className="hover:bg-gray-50/50 transition-colors">
-                            <td className="p-3 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 flex items-center gap-1.5">
-                              Trasferta <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1 py-0.5 rounded font-mono">T</span>
+                          <tr className="hover:bg-gray-50/50 transition-colors h-10">
+                            <td className="px-3 py-2 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 whitespace-nowrap h-10 align-middle">
+                              <div className="flex items-center gap-1.5">
+                                <span>Trasferta</span>
+                                <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1 py-0.5 rounded font-mono">T</span>
+                              </div>
                             </td>
                             {Array.from({ length: 31 }).map((_, i) => {
                               const d = i + 1;
@@ -3843,9 +3835,9 @@ export default function Presenze() {
                               const dayStyle = getCellDayStyle(d);
 
                               return (
-                                <td key={i} style={dayStyle.style} className={`p-1.5 border-r border-gray-200 ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || ''} align-middle`}>
+                                <td key={i} style={dayStyle.style} className={`p-0 border-r border-gray-200 h-10 align-middle text-center ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || ''}`}>
                                   {!outOfMonth && giorno && (
-                                    <div className="flex justify-center items-center">
+                                    <div className="w-full h-full flex justify-center items-center">
                                       <input 
                                         type="checkbox"
                                         disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || isCellDisabled(d, 'lavoro')}
@@ -3859,7 +3851,7 @@ export default function Presenze() {
                                 </td>
                               );
                             })}
-                            <td className="p-3 font-bold text-blue-600 bg-gray-50 border-l-2 border-gray-300 text-sm">
+                            <td className="p-2 font-bold text-blue-600 bg-gray-50 border-l-2 border-gray-300 text-xs h-10 align-middle">
                               {calculateTotals(rapportino.giorni, daysInMonth).ggTrasferta} gg
                             </td>
                           </tr>
@@ -4774,7 +4766,7 @@ export default function Presenze() {
                               );
                             })}
                             <td className="p-2 font-bold text-red-600 bg-gray-50 border-l">
-                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).ggMalattia} gg
+                              {formatDec(calculateTotals(reviewingRapportino.giorni, daysInMonth).oreMalattia)} ore
                             </td>
                           </tr>
 
@@ -5306,14 +5298,14 @@ export default function Presenze() {
                             const d = i + 1;
                             const val = sheetToPrint.giorni[dayStr(d)]?.ferie;
                             const out = d > daysInMonth;
-                            const hasVal = !out && val;
+                            const hasVal = !out && val && val > 0;
                             return (
                               <td 
                                 key={i} 
                                 className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}
                                 style={hasVal ? { backgroundColor: '#fef08a' } : undefined}
                               >
-                                {!out && val ? 'F' : ''}
+                                {!out && val && val > 0 ? formatDec(val) : ''}
                               </td>
                             );
                           })}
@@ -5323,20 +5315,22 @@ export default function Presenze() {
                           <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">MALATTIA (M)</td>
                           {Array.from({ length: 31 }).map((_, i) => {
                             const d = i + 1;
-                            const val = sheetToPrint.giorni[dayStr(d)]?.malattia;
+                            const g = sheetToPrint.giorni[dayStr(d)];
+                            const val = g?.malattia;
                             const out = d > daysInMonth;
                             const hasVal = !out && val;
+                            const hCount = g?.oreContratto || contractHours || 8;
                             return (
                               <td 
                                 key={i} 
                                 className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}
                                 style={hasVal ? { backgroundColor: '#fca5a5' } : undefined}
                               >
-                                {!out && val ? 'M' : ''}
+                                {!out && val ? formatDec(hCount) : ''}
                               </td>
                             );
                           })}
-                          <td className="p-1 font-extrabold bg-gray-100">{formatDec(totals.ggMalattia)} gg</td>
+                          <td className="p-1 font-extrabold bg-gray-100">{formatDec(totals.oreMalattia)} ore</td>
                         </tr>
                         <tr>
                           <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">STUDIO (S)</td>
@@ -5344,14 +5338,14 @@ export default function Presenze() {
                             const d = i + 1;
                             const val = sheetToPrint.giorni[dayStr(d)]?.permessoStudio;
                             const out = d > daysInMonth;
-                            const hasVal = !out && val;
+                            const hasVal = !out && val && val > 0;
                             return (
                               <td 
                                 key={i} 
                                 className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}
                                 style={hasVal ? { backgroundColor: '#e9d5ff' } : undefined}
                               >
-                                {!out && val ? 'S' : ''}
+                                {!out && val && val > 0 ? formatDec(val) : ''}
                               </td>
                             );
                           })}
@@ -5363,14 +5357,14 @@ export default function Presenze() {
                             const d = i + 1;
                             const val = sheetToPrint.giorni[dayStr(d)]?.permessoDonazione;
                             const out = d > daysInMonth;
-                            const hasVal = !out && val;
+                            const hasVal = !out && val && val > 0;
                             return (
                               <td 
                                 key={i} 
                                 className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}
                                 style={hasVal ? { backgroundColor: '#99f6e4' } : undefined}
                               >
-                                {!out && val ? 'D' : ''}
+                                {!out && val && val > 0 ? formatDec(val) : ''}
                               </td>
                             );
                           })}
@@ -5382,14 +5376,14 @@ export default function Presenze() {
                             const d = i + 1;
                             const val = sheetToPrint.giorni[dayStr(d)]?.permessoElettorale;
                             const out = d > daysInMonth;
-                            const hasVal = !out && val;
+                            const hasVal = !out && val && val > 0;
                             return (
                               <td 
                                 key={i} 
                                 className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}
                                 style={hasVal ? { backgroundColor: '#c7d2fe' } : undefined}
                               >
-                                {!out && val ? 'E' : ''}
+                                {!out && val && val > 0 ? formatDec(val) : ''}
                               </td>
                             );
                           })}

@@ -400,17 +400,18 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         payload.data = dataRichiesta;
         payload.dataInizio = dataRichiesta;
         payload.dataFine = dataRichiesta;
-        if (tipoRichiesta === 'permesso') {
-          payload.frazioneTipo = frazioneTipo;
-          if (frazioneTipo === 'orario') {
-            payload.oraInizio = oraInizio;
-            payload.oraFine = oraFine;
-          }
-        }
       } else {
         payload.data = dataInizio; // legacy fallback
         payload.dataInizio = dataInizio;
         payload.dataFine = dataFine;
+      }
+
+      if (tipoRichiesta === 'permesso') {
+        payload.frazioneTipo = frazioneTipo;
+        if (frazioneTipo === 'orario') {
+          payload.oraInizio = oraInizio;
+          payload.oraFine = oraFine;
+        }
       }
       
       await addDoc(collection(db, 'richieste_ferie'), payload);
@@ -1147,30 +1148,24 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                   </div>
                 )}
                 
-                {tipoRichiesta !== 'permesso' ? (
-                  <div className="flex bg-white/50 p-1 rounded-xl shadow-inner border border-green-100/50">
-                    <button
-                      type="button"
-                      onClick={() => setRequestMode('singolo')}
-                      className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${requestMode === 'singolo' ? 'bg-green-600 text-white shadow-sm' : 'text-green-800/70 hover:text-green-900'}`}
-                    >
-                      Giorno Singolo
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setRequestMode('range')}
-                      className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${requestMode === 'range' ? 'bg-green-600 text-white shadow-sm' : 'text-green-800/70 hover:text-green-900'}`}
-                    >
-                      Intervallo di Date
-                    </button>
-                  </div>
-                ) : (
-                  <div className="bg-white/40 p-3 rounded-xl border border-green-100 text-xs font-bold text-green-800/80">
-                    Modalità: Giorno Singolo (obbligatorio per permessi o frazioni di giornata)
-                  </div>
-                )}
+                <div className="flex bg-white/50 p-1 rounded-xl shadow-inner border border-green-100/50">
+                  <button
+                    type="button"
+                    onClick={() => setRequestMode('singolo')}
+                    className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${requestMode === 'singolo' ? 'bg-green-600 text-white shadow-sm' : 'text-green-800/70 hover:text-green-900'}`}
+                  >
+                    Giorno Singolo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRequestMode('range')}
+                    className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${requestMode === 'range' ? 'bg-green-600 text-white shadow-sm' : 'text-green-800/70 hover:text-green-900'}`}
+                  >
+                    Intervallo di Date
+                  </button>
+                </div>
 
-                {requestMode === 'singolo' || tipoRichiesta === 'permesso' ? (
+                {requestMode === 'singolo' ? (
                   <div>
                     <label className="block text-sm font-bold text-green-900 mb-1.5 ml-1">Giorno di assenza</label>
                     <input 
@@ -1212,13 +1207,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                   <label className="block text-sm font-bold text-green-900 mb-1.5 ml-1">Tipo di assenza</label>
                   <select 
                     value={tipoRichiesta} 
-                    onChange={e => {
-                      const val = e.target.value;
-                      setTipoRichiesta(val);
-                      if (val === 'permesso') {
-                        setRequestMode('singolo');
-                      }
-                    }}
+                    onChange={e => setTipoRichiesta(e.target.value)}
                     className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900"
                   >
                     <option value="ferie">Ferie</option>
@@ -1323,10 +1312,10 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                       <div className="font-bold text-base sm:text-lg text-gray-900 truncate">{req.dipendenteName}</div>
                       <div className="flex flex-wrap items-center gap-2 sm:gap-4">
                         <span className="text-xs sm:text-sm font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded-lg">
-                          {req.tipo === 'permesso' && req.oraInizio && req.oraFine
-                            ? `Il ${formatDate(req.dataInizio || req.data)} dalle ${req.oraInizio} alle ${req.oraFine}`
-                            : req.dataInizio && req.dataFine && req.dataInizio !== req.dataFine 
-                              ? `Dal ${formatDate(req.dataInizio)} al ${formatDate(req.dataFine)}` 
+                          {req.dataInizio && req.dataFine && req.dataInizio !== req.dataFine 
+                            ? `Dal ${formatDate(req.dataInizio)} al ${formatDate(req.dataFine)}${req.tipo === 'permesso' && req.oraInizio && req.oraFine ? ` (dalle ${req.oraInizio} alle ${req.oraFine})` : ''}`
+                            : req.tipo === 'permesso' && req.oraInizio && req.oraFine
+                              ? `Il ${formatDate(req.dataInizio || req.data)} dalle ${req.oraInizio} alle ${req.oraFine}`
                               : `Il ${formatDate(req.dataInizio || req.data)}`}
                         </span>
                         {getTipoLabel(req.tipo)}
