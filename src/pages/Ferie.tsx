@@ -25,6 +25,8 @@ interface RichiestaFerie {
   dataFine?: string;
   oraInizio?: string;
   oraFine?: string;
+  pausaPranzo?: boolean;
+  pausaPranzoOre?: number;
   timestamp?: string;
   note?: string;
   comunicazioneId?: string;
@@ -34,6 +36,11 @@ const TIME_OPTIONS = Array.from({ length: 48 }).map((_, i) => {
   const h = Math.floor(i / 2);
   const m = i % 2 === 0 ? '00' : '30';
   return `${String(h).padStart(2, '0')}:${m}`;
+});
+
+const PAUSA_PRANZO_OPTIONS = Array.from({ length: 8 }).map((_, i) => {
+  const v = (i + 1) * 0.5;
+  return { value: v.toFixed(1), label: `${v.toString().replace('.', ',')} or${v === 1 ? 'a' : 'e'}` };
 });
 
 interface FerieContentProps {
@@ -70,6 +77,8 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
   const [tipoRichiesta, setTipoRichiesta] = useState('ferie');
   const [frazioneTipo, setFrazioneTipo] = useState<'mattina' | 'pomeriggio' | 'giornata' | 'orario'>('giornata');
   const [approvedWeekends, setApprovedWeekends] = useState<Record<string, boolean>>({});
+  const [pausaPranzo, setPausaPranzo] = useState(false);
+  const [pausaPranzoOre, setPausaPranzoOre] = useState('1.0');
 
   useEffect(() => {
     if (myAssociatedName && !dipendenteSelezionato) {
@@ -135,7 +144,9 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
             oraFine: data.oraFine,
             timestamp: data.timestamp,
             note: data.note || '',
-            comunicazioneId: data.comunicazioneId || ''
+            comunicazioneId: data.comunicazioneId || '',
+            pausaPranzo: data.pausaPranzo || false,
+            pausaPranzoOre: data.pausaPranzoOre || 0
           });
         });
         setHrRichieste(list);
@@ -163,7 +174,9 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
             oraFine: data.oraFine,
             timestamp: data.timestamp,
             note: data.note || '',
-            comunicazioneId: data.comunicazioneId || ''
+            comunicazioneId: data.comunicazioneId || '',
+            pausaPranzo: data.pausaPranzo || false,
+            pausaPranzoOre: data.pausaPranzoOre || 0
           });
         });
         setMyRichieste(listMy);
@@ -195,7 +208,9 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
             oraFine: data.oraFine,
             timestamp: data.timestamp,
             note: data.note || '',
-            comunicazioneId: data.comunicazioneId || ''
+            comunicazioneId: data.comunicazioneId || '',
+            pausaPranzo: data.pausaPranzo || false,
+            pausaPranzoOre: data.pausaPranzoOre || 0
           });
         });
         setOthersApprovedRichieste(listOthers);
@@ -411,6 +426,10 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         if (frazioneTipo === 'orario') {
           payload.oraInizio = oraInizio;
           payload.oraFine = oraFine;
+          if (pausaPranzo) {
+            payload.pausaPranzo = true;
+            payload.pausaPranzoOre = Number(pausaPranzoOre);
+          }
         }
       }
       
@@ -422,6 +441,8 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       setOraInizio('09:00');
       setOraFine('18:00');
       setFrazioneTipo('giornata');
+      setPausaPranzo(false);
+      setPausaPranzoOre('1.0');
       showToast("Richiesta inviata con successo!");
       loadFerieData();
     } catch (err) {
@@ -452,7 +473,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
           if (req.frazioneTipo === 'mattina') dateDesc += ' (mattina)';
           else if (req.frazioneTipo === 'pomeriggio') dateDesc += ' (pomeriggio)';
           else if (req.frazioneTipo === 'giornata') dateDesc += ' (giornata intera)';
-          else if (req.oraInizio && req.oraFine) dateDesc += ` dalle ${req.oraInizio} alle ${req.oraFine}`;
+          else if (req.oraInizio && req.oraFine) dateDesc += ` dalle ${req.oraInizio} alle ${req.oraFine}${req.pausaPranzo && req.pausaPranzoOre ? ` (esclusa pausa pranzo di ${req.pausaPranzoOre.toString().replace('.', ',')}h)` : ''}`;
         } else if (req.tipo === 'mattina') {
           dateDesc += ' (mattina)';
         } else if (req.tipo === 'pomeriggio') {
@@ -505,7 +526,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
           if (req.frazioneTipo === 'mattina') dateDesc += ' (mattina)';
           else if (req.frazioneTipo === 'pomeriggio') dateDesc += ' (pomeriggio)';
           else if (req.frazioneTipo === 'giornata') dateDesc += ' (giornata intera)';
-          else if (req.oraInizio && req.oraFine) dateDesc += ` dalle ${req.oraInizio} alle ${req.oraFine}`;
+          else if (req.oraInizio && req.oraFine) dateDesc += ` dalle ${req.oraInizio} alle ${req.oraFine}${req.pausaPranzo && req.pausaPranzoOre ? ` (esclusa pausa pranzo di ${req.pausaPranzoOre.toString().replace('.', ',')}h)` : ''}`;
         } else if (req.tipo === 'mattina') {
           dateDesc += ' (mattina)';
         } else if (req.tipo === 'pomeriggio') {
@@ -692,7 +713,10 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
               const [hStart, mStart] = reqObj.oraInizio.split(':').map(Number);
               const [hEnd, mEnd] = reqObj.oraFine.split(':').map(Number);
               const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
-              const hrs = Math.round((diffMs / 3600000) * 100) / 100;
+              let hrs = Math.round((diffMs / 3600000) * 100) / 100;
+              if (reqObj.pausaPranzo && reqObj.pausaPranzoOre) {
+                hrs = Math.max(0, hrs - reqObj.pausaPranzoOre);
+              }
               cellText = `${hrs.toString().replace('.', ',')}h`;
             } else {
               cellText = 'P';
@@ -1063,7 +1087,9 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
               if (req.frazioneTipo === 'mattina') hourSuffix = ' AM';
               else if (req.frazioneTipo === 'pomeriggio') hourSuffix = ' PM';
               else if (req.frazioneTipo === 'giornata') hourSuffix = ' GI';
-              else if (req.oraInizio && req.oraFine) hourSuffix = ` (${req.oraInizio}-${req.oraFine})`;
+              else if (req.oraInizio && req.oraFine) {
+                hourSuffix = ` (${req.oraInizio}-${req.oraFine}${req.pausaPranzo && req.pausaPranzoOre ? `, escl. p.pranzo ${req.pausaPranzoOre.toString().replace('.', ',')}h` : ''})`;
+              }
             }
 
             const isPowerUser = isHR || isAdmin;
@@ -1246,35 +1272,63 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                         </button>
                       ))}
                     </div>
+                          {frazioneTipo === 'orario' && (
+                      <div className="space-y-4 pt-2 border-t border-green-100 animate-in slide-in-from-top-2 duration-200">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-bold text-green-900 mb-1 ml-1">Ora Inizio</label>
+                            <select 
+                              required 
+                              value={oraInizio}
+                              onChange={e => setOraInizio(e.target.value)}
+                              className="w-full p-3 border-none rounded-xl bg-white/70 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-bold text-green-900 text-xs cursor-pointer"
+                            >
+                              {TIME_OPTIONS.map(opt => (
+                                <option key={opt} value={opt}>{opt}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-green-900 mb-1 ml-1">Ora Fine</label>
+                            <select 
+                              required 
+                              value={oraFine}
+                              onChange={e => setOraFine(e.target.value)}
+                              className="w-full p-3 border-none rounded-xl bg-white/70 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-bold text-green-900 text-xs cursor-pointer"
+                            >
+                              {TIME_OPTIONS.map(opt => (
+                                <option key={opt} value={opt}>{opt}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
 
-                    {frazioneTipo === 'orario' && (
-                      <div className="grid grid-cols-2 gap-4 pt-2 border-t border-green-100 animate-in slide-in-from-top-2 duration-200">
-                        <div>
-                          <label className="block text-xs font-bold text-green-900 mb-1 ml-1">Ora Inizio</label>
-                          <select 
-                            required 
-                            value={oraInizio}
-                            onChange={e => setOraInizio(e.target.value)}
-                            className="w-full p-3 border-none rounded-xl bg-white/70 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-bold text-green-900 text-xs cursor-pointer"
-                          >
-                            {TIME_OPTIONS.map(opt => (
-                              <option key={opt} value={opt}>{opt}</option>
-                            ))}
-                          </select>
+                        <div className="flex items-center gap-3 bg-white/50 p-3 rounded-xl border border-green-100/50">
+                          <label className="flex items-center gap-2.5 cursor-pointer text-xs font-bold text-green-950 select-none">
+                            <input 
+                              type="checkbox" 
+                              checked={pausaPranzo}
+                              onChange={e => setPausaPranzo(e.target.checked)}
+                              className="w-4.5 h-4.5 rounded border-green-200 text-green-600 focus:ring-green-500 cursor-pointer"
+                            />
+                            <span>Pausa pranzo all'interno della fascia oraria</span>
+                          </label>
                         </div>
-                        <div>
-                          <label className="block text-xs font-bold text-green-900 mb-1 ml-1">Ora Fine</label>
-                          <select 
-                            required 
-                            value={oraFine}
-                            onChange={e => setOraFine(e.target.value)}
-                            className="w-full p-3 border-none rounded-xl bg-white/70 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-bold text-green-900 text-xs cursor-pointer"
-                          >
-                            {TIME_OPTIONS.map(opt => (
-                              <option key={opt} value={opt}>{opt}</option>
-                            ))}
-                          </select>
-                        </div>
+
+                        {pausaPranzo && (
+                          <div className="animate-in slide-in-from-top-2 duration-200">
+                            <label className="block text-xs font-bold text-green-900 mb-1 ml-1">Durata pausa pranzo da sottrarre</label>
+                            <select 
+                              value={pausaPranzoOre}
+                              onChange={e => setPausaPranzoOre(e.target.value)}
+                              className="w-full p-3 border-none rounded-xl bg-white/70 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-bold text-green-900 text-xs cursor-pointer"
+                            >
+                              {PAUSA_PRANZO_OPTIONS.map(opt => (
+                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1313,9 +1367,9 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                       <div className="flex flex-wrap items-center gap-2 sm:gap-4">
                         <span className="text-xs sm:text-sm font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded-lg">
                           {req.dataInizio && req.dataFine && req.dataInizio !== req.dataFine 
-                            ? `Dal ${formatDate(req.dataInizio)} al ${formatDate(req.dataFine)}${req.tipo === 'permesso' && req.oraInizio && req.oraFine ? ` (dalle ${req.oraInizio} alle ${req.oraFine})` : ''}`
+                            ? `Dal ${formatDate(req.dataInizio)} al ${formatDate(req.dataFine)}${req.tipo === 'permesso' && req.oraInizio && req.oraFine ? ` (dalle ${req.oraInizio} alle ${req.oraFine}${req.pausaPranzo && req.pausaPranzoOre ? `, esclusa p. pranzo ${req.pausaPranzoOre.toString().replace('.', ',')}h` : ''})` : ''}`
                             : req.tipo === 'permesso' && req.oraInizio && req.oraFine
-                              ? `Il ${formatDate(req.dataInizio || req.data)} dalle ${req.oraInizio} alle ${req.oraFine}`
+                              ? `Il ${formatDate(req.dataInizio || req.data)} dalle ${req.oraInizio} alle ${req.oraFine}${req.pausaPranzo && req.pausaPranzoOre ? ` (esclusa p. pranzo ${req.pausaPranzoOre.toString().replace('.', ',')}h)` : ''}`
                               : `Il ${formatDate(req.dataInizio || req.data)}`}
                         </span>
                         {getTipoLabel(req.tipo)}
@@ -1501,7 +1555,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
 
                               titleStr += `\nStato: ${req.stato}\nTipo: ${getTipoData(req.tipo, req.frazioneTipo).label}`;
                               if (req.tipo === 'permesso' && req.oraInizio && req.oraFine && req.frazioneTipo !== 'mattina' && req.frazioneTipo !== 'pomeriggio' && req.frazioneTipo !== 'giornata') {
-                                titleStr += `\nOrario: dalle ${req.oraInizio} alle ${req.oraFine}`;
+                                titleStr += `\nOrario: dalle ${req.oraInizio} alle ${req.oraFine}${req.pausaPranzo && req.pausaPranzoOre ? ` (esclusa p. pranzo ${req.pausaPranzoOre.toString().replace('.', ',')}h)` : ''}`;
                               }
                               if (req.note) titleStr += `\nNote: ${req.note}`;
 
@@ -1535,7 +1589,10 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                                   const [hStart, mStart] = req.oraInizio.split(':').map(Number);
                                   const [hEnd, mEnd] = req.oraFine.split(':').map(Number);
                                   const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
-                                  const hrs = Math.round((diffMs / 3600000) * 100) / 100;
+                                  let hrs = Math.round((diffMs / 3600000) * 100) / 100;
+                                  if (req.pausaPranzo && req.pausaPranzoOre) {
+                                    hrs = Math.max(0, hrs - req.pausaPranzoOre);
+                                  }
                                   cellText = `${hrs.toString().replace('.', ',')}h`;
                                 } else {
                                   cellText = 'P';
@@ -1635,7 +1692,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                       if (cancellationRequest.frazioneTipo === 'mattina') cancelPeriod += ' (mattina)';
                       else if (cancellationRequest.frazioneTipo === 'pomeriggio') cancelPeriod += ' (pomeriggio)';
                       else if (cancellationRequest.frazioneTipo === 'giornata') cancelPeriod += ' (giornata intera)';
-                      else if (cancellationRequest.oraInizio && cancellationRequest.oraFine) cancelPeriod += ` dalle ${cancellationRequest.oraInizio} alle ${cancellationRequest.oraFine}`;
+                      else if (cancellationRequest.oraInizio && cancellationRequest.oraFine) cancelPeriod += ` dalle ${cancellationRequest.oraInizio} alle ${cancellationRequest.oraFine}${cancellationRequest.pausaPranzo && cancellationRequest.pausaPranzoOre ? ` (esclusa p. pranzo ${cancellationRequest.pausaPranzoOre.toString().replace('.', ',')}h)` : ''}`;
                     }
                     return cancelPeriod;
                   })()

@@ -273,7 +273,7 @@ export default function Presenze() {
 
   // Stati per autorizzazione weekend/chiusure
   const [approvedWeekends, setApprovedWeekends] = useState<Record<string, boolean>>({});
-  const [approvedLeaves, setApprovedLeaves] = useState<Record<string, { tipo: string; frazioneTipo?: string; oraInizio?: string; oraFine?: string }>>({});
+  const [approvedLeaves, setApprovedLeaves] = useState<Record<string, { tipo: string; frazioneTipo?: string; oraInizio?: string; oraFine?: string; pausaPranzo?: boolean; pausaPranzoOre?: number }>>({});
   const [reqWeekendData, setReqWeekendData] = useState('');
   const [reqWeekendMotivo, setReqWeekendMotivo] = useState('');
   const [reqWeekendLoading, setReqWeekendLoading] = useState(false);
@@ -424,7 +424,7 @@ export default function Presenze() {
       );
 
       const querySnap = await getDocs(qRichieste);
-      const approvedAbsences: Record<string, { tipo: string; frazioneTipo?: string; oraInizio?: string; oraFine?: string }> = {}; // YYYY-MM-DD -> data
+      const approvedAbsences: Record<string, { tipo: string; frazioneTipo?: string; oraInizio?: string; oraFine?: string; pausaPranzo?: boolean; pausaPranzoOre?: number }> = {}; // YYYY-MM-DD -> data
       
       querySnap.forEach(docSnap => {
         const d = docSnap.data();
@@ -449,7 +449,9 @@ export default function Presenze() {
                 tipo: d.tipo,
                 frazioneTipo: d.frazioneTipo,
                 oraInizio: d.oraInizio,
-                oraFine: d.oraFine
+                oraFine: d.oraFine,
+                pausaPranzo: d.pausaPranzo || false,
+                pausaPranzoOre: d.pausaPranzoOre || 0
               };
             }
             currDate.setDate(currDate.getDate() + 1);
@@ -538,12 +540,18 @@ export default function Presenze() {
               const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
               const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
               hrs = Math.round((diffMs / 3600000) * 100) / 100;
+              if (abs.pausaPranzo && abs.pausaPranzoOre) {
+                hrs = Math.max(0, hrs - abs.pausaPranzoOre);
+              }
             } else if (abs.oraInizio && abs.oraFine) {
               // fallback per permessi legacy senza frazioneTipo
               const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
               const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
               const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
               hrs = Math.round((diffMs / 3600000) * 100) / 100;
+              if (abs.pausaPranzo && abs.pausaPranzoOre) {
+                hrs = Math.max(0, hrs - abs.pausaPranzoOre);
+              }
             }
             ore = Math.max(0, dayContractHours - hrs);
             permessi = hrs;
@@ -739,7 +747,7 @@ export default function Presenze() {
           })
         ]);
 
-        const leaves: Record<string, { tipo: string; frazioneTipo?: string; oraInizio?: string; oraFine?: string }> = {};
+        const leaves: Record<string, { tipo: string; frazioneTipo?: string; oraInizio?: string; oraFine?: string; pausaPranzo?: boolean; pausaPranzoOre?: number }> = {};
         if (leavesSnap) {
           leavesSnap.forEach(docSnap => {
             const d = docSnap.data();
@@ -762,7 +770,9 @@ export default function Presenze() {
                     tipo: d.tipo,
                     frazioneTipo: d.frazioneTipo,
                     oraInizio: d.oraInizio,
-                    oraFine: d.oraFine
+                    oraFine: d.oraFine,
+                    pausaPranzo: d.pausaPranzo || false,
+                    pausaPranzoOre: d.pausaPranzoOre || 0
                   };
                 }
                 currDate.setDate(currDate.getDate() + 1);
@@ -968,12 +978,18 @@ export default function Presenze() {
                         const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
                         const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
                         hrs = Math.round((diffMs / 3600000) * 100) / 100;
+                        if (abs.pausaPranzo && abs.pausaPranzoOre) {
+                          hrs = Math.max(0, hrs - abs.pausaPranzoOre);
+                        }
                       } else if (abs.oraInizio && abs.oraFine) {
                         // fallback per permessi legacy senza frazioneTipo
                         const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
                         const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
                         const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
                         hrs = Math.round((diffMs / 3600000) * 100) / 100;
+                        if (abs.pausaPranzo && abs.pausaPranzoOre) {
+                          hrs = Math.max(0, hrs - abs.pausaPranzoOre);
+                        }
                       }
                       targetOre = Math.max(0, dayContractHours - hrs);
                       targetPermessi = hrs;
