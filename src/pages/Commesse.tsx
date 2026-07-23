@@ -160,6 +160,7 @@ export default function Commesse() {
   const { 
     isAdmin, 
     myAssociatedName, 
+    userEmail,
     dipendenti, 
     commesse, 
     clienti: clientiList, 
@@ -637,10 +638,11 @@ export default function Commesse() {
 
       await setDoc(docRef, updates, { merge: true });
 
-      // Invia notifiche email se sono state fatte assegnazioni
+      // Invia notifiche email se sono state fatte assegnazioni (escludendo l'auto-assegnazione)
       if (editResponsabile && editResponsabile !== editingCommessa.responsabile) {
         const respDip = dipendenti.find(d => d.nome === editResponsabile);
-        if (respDip && respDip.email) {
+        const isSelfResp = (respDip?.email?.toLowerCase() === userEmail?.toLowerCase()) || areNamesEqual(editResponsabile, myAssociatedName);
+        if (respDip && respDip.email && !isSelfResp) {
           const subject = `[Notifica] Abilitazione Funzioni Responsabile - Commessa ${editingCommessa.nome}`;
           const htmlBody = `
             <p>Ciao <strong>${editResponsabile}</strong>,</p>
@@ -653,7 +655,7 @@ export default function Commesse() {
         }
       }
 
-      // Notifica ai PM aggiunti
+      // Notifica ai PM aggiunti (escludendo l'auto-assegnazione)
       const oldPMs = Array.isArray(editingCommessa.pm) 
         ? editingCommessa.pm 
         : (editingCommessa.pm ? [editingCommessa.pm] : []);
@@ -661,7 +663,8 @@ export default function Commesse() {
 
       for (const addedPM of addedPMs) {
         const pmDip = dipendenti.find(d => d.nome === addedPM);
-        if (pmDip && pmDip.email) {
+        const isSelfPM = (pmDip?.email?.toLowerCase() === userEmail?.toLowerCase()) || areNamesEqual(addedPM, myAssociatedName);
+        if (pmDip && pmDip.email && !isSelfPM) {
           const subject = `[Notifica] Abilitazione Funzioni PM - Commessa ${editingCommessa.nome}`;
           const htmlBody = `
             <p>Ciao <strong>${addedPM}</strong>,</p>
@@ -802,64 +805,62 @@ export default function Commesse() {
       
       await addDoc(collection(db, 'catalogo_commesse'), payload);
       
-      // Invio notifica e-mail ai Commerciali configurati
-      if (!isCommerciale && commercialiEmails && commercialiEmails.length > 0) {
-        const mailSubject = `[Nuova Commessa] Aperta commessa: ${payload.nome}`;
-        
-        let progettiHtml = '';
-        payload.progetti.forEach((p, index) => {
-          let sgqInfo = '';
-          if (p.sgq === 'SI') {
-            const vList = Array.isArray(p.verificatori) ? p.verificatori.join(', ') : (p.verificatori || '-');
-            sgqInfo = `<strong>SGQ:</strong> Sì<br/><strong>Verif./Valid.:</strong> ${vList || '-'}<br/><strong>Compilatore:</strong> ${p.compilatore || '-'}`;
-          } else {
-            sgqInfo = `<strong>SGQ:</strong> No<br/><strong>Giornate:</strong> Senior: ${p.giornateSenior} gg | Project: ${p.giornateProject} gg | Junior: ${p.giornateJunior} gg`;
-          }
-          const formattedDesc = (p.descrizione || '').replace(/\n/g, '<br/>');
-          progettiHtml += `
-            <tr style="background-color: ${index % 2 === 0 ? '#f9fafb' : '#ffffff'};">
-              <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-weight: 600; font-size: 13px; line-height: 1.45;">${formattedDesc || '(Nessuna descrizione)'}</td>
-              <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 13px; vertical-align: top;">${p.pm || 'Non assegnato'}</td>
-              <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 12px; line-height: 1.5; vertical-align: top;">${sgqInfo}</td>
-            </tr>
-          `;
-        });
-
-        const mailBody = `
-          <p>Gentile Commerciale,</p>
-          <p>Ti informiamo che è stata aperta una nuova commessa sulla piattaforma di pianificazione con i seguenti dettagli:</p>
-          <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 15px 0;" />
-          <table border="0" cellpadding="5" cellspacing="0" style="font-size: 14px; color: #374151; width: 100%;">
-            <tr><td style="font-weight: bold; width: 180px;">Codice Commessa:</td><td>${payload.codiceCommessa}</td></tr>
-            <tr><td style="font-weight: bold;">Titolo:</td><td>${payload.titolo}</td></tr>
-            <tr><td style="font-weight: bold;">Cliente:</td><td>${payload.cliente}</td></tr>
-            <tr><td style="font-weight: bold;">Tipologia:</td><td>${TIPOLOGIE_COMMESSE[payload.tipologia] || payload.tipologia}</td></tr>
-            <tr><td style="font-weight: bold;">Anno:</td><td>${payload.anno}</td></tr>
-            <tr><td style="font-weight: bold;">Data Inizio:</td><td>${payload.dataInizio ? new Date(payload.dataInizio).toLocaleDateString('it-IT') : 'Non specificata'}</td></tr>
-            <tr><td style="font-weight: bold;">Data Fine:</td><td>${payload.dataFine ? new Date(payload.dataFine).toLocaleDateString('it-IT') : 'Non specificata'}</td></tr>
-            <tr><td style="font-weight: bold;">Responsabile Commessa:</td><td>${payload.responsabile || 'Non assegnato'}</td></tr>
-            <tr><td style="font-weight: bold;">Giornate Totali Stimate (No SGQ):</td><td>Senior: ${payload.giornateSeniorProject} gg | Project: ${payload.giornateProject} gg | Junior: ${payload.giornateJuniorProject} gg</td></tr>
-          </table>
-          
-          <h3 style="color: #065f46; font-size: 16px; margin-top: 25px; margin-bottom: 10px;">Split in Progetti</h3>
-          <table border="0" cellpadding="0" cellspacing="0" style="width: 100%; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; font-family: inherit;">
-            <thead style="background-color: #f3f4f6;">
-              <tr>
-                <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Descrizione Progetto</th>
-                <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Project Manager</th>
-                <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Configurazione / SGQ</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${progettiHtml}
-            </tbody>
-          </table>
-          <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 25px 0;" />
-          <p>Puoi ora procedere all'apertura di questa commessa sul gestionale separato aziendale.</p>
+      // Invio notifica e-mail apertura commessa ad synergiesflow@ingegno06.it
+      const mailSubject = `[Nuova Commessa] Aperta commessa: ${payload.nome}`;
+      
+      let progettiHtml = '';
+      payload.progetti.forEach((p, index) => {
+        let sgqInfo = '';
+        if (p.sgq === 'SI') {
+          const vList = Array.isArray(p.verificatori) ? p.verificatori.join(', ') : (p.verificatori || '-');
+          sgqInfo = `<strong>SGQ:</strong> Sì<br/><strong>Verif./Valid.:</strong> ${vList || '-'}<br/><strong>Compilatore:</strong> ${p.compilatore || '-'}`;
+        } else {
+          sgqInfo = `<strong>SGQ:</strong> No<br/><strong>Giornate:</strong> Senior: ${p.giornateSenior} gg | Project: ${p.giornateProject} gg | Junior: ${p.giornateJunior} gg`;
+        }
+        const formattedDesc = (p.descrizione || '').replace(/\n/g, '<br/>');
+        progettiHtml += `
+          <tr style="background-color: ${index % 2 === 0 ? '#f9fafb' : '#ffffff'};">
+            <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-weight: 600; font-size: 13px; line-height: 1.45;">${formattedDesc || '(Nessuna descrizione)'}</td>
+            <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 13px; vertical-align: top;">${p.pm || 'Non assegnato'}</td>
+            <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 12px; line-height: 1.5; vertical-align: top;">${sgqInfo}</td>
+          </tr>
         `;
+      });
 
-        await queueMail('synergiesflow@ingegno06.it', mailSubject, mailBody);
-      }
+      const mailBody = `
+        <p>Gentili,</p>
+        <p>Ti informiamo che è stata aperta una nuova commessa sulla piattaforma di pianificazione con i seguenti dettagli:</p>
+        <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 15px 0;" />
+        <table border="0" cellpadding="5" cellspacing="0" style="font-size: 14px; color: #374151; width: 100%;">
+          <tr><td style="font-weight: bold; width: 180px;">Codice Commessa:</td><td>${payload.codiceCommessa}</td></tr>
+          <tr><td style="font-weight: bold;">Titolo:</td><td>${payload.titolo}</td></tr>
+          <tr><td style="font-weight: bold;">Cliente:</td><td>${payload.cliente}</td></tr>
+          <tr><td style="font-weight: bold;">Tipologia:</td><td>${TIPOLOGIE_COMMESSE[payload.tipologia] || payload.tipologia}</td></tr>
+          <tr><td style="font-weight: bold;">Anno:</td><td>${payload.anno}</td></tr>
+          <tr><td style="font-weight: bold;">Data Inizio:</td><td>${payload.dataInizio ? new Date(payload.dataInizio).toLocaleDateString('it-IT') : 'Non specificata'}</td></tr>
+          <tr><td style="font-weight: bold;">Data Fine:</td><td>${payload.dataFine ? new Date(payload.dataFine).toLocaleDateString('it-IT') : 'Non specificata'}</td></tr>
+          <tr><td style="font-weight: bold;">Responsabile Commessa:</td><td>${payload.responsabile || 'Non assegnato'}</td></tr>
+          <tr><td style="font-weight: bold;">Giornate Totali Stimate (No SGQ):</td><td>Senior: ${payload.giornateSeniorProject} gg | Project: ${payload.giornateProject} gg | Junior: ${payload.giornateJuniorProject} gg</td></tr>
+        </table>
+        
+        <h3 style="color: #065f46; font-size: 16px; margin-top: 25px; margin-bottom: 10px;">Split in Progetti</h3>
+        <table border="0" cellpadding="0" cellspacing="0" style="width: 100%; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; font-family: inherit;">
+          <thead style="background-color: #f3f4f6;">
+            <tr>
+              <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Descrizione Progetto</th>
+              <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Project Manager</th>
+              <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Configurazione / SGQ</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${progettiHtml}
+          </tbody>
+        </table>
+        <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 25px 0;" />
+        <p>Puoi ora procedere all'apertura di questa commessa sul gestionale separato aziendale.</p>
+      `;
+
+      await queueMail('synergiesflow@ingegno06.it', mailSubject, mailBody);
       
       setSelectedClient(null);
       setClientSearchText('');

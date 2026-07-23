@@ -2,8 +2,10 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, addDoc, doc, setDoc, deleteDoc, onSnapshot, updateDoc } from 'firebase/firestore';
-import { Shield, UserCheck, Star, Users, Plus, Trash2, Settings, Printer, Building2, Search, Pencil, X, MessageSquare, Edit, Mail } from 'lucide-react';
+import { Shield, UserCheck, Star, Users, Plus, Trash2, Settings, Printer, Building2, Search, Pencil, X, MessageSquare, Edit, Mail, Eye, Send, Code } from 'lucide-react';
 import ConfirmModal from '../components/ConfirmModal';
+import { wrapMailTemplate } from '../utils/mailTemplate';
+import { queueMail } from '../utils/mailSender';
 
 
 const COLLABORATORI = [
@@ -63,10 +65,116 @@ export const isSoci = (nome?: string | null): boolean => {
   return clean === 'corbellini matteo' || clean === 'profeti andrea' || clean === 'matteo corbellini' || clean === 'andrea profeti';
 };
 
+export const EMAIL_TEST_TEMPLATES = [
+  {
+    id: 'planning_update',
+    name: '[Pianificazione] Aggiornamento Calendario Commesse',
+    subject: '[Pianificazione] Aggiornamento Calendario Commesse',
+    getHtml: (name = 'Emanuele Bartalucci') => `
+      <p>Ciao <strong>${name}</strong>,</p>
+      <p>Ti comunichiamo che sono state apportate delle modifiche alla tua pianificazione delle commesse:</p>
+      <div style="margin-top: 15px; padding: 12px 16px; background-color: #f9fafb; border-left: 4px solid #4f46e5; border-radius: 8px; border: 1px solid #e5e7eb;">
+        <strong style="color: #111827; font-size: 14px;">Sett. 30 (20/07 - 24/07)</strong>
+        <ul style="margin: 8px 0 0 20px; padding: 0; color: #374151; font-size: 13px; line-height: 1.5;">
+          <li style="margin-bottom: 4px;">Assegnata commessa: P-2026-61A - GSK Modulo 4 (100%)</li>
+          <li style="margin-bottom: 4px;">Rimossa commessa: P-2026-12B - Novartis</li>
+        </ul>
+      </div>
+      <p style="margin-top: 20px;">Accedi alla piattaforma per visualizzare la tua pianificazione completa.</p>
+    `,
+    getPlainText: (name = 'Emanuele Bartalucci') => `Ciao ${name},\n\nTi comunichiamo che sono state apportate delle modifiche alla tua pianificazione delle commesse:\n\n* Sett. 30:\n  - Assegnata commessa: P-2026-61A (100%)\n\nAccedi alla piattaforma per verificare.`
+  },
+  {
+    id: 'resp_assigned',
+    name: '[Notifica] Abilitazione Responsabile Commessa',
+    subject: '[Notifica] Abilitazione Funzioni Responsabile - Commessa P-2026-61A',
+    getHtml: (name = 'Emanuele Bartalucci') => `
+      <p>Ciao <strong>${name}</strong>,</p>
+      <p>Sei stato assegnato come <strong>Responsabile</strong> per la commessa <strong>P-2026-61A - GSK Modulo 4</strong>.</p>
+      <p>Periodo previsto: dal <strong>01/09/2026</strong> al <strong>31/12/2026</strong>.</p>
+      <p>Puoi procedere all'assegnazione e pianificazione delle risorse per questa commessa direttamente dall'applicazione.</p>
+    `,
+    getPlainText: (name = 'Emanuele Bartalucci') => `Ciao ${name},\n\nSei stato assegnato come Responsabile per la commessa P-2026-61A.`
+  },
+  {
+    id: 'pm_assigned',
+    name: '[Notifica] Abilitazione PM Commessa',
+    subject: '[Notifica] Abilitazione Funzioni PM - Commessa P-2026-61A',
+    getHtml: (name = 'Emanuele Bartalucci') => `
+      <p>Ciao <strong>${name}</strong>,</p>
+      <p>Sei stato assegnato come <strong>Project Manager (PM)</strong> per la commessa <strong>P-2026-61A - GSK Modulo 4</strong>.</p>
+      <p>Periodo previsto: dal <strong>01/09/2026</strong> al <strong>31/12/2026</strong>.</p>
+      <p>Puoi procedere al monitoraggio e pianificazione delle risorse per questa commessa dall'applicazione.</p>
+    `,
+    getPlainText: (name = 'Emanuele Bartalucci') => `Ciao ${name},\n\nSei stato assegnato come Project Manager (PM) per la commessa P-2026-61A.`
+  },
+  {
+    id: 'ferie_status',
+    name: '[Notifica] Approvazione Richiesta Ferie / Assenza',
+    subject: '[Notifica] Richiesta Ferie Approvato',
+    getHtml: (name = 'Emanuele Bartalucci') => `
+      <p>Ciao <strong>${name}</strong>,</p>
+      <p>La tua richiesta di <strong>Ferie</strong> prevista <strong>dal 10/08/2026 al 21/08/2026</strong> è stata <strong>approvata</strong>.</p>
+      <p>Puoi consultare lo stato delle tue richieste direttamente nella tua area personale della webapp.</p>
+    `,
+    getPlainText: (name = 'Emanuele Bartalucci') => `Ciao ${name},\n\nLa tua richiesta di Ferie dal 10/08/2026 al 21/08/2026 è stata approvata.`
+  },
+  {
+    id: 'coord_request',
+    name: '[Richiesta Personale] Notifica Coordinatore',
+    subject: '[Richiesta Personale] Richiesta risorsa Disegnatori per commessa P-2026-61A',
+    getHtml: (_name = 'Coordinatore') => `
+      <p>Gentile Coordinatore,</p>
+      <p>È stata ricevuta una nuova richiesta di personale dall'area <strong>Disegnatori</strong>.</p>
+      <table border="0" cellpadding="6" cellspacing="0" style="font-size:13px;color:#374151;width:100%">
+        <tr><td style="font-weight:bold;width:180px">Commessa:</td><td>P-2026-61A - GSK Modulo 4</td></tr>
+        <tr><td style="font-weight:bold">Richiedente:</td><td>Mario Rossi (m.rossi@ingegno06.it)</td></tr>
+        <tr><td style="font-weight:bold">Periodo:</td><td>2026-09-01 → 2026-09-30</td></tr>
+        <tr><td style="font-weight:bold">Carico Richiesto:</td><td>100%</td></tr>
+        <tr><td style="font-weight:bold">Nota:</td><td><em>Necessaria figura Senior esperta Revit.</em></td></tr>
+      </table>
+      <p style="margin-top:16px">Accedi alla <strong>Pianificazione del Personale e Carichi</strong> per gestire questa richiesta e assegnare la risorsa più adeguata.</p>
+    `,
+    getPlainText: () => `Gentile Coordinatore,\n\nÈ stata ricevuta una nuova richiesta di personale per l'area Disegnatori.\n\nAccedi alla piattaforma per gestire la richiesta.`
+  },
+  {
+    id: 'weekend_unlock',
+    name: '[Notifica] Autorizzazione Lavoro Straordinario Weekend',
+    subject: '[Notifica] Autorizzazione lavoro straordinario Approvato',
+    getHtml: (name = 'Emanuele Bartalucci') => `
+      <p>Ciao <strong>${name}</strong>,</p>
+      <p>La tua richiesta di autorizzazione per lavorare il giorno <strong>Sabato 05/09/2026</strong> (Consegna urgente tavole cantiere) è stata <strong>approvata</strong>.</p>
+      <p>Puoi procedere all'inserimento delle ore sul tuo foglio presenze.</p>
+    `,
+    getPlainText: (name = 'Emanuele Bartalucci') => `Ciao ${name},\n\nLa tua richiesta di autorizzazione per lavorare il giorno Sabato 05/09/2026 è stata approvata.`
+  },
+  {
+    id: 'rapportino_feedback',
+    name: '[Pianificazione] Correzione Richiesta per Rapportino Presenze',
+    subject: '[Pianificazione] Correzione richiesta per il tuo Rapportino Presenze - Luglio 2026',
+    getHtml: (name = 'Emanuele Bartalucci') => `
+      <p>Ciao <strong>${name}</strong>,</p>
+      <p>L'amministrazione ha esaminato il tuo rapportino presenze per il mese di <strong>Luglio 2026</strong> e ha richiesto alcune <strong>correzioni</strong>.</p>
+      <p><strong>Nota dell'HR:</strong></p>
+      <blockquote style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 10px 15px; margin: 10px 0; font-style: italic;">
+        Verificare l'inserimento del rimborso chilometrico nel giorno 14 ed aggiungere la motivazione delle ore straordinarie prestati il giorno 22.
+      </blockquote>
+      <p>Accedi alla piattaforma per effettuare le modifiche richieste e inviarlo nuovamente.</p>
+    `,
+    getPlainText: (name = 'Emanuele Bartalucci') => `Ciao ${name},\n\nL'amministrazione ha richiesto correzioni al tuo rapportino presenze per Luglio 2026.`
+  }
+];
+
 export default function Impostazioni() {
-  const { isAdmin, isHR, dipendenti, coordinatori, refreshData } = useAuth();
+  const { isAdmin, isHR, dipendenti, coordinatori, refreshData, userEmail, myAssociatedName } = useAuth();
   const isAuthorized = isAdmin || isHR;
+  const isDev = userEmail?.toLowerCase() === 'ebartalucci@ingegno06.it';
   
+  // Stato per il simulatore di e-mail sviluppatore
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('planning_update');
+  const [isMailPreviewModalOpen, setIsMailPreviewModalOpen] = useState(false);
+  const [sendingTestMail, setSendingTestMail] = useState(false);
+
   // Stato per la modale di conferma personalizzata
   const [confirmConfig, setConfirmConfig] = useState<{
     isOpen: boolean;
@@ -615,11 +723,19 @@ export default function Impostazioni() {
             </tbody>
           </table>
           <script>
+            function closeWindow() {
+              try { window.close(); } catch(e) {}
+            }
+            window.onafterprint = closeWindow;
             window.onload = function() {
-              window.print();
-              window.onafterprint = function() {
-                window.close();
-              };
+              setTimeout(function() {
+                window.print();
+                closeWindow();
+                setTimeout(closeWindow, 500);
+              }, 250);
+            };
+            window.onfocus = function() {
+              setTimeout(closeWindow, 300);
             };
           </script>
         </body>
@@ -686,11 +802,19 @@ export default function Impostazioni() {
             </tbody>
           </table>
           <script>
+            function closeWindow() {
+              try { window.close(); } catch(e) {}
+            }
+            window.onafterprint = closeWindow;
             window.onload = function() {
-              window.print();
-              window.onafterprint = function() {
-                window.close();
-              };
+              setTimeout(function() {
+                window.print();
+                closeWindow();
+                setTimeout(closeWindow, 500);
+              }, 250);
+            };
+            window.onfocus = function() {
+              setTimeout(closeWindow, 300);
             };
           </script>
         </body>
@@ -757,11 +881,19 @@ export default function Impostazioni() {
             </tbody>
           </table>
           <script>
+            function closeWindow() {
+              try { window.close(); } catch(e) {}
+            }
+            window.onafterprint = closeWindow;
             window.onload = function() {
-              window.print();
-              window.onafterprint = function() {
-                window.close();
-              };
+              setTimeout(function() {
+                window.print();
+                closeWindow();
+                setTimeout(closeWindow, 500);
+              }, 250);
+            };
+            window.onfocus = function() {
+              setTimeout(closeWindow, 300);
             };
           </script>
         </body>
@@ -840,6 +972,20 @@ export default function Impostazioni() {
               <span>Sistema</span>
             </button>
           </>
+        )}
+
+        {isDev && (
+          <button
+            onClick={() => setActiveTab('email_dev' as any)}
+            className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm transition-all active:scale-95 cursor-pointer ${
+              activeTab === ('email_dev' as any)
+                ? 'bg-indigo-700 text-white shadow-md shadow-indigo-250 font-black'
+                : 'bg-indigo-50 text-indigo-800 hover:bg-indigo-100 border border-indigo-200'
+            }`}
+          >
+            <Mail className="w-4 h-4 text-indigo-600" />
+            <span>Dev E-mail Simulator</span>
+          </button>
         )}
       </div>
 
@@ -1096,145 +1242,120 @@ export default function Impostazioni() {
 
         {/* TAB 4: RUOLI & PERMESSI */}
         {activeTab === 'ruoli' && isAdmin && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            
-            {/* Amministratori */}
-            <section className="bg-gradient-to-br from-red-50 to-orange-50 p-6 rounded-3xl border border-red-100 shadow-sm">
-              <h3 className="text-xl font-bold text-red-900 mb-4 flex items-center gap-2"><Shield className="w-6 h-6 text-red-600" /> Amministratori</h3>
-              <form onSubmit={handleAddAdmin} className="flex gap-2 mb-4">
-                <select required value={newAdminEmail} onChange={e => setNewAdminEmail(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-red-400 transition shadow-inner font-medium text-red-900">
-                  <option value="">Seleziona dipendente</option>
-                  {dipendenti.filter(d => d.email).map(d => <option key={d.id} value={d.email}>{d.nome}</option>)}
-                </select>
-                <button type="submit" className="bg-red-600 text-white px-5 rounded-xl hover:bg-red-700 transition font-bold shadow-md active:scale-95 cursor-pointer">Aggiungi</button>
-              </form>
-              <div className="max-h-80 overflow-y-auto bg-white/50 rounded-xl divide-y border border-red-100">
-                {/* Mostra sempre i Super Admin (hardcoded) */}
-                {['aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it'].map(email => {
-                  const name = getDipNomeFromEmail(email);
-                  return (
-                    <div key={email} className="p-3 flex justify-between items-center text-sm">
-                      <div>
-                        <div className="font-bold text-red-900">{name}</div>
-                        <div className="text-xs text-red-700/70">{email}</div>
-                      </div>
-                      <span className="p-1" title="Super Admin non eliminabile">
-                        <Trash2 className="w-4 h-4 text-gray-300 cursor-not-allowed"/>
-                      </span>
-                    </div>
-                  );
-                })}
-                
-                {/* Mostra gli Admin dinamici dal database */}
-                {adminsList.filter(a => a.email.toLowerCase() !== 'aprofeti@ingegno06.it' && a.email.toLowerCase() !== 'mcorbellini@ingegno06.it').map(a => {
-                  const name = getDipNomeFromEmail(a.email);
-                  return (
-                    <div key={a.id} className="p-3 flex justify-between items-center text-sm">
-                      <div>
-                        <div className="font-bold text-red-900">{name}</div>
-                        <div className="text-xs text-red-700/70">{a.email}</div>
-                      </div>
-                      <button onClick={() => handleRemoveAdmin(a.id)} className="text-red-400 hover:text-red-600 p-1 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-
-
-
-            {/* HR */}
-            <section className="bg-gradient-to-br from-fuchsia-50 to-pink-50 p-6 rounded-3xl border border-fuchsia-100 shadow-sm h-fit">
-              <h3 className="text-xl font-bold text-fuchsia-900 mb-2 flex items-center gap-2"><UserCheck className="w-6 h-6 text-fuchsia-600" /> Responsabili HR</h3>
-              <p className="text-sm text-fuchsia-750 mb-4">Gestiscono le richieste di ferie, i rapportini presenze e le bozze fattura.</p>
-              <form onSubmit={handleAddHR} className="flex gap-2 mb-4">
-                <select required value={newHrEmail} onChange={e => setNewHrEmail(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-fuchsia-400 transition shadow-inner font-medium text-fuchsia-900">
-                  <option value="">Seleziona dipendente</option>
-                  {dipendenti.filter(d => d.email).map(d => <option key={d.id} value={d.email}>{d.nome}</option>)}
-                </select>
-                <button type="submit" className="bg-fuchsia-600 text-white px-5 rounded-xl hover:bg-fuchsia-700 transition font-bold shadow-md active:scale-95 cursor-pointer">Nomina</button>
-              </form>
-              <div className="max-h-80 overflow-y-auto bg-white/50 rounded-xl divide-y border border-fuchsia-100">
-                {hrList.map(h => {
-                  const name = getDipNomeFromEmail(h.email);
-                  return (
-                    <div key={h.id} className="p-3 flex justify-between items-center text-sm">
-                      <div>
-                        <div className="font-bold text-fuchsia-900">{name}</div>
-                        <div className="text-xs text-fuchsia-700/70">{h.email}</div>
-                      </div>
-                      <button onClick={() => handleRemoveHR(h.id)} className="text-fuchsia-400 hover:text-fuchsia-600 p-1 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-
-            {/* Project Managers */}
-            <section className="bg-gradient-to-br from-blue-50 to-indigo-50/40 p-6 rounded-3xl border border-blue-100 shadow-sm h-fit">
-              <h3 className="text-xl font-bold text-blue-900 mb-2 flex items-center gap-2">
-                <Star className="w-6 h-6 text-blue-600" /> Project Managers (PM)
-              </h3>
-              <p className="text-sm text-blue-750 mb-4">Nomina o rimuovi i Project Manager abilitati a supervisionare le commesse.</p>
-              <form onSubmit={handleAddPM} className="flex gap-2 mb-4">
-                <select required value={newPmEmail} onChange={e => setNewPmEmail(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-blue-400 transition shadow-inner font-medium text-blue-900">
-                  <option value="">Seleziona dipendente</option>
-                  {dipendenti.filter(d => d.email).map(d => <option key={d.id} value={d.email}>{d.nome}</option>)}
-                </select>
-                <button type="submit" className="bg-blue-600 text-white px-5 rounded-xl hover:bg-blue-700 transition font-bold shadow-md active:scale-95 cursor-pointer">Nomina</button>
-              </form>
-              <div className="max-h-80 overflow-y-auto bg-white/50 rounded-xl divide-y border border-blue-100">
-                {pmsList.length === 0 ? (
-                  <p className="p-4 text-xs text-gray-400 italic font-bold">Nessun PM nominato.</p>
-                ) : (
-                  pmsList.map(p => {
-                    const name = getDipNomeFromEmail(p.email);
+          <div className="space-y-8">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch">
+              
+              {/* Amministratori */}
+              <section className="bg-gradient-to-br from-red-50 to-orange-50 p-6 rounded-3xl border border-red-100 shadow-sm h-full flex flex-col justify-between">
+                <div>
+                  <h3 className="text-xl font-bold text-red-900 mb-1 flex items-center gap-2"><Shield className="w-6 h-6 text-red-600" /> Amministratori</h3>
+                  <p className="text-xs text-red-750 mb-4">Hanno accesso completo a tutte le funzioni e impostazioni della piattaforma.</p>
+                  <form onSubmit={handleAddAdmin} className="flex gap-2 mb-4">
+                    <select required value={newAdminEmail} onChange={e => setNewAdminEmail(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-red-400 transition shadow-inner font-medium text-red-900 text-xs">
+                      <option value="">Seleziona dipendente</option>
+                      {dipendenti.filter(d => d.email).map(d => <option key={d.id} value={d.email}>{d.nome}</option>)}
+                    </select>
+                    <button type="submit" className="bg-red-600 text-white px-4 py-3 rounded-xl hover:bg-red-700 transition font-bold shadow-md active:scale-95 text-xs cursor-pointer">Aggiungi</button>
+                  </form>
+                </div>
+                <div className="h-48 overflow-y-auto bg-white/50 rounded-xl divide-y border border-red-100">
+                  {/* Mostra sempre i Super Admin (hardcoded) */}
+                  {['aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it'].map(email => {
+                    const name = getDipNomeFromEmail(email);
                     return (
-                      <div key={p.id} className="p-3 flex justify-between items-center text-sm">
+                      <div key={email} className="p-3 flex justify-between items-center text-sm">
                         <div>
-                          <div className="font-bold text-blue-900">{name}</div>
-                          <div className="text-xs text-blue-700/70">{p.email}</div>
+                          <div className="font-bold text-red-900">{name}</div>
+                          <div className="text-xs text-red-700/70">{email}</div>
                         </div>
-                        <button onClick={() => handleRemovePM(p.id)} className="text-blue-405 hover:text-red-655 p-1 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
+                        <span className="p-1" title="Super Admin non eliminabile">
+                          <Trash2 className="w-4 h-4 text-gray-300 cursor-not-allowed"/>
+                        </span>
                       </div>
                     );
-                  })
-                )}
-              </div>
-            </section>
-
-            {/* Commerciali */}
-            <section className="bg-gradient-to-br from-amber-50 to-orange-50/40 p-6 rounded-3xl border border-amber-100 shadow-sm h-fit">
-              <h3 className="text-xl font-bold text-amber-900 mb-2 flex items-center gap-2">
-                <Star className="w-6 h-6 text-amber-600" /> Commerciali
-              </h3>
-              <p className="text-sm text-amber-750 mb-4">Nomina o rimuovi i Commerciali. Riceveranno le notifiche email all'apertura delle commesse.</p>
-              <form onSubmit={handleAddCommerciale} className="flex gap-2 mb-4">
-                <select required value={newCommercialeEmail} onChange={e => setNewCommercialeEmail(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-amber-400 transition shadow-inner font-medium text-amber-900">
-                  <option value="">Seleziona dipendente</option>
-                  {dipendenti.filter(d => d.email).map(d => <option key={d.id} value={d.email}>{d.nome}</option>)}
-                </select>
-                <button type="submit" className="bg-amber-600 text-white px-5 rounded-xl hover:bg-amber-700 transition font-bold shadow-md active:scale-95 cursor-pointer">Nomina</button>
-              </form>
-              <div className="max-h-80 overflow-y-auto bg-white/50 rounded-xl divide-y border border-amber-100">
-                {commercialiList.length === 0 ? (
-                  <p className="p-4 text-xs text-gray-400 italic font-bold">Nessun Commerciale nominato.</p>
-                ) : (
-                  commercialiList.map(c => {
-                    const name = getDipNomeFromEmail(c.email);
+                  })}
+                  
+                  {/* Mostra gli Admin dinamici dal database */}
+                  {adminsList.filter(a => a.email.toLowerCase() !== 'aprofeti@ingegno06.it' && a.email.toLowerCase() !== 'mcorbellini@ingegno06.it').map(a => {
+                    const name = getDipNomeFromEmail(a.email);
                     return (
-                      <div key={c.id} className="p-3 flex justify-between items-center text-sm">
+                      <div key={a.id} className="p-3 flex justify-between items-center text-sm">
                         <div>
-                          <div className="font-bold text-amber-900">{name}</div>
-                          <div className="text-xs text-amber-700/70">{c.email}</div>
+                          <div className="font-bold text-red-900">{name}</div>
+                          <div className="text-xs text-red-700/70">{a.email}</div>
                         </div>
-                        <button onClick={() => handleRemoveCommerciale(c.id)} className="text-amber-405 hover:text-red-655 p-1 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
+                        <button onClick={() => handleRemoveAdmin(a.id)} className="text-red-400 hover:text-red-600 p-1 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
                       </div>
                     );
-                  })
-                )}
-              </div>
-            </section>
+                  })}
+                </div>
+              </section>
+
+              {/* HR */}
+              <section className="bg-gradient-to-br from-fuchsia-50 to-pink-50 p-6 rounded-3xl border border-fuchsia-100 shadow-sm h-full flex flex-col justify-between">
+                <div>
+                  <h3 className="text-xl font-bold text-fuchsia-900 mb-1 flex items-center gap-2"><UserCheck className="w-6 h-6 text-fuchsia-600" /> Responsabili HR</h3>
+                  <p className="text-xs text-fuchsia-750 mb-4">Gestiscono le richieste di ferie, i rapportini presenze e le bozze fattura.</p>
+                  <form onSubmit={handleAddHR} className="flex gap-2 mb-4">
+                    <select required value={newHrEmail} onChange={e => setNewHrEmail(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-fuchsia-400 transition shadow-inner font-medium text-fuchsia-900 text-xs">
+                      <option value="">Seleziona dipendente</option>
+                      {dipendenti.filter(d => d.email).map(d => <option key={d.id} value={d.email}>{d.nome}</option>)}
+                    </select>
+                    <button type="submit" className="bg-fuchsia-600 text-white px-4 py-3 rounded-xl hover:bg-fuchsia-700 transition font-bold shadow-md active:scale-95 text-xs cursor-pointer">Nomina</button>
+                  </form>
+                </div>
+                <div className="h-48 overflow-y-auto bg-white/50 rounded-xl divide-y border border-fuchsia-100">
+                  {hrList.map(h => {
+                    const name = getDipNomeFromEmail(h.email);
+                    return (
+                      <div key={h.id} className="p-3 flex justify-between items-center text-sm">
+                        <div>
+                          <div className="font-bold text-fuchsia-900">{name}</div>
+                          <div className="text-xs text-fuchsia-700/70">{h.email}</div>
+                        </div>
+                        <button onClick={() => handleRemoveHR(h.id)} className="text-fuchsia-400 hover:text-fuchsia-600 p-1 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+
+              {/* Project Managers */}
+              <section className="bg-gradient-to-br from-blue-50 to-indigo-50/40 p-6 rounded-3xl border border-blue-100 shadow-sm h-full flex flex-col justify-between">
+                <div>
+                  <h3 className="text-xl font-bold text-blue-900 mb-1 flex items-center gap-2">
+                    <Star className="w-6 h-6 text-blue-600" /> Project Managers (PM)
+                  </h3>
+                  <p className="text-xs text-blue-750 mb-4">Nomina o rimuovi i Project Manager abilitati a supervisionare le commesse.</p>
+                  <form onSubmit={handleAddPM} className="flex gap-2 mb-4">
+                    <select required value={newPmEmail} onChange={e => setNewPmEmail(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-blue-400 transition shadow-inner font-medium text-blue-900 text-xs">
+                      <option value="">Seleziona dipendente</option>
+                      {dipendenti.filter(d => d.email).map(d => <option key={d.id} value={d.email}>{d.nome}</option>)}
+                    </select>
+                    <button type="submit" className="bg-blue-600 text-white px-4 py-3 rounded-xl hover:bg-blue-700 transition font-bold shadow-md active:scale-95 text-xs cursor-pointer">Nomina</button>
+                  </form>
+                </div>
+                <div className="h-48 overflow-y-auto bg-white/50 rounded-xl divide-y border border-blue-100">
+                  {pmsList.length === 0 ? (
+                    <p className="p-4 text-xs text-gray-400 italic font-bold">Nessun PM nominato.</p>
+                  ) : (
+                    pmsList.map(p => {
+                      const name = getDipNomeFromEmail(p.email);
+                      return (
+                        <div key={p.id} className="p-3 flex justify-between items-center text-sm">
+                          <div>
+                            <div className="font-bold text-blue-900">{name}</div>
+                            <div className="text-xs text-blue-700/70">{p.email}</div>
+                          </div>
+                          <button onClick={() => handleRemovePM(p.id)} className="text-blue-405 hover:text-red-655 p-1 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </section>
+
+            </div>
             
             {/* Gestione Appartenenza Macro Aree */}
             <section className="bg-gradient-to-br from-indigo-50 to-blue-50/40 p-6 rounded-3xl border border-indigo-100 shadow-sm md:col-span-2">
@@ -1505,32 +1626,32 @@ export default function Impostazioni() {
 
         {/* TAB 5: SISTEMA */}
         {activeTab === 'sistema' && isAdmin && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start w-full">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch w-full">
             {/* Configurazione Email */}
-            <section className="bg-gradient-to-br from-slate-50 to-zinc-100 p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col gap-4">
+            <section className="bg-gradient-to-br from-slate-50 to-zinc-100 p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col justify-between h-full gap-4">
               <div>
                 <h3 className="text-xl font-bold text-slate-800 mb-1 flex items-center gap-2">
                   <Mail className="w-6 h-6 text-indigo-650" /> Notifiche Email
                 </h3>
-                <p className="text-xs text-slate-500 leading-relaxed">
+                <p className="text-xs text-slate-500 leading-relaxed mb-4">
                   Abilita o disabilita singolarmente le risorse a ricevere e-mail automatiche dal sistema (notifiche ferie, weekend, invio e approvazione foglio ore/fatture, assegnazione commesse, ecc.).
                 </p>
-              </div>
-
-              {/* Filtro Ricerca Risorsa */}
-              <div className="relative">
-                <input
-                  type="text"
-                  placeholder="Cerca risorsa..."
-                  value={emailSearchText}
-                  onChange={e => setEmailSearchText(e.target.value)}
-                  className="w-full pl-9 pr-4 py-2.5 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400 text-xs font-semibold text-slate-700 shadow-sm"
-                />
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                
+                {/* Filtro Ricerca Risorsa */}
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="Cerca risorsa..."
+                    value={emailSearchText}
+                    onChange={e => setEmailSearchText(e.target.value)}
+                    className="w-full pl-9 pr-4 py-2.5 border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400 text-xs font-semibold text-slate-700 shadow-sm"
+                  />
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                </div>
               </div>
 
               {/* Lista delle Risorse con Scrollbar */}
-              <div className="max-h-80 overflow-y-auto border border-slate-200/60 rounded-2xl bg-white divide-y divide-slate-100 shadow-inner">
+              <div className="h-64 overflow-y-auto border border-slate-200/60 rounded-2xl bg-white divide-y divide-slate-100 shadow-inner">
                 {(() => {
                   const filtered = dipendenti.filter(dip => 
                     dip.nome.toLowerCase().includes(emailSearchText.toLowerCase()) || 
@@ -1575,34 +1696,36 @@ export default function Impostazioni() {
             </section>
 
             {/* Frasi di Benvenuto */}
-            <section className="bg-gradient-to-br from-indigo-50 to-indigo-100 p-6 rounded-3xl border border-indigo-200 shadow-sm">
-              <h3 className="text-xl font-bold text-indigo-900 mb-2 flex items-center gap-2">
-                <MessageSquare className="w-6 h-6 text-indigo-600" /> Frasi di Benvenuto Dashboard
-              </h3>
-              <p className="text-xs text-indigo-755 mb-4">
-                Gestisci le frasi accoglienti visualizzate casualmente nella dashboard. Il sistema userà il formato: <em>"Ciao, Nome! [Frase]"</em>.
-              </p>
-              
-              {/* Form per aggiungere una nuova frase */}
-              <form onSubmit={handleAddGreeting} className="flex gap-2 mb-4">
-                <input 
-                  type="text"
-                  required
-                  placeholder="Es. Felici di collaborare con te anche oggi."
-                  value={newGreetingText}
-                  onChange={e => setNewGreetingText(e.target.value)}
-                  className="flex-1 p-3 border-none rounded-xl bg-white/80 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition shadow-inner font-semibold text-xs text-indigo-950"
-                />
-                <button 
-                  type="submit"
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold px-4 py-3 rounded-xl transition shadow active:scale-95 text-xs flex items-center gap-1 shrink-0 cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" /> Aggiungi
-                </button>
-              </form>
+            <section className="bg-gradient-to-br from-indigo-50 to-indigo-100 p-6 rounded-3xl border border-indigo-200 shadow-sm flex flex-col justify-between h-full gap-4">
+              <div>
+                <h3 className="text-xl font-bold text-indigo-900 mb-1 flex items-center gap-2">
+                  <MessageSquare className="w-6 h-6 text-indigo-600" /> Frasi di Benvenuto Dashboard
+                </h3>
+                <p className="text-xs text-indigo-755 mb-4">
+                  Gestisci le frasi accoglienti visualizzate casualmente nella dashboard. Il sistema userà il formato: <em>"Ciao, Nome! [Frase]"</em>.
+                </p>
+                
+                {/* Form per aggiungere una nuova frase */}
+                <form onSubmit={handleAddGreeting} className="flex gap-2">
+                  <input 
+                    type="text"
+                    required
+                    placeholder="Es. Felici di collaborare con te anche oggi."
+                    value={newGreetingText}
+                    onChange={e => setNewGreetingText(e.target.value)}
+                    className="flex-1 p-3 border-none rounded-xl bg-white/80 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition shadow-inner font-semibold text-xs text-indigo-950"
+                  />
+                  <button 
+                    type="submit"
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold px-4 py-3 rounded-xl transition shadow active:scale-95 text-xs flex items-center gap-1 shrink-0 cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" /> Aggiungi
+                  </button>
+                </form>
+              </div>
 
               {/* Lista delle frasi esistenti */}
-              <div className="space-y-2 max-h-60 overflow-y-auto pr-1 scrollbar-thin">
+              <div className="h-64 overflow-y-auto space-y-2 pr-1 scrollbar-thin">
                 {greetingsList.length === 0 ? (
                   <div className="text-center py-6 bg-white/40 border border-indigo-200/50 border-dashed rounded-2xl p-4 flex flex-col items-center gap-3">
                     <p className="text-xs text-indigo-500 font-semibold italic">Nessuna frase di benvenuto caricata.</p>
@@ -1919,6 +2042,151 @@ export default function Impostazioni() {
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* TAB DEV: EMAIL SIMULATOR */}
+      {activeTab === ('email_dev' as any) && isDev && (
+        <div className="space-y-6">
+          <div className="bg-gradient-to-r from-indigo-900 to-purple-900 text-white p-6 rounded-[2rem] shadow-lg flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="bg-amber-400 text-indigo-950 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full">
+                  🛠️ Strumenti Sviluppatore
+                </span>
+                <span className="text-xs text-indigo-200 font-medium">Riservato a {userEmail}</span>
+              </div>
+              <h3 className="text-2xl font-extrabold">Simulatore & Anteprima E-mail</h3>
+              <p className="text-xs text-indigo-200 mt-1 font-medium max-w-2xl">
+                Seleziona uno qualsiasi dei modelli e-mail utilizzati dalla piattaforma per testare la resa grafica HTML live o inviare una mail di prova reale al tuo indirizzo.
+              </p>
+            </div>
+          </div>
+
+          {/* Controlli Simulatore */}
+          {(() => {
+            const currentTemplate = EMAIL_TEST_TEMPLATES.find(t => t.id === selectedTemplateId) || EMAIL_TEST_TEMPLATES[0];
+            const recipient = userEmail || 'ebartalucci@ingegno06.it';
+            const nameToUse = myAssociatedName || 'Emanuele Bartalucci';
+            const sampleHtml = currentTemplate.getHtml(nameToUse);
+            const fullWrappedHtml = wrapMailTemplate(currentTemplate.subject, sampleHtml);
+            const samplePlainText = currentTemplate.getPlainText(nameToUse);
+
+            const handleSendTestMail = async () => {
+              setSendingTestMail(true);
+              try {
+                await queueMail(recipient, currentTemplate.subject, sampleHtml, samplePlainText);
+                showToast(`E-mail di prova accodata per ${recipient}!`, "success");
+              } catch (err) {
+                console.error(err);
+                showToast("Errore durante l'invio dell'e-mail di prova.", "error");
+              } finally {
+                setSendingTestMail(false);
+              }
+            };
+
+            return (
+              <div className="bg-white rounded-[2rem] shadow-md border border-gray-100 p-6 space-y-6">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b pb-4">
+                  <div className="w-full md:w-1/2">
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Seleziona Modello E-mail</label>
+                    <select
+                      value={selectedTemplateId}
+                      onChange={e => setSelectedTemplateId(e.target.value)}
+                      className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl font-bold text-sm text-gray-800 focus:ring-2 focus:ring-indigo-500 outline-none"
+                    >
+                      {EMAIL_TEST_TEMPLATES.map(tmpl => (
+                        <option key={tmpl.id} value={tmpl.id}>{tmpl.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex gap-3 w-full md:w-auto">
+                    <button
+                      onClick={() => setIsMailPreviewModalOpen(true)}
+                      className="flex-1 md:flex-initial bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold px-4 py-3.5 rounded-xl border border-indigo-200 transition flex items-center justify-center gap-2 text-xs active:scale-95 cursor-pointer"
+                    >
+                      <Eye className="w-4 h-4" /> Anteprima HTML Live
+                    </button>
+                    <button
+                      onClick={handleSendTestMail}
+                      disabled={sendingTestMail}
+                      className="flex-1 md:flex-initial bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-5 py-3.5 rounded-xl shadow-md transition flex items-center justify-center gap-2 text-xs active:scale-95 disabled:opacity-50 cursor-pointer"
+                    >
+                      <Send className="w-4 h-4" /> {sendingTestMail ? 'Invio in corso...' : 'Invia Mail di Prova'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Informazioni E-mail */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-medium bg-gray-50 p-4 rounded-xl border">
+                  <div>
+                    <span className="font-bold text-gray-500">Oggetto:</span> <span className="font-bold text-gray-900">{currentTemplate.subject}</span>
+                  </div>
+                  <div>
+                    <span className="font-bold text-gray-500">Destinatario Prova:</span> <span className="font-bold text-indigo-600">{recipient}</span>
+                  </div>
+                </div>
+
+                {/* Anteprima Live Integrata nella scheda */}
+                <div>
+                  <h4 className="text-xs font-extrabold text-gray-700 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                    <Code className="w-4 h-4 text-indigo-600" /> Anteprima Layout E-mail Ufficiale
+                  </h4>
+                  <div className="border border-gray-200 rounded-2xl overflow-hidden shadow-inner bg-gray-100 p-4">
+                    <iframe
+                      title="Mail Preview"
+                      srcDoc={fullWrappedHtml}
+                      className="w-full min-h-[480px] bg-white rounded-xl border border-gray-200 shadow-sm"
+                    />
+                  </div>
+                </div>
+
+                {/* Modale di Anteprima a Schermo Intero */}
+                {isMailPreviewModalOpen && (
+                  <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+                    <div className="bg-white rounded-[2rem] shadow-2xl max-w-4xl w-full max-h-[90vh] border border-gray-100 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                      <div className="p-5 bg-indigo-900 text-white flex justify-between items-center">
+                        <h3 className="font-extrabold text-base flex items-center gap-2">
+                          <Eye className="w-5 h-5" /> Anteprima Grafica HTML: {currentTemplate.name}
+                        </h3>
+                        <button
+                          onClick={() => setIsMailPreviewModalOpen(false)}
+                          className="hover:bg-white/20 p-1.5 rounded-xl transition text-white"
+                        >
+                          <X className="w-5 h-5" />
+                        </button>
+                      </div>
+                      <div className="p-4 bg-gray-100 flex-1 overflow-y-auto">
+                        <iframe
+                          title="Full Mail Preview"
+                          srcDoc={fullWrappedHtml}
+                          className="w-full h-[650px] bg-white rounded-xl border border-gray-200 shadow-sm"
+                        />
+                      </div>
+                      <div className="p-4 bg-white border-t flex justify-end gap-3">
+                        <button
+                          onClick={() => setIsMailPreviewModalOpen(false)}
+                          className="px-5 py-2.5 rounded-xl border text-xs font-bold text-gray-600 hover:bg-gray-50 transition"
+                        >
+                          Chiudi
+                        </button>
+                        <button
+                          onClick={() => {
+                            setIsMailPreviewModalOpen(false);
+                            handleSendTestMail();
+                          }}
+                          className="px-5 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition flex items-center gap-2 shadow"
+                        >
+                          <Send className="w-3.5 h-3.5" /> Invia Mail di Prova
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
 

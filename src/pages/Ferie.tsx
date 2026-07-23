@@ -499,7 +499,10 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         `;
         const plainText = `Ciao ${req.dipendenteName},\n\nLa tua richiesta di ${typeDesc} prevista ${dateDesc} è stata ${newStatus.toLowerCase()}.\n\nPuoi consultare lo stato delle tue richieste direttamente nella tua area personale.\n\nQuesta è una notifica automatica.`;
 
-        await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+        const isSelfTarget = (targetDip.email.toLowerCase() === userEmail?.toLowerCase()) || (myAssociatedName && req.dipendenteName === myAssociatedName);
+        if (!isSelfTarget) {
+          await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+        }
       }
       loadFerieData();
     } catch (e) {
@@ -554,7 +557,10 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         `;
         const plainText = `Ciao ${req.dipendenteName},\n\nTi informiamo che la tua richiesta di ${typeDesc} prevista ${dateDesc} (in stato ${req.stato.toLowerCase()}) è stata annullata dall'amministrazione / HR.\n\n${cancellationReason.trim() ? `Motivazione dell'annullamento: ${cancellationReason.trim()}\n\n` : ''}Questa è una notifica automatica.`;
 
-        await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+        const isSelfTarget = (targetDip.email.toLowerCase() === userEmail?.toLowerCase()) || (myAssociatedName && req.dipendenteName === myAssociatedName);
+        if (!isSelfTarget) {
+          await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+        }
       }
 
       showToast("Ferie annullate con successo!");
@@ -974,11 +980,19 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
             </div>
           </div>
           <script>
+            function closeWindow() {
+              try { window.close(); } catch(e) {}
+            }
+            window.onafterprint = closeWindow;
             window.onload = function() {
               setTimeout(function() {
                 window.print();
-                window.close();
-              }, 300);
+                closeWindow();
+                setTimeout(closeWindow, 500);
+              }, 250);
+            };
+            window.onfocus = function() {
+              setTimeout(closeWindow, 300);
             };
           </script>
         </body>

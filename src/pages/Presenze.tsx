@@ -1493,14 +1493,17 @@ export default function Presenze() {
       // Invia email al dipendente
       const targetDip = dipendenti.find(d => d.nome === req.dipendenteName);
       if (targetDip && targetDip.email) {
-        const subject = `[Notifica] Autorizzazione lavoro straordinario ${newStatus}`;
-        const htmlBody = `
-          <p>Ciao <strong>${req.dipendenteName}</strong>,</p>
-          <p>La tua richiesta di autorizzazione per lavorare il giorno <strong>${formatDate(req.data)}</strong> (${req.motivo}) è stata <strong>${newStatus.toLowerCase()}</strong>.</p>
-          <p>Puoi procedere all'inserimento delle ore sul tuo foglio presenze se la richiesta è stata approvata.</p>
-        `;
-        const plainText = `Ciao ${req.dipendenteName},\n\nLa tua richiesta di autorizzazione per lavorare il giorno ${formatDate(req.data)} (${req.motivo}) è stata ${newStatus.toLowerCase()}.\n\nQuesta è una notifica automatica.`;
-        await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+        const isSelfTarget = (targetDip.email.toLowerCase() === userEmail?.toLowerCase()) || (myAssociatedName && req.dipendenteName === myAssociatedName);
+        if (!isSelfTarget) {
+          const subject = `[Notifica] Autorizzazione lavoro straordinario ${newStatus}`;
+          const htmlBody = `
+            <p>Ciao <strong>${req.dipendenteName}</strong>,</p>
+            <p>La tua richiesta di autorizzazione per lavorare il giorno <strong>${formatDate(req.data)}</strong> (${req.motivo}) è stata <strong>${newStatus.toLowerCase()}</strong>.</p>
+            <p>Puoi procedere all'inserimento delle ore sul tuo foglio presenze se la richiesta è stata approvata.</p>
+          `;
+          const plainText = `Ciao ${req.dipendenteName},\n\nLa tua richiesta di autorizzazione per lavorare il giorno ${formatDate(req.data)} (${req.motivo}) è stata ${newStatus.toLowerCase()}.\n\nQuesta è una notifica automatica.`;
+          await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+        }
       }
       showToast(`Richiesta ${newStatus.toLowerCase()} con successo!`);
     } catch (e) {
@@ -1691,8 +1694,9 @@ export default function Presenze() {
           showToast(isCollab ? "Bozza fattura approvata!" : "Rapportino approvato!");
           loadPresenzeData();
 
-          // Invia notifica al dipendente
-          if (updated.dipendenteEmail) {
+          // Invia notifica al dipendente (se non è se stesso)
+          const isSelfTarget = (updated.dipendenteEmail?.toLowerCase() === userEmail?.toLowerCase()) || (myAssociatedName && updated.dipendenteNome === myAssociatedName);
+          if (updated.dipendenteEmail && !isSelfTarget) {
             const meseNome = MESI[selectedMonth - 1];
             await queueMail(
               updated.dipendenteEmail,
@@ -1733,8 +1737,9 @@ export default function Presenze() {
       showToast("Richiesta di modifica inviata al dipendente.");
       loadPresenzeData();
 
-      // Invia notifica al dipendente
-      if (updated.dipendenteEmail) {
+      // Invia notifica al dipendente (se non è se stesso)
+      const isSelfTarget = (updated.dipendenteEmail?.toLowerCase() === userEmail?.toLowerCase()) || (myAssociatedName && updated.dipendenteNome === myAssociatedName);
+      if (updated.dipendenteEmail && !isSelfTarget) {
         const meseNome = MESI[selectedMonth - 1];
         await queueMail(
           updated.dipendenteEmail,

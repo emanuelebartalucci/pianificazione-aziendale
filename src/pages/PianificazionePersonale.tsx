@@ -471,7 +471,9 @@ export default function PianificazionePersonale() {
           <p style="margin-top:16px">Accedi alla <strong>Pianificazione del Personale e Carichi</strong> per gestire questa richiesta e assegnare la risorsa più adeguata.</p>
         `;
         for (const email of coordAreaEmails) {
-          await queueMail(email, subject, htmlBody);
+          if (email.toLowerCase() !== userEmail.toLowerCase()) {
+            await queueMail(email, subject, htmlBody);
+          }
         }
       }
       
@@ -538,8 +540,9 @@ export default function PianificazionePersonale() {
       
       await batch.commit();
 
-      // Notifica al richiedente dell'approvazione
-      if (req.richiedenteEmail) {
+      // Notifica al richiedente dell'approvazione (se non è se stesso)
+      const isSelfRequestor = (req.richiedenteEmail && req.richiedenteEmail.toLowerCase() === userEmail.toLowerCase()) || areNamesEqual(req.richiedenteNome, myAssociatedName);
+      if (req.richiedenteEmail && !isSelfRequestor) {
         const areaLabel = req.area || 'Disegnatori';
         const subject = `[Approvata] Richiesta ${areaLabel} per ${req.commessaName}`;
         const htmlBody = `
@@ -807,9 +810,10 @@ export default function PianificazionePersonale() {
             updatedAssignments[docId] = filteredList;
           }
 
-          // Coda notifica
+          // Coda notifica (solo se la risorsa non è l'utente operante)
           const targetDip = dipendenti.find(d => d.nome === resName);
-          if (targetDip && targetDip.email) {
+          const isSelfRes = (targetDip?.email?.toLowerCase() === userEmail.toLowerCase()) || areNamesEqual(resName, myAssociatedName);
+          if (targetDip && targetDip.email && !isSelfRes) {
             const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
             newNotifications.push({
               dipendenteNome: resName,
@@ -904,9 +908,10 @@ export default function PianificazionePersonale() {
 
         updatedAssignments[docId] = [...filteredList, newAllocation];
 
-        // Coda notifica
+        // Coda notifica (solo se la risorsa non è l'utente operante)
         const targetDip = dipendenti.find(d => d.nome === resName);
-        if (targetDip && targetDip.email) {
+        const isSelfRes = (targetDip?.email?.toLowerCase() === userEmail.toLowerCase()) || areNamesEqual(resName, myAssociatedName);
+        if (targetDip && targetDip.email && !isSelfRes) {
           const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
           newNotifications.push({
             dipendenteNome: resName,

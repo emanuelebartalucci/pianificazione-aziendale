@@ -22,13 +22,33 @@ export function savePendingNotifications(notifications: Record<string, PendingUs
   localStorage.setItem(STORAGE_KEY, JSON.stringify(notifications));
 }
 
-export function addPendingNotification(dipendenteNome: string, email: string, weekLabel: string, description: string) {
+export function addPendingNotification(
+  dipendenteNome: string, 
+  email: string, 
+  weekLabel: string, 
+  description: string,
+  currentUserEmail?: string,
+  currentUserName?: string
+) {
   if (!email || !email.trim()) return;
+
+  const targetEmail = email.toLowerCase().trim();
+  const activeUserEmail = currentUserEmail?.toLowerCase().trim();
+
+  // Blocco auto-notifica se l'utente che sta salvando modifica la propria pianificazione
+  if (activeUserEmail && targetEmail === activeUserEmail) {
+    console.log(`[PAUSA NOTIFICA AUTO-ASSEGNAZIONE] Ignorata notifica per se stessi (${email})`);
+    return;
+  }
+  if (currentUserName && dipendenteNome.toLowerCase().trim() === currentUserName.toLowerCase().trim()) {
+    console.log(`[PAUSA NOTIFICA AUTO-ASSEGNAZIONE] Ignorata notifica per se stessi (${dipendenteNome})`);
+    return;
+  }
   
   const current = getPendingNotifications();
   if (!current[dipendenteNome]) {
     current[dipendenteNome] = {
-      email: email.toLowerCase().trim(),
+      email: targetEmail,
       variazioni: {}
     };
   }
