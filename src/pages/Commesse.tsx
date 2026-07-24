@@ -7,7 +7,7 @@ import { getWeekNumber, getStartOfWeek, addDays } from '../utils/date';
 import { queueMail } from '../utils/mailSender';
 import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
 import ConfirmModal from '../components/ConfirmModal';
-import { TIPOLOGIE_COMMESSE } from './Impostazioni';
+import { TIPOLOGIE_COMMESSE, isSoci } from './Impostazioni';
 
 const isWeekWithinRange = (wkDateObj: Date | undefined, startStr?: string, endStr?: string): boolean => {
   if (!wkDateObj || !startStr || !endStr) return false;
@@ -71,8 +71,8 @@ interface WeekInfo {
 //   return '';
 // };
 
-const formatDate = (dateStr: string): string => {
-  if (!dateStr) return '';
+const formatDate = (dateStr?: any): string => {
+  if (!dateStr || typeof dateStr !== 'string') return '';
   const parts = dateStr.split('-');
   if (parts.length === 3) {
     return `${parts[2]}/${parts[1]}/${parts[0]}`;
@@ -81,7 +81,7 @@ const formatDate = (dateStr: string): string => {
 };
 
 const areNamesEqual = (n1?: string | null, n2?: string | null): boolean => {
-  if (!n1 || !n2) return false;
+  if (!n1 || !n2 || typeof n1 !== 'string' || typeof n2 !== 'string') return false;
   const clean1 = n1.toLowerCase().trim().replace(/\s+/g, ' ');
   const clean2 = n2.toLowerCase().trim().replace(/\s+/g, ' ');
   if (clean1 === clean2) return true;
@@ -90,11 +90,12 @@ const areNamesEqual = (n1?: string | null, n2?: string | null): boolean => {
   return w1 === w2;
 };
 
-const getInitials = (name: string): string => {
-  if (!name) return '';
+const getInitials = (name?: string | null): string => {
+  if (!name || typeof name !== 'string') return '';
   const parts = name.trim().split(/\s+/);
+  if (parts.length === 0 || !parts[0]) return '';
   if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  return ((parts[0][0] || '') + (parts[parts.length - 1][0] || '')).toUpperCase();
 };
 
 interface CommessaProgetto {
@@ -158,18 +159,16 @@ const generateWeeksExtended = (baseDate: Date, numWeeks: number): WeekInfo[] => 
 
 export default function Commesse() {
   const { 
-    isAdmin, 
-    myAssociatedName, 
-    userEmail,
-    dipendenti, 
-    commesse, 
-    clienti: clientiList, 
-    assegnazioni: assignments, 
-    approvedLeaves, 
-    coordinatori, 
-    pmsEmails, 
-    isCommerciale,
-    commercialiEmails
+    isAdmin = false, 
+    myAssociatedName = '', 
+    userEmail = '',
+    dipendenti = [], 
+    commesse = [], 
+    clienti: clientiList = [], 
+    assegnazioni: assignments = {}, 
+    approvedLeaves = [], 
+    coordinatori = [], 
+    pmsEmails = []
   } = useAuth();
 
   const getOfficialName = (inputName?: string | null) => {
@@ -273,12 +272,19 @@ export default function Commesse() {
   }, [commesse]);
 
   const selectablePMPerFiltro = useMemo(() => {
-    const set = new Set<string>();
+    const names: string[] = [];
     commesse.forEach(c => {
-      if (c.responsabile) set.add(c.responsabile.trim());
+      if (c.responsabile && c.responsabile.trim()) {
+        const raw = c.responsabile.trim();
+        const matchedDip = dipendenti.find(d => areNamesEqual(d.nome, raw));
+        const canonicalName = matchedDip ? matchedDip.nome : raw;
+        if (!names.some(n => areNamesEqual(n, canonicalName))) {
+          names.push(canonicalName);
+        }
+      }
     });
-    return Array.from(set).sort();
-  }, [commesse]);
+    return names.sort((a, b) => a.localeCompare(b, 'it', { sensitivity: 'base' }));
+  }, [commesse, dipendenti]);
 
   const selectableTipologiePerFiltro = useMemo(() => {
     const set = new Set<string>();
@@ -326,6 +332,192 @@ export default function Commesse() {
     }, 4500);
   };
 
+  // Helper per calcolare le date di inizio e fine lunedì/domenica di una settimana ID
+  const getWeekDateRange = (wkId: string) => {
+    const parts = wkId.split('-W');
+    if (parts.length !== 2) return { startStr: '', endStr: '' };
+    const year = parseInt(parts[0]);
+    const week = parseInt(parts[1]);
+    if (isNaN(year) || isNaN(week)) return { startStr: '', endStr: '' };
+
+    const simple = new Date(year, 0, 4);
+    const dayOfWeek = simple.getDay();
+    const dayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const firstMonday = new Date(simple.setDate(simple.getDate() + dayOffset));
+    const monday = new Date(firstMonday.setDate(firstMonday.getDate() + (week - 1) * 7));
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+
+    const startStr = monday.toLocaleDateString('sv-SE');
+    const endStr = sunday.toLocaleDateString('sv-SE');
+    return { startStr, endStr };
+  };
+
+  // Stato per la modale di richiesta modifica risorsa al coordinatore
+  const [resourceChangeModal, setResourceChangeModal] = useState<{
+    isOpen: boolean;
+    personName: string;
+    macroArea: string;
+    coordName: string;
+    coordEmail: string;
+    commessaId: string;
+    commessaNome: string;
+    weekId: string;
+    weekLabel: string;
+    currentPct: number;
+  }>({
+    isOpen: false,
+    personName: '',
+    macroArea: '',
+    coordName: '',
+    coordEmail: '',
+    commessaId: '',
+    commessaNome: '',
+    weekId: '',
+    weekLabel: '',
+    currentPct: 100
+  });
+
+  const [reqStartWeekId, setReqStartWeekId] = useState('');
+  const [reqEndWeekId, setReqEndWeekId] = useState('');
+  const [reqNewPercentuale, setReqNewPercentuale] = useState('100');
+  const [reqChangeType, setReqChangeType] = useState('modifica_spostamento');
+  const [reqChangeNotes, setReqChangeNotes] = useState('');
+  const [sendingResourceRequest, setSendingResourceRequest] = useState(false);
+
+  const handleResourcePillClick = (e: React.MouseEvent, personName: string, personPct: number, commId: string, commNome: string, wkId: string, wkLabel: string) => {
+    e.stopPropagation();
+
+    const dip = dipendenti.find(d => areNamesEqual(d.nome, personName));
+    const macroArea = dip?.macroArea || '';
+
+    const isCoordOfResourceArea = (coordinatori || []).some(
+      c => c.area === macroArea && c.email?.toLowerCase() === userEmail?.toLowerCase()
+    );
+    const canDirectlyManage = isAdmin || isSoci(myAssociatedName) || isCoordOfResourceArea;
+
+    if (canDirectlyManage) {
+      window.open(`/pianificazione-personale?tab=risorsa&risorsa=${encodeURIComponent(personName)}&weekId=${encodeURIComponent(wkId)}`, '_blank');
+    } else {
+      const coordObjs = (coordinatori || []).filter(c => c.area === macroArea);
+      const coordEmails = coordObjs.map(c => c.email?.toLowerCase()).filter(Boolean);
+      const coordDip = dipendenti.find(d => d.email && coordEmails.includes(d.email.toLowerCase()));
+      const coordName = coordDip ? coordDip.nome : (coordObjs[0]?.email || 'Coordinatore d\'Area');
+      const coordEmail = coordDip?.email || coordObjs[0]?.email || '';
+
+      setResourceChangeModal({
+        isOpen: true,
+        personName,
+        macroArea,
+        coordName,
+        coordEmail,
+        commessaId: commId,
+        commessaNome: commNome,
+        weekId: wkId,
+        weekLabel: wkLabel,
+        currentPct: personPct || 100
+      });
+      setReqStartWeekId(wkId);
+      setReqEndWeekId(wkId);
+      setReqNewPercentuale(String(personPct || 100));
+      setReqChangeType('modifica_spostamento');
+      setReqChangeNotes('');
+    }
+  };
+
+  const handleSendResourceChangeRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSendingResourceRequest(true);
+    try {
+      const startInfo = getWeekDateRange(reqStartWeekId);
+      const endInfo = getWeekDateRange(reqEndWeekId);
+      const dataInizio = startInfo.startStr;
+      const dataFine = endInfo.endStr;
+      const pct = reqChangeType === 'annullamento' ? 0 : (parseInt(reqNewPercentuale) || 100);
+
+      let tipoLabel = '🔄 Modifica / Spostamento Assegnazione (Date e Percentuale)';
+      if (reqChangeType === 'annullamento') tipoLabel = '❌ Annullamento / Rimozione Completa';
+      if (reqChangeType === 'altro') tipoLabel = '💬 Altra Richiesta / Informazioni';
+
+      // 1. Salva in `richieste_disegnatori` per far comparire la richiesta nel pannello Coordinatore in Pianificazione Personale
+      await addDoc(collection(db, 'richieste_disegnatori'), {
+        area: resourceChangeModal.macroArea,
+        commessaId: resourceChangeModal.commessaId,
+        commessaName: resourceChangeModal.commessaNome,
+        commessaNome: resourceChangeModal.commessaNome,
+        dataInizio,
+        dataFine,
+        percentuale: pct,
+        risorsaPreferita: resourceChangeModal.personName,
+        richiedenteNome: myAssociatedName,
+        richiedenteEmail: userEmail,
+        coordinatoreNome: resourceChangeModal.coordName,
+        coordinatoreEmail: resourceChangeModal.coordEmail,
+        tipoRichiesta: tipoLabel,
+        nota: reqChangeNotes,
+        originalWeekId: resourceChangeModal.weekId,
+        nuovaStartWeekId: reqStartWeekId,
+        nuovaEndWeekId: reqEndWeekId,
+        stato: 'in_attesa',
+        createdAt: new Date().toISOString()
+      });
+
+      // 2. Salva in `richieste_modifica_risorsa`
+      await addDoc(collection(db, 'richieste_modifica_risorsa'), {
+        risorsaNome: resourceChangeModal.personName,
+        risorsaMacroArea: resourceChangeModal.macroArea,
+        coordinatoreNome: resourceChangeModal.coordName,
+        coordinatoreEmail: resourceChangeModal.coordEmail,
+        richiedenteNome: myAssociatedName,
+        richiedenteEmail: userEmail,
+        commessaId: resourceChangeModal.commessaId,
+        commessaNome: resourceChangeModal.commessaNome,
+        weekId: resourceChangeModal.weekId,
+        nuovaStartWeekId: reqStartWeekId,
+        nuovaEndWeekId: reqEndWeekId,
+        dataInizio,
+        dataFine,
+        percentuale: pct,
+        tipoRichiesta: tipoLabel,
+        note: reqChangeNotes,
+        stato: 'in_attesa',
+        createdAt: new Date().toISOString()
+      });
+
+      // 3. Email al Coordinatore
+      if (resourceChangeModal.coordEmail) {
+        const subject = `[Richiesta Modifica Risorsa] ${resourceChangeModal.personName} - Commessa ${resourceChangeModal.commessaNome}`;
+        const htmlBody = `
+          <div style="font-family: Arial, sans-serif; color: #1e293b; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px;">
+            <h2 style="color: #2563eb; margin-top: 0;">✉️ Richiesta al Coordinatore d'Area</h2>
+            <p>Ciao <strong>${resourceChangeModal.coordName}</strong>,</p>
+            <p><strong>${myAssociatedName}</strong> ti ha inviato una richiesta di modifica per la risorsa <strong>${resourceChangeModal.personName}</strong> (Area: ${resourceChangeModal.macroArea}).</p>
+            <div style="background-color: #f8fafc; padding: 15px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #2563eb;">
+              <p style="margin: 0 0 8px 0;"><strong>Commessa:</strong> ${resourceChangeModal.commessaNome}</p>
+              <p style="margin: 0 0 8px 0;"><strong>Tipo Richiesta:</strong> ${tipoLabel}</p>
+              <p style="margin: 0 0 8px 0;"><strong>Nuovo Periodo Richiesto:</strong> dal ${dataInizio} al ${dataFine} (${reqStartWeekId} ➔ ${reqEndWeekId})</p>
+              <p style="margin: 0 0 8px 0;"><strong>Nuova Percentuale:</strong> ${pct}%</p>
+              <p style="margin: 0;"><strong>Motivazione / Note:</strong> ${reqChangeNotes || 'Nessuna nota specificata'}</p>
+            </div>
+            <p>Puoi approvare direttamente questa richiesta con 1-click dal tuo pannello in <strong>Pianificazione Personale</strong>.</p>
+            <p style="font-size: 12px; color: #64748b;">Questa email è stata generata automaticamente dal sistema di Pianificazione Aziendale.</p>
+          </div>
+        `;
+        const plainText = `Ciao ${resourceChangeModal.coordName},\n\n${myAssociatedName} ti ha inviato una richiesta per la risorsa ${resourceChangeModal.personName}.\nCommessa: ${resourceChangeModal.commessaNome}\nPeriodo: dal ${dataInizio} al ${dataFine}\nPercentuale: ${pct}%\nTipo: ${tipoLabel}\nNote: ${reqChangeNotes || 'Nessuna'}`;
+
+        await queueMail(resourceChangeModal.coordEmail, subject, htmlBody, plainText);
+      }
+
+      showToast(`Richiesta inviata con successo al Coordinatore ${resourceChangeModal.coordName}!`, 'success');
+      setResourceChangeModal(prev => ({ ...prev, isOpen: false }));
+    } catch (err) {
+      console.error(err);
+      showToast("Errore durante l'invio della richiesta.", "error");
+    } finally {
+      setSendingResourceRequest(false);
+    }
+  };
+
   // const handleSelectCommessaFilter = (commId: string) => {
   //   if (commId) {
   //     setSelectedCommessaIdsFilter([commId]);
@@ -349,62 +541,7 @@ export default function Commesse() {
   
 
 
-  const getLeavesForResourceInWeek = (resName: string, wkId: string) => {
-    const parts = wkId.split('-W');
-    if (parts.length !== 2) return [];
-    const year = parseInt(parts[0]);
-    const week = parseInt(parts[1]);
 
-    const simple = new Date(year, 0, 4);
-    const dayOfWeek = simple.getDay();
-    const dayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-    const firstMonday = new Date(simple.setDate(simple.getDate() + dayOffset));
-    const monday = new Date(firstMonday.setDate(firstMonday.getDate() + (week - 1) * 7));
-
-    const weekDates: string[] = [];
-    for (let i = 0; i < 5; i++) {
-      const dObj = new Date(monday);
-      dObj.setDate(monday.getDate() + i);
-      const y = dObj.getFullYear();
-      const m = String(dObj.getMonth() + 1).padStart(2, '0');
-      const ds = String(dObj.getDate()).padStart(2, '0');
-      weekDates.push(`${y}-${m}-${ds}`);
-    }
-
-    const leaveDaysFound: { giorno: string; tipo: string; dettagli: string }[] = [];
-    const dayNames = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
-
-    approvedLeaves.forEach(leave => {
-      if (leave.dipendenteName !== resName) return;
-      const start = leave.dataInizio || leave.data;
-      const end = leave.dataFine || leave.data;
-      if (start && end) {
-        const [sY, sM, sD] = start.split('-').map(Number);
-        const [eY, eM, eD] = end.split('-').map(Number);
-        const curr = new Date(sY, sM - 1, sD);
-        const last = new Date(eY, eM - 1, eD);
-
-        weekDates.forEach((wDateStr, idx) => {
-          const [wY, wM, wD] = wDateStr.split('-').map(Number);
-          const wDate = new Date(wY, wM - 1, wD);
-          if (wDate >= curr && wDate <= last) {
-            let label = leave.tipo === 'ferie' ? 'Ferie' : leave.tipo === 'malattia' ? 'Malattia' : leave.tipo === 'maternita' ? 'Maternità' : leave.tipo === 'smart' ? 'Smart' : leave.tipo;
-            if (leave.tipo === 'mattina') label = 'Ass. Matt.';
-            if (leave.tipo === 'pomeriggio') label = 'Ass. Pom.';
-            if (leave.tipo === 'permesso') label = `Perm. (${leave.oraInizio || ''}-${leave.oraFine || ''})`;
-
-            leaveDaysFound.push({
-              giorno: dayNames[idx],
-              tipo: leave.tipo,
-              dettagli: label
-            });
-          }
-        });
-      }
-    });
-
-    return leaveDaysFound;
-  };
 
   // Dynamically determine baseDate and number of weeks if a single commessa is selected
   const activeWeeks = useMemo(() => {
@@ -547,19 +684,191 @@ export default function Commesse() {
     return [...list].sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
   }, [commesse, selectedCommessaIdsFilter, selectedClientFilter, selectedPMFilter, selectedTipologiaFilter, commessaTextQuery, isAdmin, myAssociatedName, assignments]);
 
-  // Get people allocated to a commessa in a specific week
-  const getAssignmentsForCommessaInWeek = (commId: string, wkId: string) => {
-    const list: { name: string; pct: number; giorni?: string[] }[] = [];
-    dipendenti.forEach(d => {
-      const key = `${d.nome}-${wkId}`;
-      const assList = assignments[key] || [];
-      const match = assList.find(a => a.commessaId === commId);
-      if (match) {
-        list.push({ name: d.nome, pct: match.percentuale, giorni: match.giorni });
+  // Pre-calcolo delle ferie settimanali full-week in O(L)
+  const fullWeekLeavesSet = useMemo(() => {
+    const set = new Set<string>();
+    if (!approvedLeaves || !approvedLeaves.length || !activeWeeks || !activeWeeks.length) return set;
+
+    (approvedLeaves || []).forEach(leave => {
+      if (!leave || !leave.dipendenteName) return;
+      const resName = leave.dipendenteName;
+      const isFullDay = leave.tipo === 'ferie' || 
+                        leave.tipo === 'malattia' || 
+                        leave.tipo === 'maternita' || 
+                        (leave.tipo !== 'smart' && leave.tipo !== 'permesso' && leave.tipo !== 'mattina' && leave.tipo !== 'pomeriggio');
+      if (!isFullDay) return;
+
+      const start = typeof leave.dataInizio === 'string' ? leave.dataInizio : (typeof leave.data === 'string' ? leave.data : null);
+      const end = typeof leave.dataFine === 'string' ? leave.dataFine : (typeof leave.data === 'string' ? leave.data : null);
+      if (start && end && start.includes('-') && end.includes('-')) {
+        const [sY, sM, sD] = start.split('-').map(Number);
+        const [eY, eM, eD] = end.split('-').map(Number);
+        if (!isNaN(sY) && !isNaN(sM) && !isNaN(sD) && !isNaN(eY) && !isNaN(eM) && !isNaN(eD)) {
+          const curr = new Date(sY, sM - 1, sD);
+          const last = new Date(eY, eM - 1, eD);
+
+          activeWeeks.forEach(wk => {
+            const parts = wk.id.split('-W');
+            if (parts.length !== 2) return;
+            const year = parseInt(parts[0]);
+            const week = parseInt(parts[1]);
+            if (isNaN(year) || isNaN(week)) return;
+
+            const simple = new Date(year, 0, 4);
+            const dayOfWeek = simple.getDay();
+            const dayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+            const firstMonday = new Date(simple.setDate(simple.getDate() + dayOffset));
+            const monday = new Date(firstMonday.setDate(firstMonday.getDate() + (week - 1) * 7));
+
+            let count = 0;
+            for (let i = 0; i < 5; i++) {
+              const dObj = new Date(monday);
+              dObj.setDate(monday.getDate() + i);
+              if (dObj >= curr && dObj <= last) {
+                count++;
+              }
+            }
+            if (count >= 5) {
+              set.add(`${resName.toLowerCase()}-${wk.id}`);
+            }
+          });
+        }
       }
     });
-    return list;
+
+    return set;
+  }, [approvedLeaves, activeWeeks]);
+
+  // Pre-calcolo mappa delle assegnazioni commessa per lookup O(1) ultra-veloce
+  const commessaAssignmentsMap = useMemo(() => {
+    const map = new Map<string, { name: string; pct: number; giorni?: string[] }[]>();
+    if (!assignments || !dipendenti) return map;
+
+    const validDipNames = new Set((dipendenti || []).map(d => (d && d.nome) ? d.nome : '').filter(Boolean));
+
+    Object.entries(assignments).forEach(([key, listAss]) => {
+      if (!listAss || !listAss.length) return;
+      const match = key.match(/^(.*)-(\d{4}-W\d{1,2})$/);
+      if (!match) return;
+      const dipName = match[1];
+      const wkId = match[2];
+
+      if (!validDipNames.has(dipName)) return;
+
+      // Escludi risorsa se in ferie tutta la settimana
+      if (fullWeekLeavesSet.has(`${dipName.toLowerCase()}-${wkId}`)) return;
+
+      listAss.forEach(ass => {
+        if (!ass || !ass.commessaId || !ass.percentuale) return;
+        const cellKey = `${ass.commessaId}-${wkId}`;
+        const existing = map.get(cellKey) || [];
+        existing.push({ name: dipName, pct: ass.percentuale, giorni: ass.giorni });
+        map.set(cellKey, existing);
+      });
+    });
+
+    return map;
+  }, [assignments, dipendenti, fullWeekLeavesSet]);
+
+  // Lookup O(1) istantaneo
+  const getAssignmentsForCommessaInWeek = (commId: string, wkId: string) => {
+    return commessaAssignmentsMap.get(`${commId}-${wkId}`) || [];
   };
+
+  const dipendentiMap = useMemo(() => {
+    const map = new Map<string, any>();
+    (dipendenti || []).forEach(d => {
+      if (d && d.nome) {
+        map.set(d.nome.toLowerCase().trim(), d);
+      }
+    });
+    return map;
+  }, [dipendenti]);
+
+  const totalPctInWeekMap = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!assignments) return map;
+    Object.entries(assignments).forEach(([key, listAss]) => {
+      if (Array.isArray(listAss)) {
+        const total = listAss.reduce((sum: number, a: any) => sum + (a.percentuale || 0), 0);
+        map.set(key.toLowerCase().trim(), total);
+      }
+    });
+    return map;
+  }, [assignments]);
+
+  const resourceWeekLeavesMap = useMemo(() => {
+    const map = new Map<string, { giorno: string; tipo: string; dettagli: string }[]>();
+    if (!approvedLeaves || !approvedLeaves.length || !activeWeeks || !activeWeeks.length) return map;
+
+    const dayNames = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
+    
+    // Cache week dates for activeWeeks
+    const weekDatesCache = new Map<string, { dateStrs: string[] }>();
+    activeWeeks.forEach(wk => {
+      const parts = wk.id.split('-W');
+      if (parts.length === 2) {
+        const year = parseInt(parts[0]);
+        const week = parseInt(parts[1]);
+        if (!isNaN(year) && !isNaN(week)) {
+          const simple = new Date(year, 0, 4);
+          const dayOfWeek = simple.getDay();
+          const dayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+          const firstMonday = new Date(simple.setDate(simple.getDate() + dayOffset));
+          const monday = new Date(firstMonday.setDate(firstMonday.getDate() + (week - 1) * 7));
+          const dateStrs: string[] = [];
+          for (let i = 0; i < 5; i++) {
+            const dObj = new Date(monday);
+            dObj.setDate(monday.getDate() + i);
+            const y = dObj.getFullYear();
+            const m = String(dObj.getMonth() + 1).padStart(2, '0');
+            const ds = String(dObj.getDate()).padStart(2, '0');
+            dateStrs.push(`${y}-${m}-${ds}`);
+          }
+          weekDatesCache.set(wk.id, { dateStrs });
+        }
+      }
+    });
+
+    (approvedLeaves || []).forEach(leave => {
+      if (!leave || !leave.dipendenteName) return;
+      const resKey = leave.dipendenteName.toLowerCase().trim();
+      const start = typeof leave.dataInizio === 'string' ? leave.dataInizio : (typeof leave.data === 'string' ? leave.data : null);
+      const end = typeof leave.dataFine === 'string' ? leave.dataFine : (typeof leave.data === 'string' ? leave.data : null);
+      if (!start || !end || !start.includes('-') || !end.includes('-')) return;
+
+      const [sY, sM, sD] = start.split('-').map(Number);
+      const [eY, eM, eD] = end.split('-').map(Number);
+      if (isNaN(sY) || isNaN(sM) || isNaN(sD) || isNaN(eY) || isNaN(eM) || isNaN(eD)) return;
+
+      const curr = new Date(sY, sM - 1, sD).getTime();
+      const last = new Date(eY, eM - 1, eD).getTime();
+
+      weekDatesCache.forEach(({ dateStrs }, wkId) => {
+        dateStrs.forEach((wDateStr, idx) => {
+          const [wY, wM, wD] = wDateStr.split('-').map(Number);
+          const wTime = new Date(wY, wM - 1, wD).getTime();
+          if (wTime >= curr && wTime <= last) {
+            let label = leave.tipo === 'ferie' ? 'Ferie' : leave.tipo === 'malattia' ? 'Malattia' : leave.tipo === 'maternita' ? 'Maternità' : leave.tipo === 'smart' ? 'Smart' : (leave.tipo || 'Assenza');
+            if (leave.tipo === 'mattina') label = 'Ass. Matt.';
+            if (leave.tipo === 'pomeriggio') label = 'Ass. Pom.';
+            if (leave.tipo === 'permesso') label = `Perm. (${leave.oraInizio || ''}-${leave.oraFine || ''})`;
+
+            const mapKey = `${resKey}_${wkId}`;
+            const existing = map.get(mapKey) || [];
+            existing.push({
+              giorno: dayNames[idx],
+              tipo: leave.tipo || 'ferie',
+              dettagli: label
+            });
+            map.set(mapKey, existing);
+          }
+        });
+      });
+    });
+
+    return map;
+  }, [approvedLeaves, activeWeeks]);
 
   const handleOpenEditModal = (comm: any) => {
     setEditingCommessa(comm);
@@ -729,13 +1038,13 @@ export default function Commesse() {
   }, [selectedClient, newCommessaTipologia, newCommessaAnno, commesse]);
 
   const responsabiliMacroAreeList = useMemo(() => {
-    const coordEmails = new Set(coordinatori.map(c => c.email.toLowerCase()));
-    return dipendenti.filter(d => d.email && coordEmails.has(d.email.toLowerCase()));
+    const coordEmails = new Set((coordinatori || []).map(c => (c && c.email && typeof c.email === 'string') ? c.email.toLowerCase() : '').filter(Boolean));
+    return (dipendenti || []).filter(d => d && d.email && typeof d.email === 'string' && coordEmails.has(d.email.toLowerCase()));
   }, [dipendenti, coordinatori]);
 
-
   const pmsList = useMemo(() => {
-    return dipendenti.filter(d => d.email && pmsEmails.includes(d.email.toLowerCase()));
+    const safePms = (pmsEmails || []).map(e => (e && typeof e === 'string') ? e.toLowerCase() : '').filter(Boolean);
+    return (dipendenti || []).filter(d => d && d.email && typeof d.email === 'string' && safePms.includes(d.email.toLowerCase()));
   }, [dipendenti, pmsEmails]);
 
   const isResponsabileDiQualcheCommessa = useMemo(() => {
@@ -968,14 +1277,14 @@ export default function Commesse() {
         </h2>
         
         <div className={`flex items-center gap-2 text-xs font-bold px-4 py-2 rounded-xl border ${
-          (isAdmin || isResponsabileDiQualcheCommessa || isCommerciale) ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-blue-50 text-blue-700 border-blue-100'
+          (isAdmin || isResponsabileDiQualcheCommessa) ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-blue-50 text-blue-700 border-blue-100'
         }`}>
-          {(isAdmin || isResponsabileDiQualcheCommessa || isCommerciale) ? 'Vista Amministrazione e Assegnazione' : 'Vista di Sola Consultazione'}
+          {(isAdmin || isResponsabileDiQualcheCommessa) ? 'Vista Amministrazione e Assegnazione' : 'Vista di Sola Consultazione'}
         </div>
       </div>
       
-      {/* TAB BAR (Solo per Admin, Responsabili e Commerciali) */}
-      {(isAdmin || isResponsabileDiQualcheCommessa || isCommerciale) && (
+      {/* TAB BAR (Solo per Admin e Responsabili) */}
+      {(isAdmin || isResponsabileDiQualcheCommessa) && (
         <div className="flex border-b border-gray-200 gap-2 no-print">
           <button
             type="button"
@@ -1253,26 +1562,29 @@ export default function Commesse() {
                 </div>
 
                 {/* Navigation Controls */}
-                {selectedCommessaIdsFilter.length !== 1 && (
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-1 bg-white p-1.5 rounded-xl border border-gray-200 shadow-sm">
-                      <button onClick={() => shiftPeriod(-zoomWeeks)} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-655 transition" title="Indietro"><ChevronLeft className="w-4 h-4" /></button>
-                      <button onClick={resetToToday} className="px-3 py-1.5 text-xs font-extrabold text-gray-700 hover:bg-gray-100 rounded-lg transition">Oggi</button>
-                      <button onClick={() => shiftPeriod(zoomWeeks)} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-655 transition" title="Avanti"><ChevronRight className="w-4 h-4" /></button>
-                      <div className="h-5 w-px bg-gray-200 mx-1"></div>
-                      <input 
-                        type="date" 
-                        value={baseDate.toISOString().split('T')[0]} 
-                        onChange={e => setBaseDate(new Date(e.target.value))} 
-                        className="text-xs font-bold border-none bg-transparent outline-none text-gray-700 cursor-pointer pl-1 pr-1" 
-                      />
-                    </div>
-                    
-                    <button onClick={handleExportToExcel} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition shadow-md active:scale-95">
-                      <Download className="w-4 h-4" /> Esporta Excel
-                    </button>
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1 bg-white p-1.5 rounded-xl border border-gray-200 shadow-sm">
+                    <button onClick={() => shiftPeriod(-zoomWeeks)} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-655 transition cursor-pointer" title="Indietro"><ChevronLeft className="w-4 h-4" /></button>
+                    <button onClick={resetToToday} className="px-3 py-1.5 text-xs font-extrabold text-gray-700 hover:bg-gray-100 rounded-lg transition cursor-pointer">Oggi</button>
+                    <button onClick={() => shiftPeriod(zoomWeeks)} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-655 transition cursor-pointer" title="Avanti"><ChevronRight className="w-4 h-4" /></button>
+                    <div className="h-5 w-px bg-gray-200 mx-1"></div>
+                    <input 
+                      type="date" 
+                      value={(baseDate && !isNaN(baseDate.getTime())) ? baseDate.toISOString().split('T')[0] : ''} 
+                      onChange={e => {
+                        if (e.target.value) {
+                          const d = new Date(e.target.value);
+                          if (!isNaN(d.getTime())) setBaseDate(d);
+                        }
+                      }} 
+                      className="text-xs font-bold border-none bg-transparent outline-none text-gray-700 cursor-pointer pl-1 pr-1" 
+                    />
                   </div>
-                )}
+                  
+                  <button onClick={handleExportToExcel} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition shadow-md active:scale-95 cursor-pointer">
+                    <Download className="w-4 h-4" /> Esporta Excel
+                  </button>
+                </div>
               </div>
             </div>
 {/* Load Grid Wrapper with clipping for rounded corners */}
@@ -1401,75 +1713,124 @@ export default function Commesse() {
                             return (
                               <td 
                                 key={wIndex} 
-                                className={`${isUltraNarrow ? 'p-1' : 'p-2'} border-l border-b border-gray-100 align-top ${isCurrentWeek ? 'ring-2 ring-inset ring-blue-300' : ''}`}
+                                onClick={() => {
+                                  window.open(`/pianificazione-personale?tab=commessa&commessaId=${encodeURIComponent(comm.id)}&weekId=${encodeURIComponent(wk.id)}`, '_blank');
+                                }}
+                                className={`group/weekcell relative ${isUltraNarrow ? 'p-1' : 'p-2'} border-l border-b border-gray-100 align-top ${
+                                  isCurrentWeek ? 'ring-2 ring-inset ring-blue-300' : ''
+                                } cursor-pointer hover:bg-indigo-100/70 hover:ring-2 hover:ring-inset hover:ring-indigo-400 hover:shadow-md transition-all`}
                                 style={{ backgroundColor: cellBg, minWidth: weekColumnMinWidth, width: weekColumnMinWidth }}
                               >
                                 <div 
                                   className="flex flex-col"
-                                      style={{ 
+                                  style={{ 
                                     minHeight: isNarrow ? '30px' : '40px', 
                                     gap: '4px' 
                                   }}
                                 >
+                                  {/* Barra colorata tenue in cima alla casella stile intestazione */}
+                                  <div
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      window.open(`/pianificazione-personale?tab=commessa&commessaId=${encodeURIComponent(comm.id)}&weekId=${encodeURIComponent(wk.id)}`, '_blank');
+                                    }}
+                                    className="w-full h-1.5 rounded-t-xs bg-indigo-150/40 group-hover/weekcell:bg-indigo-600 transition-colors cursor-pointer mb-1 shrink-0"
+                                    title={`Gestisci commessa per questa settimana (${comm.nome} - ${wk.label})`}
+                                  />
+
                                   {assignedPeople.map((person, pIdx) => {
-                                    const dip = dipendenti.find(d => areNamesEqual(d.nome, person.name));
-                                    const dailyContractHours = dip?.tipo === 'collaboratore' ? 8 : (dip?.oreContratto ?? 8);
-                                    const weeklyContractHours = dailyContractHours * 5;
-                                    const hours = Math.round(person.pct * weeklyContractHours / 100);
-                                    const leaves = getLeavesForResourceInWeek(person.name, wk.id);
-                                    const hasLeaves = leaves.length > 0;
-                                    const leavesStr = leaves.map(l => `${l.giorno}: ${l.tipo === 'ferie' ? 'Ferie' : l.tipo === 'malattia' ? 'Malattia' : l.tipo === 'permesso' ? 'Permesso' : 'Assenza'}${l.dettagli ? ` (${l.dettagli})` : ''}`).join(', ');
-                                    const tooltipText = `${person.name} - Impegno: ${person.pct}% (${hours}h)${hasLeaves ? `\nAssenze: ${leavesStr}` : ''}`;
+                                     const normName = person.name.toLowerCase().trim();
+                                     const dip = dipendentiMap.get(normName);
+                                     const dailyContractHours = dip?.tipo === 'collaboratore' ? 8 : (dip?.oreContratto ?? 8);
+                                     const leaves = resourceWeekLeavesMap.get(`${normName}_${wk.id}`) || [];
+                                     const fullLeaveDaysCount = leaves.filter(l => l.tipo === 'ferie' || l.tipo === 'malattia' || l.tipo === 'maternita').length;
+                                     const activeWorkingDays = Math.max(0, 5 - fullLeaveDaysCount);
+                                     const availableContractHours = dailyContractHours * activeWorkingDays;
+                                     const hours = Math.round((person.pct * availableContractHours) / 100);
+                                     const isAllWeekOnLeave = fullLeaveDaysCount >= 5;
+                                     const hasLeaves = leaves.length > 0;
+                                     const personDocId = `${person.name}-${wk.id}`;
+                                     const totalPctInWeek = totalPctInWeekMap.get(personDocId.toLowerCase().trim()) || 0;
+                                     const totalAssignedHoursInWeek = Math.round((totalPctInWeek * availableContractHours) / 100);
+                                     const freeHoursInWeek = Math.max(0, availableContractHours - totalAssignedHoursInWeek);
+                                     const freePctInWeek = availableContractHours > 0 ? Math.round((freeHoursInWeek / availableContractHours) * 100) : 0;
+                                     const totalLeaveHoursInWeek = fullLeaveDaysCount * dailyContractHours;
+                                     const leavePctInWeek = Math.round((fullLeaveDaysCount / 5) * 100);
+                                     const leaveDaysStr = leaves.map(l => l.giorno).join(', ');
+                                     const leavesFormatted = hasLeaves
+                                       ? `(${leaveDaysStr}) ${totalLeaveHoursInWeek}h (${leavePctInWeek}%)`
+                                       : '0h (0%)';
 
-                                    if (isUltraNarrow) {
-                                      return (
-                                        <div 
-                                          key={pIdx} 
-                                          className={`text-[9px] font-black text-center py-1 px-0.5 rounded-md border flex items-center justify-center shadow-sm select-none ${
-                                            hasLeaves 
-                                              ? 'bg-rose-50 text-rose-800 border-rose-200 ring-1 ring-rose-300' 
-                                              : 'bg-indigo-50 text-indigo-900 border-indigo-150'
-                                          }`}
-                                          title={tooltipText}
-                                        >
-                                          {person.pct}%
-                                        </div>
-                                      );
-                                    }
+                                     const displayHoursText = isAllWeekOnLeave ? `0h (Ferie)` : `${person.pct}% (${hours}h)`;
+                                     const tooltipText = [
+                                       `👤 ${person.name}`,
+                                       `• Ore assegnate alla commessa: ${hours}h (${person.pct}%)`,
+                                       `• Ore libere residue (settimana): ${freeHoursInWeek}h (${freePctInWeek}%)`,
+                                       `• Ferie / Assenze: ${leavesFormatted}`,
+                                       ``,
+                                       `Clicca per gestire`
+                                     ].join('\n');
 
-                                    if (isNarrow) {
-                                      const initials = getInitials(person.name);
-                                      return (
-                                        <div 
-                                          key={pIdx} 
-                                          className={`text-[10px] font-bold py-1 px-1.5 rounded-md border flex items-center justify-between gap-1 shadow-sm truncate select-none w-full ${
-                                            hasLeaves 
-                                              ? 'bg-rose-50 text-rose-800 border-rose-200' 
-                                              : 'bg-indigo-50 text-indigo-900 border-indigo-150'
-                                          }`}
-                                          title={tooltipText}
-                                        >
-                                          <span className="truncate text-left">{initials}</span>
-                                          <span className="font-extrabold text-[9px] text-indigo-655 shrink-0 text-right">{person.pct}% ({hours}h)</span>
-                                          {hasLeaves && <span className="text-[8px] text-red-500 shrink-0 ml-0.5">⚠️</span>}
-                                        </div>
-                                      );
-                                    }
+                                     if (isUltraNarrow) {
+                                       return (
+                                         <div 
+                                           key={pIdx} 
+                                           onClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
+                                           className={`text-[9px] font-black text-center py-1 px-0.5 rounded-md border flex items-center justify-center shadow-sm select-none cursor-pointer hover:ring-2 hover:ring-indigo-400 transition-all ${
+                                             isAllWeekOnLeave
+                                               ? 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100'
+                                               : hasLeaves 
+                                                 ? 'bg-rose-50 text-rose-800 border-rose-200 ring-1 ring-rose-300' 
+                                                 : 'bg-indigo-50 text-indigo-900 border-indigo-150 hover:bg-indigo-100'
+                                           }`}
+                                           title={tooltipText}
+                                         >
+                                           {isAllWeekOnLeave ? '0h' : `${person.pct}%`}
+                                         </div>
+                                       );
+                                     }
 
-                                    return (
-                                      <div 
-                                        key={pIdx} 
-                                        className="text-[11px] bg-indigo-50/80 text-indigo-950 p-1.5 rounded-lg border border-indigo-100/60 flex items-center justify-between gap-1 shadow-sm w-full select-none"
-                                        title={tooltipText}
-                                      >
-                                        <div className="flex items-center gap-1 min-w-0 flex-1">
-                                          {hasLeaves && <span className="text-[11px] shrink-0 text-amber-500" title={`Assenze: ${leavesStr}`}>⚠️</span>}
-                                          <span className="truncate font-bold text-left">{person.name}</span>
-                                        </div>
-                                        <span className="text-indigo-650 font-black shrink-0 text-right text-[10px]">{person.pct}% ({hours}h)</span>
-                                      </div>
-                                    );
-                                  })}
+                                     if (isNarrow) {
+                                       const initials = getInitials(person.name);
+                                       return (
+                                         <div 
+                                           key={pIdx} 
+                                           onClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
+                                           className={`text-[10px] font-bold py-1 px-1.5 rounded-md border flex items-center justify-between gap-1 shadow-sm truncate select-none w-full cursor-pointer hover:ring-2 hover:ring-indigo-400 transition-all ${
+                                             isAllWeekOnLeave
+                                               ? 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100'
+                                               : hasLeaves 
+                                                 ? 'bg-rose-50 text-rose-800 border-rose-200' 
+                                                 : 'bg-indigo-50 text-indigo-900 border-indigo-150 hover:bg-indigo-100'
+                                           }`}
+                                           title={tooltipText}
+                                         >
+                                           <span className="truncate text-left">{initials}</span>
+                                           <span className="font-extrabold text-[9px] text-indigo-655 shrink-0 text-right">{displayHoursText}</span>
+                                           {hasLeaves && <span className="text-[8px] text-amber-500 shrink-0 ml-0.5" title={`Assenze: ${leavesFormatted}`}>⚠️</span>}
+                                         </div>
+                                       );
+                                     }
+
+                                     return (
+                                       <div 
+                                         key={pIdx} 
+                                         onClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
+                                         className={`text-[11px] p-1.5 rounded-lg border flex items-center justify-between gap-1 shadow-sm w-full select-none cursor-pointer hover:ring-2 hover:ring-indigo-400 transition-all hover:scale-[1.01] ${
+                                           isAllWeekOnLeave
+                                             ? 'bg-amber-50/90 text-amber-950 border-amber-200 hover:bg-amber-100'
+                                             : 'bg-indigo-50/80 text-indigo-950 border-indigo-100/60 hover:bg-indigo-100'
+                                         }`}
+                                         title={tooltipText}
+                                       >
+                                         <div className="flex items-center gap-1 min-w-0 flex-1">
+                                           {hasLeaves && <span className="text-[11px] shrink-0 text-amber-500" title={`Assenze: ${leavesFormatted}`}>⚠️</span>}
+                                           <span className="truncate font-bold text-left">{person.name}</span>
+                                         </div>
+                                         <span className="text-indigo-650 font-black shrink-0 text-right text-[10px]">{displayHoursText}</span>
+                                       </div>
+                                     );
+                                   })}
                                 </div>
                               </td>
                             );
@@ -1487,8 +1848,8 @@ export default function Commesse() {
         </>
       )}
 
-      {/* TAB 2: GESTIONE CATALOGO (Per Admin, Responsabili e Commerciali) */}
-      {(activeTab === 'gestione' && (isAdmin || isResponsabileDiQualcheCommessa || isCommerciale)) && (
+      {/* TAB 2: GESTIONE CATALOGO (Per Admin e Responsabili) */}
+      {(activeTab === 'gestione' && (isAdmin || isResponsabileDiQualcheCommessa)) && (
         <div className="space-y-8">
           <section className="bg-gradient-to-br from-emerald-50 to-teal-50 p-6 rounded-3xl border border-emerald-100 shadow-sm">
             <div className="flex justify-between items-center mb-4">
@@ -1497,7 +1858,7 @@ export default function Commesse() {
               </h3>
             </div>
             
-            {(isAdmin || isCommerciale) && (
+            {isAdmin && (
               <div className="mb-6 bg-white/50 p-5 rounded-2xl border border-emerald-100/50 shadow-inner">
                 <form onSubmit={handleAddCommessa} className="space-y-4">
                 
@@ -1649,14 +2010,13 @@ export default function Commesse() {
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div>
-                            <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Project Manager</label>
+                            <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Project Manager (Opzionale)</label>
                             <select
-                              required
                               value={progetto.pm}
                               onChange={e => handleUpdateProgettoField(idx, { pm: e.target.value })}
                               className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
                             >
-                              <option value="">-- Seleziona PM --</option>
+                              <option value="">-- Nessun PM --</option>
                               {pmsList.map(pm => (
                                 <option key={pm.id} value={pm.nome}>{pm.nome}</option>
                               ))}
@@ -1845,7 +2205,7 @@ export default function Commesse() {
                           <td className="p-2.5 font-bold whitespace-nowrap">
                             <div className="flex items-center gap-1.5">
                               <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow-inner" style={{backgroundColor: computedColor}}></span>
-                              {(c as any).codiceCommessa || c.nome.split(' - ')[0]}
+                              {(c as any).codiceCommessa || (c.nome ? c.nome.split(' - ')[0] : 'Commessa')}
                             </div>
                           </td>
                           <td className="p-2.5">{computedAnno}</td>
@@ -1992,14 +2352,13 @@ export default function Commesse() {
 
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div>
-                              <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Project Manager</label>
+                              <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Project Manager (Opzionale)</label>
                               <select
-                                required
                                 value={progetto.pm}
                                 onChange={e => handleUpdateEditProgettoField(idx, { pm: e.target.value })}
                                 className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
                               >
-                                <option value="">-- Seleziona PM --</option>
+                                <option value="">-- Nessun PM --</option>
                                 {pmsList.map(pm => (
                                   <option key={pm.id} value={pm.nome}>{pm.nome}</option>
                                 ))}
@@ -2134,6 +2493,149 @@ export default function Commesse() {
                   className="flex-1 py-3 px-4 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 transition active:scale-95 disabled:opacity-50"
                 >
                   {savingEdit ? 'Salvataggio...' : 'Salva Modifiche'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODALE RICHIESTA MODIFICA RISORSA ESTERNA AL COORDINATORE */}
+      {resourceChangeModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs no-print">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-xl w-full p-6 sm:p-8 border border-slate-100 flex flex-col gap-5 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start justify-between gap-4 border-b pb-4">
+              <div>
+                <h3 className="text-lg font-extrabold text-indigo-950 flex items-center gap-2">
+                  <span>✉️ Richiesta al Coordinatore d'Area</span>
+                </h3>
+                <p className="text-xs text-gray-500 font-medium mt-1">
+                  La risorsa <strong className="text-indigo-700">{resourceChangeModal.personName}</strong> appartiene alla Macroarea <strong className="text-slate-800">{resourceChangeModal.macroArea || 'Generica'}</strong>.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setResourceChangeModal(prev => ({ ...prev, isOpen: false }))}
+                className="text-gray-400 hover:text-gray-600 p-1.5 rounded-xl hover:bg-gray-100 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="bg-indigo-50/60 p-4 rounded-2xl border border-indigo-100 flex flex-col gap-2 text-xs text-indigo-950 font-medium">
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500 font-bold uppercase tracking-wider text-[10px]">Coordinatore Destinatario:</span>
+                <span className="font-extrabold text-indigo-900">{resourceChangeModal.coordName} {resourceChangeModal.coordEmail ? `(${resourceChangeModal.coordEmail})` : ''}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500 font-bold uppercase tracking-wider text-[10px]">Commessa:</span>
+                <span className="font-bold text-slate-800 truncate max-w-[250px]">{resourceChangeModal.commessaNome}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500 font-bold uppercase tracking-wider text-[10px]">Settimana:</span>
+                <span className="font-extrabold text-blue-700">{resourceChangeModal.weekId}</span>
+              </div>
+            </div>
+
+            <form onSubmit={handleSendResourceChangeRequest} className="flex flex-col gap-4">
+              <div>
+                <label className="block text-xs font-extrabold text-gray-700 uppercase tracking-wider mb-1 ml-1">
+                  Tipo di Intervento Richiesto
+                </label>
+                <select
+                  value={reqChangeType}
+                  onChange={e => setReqChangeType(e.target.value)}
+                  className="w-full p-3 border border-gray-200 rounded-xl font-bold text-xs bg-white text-gray-800 focus:ring-2 focus:ring-indigo-400 outline-none shadow-xs"
+                >
+                  <option value="modifica_spostamento">🔄 Modifica / Spostamento Assegnazione (Date e Percentuale)</option>
+                  <option value="annullamento">❌ Richiedi Annullamento / Rimozione Completa</option>
+                  <option value="altro">💬 Altra Richiesta / Informazioni</option>
+                </select>
+              </div>
+
+              {reqChangeType === 'modifica_spostamento' && (
+                <>
+                  <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200/80 flex flex-col gap-3">
+                    <label className="block text-xs font-extrabold text-indigo-950 uppercase tracking-wider ml-0.5">
+                      Nuovo Periodo Richiesto (Settimane)
+                    </label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <span className="text-[10px] text-gray-500 font-bold ml-1 mb-1 block">Da Settimana:</span>
+                        <select
+                          value={reqStartWeekId}
+                          onChange={e => {
+                            setReqStartWeekId(e.target.value);
+                            if (e.target.value > reqEndWeekId) setReqEndWeekId(e.target.value);
+                          }}
+                          className="w-full p-2.5 border border-gray-200 rounded-xl font-bold text-xs bg-white text-gray-800 focus:ring-2 focus:ring-indigo-400 outline-none shadow-2xs"
+                        >
+                          {activeWeeks.map(w => (
+                            <option key={w.id} value={w.id}>{w.label} ({w.sub})</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <span className="text-[10px] text-gray-500 font-bold ml-1 mb-1 block">A Settimana:</span>
+                        <select
+                          value={reqEndWeekId}
+                          onChange={e => setReqEndWeekId(e.target.value)}
+                          className="w-full p-2.5 border border-gray-200 rounded-xl font-bold text-xs bg-white text-gray-800 focus:ring-2 focus:ring-indigo-400 outline-none shadow-2xs"
+                        >
+                          {activeWeeks.map(w => (
+                            <option key={w.id} value={w.id}>{w.label} ({w.sub})</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-extrabold text-gray-700 uppercase tracking-wider mb-1 ml-1">
+                      Nuova Percentuale di Occupazione Richiesta
+                    </label>
+                    <select
+                      value={reqNewPercentuale}
+                      onChange={e => setReqNewPercentuale(e.target.value)}
+                      className="w-full p-3 border border-gray-200 rounded-xl font-bold text-xs bg-white text-gray-800 focus:ring-2 focus:ring-indigo-400 outline-none shadow-xs"
+                    >
+                      {['10', '20', '30', '40', '50', '60', '70', '80', '90', '100'].map(pct => (
+                        <option key={pct} value={pct}>{pct}% di carico lavoro</option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              )}
+
+              <div>
+                <label className="block text-xs font-extrabold text-gray-700 uppercase tracking-wider mb-1 ml-1">
+                  Motivazione / Note per il Coordinatore
+                </label>
+                <textarea
+                  rows={3}
+                  value={reqChangeNotes}
+                  onChange={e => setReqChangeNotes(e.target.value)}
+                  placeholder="Spiega la motivazione della richiesta (es. esigenze di cantiere, slittamento date, necessità di sostituire la risorsa)..."
+                  className="w-full p-3 border border-gray-200 rounded-xl text-xs font-medium text-gray-800 focus:ring-2 focus:ring-indigo-400 outline-none shadow-xs resize-none"
+                  required
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t">
+                <button
+                  type="button"
+                  onClick={() => setResourceChangeModal(prev => ({ ...prev, isOpen: false }))}
+                  className="px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-xs rounded-xl transition cursor-pointer"
+                >
+                  Annulla
+                </button>
+                <button
+                  type="submit"
+                  disabled={sendingResourceRequest}
+                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-md transition cursor-pointer disabled:opacity-50"
+                >
+                  {sendingResourceRequest ? 'Invio in corso...' : '✉️ Invia Richiesta al Coordinatore'}
                 </button>
               </div>
             </form>

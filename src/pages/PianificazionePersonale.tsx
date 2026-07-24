@@ -1,10 +1,10 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth, type Dipendente } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, doc, writeBatch, addDoc, updateDoc } from 'firebase/firestore';
-import { Users, ChevronLeft, ChevronRight, Save, Download, ZoomIn, ZoomOut, Trash2, Plus, RefreshCw } from 'lucide-react';
+import { Users, ChevronLeft, ChevronRight, Save, Download, ZoomIn, ZoomOut, Trash2, Plus, RefreshCw, CalendarDays } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays, isItalianHoliday } from '../utils/date';
-import AssegnazioneModal from '../components/AssegnazioneModal';
+
 import ConfirmModal from '../components/ConfirmModal';
 import { addPendingNotification, getPendingNotifications, clearPendingNotifications, sendAllPendingNotifications } from '../utils/pendingNotifications';
 import { isCollaboratore, isSoci } from './Impostazioni';
@@ -38,6 +38,15 @@ interface WeekInfo {
   label: string;
   sub: string;
   dateObj?: Date;
+}
+
+interface WeekOption {
+  id: string;
+  mondayStr: string;
+  sundayStr: string;
+  label: string;
+  weekNum: number;
+  year: number;
 }
 
 const generateWeeksExtended = (baseDate: Date, numWeeks: number): WeekInfo[] => {
@@ -115,17 +124,16 @@ const formatCommDate = (dateStr?: string): string => {
 
 export default function PianificazionePersonale() {
   const { 
-    isAdmin, 
-    dipendenti, 
-    commesse, 
-    coordinatori, 
-    user, 
-    myAssociatedName, 
-    userEmail,
-    assegnazioni: globalAssignments,
-
-    approvedLeaves,
-    richiesteDisegnatori
+    isAdmin = false, 
+    dipendenti = [], 
+    commesse = [], 
+    coordinatori = [], 
+    user = null, 
+    myAssociatedName = '', 
+    userEmail = '',
+    assegnazioni: globalAssignments = {},
+    approvedLeaves = [],
+    richiesteDisegnatori = []
   } = useAuth();
   
   const [commessaSearchText, setCommessaSearchText] = useState('');
@@ -155,6 +163,7 @@ export default function PianificazionePersonale() {
   }[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(true);
   const [savingChanges, setSavingChanges] = useState(false);
+  const plannerContainerRef = useRef<HTMLDivElement>(null);
   
   // Selection states for bulk allocator
   const [activeTab, setActiveTab] = useState<'commessa' | 'risorsa' | 'sostituisci'>('commessa');
@@ -166,8 +175,95 @@ export default function PianificazionePersonale() {
   const [sourceResource, setSourceResource] = useState('');
   const [targetResource, setTargetResource] = useState('');
 
+  const selectableWeekOptions = useMemo(() => {
+    const options: WeekOption[] = [];
+    const today = new Date();
+    let currentMonday = getStartOfWeek(addDays(today, -84)); // 12 settimane prima
+
+    const months = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
+
+    for (let i = 0; i < 80; i++) {
+      const sunday = addDays(currentMonday, 6);
+      const wkNum = getWeekNumber(currentMonday);
+      const y = currentMonday.getFullYear();
+
+      const mY = currentMonday.getFullYear();
+      const mM = String(currentMonday.getMonth() + 1).padStart(2, '0');
+      const mD = String(currentMonday.getDate()).padStart(2, '0');
+      const mondayStr = `${mY}-${mM}-${mD}`;
+
+      const sY = sunday.getFullYear();
+      const sM = String(sunday.getMonth() + 1).padStart(2, '0');
+      const sD = String(sunday.getDate()).padStart(2, '0');
+      const sundayStr = `${sY}-${sM}-${sD}`;
+
+      const startFormatted = `${currentMonday.getDate()} ${months[currentMonday.getMonth()]}`;
+      const endFormatted = `${sunday.getDate()} ${months[sunday.getMonth()]} ${sunday.getFullYear()}`;
+
+      options.push({
+        id: `${y}-W${wkNum}`,
+        mondayStr,
+        sundayStr,
+        label: `Settimana ${wkNum} (${startFormatted} - ${endFormatted})`,
+        weekNum: wkNum,
+        year: y
+      });
+
+      currentMonday = addDays(currentMonday, 7);
+    }
+
+    return options;
+  }, []);
+
+  const currentWeekOpt = useMemo(() => {
+    const todayMon = getStartOfWeek(new Date());
+    const todayMonStr = `${todayMon.getFullYear()}-${String(todayMon.getMonth()+1).padStart(2,'0')}-${String(todayMon.getDate()).padStart(2,'0')}`;
+    return selectableWeekOptions.find(o => o.mondayStr === todayMonStr) || selectableWeekOptions[12] || selectableWeekOptions[0];
+  }, [selectableWeekOptions]);
+
+  const [selectedStartWeekId, setSelectedStartWeekId] = useState<string>(() => currentWeekOpt.id);
+  const [selectedEndWeekId, setSelectedEndWeekId] = useState<string>(() => {
+    const idx = selectableWeekOptions.findIndex(o => o.id === currentWeekOpt.id);
+    const endIdx = idx !== -1 && idx + 3 < selectableWeekOptions.length ? idx + 3 : idx;
+    return selectableWeekOptions[endIdx]?.id || currentWeekOpt.id;
+  });
+
   const [allocDataInizio, setAllocDataInizio] = useState('');
   const [allocDataFine, setAllocDataFine] = useState('');
+
+  // Sincronizza allocDataInizio e allocDataFine con le settimane selezionate
+  useEffect(() => {
+    const startOpt = selectableWeekOptions.find(o => o.id === selectedStartWeekId);
+    const endOpt = selectableWeekOptions.find(o => o.id === selectedEndWeekId);
+
+    if (startOpt && endOpt) {
+      setAllocDataInizio(startOpt.mondayStr);
+      setAllocDataFine(endOpt.sundayStr);
+    }
+  }, [selectedStartWeekId, selectedEndWeekId, selectableWeekOptions]);
+
+  // Pre-selezione automatica dell'intervallo settimane quando viene selezionata una commessa
+  useEffect(() => {
+    if (selectedCommessaId) {
+      const comm = commesse.find(c => c.id === selectedCommessaId);
+      if (comm && (comm.dataInizio || comm.dataFine)) {
+        if (comm.dataInizio) {
+          const commStartMon = getStartOfWeek(new Date(comm.dataInizio));
+          const startMonStr = `${commStartMon.getFullYear()}-${String(commStartMon.getMonth()+1).padStart(2,'0')}-${String(commStartMon.getDate()).padStart(2,'0')}`;
+          const startMatch = selectableWeekOptions.find(o => o.mondayStr === startMonStr);
+          if (startMatch) setSelectedStartWeekId(startMatch.id);
+        }
+        if (comm.dataFine) {
+          const commEndMon = getStartOfWeek(new Date(comm.dataFine));
+          const commEndSun = addDays(commEndMon, 6);
+          const endSunStr = `${commEndSun.getFullYear()}-${String(commEndSun.getMonth()+1).padStart(2,'0')}-${String(commEndSun.getDate()).padStart(2,'0')}`;
+          const endMatch = selectableWeekOptions.find(o => o.sundayStr === endSunStr);
+          if (endMatch) setSelectedEndWeekId(endMatch.id);
+        }
+      }
+    }
+  }, [selectedCommessaId, commesse, selectableWeekOptions]);
+
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
 
   // Pending notifications states
@@ -175,6 +271,47 @@ export default function PianificazionePersonale() {
   const [sendingNotifications, setSendingNotifications] = useState(false);
 
   const [commesseToRemove, setCommesseToRemove] = useState<string[]>([]);
+
+  // Gestione parametri URL per il collegamento da altre pagine (es. Commesse.tsx)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tabParam = params.get('tab');
+    const commessaIdParam = params.get('commessaId');
+    const risorsaParam = params.get('risorsa');
+    const weekIdParam = params.get('weekId');
+
+    if (tabParam === 'commessa' && commessaIdParam) {
+      setActiveTab('commessa');
+      setSelectedCommessaId(commessaIdParam);
+      const commObj = commesse.find(c => c.id === commessaIdParam);
+      if (commObj) {
+        setCommessaSearchText(commObj.nome);
+      }
+      if (weekIdParam) {
+        const matched = selectableWeekOptions.find(o => o.id === weekIdParam);
+        if (matched) {
+          setSelectedStartWeekId(matched.id);
+          setSelectedEndWeekId(matched.id);
+        }
+      }
+      setTimeout(() => {
+        plannerContainerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 100);
+    } else if (tabParam === 'risorsa' && risorsaParam) {
+      setActiveTab('risorsa');
+      setSelectedResourceForTab(decodeURIComponent(risorsaParam));
+      if (weekIdParam) {
+        const matched = selectableWeekOptions.find(o => o.id === weekIdParam);
+        if (matched) {
+          setSelectedStartWeekId(matched.id);
+          setSelectedEndWeekId(matched.id);
+        }
+      }
+      setTimeout(() => {
+        plannerContainerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 100);
+    }
+  }, [commesse, selectableWeekOptions]);
 
   // Stato per la modale di conferma
   const [confirmConfig, setConfirmConfig] = useState<{
@@ -190,6 +327,145 @@ export default function PianificazionePersonale() {
     onConfirm: () => {},
     type: 'danger'
   });
+
+  const renderWeekPeriodSelector = () => {
+    const startOpt = selectableWeekOptions.find(o => o.id === selectedStartWeekId);
+    const endOpt = selectableWeekOptions.find(o => o.id === selectedEndWeekId);
+    const targetWeekIds = (allocDataInizio && allocDataFine) ? getWeeksSpannedByDates(allocDataInizio, allocDataFine) : [];
+
+    return (
+      <div className="bg-white/90 p-4 rounded-2xl border border-indigo-100/80 shadow-sm flex flex-col gap-3 w-full">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100 pb-2.5">
+          <label className="text-xs font-black text-indigo-950 uppercase tracking-wider flex items-center gap-2">
+            <CalendarDays className="w-4 h-4 text-indigo-600" />
+            <span>Periodo Lavoro (Settimana per Settimana)</span>
+          </label>
+
+          {/* Quick Presets */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedStartWeekId(currentWeekOpt.id);
+                setSelectedEndWeekId(currentWeekOpt.id);
+              }}
+              className="px-2.5 py-1 text-[10.5px] font-extrabold bg-indigo-50 hover:bg-indigo-100 text-indigo-750 rounded-lg transition cursor-pointer"
+            >
+              Questa Settimana
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const idx = selectableWeekOptions.findIndex(o => o.id === currentWeekOpt.id);
+                setSelectedStartWeekId(currentWeekOpt.id);
+                if (idx !== -1 && idx + 1 < selectableWeekOptions.length) {
+                  setSelectedEndWeekId(selectableWeekOptions[idx + 1].id);
+                }
+              }}
+              className="px-2.5 py-1 text-[10.5px] font-extrabold bg-indigo-50 hover:bg-indigo-100 text-indigo-750 rounded-lg transition cursor-pointer"
+            >
+              Prossime 2 Sett.
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const idx = selectableWeekOptions.findIndex(o => o.id === currentWeekOpt.id);
+                setSelectedStartWeekId(currentWeekOpt.id);
+                if (idx !== -1 && idx + 3 < selectableWeekOptions.length) {
+                  setSelectedEndWeekId(selectableWeekOptions[idx + 3].id);
+                }
+              }}
+              className="px-2.5 py-1 text-[10.5px] font-extrabold bg-indigo-50 hover:bg-indigo-100 text-indigo-750 rounded-lg transition cursor-pointer"
+            >
+              Prossime 4 Sett.
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const idx = selectableWeekOptions.findIndex(o => o.id === currentWeekOpt.id);
+                setSelectedStartWeekId(currentWeekOpt.id);
+                if (idx !== -1 && idx + 7 < selectableWeekOptions.length) {
+                  setSelectedEndWeekId(selectableWeekOptions[idx + 7].id);
+                }
+              }}
+              className="px-2.5 py-1 text-[10.5px] font-extrabold bg-indigo-50 hover:bg-indigo-100 text-indigo-750 rounded-lg transition cursor-pointer"
+            >
+              Prossime 8 Sett.
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {/* Settimana Inizio */}
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 ml-0.5">
+              Settimana di Inizio
+            </label>
+            <select
+              value={selectedStartWeekId}
+              onChange={e => {
+                const newStartId = e.target.value;
+                setSelectedStartWeekId(newStartId);
+                const startIdx = selectableWeekOptions.findIndex(o => o.id === newStartId);
+                const endIdx = selectableWeekOptions.findIndex(o => o.id === selectedEndWeekId);
+                if (startIdx > endIdx) {
+                  setSelectedEndWeekId(newStartId);
+                }
+              }}
+              className="w-full p-2.5 border border-indigo-100 bg-white rounded-xl text-xs font-extrabold text-indigo-950 outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm cursor-pointer"
+            >
+              {selectableWeekOptions.map(opt => (
+                <option key={`start-${opt.id}`} value={opt.id}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Settimana Fine */}
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 ml-0.5">
+              Settimana di Fine
+            </label>
+            <select
+              value={selectedEndWeekId}
+              onChange={e => {
+                const newEndId = e.target.value;
+                const startIdx = selectableWeekOptions.findIndex(o => o.id === selectedStartWeekId);
+                const endIdx = selectableWeekOptions.findIndex(o => o.id === newEndId);
+                if (endIdx < startIdx) {
+                  setSelectedStartWeekId(newEndId);
+                }
+                setSelectedEndWeekId(newEndId);
+              }}
+              className="w-full p-2.5 border border-indigo-100 bg-white rounded-xl text-xs font-extrabold text-indigo-950 outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm cursor-pointer"
+            >
+              {selectableWeekOptions.map(opt => (
+                <option key={`end-${opt.id}`} value={opt.id}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* Dynamic Summary Banner */}
+        {startOpt && endOpt && (
+          <div className="flex flex-wrap items-center justify-between gap-2 bg-indigo-50/80 px-3 py-2 rounded-xl border border-indigo-100 text-xs font-bold text-indigo-900 mt-0.5">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-indigo-600 animate-pulse"></span>
+              <span>
+                Durata Selezionata: <strong className="text-indigo-700 font-extrabold">{targetWeekIds.length} {targetWeekIds.length === 1 ? 'settimana' : 'settimane'}</strong>
+              </span>
+            </div>
+            <div className="text-[11px] text-indigo-700 font-semibold">
+              (da Lun {formatCommDate(startOpt.mondayStr)} a Dom {formatCommDate(endOpt.sundayStr)})
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   // Tab 2 selection states
   const [selectedResourceForTab, setSelectedResourceForTab] = useState<string>('');
@@ -388,9 +664,7 @@ export default function PianificazionePersonale() {
     'Non Assegnati': false,
   });
 
-  // Modal states for cell edits
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [modalData, setModalData] = useState({ dipendente: '', weekId: '', weekLabel: '', weekSub: '', currentAssignments: [] as Assegnazione[] });
+
 
 
 
@@ -404,6 +678,7 @@ export default function PianificazionePersonale() {
   const [reqDataInizio, setReqDataInizio] = useState('');
   const [reqDataFine, setReqDataFine] = useState('');
   const [reqPercentuale, setReqPercentuale] = useState(100);
+  const [reqPreferredResource, setReqPreferredResource] = useState('');
   const [reqNota, setReqNota] = useState('');
   const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
   const [selectedRisorsePerRichiesta, setSelectedRisorsePerRichiesta] = useState<Record<string, string>>({});
@@ -414,6 +689,7 @@ export default function PianificazionePersonale() {
     setReqDataInizio(allocDataInizio);
     setReqDataFine(allocDataFine);
     setReqPercentuale(100);
+    setReqPreferredResource('');
     setReqNota('');
     setIsRequestModalOpen(true);
   };
@@ -443,6 +719,7 @@ export default function PianificazionePersonale() {
         dataInizio: reqDataInizio,
         dataFine: reqDataFine,
         percentuale: Number(reqPercentuale),
+        risorsaPreferita: reqPreferredResource || '',
         nota: reqNota,
         richiedenteNome: myAssociatedName || user?.displayName || userEmail || '',
         richiedenteEmail: userEmail,
@@ -466,6 +743,7 @@ export default function PianificazionePersonale() {
             <tr><td style="font-weight:bold">Richiedente:</td><td>${richiedente} (${userEmail})</td></tr>
             <tr><td style="font-weight:bold">Periodo:</td><td>${reqDataInizio} → ${reqDataFine}</td></tr>
             <tr><td style="font-weight:bold">Carico Richiesto:</td><td>${reqPercentuale}%</td></tr>
+            ${reqPreferredResource ? `<tr><td style="font-weight:bold">Risorsa Preferita:</td><td><strong style="color:#4f46e5">${reqPreferredResource}</strong></td></tr>` : ''}
             ${reqNota ? `<tr><td style="font-weight:bold">Nota:</td><td><em>${reqNota}</em></td></tr>` : ''}
           </table>
           <p style="margin-top:16px">Accedi alla <strong>Pianificazione del Personale e Carichi</strong> per gestire questa richiesta e assegnare la risorsa più adeguata.</p>
@@ -483,6 +761,7 @@ export default function PianificazionePersonale() {
       setReqDataInizio('');
       setReqDataFine('');
       setReqPercentuale(100);
+      setReqPreferredResource('');
       setReqNota('');
     } catch (err) {
       console.error("Errore salvataggio richiesta:", err);
@@ -493,11 +772,16 @@ export default function PianificazionePersonale() {
   };
 
   const handleApproveRequest = async (req: any) => {
-    const risorsaNome = selectedRisorsePerRichiesta[req.id];
+    const risorsaNome = req.risorsaPreferita || selectedRisorsePerRichiesta[req.id] || '';
     if (!risorsaNome) {
-      showToast("Seleziona una risorsa da assegnare.", "warning");
+      showToast("Seleziona una risorsa per completare l'operazione.", "warning");
       return;
     }
+
+    const isCancellation = Number(req.percentuale) === 0 || 
+      (req.tipoRichiesta || '').toLowerCase().includes('annullamento') || 
+      (req.tipoRichiesta || '').toLowerCase().includes('rimozione');
+
     try {
       const start = new Date(req.dataInizio);
       const end = new Date(req.dataFine);
@@ -521,12 +805,16 @@ export default function PianificazionePersonale() {
         const docId = `${risorsaNome}-${wkId}`;
         const currentList = [...(assignments[docId] || [])];
         const filtered = currentList.filter(c => c.commessaId !== req.commessaId);
-        filtered.push({
-          commessaId: req.commessaId,
-          commessaName: req.commessaName,
-          percentuale: Number(req.percentuale),
-          colore: colore
-        });
+
+        // Aggiungiamo l'assegnazione SOLO se non si tratta di un annullamento/rimozione
+        if (!isCancellation && Number(req.percentuale) > 0) {
+          filtered.push({
+            commessaId: req.commessaId,
+            commessaName: req.commessaName,
+            percentuale: Number(req.percentuale),
+            colore: colore
+          });
+        }
         
         const docRef = doc(db, 'assegnazioni', docId);
         batch.set(docRef, { lista: filtered });
@@ -544,8 +832,14 @@ export default function PianificazionePersonale() {
       const isSelfRequestor = (req.richiedenteEmail && req.richiedenteEmail.toLowerCase() === userEmail.toLowerCase()) || areNamesEqual(req.richiedenteNome, myAssociatedName);
       if (req.richiedenteEmail && !isSelfRequestor) {
         const areaLabel = req.area || 'Disegnatori';
-        const subject = `[Approvata] Richiesta ${areaLabel} per ${req.commessaName}`;
-        const htmlBody = `
+        const subject = isCancellation 
+          ? `[Approvato Annullamento] Rimosso ${risorsaNome} da ${req.commessaName}`
+          : `[Approvata] Richiesta ${areaLabel} per ${req.commessaName}`;
+        const htmlBody = isCancellation ? `
+          <p>Gentile ${req.richiedenteNome || req.richiedenteEmail},</p>
+          <p>La tua richiesta di <strong style="color:#e11d48">rimozione della risorsa ${risorsaNome}</strong> dalla commessa <strong>${req.commessaName}</strong> è stata <strong style="color:#059669">approvata</strong>.</p>
+          <p>La risorsa è stata rimossa dalla commessa per il periodo ${req.dataInizio} → ${req.dataFine}.</p>
+        ` : `
           <p>Gentile ${req.richiedenteNome || req.richiedenteEmail},</p>
           <p>La tua richiesta di personale dell'area <strong>${areaLabel}</strong> per la commessa <strong>${req.commessaName}</strong> è stata <strong style="color:#059669">approvata</strong>.</p>
           <p>Risorsa assegnata: <strong>${risorsaNome}</strong></p>
@@ -554,7 +848,7 @@ export default function PianificazionePersonale() {
         await queueMail(req.richiedenteEmail, subject, htmlBody);
       }
 
-      showToast("Richiesta approvata e risorsa assegnata con successo!", "success");
+      showToast(isCancellation ? `Annullamento approvato: ${risorsaNome} rimosso dalla commessa!` : `Richiesta approvata per ${risorsaNome}!`, "success");
     } catch (err) {
       console.error("Errore approvazione richiesta:", err);
       showToast("Errore durante l'approvazione.", "error");
@@ -644,29 +938,47 @@ export default function PianificazionePersonale() {
     return leaveDaysFound;
   };
 
-  const getDayLoad = (dayName: string, commesseLoad: number, dayLeaves: any[]) => {
-    const leavesForDay = dayLeaves.filter(l => l.giorno === dayName);
-    if (leavesForDay.length === 0) return commesseLoad;
-    
-    const haGiornataIntera = leavesForDay.some(l => 
+  const isFullWeekLeave = (resName: string, wkId: string) => {
+    const leaves = getLeavesForResourceInWeek(resName, wkId);
+    const fullLeaveDays = leaves.filter(l => 
       l.tipo === 'ferie' || 
       l.tipo === 'malattia' || 
       l.tipo === 'maternita' || 
       (l.tipo !== 'smart' && l.tipo !== 'permesso' && l.tipo !== 'mattina' && l.tipo !== 'pomeriggio')
     );
-    if (haGiornataIntera) return 100;
-    
-    const haMezzaGiornata = leavesForDay.some(l => 
-      l.tipo === 'permesso' || 
-      l.tipo === 'mattina' || 
-      l.tipo === 'pomeriggio'
-    );
-    if (haMezzaGiornata) return 50 + (commesseLoad * 0.5);
-    
-    return commesseLoad;
+    const uniqueDays = new Set(fullLeaveDays.map(l => l.giorno));
+    return uniqueDays.size >= 5;
   };
 
-  const calculateWeeklyLoad = (dipName: string, wkId: string, list: any[]) => {
+  const getDayLoad = (dayName: string, commesseLoad: number, dayLeaves: any[]) => {
+    const leavesForDay = dayLeaves.filter(l => l.giorno === dayName);
+    let leaveLoad = 0;
+    if (leavesForDay.length > 0) {
+      const haGiornataIntera = leavesForDay.some(l => 
+        l.tipo === 'ferie' || 
+        l.tipo === 'malattia' || 
+        l.tipo === 'maternita' || 
+        (l.tipo !== 'smart' && l.tipo !== 'permesso' && l.tipo !== 'mattina' && l.tipo !== 'pomeriggio')
+      );
+      if (haGiornataIntera) {
+        leaveLoad = 100;
+      } else {
+        const haMezzaGiornata = leavesForDay.some(l => 
+          l.tipo === 'permesso' || 
+          l.tipo === 'mattina' || 
+          l.tipo === 'pomeriggio'
+        );
+        if (haMezzaGiornata) {
+          leaveLoad = 50;
+        }
+      }
+    }
+    return leaveLoad + commesseLoad;
+  };
+
+  const calculateWeeklyLoad = (dipName: string, wkId: string, rawList: any[]) => {
+    const isFullLeave = isFullWeekLeave(dipName, wkId);
+    const list = isFullLeave ? [] : rawList;
     const leaves = getLeavesForResourceInWeek(dipName, wkId);
     const commesseLoad = list.reduce((acc, c) => acc + Number(c.percentuale), 0);
     const baseDays = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
@@ -932,51 +1244,7 @@ export default function PianificazionePersonale() {
     }
   };
 
-  const handleLocalCellChange = (
-    dipNome: string,
-    weekId: string,
-    _weekLabel: string,
-    updatedList: Assegnazione[],
-    addedNotif?: string,
-    removedNotif?: string
-  ) => {
-    const key = `${dipNome}-${weekId}`;
-    const updatedAssignments = {
-      ...assignments,
-      [key]: updatedList
-    };
-    
-    if (updatedList.length === 0) {
-      delete updatedAssignments[key];
-    }
-    
-    setAssignments(updatedAssignments);
-    setIsDirty(true);
-    
-    const targetDip = dipendenti.find(d => d.nome === dipNome);
-    if (targetDip && targetDip.email) {
-      const wkLabel = `Sett. ${weekId.split('-W')[1] || ''}`;
-      const newNotifications = [...draftNotifications];
-      
-      if (addedNotif) {
-        newNotifications.push({
-          dipendenteNome: dipNome,
-          email: targetDip.email,
-          weekLabel: wkLabel,
-          description: addedNotif
-        });
-      }
-      if (removedNotif) {
-        newNotifications.push({
-          dipendenteNome: dipNome,
-          email: targetDip.email,
-          weekLabel: wkLabel,
-          description: removedNotif
-        });
-      }
-      setDraftNotifications(newNotifications);
-    }
-  };
+
 
   const handleDiscardChanges = () => {
     setAssignments(dbAssignments);
@@ -1033,16 +1301,21 @@ export default function PianificazionePersonale() {
     }
   };
 
-  const handleCellClick = (dipNome: string, weekId: string, weekLabel: string, weekSub: string) => {
-    const key = `${dipNome}-${weekId}`;
-    setModalData({
-      dipendente: dipNome,
-      weekId,
-      weekLabel,
-      weekSub,
-      currentAssignments: assignments[key] || []
-    });
-    setIsModalOpen(true);
+  const handleCellClick = (dipNome: string, weekId: string, _weekLabel?: string, _weekSub?: string) => {
+    setActiveTab('risorsa');
+    setSelectedResourceForTab(dipNome);
+
+    if (weekId) {
+      const matchedOpt = selectableWeekOptions.find(o => o.id === weekId);
+      if (matchedOpt) {
+        setSelectedStartWeekId(matchedOpt.id);
+        setSelectedEndWeekId(matchedOpt.id);
+      }
+    }
+
+    setTimeout(() => {
+      plannerContainerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 50);
   };
 
   const handleConfirmAssignments = async (e: React.FormEvent) => {
@@ -1121,16 +1394,20 @@ export default function PianificazionePersonale() {
 
       if (allocAction === 'assegna') {
         if (!commObj) return;
-        const conflictedResources: string[] = [];
+        const entirePeriodOnLeaveResources: string[] = [];
         for (const resName of selectedResourceNames) {
-          // Fetch approved leaves locally
-          const blockedDates = getBlockedDatesForResource(resName, allocDataInizio, allocDataFine);
-          const blockedDatesArray = Object.keys(blockedDates);
-          if (blockedDatesArray.length > 0) {
-            conflictedResources.push(resName);
+          // Controlla se la risorsa è in ferie per l'intero periodo selezionato
+          const isAllWeeksOnLeave = targetWeekIds.length > 0 && targetWeekIds.every(wkId => isFullWeekLeave(resName, wkId));
+          if (isAllWeeksOnLeave) {
+            entirePeriodOnLeaveResources.push(resName);
           }
 
           for (const wkId of targetWeekIds) {
+            // SALTA la settimana se la risorsa è in ferie per tutta la settimana (5gg su 5)
+            if (isFullWeekLeave(resName, wkId)) {
+              continue;
+            }
+
             const docId = `${resName}-${wkId}`;
             const baseDays = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
             const allowedDays: string[] = [];
@@ -1181,11 +1458,11 @@ export default function PianificazionePersonale() {
         }
         showToast("Assegnazioni registrate in bozza!", "success");
 
-        if (conflictedResources.length > 0) {
+        if (entirePeriodOnLeaveResources.length > 0) {
           setConfirmConfig({
             isOpen: true,
-            title: '⚠️ Avviso Conflitto Assenze',
-            message: `Le assegnazioni sono state registrate in bozza, ma si segnala che nel periodo selezionato le seguenti risorse hanno registrato ferie o permessi: ${conflictedResources.join(', ')}.`,
+            title: '⚠️ Risorse in Ferie per l\'Intero Periodo',
+            message: `Le seguenti risorse sono risultate in ferie per l'intero periodo selezionato e non è stata salvata alcuna assegnazione: ${entirePeriodOnLeaveResources.join(', ')}.`,
             type: 'warning',
             onConfirm: () => setConfirmConfig(prev => ({ ...prev, isOpen: false }))
           });
@@ -1610,22 +1887,24 @@ export default function PianificazionePersonale() {
           if (canDirectlyEditCell) bgClass += " hover:bg-slate-100/60";
           let indicatorColor = "bg-slate-400"; // Grigio scuro per 0%
 
+          const isFullLeave = isFullWeekLeave(dip.nome, wk.id);
+
           if (totalLoad > 0) {
-            if (totalLoad < 90) {
+            if (totalLoad <= 60) {
               bgClass = canDirectlyEditCell 
                 ? "bg-sky-50 text-sky-900 hover:bg-sky-100/80 font-bold" 
                 : "bg-sky-50 text-sky-900 font-bold";
-              indicatorColor = "bg-sky-500"; // Celeste acceso
-            } else if (totalLoad >= 90 && totalLoad <= 100) {
+              indicatorColor = "bg-sky-500"; // Celeste acceso per sotto-utilizzato
+            } else if (totalLoad > 60 && totalLoad <= 110) {
               bgClass = canDirectlyEditCell 
                 ? "bg-emerald-50 text-emerald-900 hover:bg-emerald-100/80 font-bold" 
                 : "bg-emerald-50 text-emerald-900 font-bold";
-              indicatorColor = "bg-emerald-500"; // Verde acceso
+              indicatorColor = "bg-emerald-500"; // Verde acceso per ottimale
             } else {
               bgClass = canDirectlyEditCell 
                 ? "bg-rose-50 text-rose-900 hover:bg-rose-100/90 font-black" 
                 : "bg-rose-50 text-rose-900 font-black";
-              indicatorColor = "bg-rose-600"; // Rosso acceso
+              indicatorColor = "bg-rose-600"; // Rosso acceso per sovraccarico
             }
           }
 
@@ -1634,6 +1913,10 @@ export default function PianificazionePersonale() {
           const maternitaCount = leaves.filter(l => l.tipo === 'maternita').length;
           const permessoCount = leaves.filter(l => l.tipo === 'permesso' || l.tipo === 'mattina' || l.tipo === 'pomeriggio').length;
           const smartCount = leaves.filter(l => l.tipo === 'smart').length;
+
+          const cellBgStyle: React.CSSProperties | undefined = isFullLeave ? {
+            backgroundImage: 'repeating-linear-gradient(45deg, #dbeafe 0px, #dbeafe 10px, #eff6ff 10px, #eff6ff 20px)'
+          } : undefined;
 
           return (
             <td 
@@ -1646,7 +1929,8 @@ export default function PianificazionePersonale() {
                 minWidth: weekColumnMinWidth, 
                 width: weekColumnMinWidth,
                 outline: isCellModified ? '2px dashed #d97706' : undefined,
-                outlineOffset: '-2px'
+                outlineOffset: '-2px',
+                ...cellBgStyle
               }}
             >
               <div 
@@ -1802,15 +2086,15 @@ export default function PianificazionePersonale() {
             let indicatorColor = "bg-slate-400"; // Grigio scuro per 0%
 
             if (avgLoad > 0) {
-              if (avgLoad < 90) {
+              if (avgLoad <= 60) {
                 bgClass = "bg-sky-50/70 text-sky-900 font-bold";
-                indicatorColor = "bg-sky-500"; // Celeste acceso
-              } else if (avgLoad >= 90 && avgLoad <= 100) {
+                indicatorColor = "bg-sky-500"; // Celeste acceso per sotto-utilizzato (> 0% a 60%)
+              } else if (avgLoad > 60 && avgLoad <= 110) {
                 bgClass = "bg-emerald-50/70 text-emerald-900 font-bold";
-                indicatorColor = "bg-emerald-500"; // Verde acceso
+                indicatorColor = "bg-emerald-500"; // Verde acceso per ottimale (> 60% a 110%)
               } else {
                 bgClass = "bg-rose-50/75 text-rose-900 font-black";
-                indicatorColor = "bg-rose-600"; // Rosso acceso
+                indicatorColor = "bg-rose-600"; // Rosso acceso per sovraccarico (> 110%)
               }
             }
 
@@ -1976,7 +2260,66 @@ export default function PianificazionePersonale() {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {areaReqs.map(req => {
-                  const selectedRisorsa = selectedRisorsePerRichiesta[req.id] || '';
+                  const isCancellation = Number(req.percentuale) === 0 || 
+                    (req.tipoRichiesta || '').toLowerCase().includes('annullamento') || 
+                    (req.tipoRichiesta || '').toLowerCase().includes('rimozione');
+                  const targetResource = req.risorsaPreferita || req.risorseAssegnata || 'Risorsa';
+                  const selectedRisorsa = selectedRisorsePerRichiesta[req.id] ?? targetResource;
+
+                  if (isCancellation) {
+                    return (
+                      <div key={req.id} className="bg-rose-50/60 p-5 rounded-2xl border border-rose-200 shadow-sm flex flex-col justify-between gap-4 text-xs animate-in fade-in duration-200">
+                        <div>
+                          <div className="flex justify-between items-center mb-2.5">
+                            <span className="font-extrabold text-rose-950 text-sm">{req.commessaName}</span>
+                            <span className="bg-rose-600 text-white font-black px-2.5 py-1 rounded-full uppercase tracking-wider text-[9px] shadow-xs">
+                              ❌ RICHIESTA ANNULLAMENTO / RIMOZIONE
+                            </span>
+                          </div>
+
+                          <div className="bg-white p-3.5 rounded-xl border border-rose-150 space-y-2 text-rose-950 shadow-2xs">
+                            <div className="flex items-center gap-2 font-bold text-xs text-rose-900">
+                              <span>⚠️ Risorsa da Rimuovere:</span>
+                              <span className="bg-rose-100 text-rose-950 font-black px-2.5 py-1 rounded-lg border border-rose-250 text-xs">{targetResource}</span>
+                            </div>
+                            <div className="text-gray-600 text-xs pt-1">
+                              📅 Periodo di Rimozione: <strong className="text-gray-900">{formatCommDate(req.dataInizio)}</strong> al <strong className="text-gray-900">{formatCommDate(req.dataFine)}</strong>
+                            </div>
+                            <div className="text-xs">👤 Richiedente: <span className="font-semibold text-gray-800">{req.richiedenteNome}</span> ({req.richiedenteEmail})</div>
+                            {req.nota && (
+                              <div className="bg-rose-50/60 p-2.5 rounded-lg border border-rose-100 italic text-rose-900 mt-2">
+                                💬 Motivazione: &ldquo;{req.nota}&rdquo;
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-3 pt-3 border-t border-rose-200/80">
+                          <div className="text-[11px] font-extrabold text-rose-900">
+                            Rimuovere <span className="underline decoration-rose-400">{targetResource}</span> dalla commessa?
+                          </div>
+
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleRejectRequest(req.id)}
+                              className="bg-white hover:bg-rose-100 text-rose-700 font-bold px-3 py-2 rounded-xl border border-rose-200 transition cursor-pointer"
+                            >
+                              Rifiuta
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleApproveRequest(req)}
+                              className="bg-rose-600 hover:bg-rose-700 text-white font-black px-4 py-2 rounded-xl shadow-md transition active:scale-95 cursor-pointer flex items-center gap-1.5"
+                            >
+                              <span>❌ Approva Rimozione</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+
                   return (
                     <div key={req.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-between gap-3 text-xs">
                       <div>
@@ -1987,6 +2330,11 @@ export default function PianificazionePersonale() {
                         <div className="text-gray-500 mt-1 space-y-1">
                           <div>📅 Periodo: <strong className="text-gray-700">{formatCommDate(req.dataInizio)}</strong> al <strong className="text-gray-700">{formatCommDate(req.dataFine)}</strong></div>
                           <div>⚡ Carico Richiesto: <strong className="text-gray-800">{req.percentuale}%</strong></div>
+                          {req.risorsaPreferita && (
+                            <div className="text-indigo-900 bg-indigo-50/70 px-2 py-1 rounded-lg border border-indigo-100 w-fit">
+                              ⭐ Risorsa Preferita: <strong className="text-indigo-700 font-black">{req.risorsaPreferita}</strong>
+                            </div>
+                          )}
                           <div>👤 Richiedente: <span className="font-semibold text-gray-700">{req.richiedenteNome}</span> ({req.richiedenteEmail})</div>
                           {req.nota && (
                             <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 italic text-gray-600 mt-2">
@@ -2094,7 +2442,7 @@ export default function PianificazionePersonale() {
 
       {/* 1. BULK ALLOCATION PANEL — visibile solo ad Admin, Soci, Coordinatori e PM */}
       {(isAdmin || isSoci(myAssociatedName) || isCoordinatoreQualsiasi || isPMOrResponsabile) && (
-        <div className="bg-gradient-to-br from-indigo-50 to-blue-50 p-6 sm:p-8 rounded-[2rem] border border-indigo-100 shadow-xl no-print">
+        <div ref={plannerContainerRef} className="bg-gradient-to-br from-indigo-50 to-blue-50 p-6 sm:p-8 rounded-[2rem] border border-indigo-100 shadow-xl no-print scroll-mt-6">
           <h3 className="text-xl font-extrabold text-indigo-950 mb-4 flex items-center gap-2">
             Pianificatore Risorse
           </h3>
@@ -2210,28 +2558,9 @@ export default function PianificazionePersonale() {
                   )}
                 </div>
 
-                {/* Data Inizio */}
-                <div className="min-w-[140px]">
-                  <label className="block text-[10px] font-black text-indigo-950 uppercase tracking-wider mb-1 ml-0.5">Data Inizio</label>
-                  <input
-                    type="date"
-                    required
-                    value={allocDataInizio}
-                    onChange={e => setAllocDataInizio(e.target.value)}
-                    className="w-full p-2.5 border-none bg-white rounded-xl text-xs font-bold text-gray-750 outline-none shadow-sm"
-                  />
-                </div>
-
-                {/* Data Fine */}
-                <div className="min-w-[140px]">
-                  <label className="block text-[10px] font-black text-indigo-950 uppercase tracking-wider mb-1 ml-0.5">Data Fine</label>
-                  <input
-                    type="date"
-                    required
-                    value={allocDataFine}
-                    onChange={e => setAllocDataFine(e.target.value)}
-                    className="w-full p-2.5 border-none bg-white rounded-xl text-xs font-bold text-gray-750 outline-none shadow-sm"
-                  />
+                {/* Selettore Periodo Settimanale */}
+                <div className="w-full mt-2">
+                  {renderWeekPeriodSelector()}
                 </div>
 
                 {/* Durata commessa (badge) */}
@@ -2417,304 +2746,280 @@ export default function PianificazionePersonale() {
 
           {/* TAB CONTENT: GESTIONE PER RISORSA */}
           {activeTab === 'risorsa' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Colonna 1: Selezione Risorsa e Periodo */}
-              <div className="lg:col-span-1 space-y-4 bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col justify-start">
-                <h4 className="font-bold text-sm text-indigo-900 border-b pb-2">1. Risorsa & Periodo</h4>
-                
-                <div>
-                  <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Risorsa da modificare</label>
-                  <select
-                    value={selectedResourceForTab}
-                    onChange={e => setSelectedResourceForTab(e.target.value)}
-                    className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-750"
-                  >
-                    <option value="">-- Seleziona Risorsa --</option>
-                    {filteredDipendenti.map(d => (
-                      <option key={d.id} value={d.nome}>{d.nome}</option>
-                    ))}
-                  </select>
+            <div className="flex flex-col gap-6">
+
+              {/* Riga 1: Risorsa & Periodo – barra orizzontale a tutta larghezza */}
+              <div className="bg-white/60 p-4 sm:p-5 rounded-2xl border border-indigo-100/50 flex flex-col gap-4">
+                <div className="font-bold text-sm text-indigo-900 border-b pb-2">1. Risorsa &amp; Periodo</div>
+
+                {/* Selezione Risorsa & Badge */}
+                <div className="flex flex-wrap gap-4 items-end">
+                  <div className="relative flex-1 min-w-[260px]">
+                    <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Risorsa da Modificare *</label>
+                    <select
+                      value={selectedResourceForTab}
+                      onChange={e => setSelectedResourceForTab(e.target.value)}
+                      className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-800 cursor-pointer"
+                    >
+                      <option value="">-- Seleziona Risorsa --</option>
+                      {filteredDipendenti.map(d => (
+                        <option key={d.id} value={d.nome}>{d.nome} {d.macroArea ? `(${d.macroArea})` : ''}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {selectedResourceForTab && (() => {
+                    const dip = filteredDipendenti.find(d => d.nome === selectedResourceForTab);
+                    if (!dip) return null;
+                    return (
+                      <div className="text-xs text-indigo-950/85 font-semibold bg-white/80 px-3.5 py-2.5 rounded-xl border border-indigo-100/60 flex items-center gap-2 shadow-sm self-end">
+                        <span className="w-2.5 h-2.5 rounded-full bg-indigo-600"></span>
+                        <span>Macroarea: <strong className="text-indigo-900 font-extrabold">{dip.macroArea || 'Non Assegnata'}</strong></span>
+                      </div>
+                    );
+                  })()}
                 </div>
 
-                <div className="flex flex-col gap-3 bg-indigo-50/40 p-4 rounded-xl border border-indigo-100/30">
-                  <div>
-                    <label className="block text-[10px] font-black text-indigo-950 uppercase tracking-wider mb-1 ml-0.5">Data Inizio</label>
-                    <input 
-                      type="date"
-                      required
-                      value={allocDataInizio}
-                      onChange={e => setAllocDataInizio(e.target.value)}
-                      className="w-full p-2.5 border-none bg-white rounded-xl text-xs font-bold text-gray-755 outline-none shadow-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-black text-indigo-950 uppercase tracking-wider mb-1 ml-0.5">Data Fine</label>
-                    <input 
-                      type="date"
-                      required
-                      value={allocDataFine}
-                      onChange={e => setAllocDataFine(e.target.value)}
-                      className="w-full p-2.5 border-none bg-white rounded-xl text-xs font-bold text-gray-755 outline-none shadow-sm"
-                    />
-                  </div>
+                {/* Selettore Periodo Settimanale a tutta larghezza */}
+                <div className="w-full mt-1">
+                  {renderWeekPeriodSelector()}
                 </div>
               </div>
 
-              {/* Colonna 2 & 3: Lista Assegnazioni & Form per Aggiunta */}
-              <div className="lg:col-span-2 space-y-6">
-                {!selectedResourceForTab || !allocDataInizio || !allocDataFine ? (
-                  <div className="bg-white/50 border border-dashed border-indigo-200 rounded-2xl p-8 text-center text-xs font-bold text-indigo-900/60 flex items-center justify-center h-full min-h-[200px]">
-                    ⚠️ Seleziona una risorsa e un periodo di date per visualizzare e gestire le commesse associate.
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {/* Assegna Nuova Commessa */}
-                    <div className="bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col justify-start">
+              {/* Riga 2: Griglia a 2 colonne ampie (Assegna Commessa & Lista Commesse Assegnate) */}
+              {!selectedResourceForTab || !allocDataInizio || !allocDataFine ? (
+                <div className="bg-white/50 border border-dashed border-indigo-200 rounded-2xl p-8 text-center text-xs font-bold text-indigo-900/60 flex items-center justify-center min-h-[200px]">
+                  ⚠️ Seleziona una risorsa e un periodo di date per visualizzare e gestire le commesse associate.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Assegna Nuova Commessa */}
+                  <div className="bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col justify-between min-h-[360px]">
+                    <div>
                       <h4 className="font-bold text-sm text-indigo-900 border-b pb-2 mb-4">
-                        ➕ Assegna Commessa
+                        ➕ Assegna Commessa a <strong className="text-indigo-950">{selectedResourceForTab}</strong>
                       </h4>
                       <div className="space-y-4">
                         <div>
-                          <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Seleziona Commessa</label>
+                          <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Seleziona Commessa *</label>
                           <select
                             value={addCommessaId}
                             onChange={e => setAddCommessaId(e.target.value)}
-                            className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-700"
+                            className="w-full p-3 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-800 cursor-pointer"
                           >
                             <option value="">-- Seleziona Commessa --</option>
                             {selectableCommesse.map(c => (
-                              <option key={c.id} value={c.id}>{c.nome}</option>
+                              <option key={c.id} value={c.id}>{c.nome} [{c.codiceCommessa}]</option>
                             ))}
                           </select>
                         </div>
 
                         <div>
-                          <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Percentuale Carico</label>
+                          <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Percentuale di Carico *</label>
                           <select
                             value={addPercentage}
                             onChange={e => setAddPercentage(e.target.value)}
-                            className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-700"
+                            className="w-full p-3 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-800 cursor-pointer"
                           >
                             {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
                               <option key={pct} value={pct}>{pct}%</option>
                             ))}
                           </select>
                         </div>
-
-                        <button
-                          type="button"
-                          disabled={savingAllocations || !addCommessaId}
-                          onClick={async () => {
-                            await executeAssignResourceToCommessa(selectedResourceForTab, addCommessaId, parseInt(addPercentage));
-                            setAddCommessaId('');
-                          }}
-                          className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black py-3 rounded-xl transition shadow-md active:scale-95 disabled:opacity-50 mt-2"
-                        >
-                          <Plus className="w-4 h-4" />
-                          <span>Conferma ed Esegui Assegnazione</span>
-                        </button>
                       </div>
                     </div>
 
-                    {/* Lista Commesse Assegnate */}
-                    <div className="bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col max-h-[420px]">
-                      <h4 className="font-bold text-sm text-indigo-900 border-b pb-2 mb-3">
-                        📁 Commesse Assegnate ({commesseAssegnateAllaRisorsa.length})
-                      </h4>
-                      <div className="overflow-y-auto flex-1 space-y-2 pr-1 scrollbar-thin">
-                        {commesseAssegnateAllaRisorsa.length === 0 ? (
-                          <p className="text-xs text-gray-405 italic p-3 text-center">Nessuna commessa assegnata nel periodo.</p>
-                        ) : (
-                          commesseAssegnateAllaRisorsa.map(c => {
-                            const pcts = Object.values(c.percentuali);
-                            const minPct = Math.min(...pcts);
-                            const maxPct = Math.max(...pcts);
-                            const displayPct = minPct === maxPct ? `${minPct}%` : `${minPct}% - ${maxPct}%`;
+                    <button
+                      type="button"
+                      disabled={savingAllocations || !addCommessaId}
+                      onClick={async () => {
+                        await executeAssignResourceToCommessa(selectedResourceForTab, addCommessaId, parseInt(addPercentage));
+                        setAddCommessaId('');
+                      }}
+                      className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black py-3 rounded-xl transition shadow-md active:scale-95 disabled:opacity-50 cursor-pointer mt-6"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Conferma ed Esegui Assegnazione</span>
+                    </button>
+                  </div>
 
-                            // Permessi di modifica per questa commessa
-                            const commObj = commesse.find(x => x.id === c.id);
-                            const pmArray = commObj && commObj.pm ? (Array.isArray(commObj.pm) ? commObj.pm : [commObj.pm]) : [];
-                            const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
-                            const hasPermission = isAdmin || isSoci(myAssociatedName) || (commObj && (isPM || areNamesEqual(commObj.responsabile, myAssociatedName)));
+                  {/* Lista Commesse Assegnate */}
+                  <div className="bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col max-h-[480px] min-h-[360px]">
+                    <h4 className="font-bold text-sm text-indigo-900 border-b pb-2 mb-3 flex items-center justify-between">
+                      <span>📁 Commesse Assegnate</span>
+                      <span className="bg-indigo-100 text-indigo-800 font-extrabold text-xs px-2.5 py-0.5 rounded-full">
+                        {commesseAssegnateAllaRisorsa.length}
+                      </span>
+                    </h4>
+                    <div className="overflow-y-auto flex-1 space-y-2.5 pr-1 scrollbar-thin">
+                      {commesseAssegnateAllaRisorsa.length === 0 ? (
+                        <p className="text-xs text-gray-400 italic p-6 text-center">Nessuna commessa assegnata a {selectedResourceForTab} nel periodo selezionato.</p>
+                      ) : (
+                        commesseAssegnateAllaRisorsa.map(c => {
+                          const pcts = Object.values(c.percentuali);
+                          const minPct = Math.min(...pcts);
+                          const maxPct = Math.max(...pcts);
+                          const displayPct = minPct === maxPct ? `${minPct}%` : `${minPct}% - ${maxPct}%`;
 
-                            return (
-                              <div key={c.id} className="flex justify-between items-center p-2.5 bg-white rounded-xl border border-indigo-50 shadow-sm hover:border-indigo-100 transition-colors">
-                                <div className="flex flex-col gap-0.5 truncate pr-2">
-                                  <div className="flex items-center gap-2 truncate">
-                                    <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm" style={{ backgroundColor: c.colore }}></span>
-                                    <span className="font-bold text-xs text-gray-850 truncate">{c.nome}</span>
-                                  </div>
-                                  {displayPct && <span className="text-[10px] font-black text-indigo-650 ml-4.5">Impegno commessa: {displayPct}</span>}
+                          // Permessi di modifica per questa commessa
+                          const commObj = commesse.find(x => x.id === c.id);
+                          const pmArray = commObj && commObj.pm ? (Array.isArray(commObj.pm) ? commObj.pm : [commObj.pm]) : [];
+                          const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
+                          const hasPermission = isAdmin || isSoci(myAssociatedName) || (commObj && (isPM || areNamesEqual(commObj.responsabile, myAssociatedName)));
+
+                          return (
+                            <div key={c.id} className="flex justify-between items-center p-3 bg-white rounded-xl border border-indigo-50 shadow-sm hover:border-indigo-100 transition-colors">
+                              <div className="flex flex-col gap-1 truncate pr-2">
+                                <div className="flex items-center gap-2 truncate">
+                                  <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm" style={{ backgroundColor: c.colore }}></span>
+                                  <span className="font-bold text-xs text-gray-850 truncate">{c.nome}</span>
                                 </div>
-
-                                <div className="flex items-center gap-2 shrink-0">
-                                  {hasPermission ? (
-                                    <>
-                                      <select
-                                        value={pcts[0] || 100}
-                                        disabled={savingAllocations}
-                                        onChange={async (e) => {
-                                          await executeAssignResourceToCommessa(selectedResourceForTab, c.id, parseInt(e.target.value));
-                                        }}
-                                        className="p-1 border border-gray-200 rounded-lg bg-white font-bold text-[10px] text-gray-700 outline-none focus:border-indigo-400"
-                                      >
-                                        {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
-                                          <option key={pct} value={pct}>{pct}%</option>
-                                        ))}
-                                      </select>
-                                      <button
-                                        type="button"
-                                        disabled={savingAllocations}
-                                        onClick={() => {
-                                          setConfirmConfig({
-                                            isOpen: true,
-                                            title: 'Rimozione Commessa',
-                                            message: `Sei sicuro di voler rimuovere la commessa "${c.nome}" per ${selectedResourceForTab} nel periodo selezionato?`,
-                                            type: 'danger',
-                                            onConfirm: async () => {
-                                              await executeRemoveResourceFromCommessa(selectedResourceForTab, c.id);
-                                              setConfirmConfig(prev => ({ ...prev, isOpen: false }));
-                                            }
-                                          });
-                                        }}
-                                        className="text-red-500 hover:text-red-750 hover:bg-red-55 p-1.5 rounded-lg transition-colors disabled:opacity-50"
-                                        title="Rimuovi questa commessa"
-                                      >
-                                        <Trash2 className="w-4 h-4" />
-                                      </button>
-                                    </>
-                                  ) : (
-                                    <span className="text-gray-400 text-[10px] italic font-bold bg-gray-50 px-2 py-1 rounded-lg border border-gray-100">
-                                      🔒 Sola Lettura
-                                    </span>
-                                  )}
-                                </div>
+                                {displayPct && <span className="text-[10px] font-black text-indigo-650 ml-4.5">Impegno commessa: {displayPct}</span>}
                               </div>
-                            );
-                          })
-                        )}
-                      </div>
+
+                              <div className="flex items-center gap-2 shrink-0">
+                                {hasPermission ? (
+                                  <>
+                                    <select
+                                      value={pcts[0] || 100}
+                                      disabled={savingAllocations}
+                                      onChange={async (e) => {
+                                        await executeAssignResourceToCommessa(selectedResourceForTab, c.id, parseInt(e.target.value));
+                                      }}
+                                      className="p-1.5 border border-gray-200 rounded-lg bg-white font-bold text-xs text-gray-700 outline-none focus:border-indigo-400 cursor-pointer"
+                                    >
+                                      {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
+                                        <option key={pct} value={pct}>{pct}%</option>
+                                      ))}
+                                    </select>
+                                    <button
+                                      type="button"
+                                      disabled={savingAllocations}
+                                      onClick={() => {
+                                        setConfirmConfig({
+                                          isOpen: true,
+                                          title: 'Rimozione Commessa',
+                                          message: `Sei sicuro di voler rimuovere la commessa "${c.nome}" per ${selectedResourceForTab} nel periodo selezionato?`,
+                                          type: 'danger',
+                                          onConfirm: async () => {
+                                            await executeRemoveResourceFromCommessa(selectedResourceForTab, c.id);
+                                            setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+                                          }
+                                        });
+                                      }}
+                                      className="text-red-500 hover:text-red-750 hover:bg-red-50 p-2 rounded-lg transition-colors disabled:opacity-50 cursor-pointer"
+                                      title="Rimuovi questa commessa"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  </>
+                                ) : (
+                                  <span className="text-gray-400 text-[10px] italic font-bold bg-gray-50 px-2 py-1 rounded-lg border border-gray-100">
+                                    🔒 Sola Lettura
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
                     </div>
                   </div>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           )}
 
           {/* TAB CONTENT: SOSTITUZIONE RISORSA */}
           {activeTab === 'sostituisci' && (
-            <form onSubmit={handleConfirmAssignments} className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                
-                {/* Selezione Commessa */}
-                <div className="space-y-4 bg-white/60 p-5 rounded-2xl border border-indigo-100/50">
-                  <h4 className="font-bold text-sm text-indigo-900 border-b pb-2">1. Commessa per Sostituzione</h4>
-                  
+            <form onSubmit={handleConfirmAssignments} className="flex flex-col gap-6">
+              {/* Riga 1: Commessa & Periodo – barra orizzontale a tutta larghezza */}
+              <div className="bg-white/60 p-4 sm:p-5 rounded-2xl border border-indigo-100/50 flex flex-col gap-4">
+                <div className="font-bold text-sm text-indigo-900 border-b pb-2">1. Commessa &amp; Periodo per Sostituzione</div>
+
+                <div className="relative w-full">
+                  <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Commessa *</label>
                   <div className="relative">
-                    <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Commessa</label>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        placeholder="Cerca commessa..."
-                        value={selectedCommessaId ? (commesse.find(c => c.id === selectedCommessaId)?.nome || '') : commessaSearchText}
-                        onChange={e => {
-                          setCommessaSearchText(e.target.value);
-                          if (selectedCommessaId) setSelectedCommessaId('');
-                          setIsCommessaDropdownOpen(true);
+                    <input
+                      type="text"
+                      placeholder="Cerca commessa..."
+                      value={selectedCommessaId ? (commesse.find(c => c.id === selectedCommessaId)?.nome || '') : commessaSearchText}
+                      onChange={e => {
+                        setCommessaSearchText(e.target.value);
+                        if (selectedCommessaId) setSelectedCommessaId('');
+                        setIsCommessaDropdownOpen(true);
+                      }}
+                      onFocus={() => setIsCommessaDropdownOpen(true)}
+                      className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-800"
+                    />
+                    {selectedCommessaId && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedCommessaId('');
+                          setCommessaSearchText('');
                         }}
-                        onFocus={() => setIsCommessaDropdownOpen(true)}
-                        className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-750"
-                      />
-                      {selectedCommessaId && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedCommessaId('');
-                            setCommessaSearchText('');
-                          }}
-                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-red-500 hover:text-red-700 font-extrabold text-[10px] bg-red-50 px-2 py-1 rounded-lg transition"
-                        >
-                          Rimuovi
-                        </button>
-                      )}
-                    </div>
-                    {isCommessaDropdownOpen && (
-                      <>
-                        <div className="fixed inset-0 z-10" onClick={() => setIsCommessaDropdownOpen(false)}></div>
-                        <div className="absolute left-0 right-0 z-20 mt-1 max-h-56 overflow-y-auto bg-white border border-gray-150 rounded-xl shadow-xl divide-y divide-gray-50">
-                          {(() => {
-                            const search = commessaSearchText.toLowerCase();
-                            const filtered = selectableCommesse.filter(c =>
-                              c.nome.toLowerCase().includes(search) ||
-                              (c.cliente && c.cliente.toLowerCase().includes(search))
-                            );
-                            if (filtered.length === 0) {
-                              return <div className="p-3 text-xs text-gray-450 italic font-bold">Nessuna commessa trovata</div>;
-                            }
-                            return filtered.map(c => (
-                              <button
-                                key={c.id}
-                                type="button"
-                                title={c.nome}
-                                onClick={() => {
-                                  setSelectedCommessaId(c.id);
-                                  setCommessaSearchText(c.nome);
-                                  setIsCommessaDropdownOpen(false);
-                                }}
-                                className="w-full text-left px-3 py-2 hover:bg-indigo-50 text-xs font-semibold text-gray-700 transition-colors flex flex-col gap-0.5 cursor-pointer"
-                              >
-                                <span className="truncate w-full font-bold text-gray-800">{c.nome}</span>
-                                <span className="text-[9.5px] text-indigo-650 font-semibold italic">
-                                  💼 Cliente: {c.cliente || 'Nessun cliente'}
-                                </span>
-                              </button>
-                            ));
-                          })()}
-                        </div>
-                      </>
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-red-500 hover:text-red-700 font-extrabold text-[10px] bg-red-50 px-2 py-1 rounded-lg transition cursor-pointer"
+                      >
+                        Rimuovi
+                      </button>
                     )}
                   </div>
+                  {isCommessaDropdownOpen && (
+                    <>
+                      <div className="fixed inset-0 z-10" onClick={() => setIsCommessaDropdownOpen(false)}></div>
+                      <div className="absolute left-0 right-0 z-20 mt-1 max-h-56 overflow-y-auto bg-white border border-gray-150 rounded-xl shadow-xl divide-y divide-gray-50">
+                        {(() => {
+                          const search = commessaSearchText.toLowerCase();
+                          const filtered = selectableCommesse.filter(c =>
+                            c.nome.toLowerCase().includes(search) ||
+                            (c.cliente && c.cliente.toLowerCase().includes(search))
+                          );
+                          if (filtered.length === 0) {
+                            return <div className="p-3 text-xs text-gray-450 italic font-bold">Nessuna commessa trovata</div>;
+                          }
+                          return filtered.map(c => (
+                            <button
+                              key={c.id}
+                              type="button"
+                              title={c.nome}
+                              onClick={() => {
+                                setSelectedCommessaId(c.id);
+                                setCommessaSearchText(c.nome);
+                                setIsCommessaDropdownOpen(false);
+                              }}
+                              className="w-full text-left px-3 py-2 hover:bg-indigo-50 text-xs font-semibold text-gray-700 transition-colors flex flex-col gap-0.5 cursor-pointer"
+                            >
+                              <span className="truncate w-full font-bold text-gray-800">{c.nome}</span>
+                              <span className="text-[9.5px] text-indigo-650 font-semibold italic">
+                                💼 Cliente: {c.cliente || 'Nessun cliente'}
+                              </span>
+                            </button>
+                          ));
+                        })()}
+                      </div>
+                    </>
+                  )}
                 </div>
 
-                {/* Periodo */}
-                <div className="space-y-4 bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col justify-start">
-                  <h4 className="font-bold text-sm text-indigo-900 border-b pb-2">2. Periodo</h4>
-                  <div className="flex flex-col gap-3 bg-indigo-50/40 p-4 rounded-xl border border-indigo-100/30">
-                    <div>
-                      <label className="block text-[10px] font-black text-indigo-950 uppercase tracking-wider mb-1 ml-0.5">Data Inizio</label>
-                      <input 
-                        type="date"
-                        required
-                        value={allocDataInizio}
-                        onChange={e => setAllocDataInizio(e.target.value)}
-                        className="w-full p-2.5 border-none bg-white rounded-xl text-xs font-bold text-gray-700 outline-none shadow-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-black text-indigo-950 uppercase tracking-wider mb-1 ml-0.5">Data Fine</label>
-                      <input 
-                        type="date"
-                        required
-                        value={allocDataFine}
-                        onChange={e => setAllocDataFine(e.target.value)}
-                        className="w-full p-2.5 border-none bg-white rounded-xl text-xs font-bold text-gray-700 outline-none shadow-sm"
-                      />
-                    </div>
-                  </div>
+                <div className="w-full mt-1">
+                  {renderWeekPeriodSelector()}
                 </div>
+              </div>
 
-                {/* Sostituzione Risorse */}
-                <div className="space-y-4 bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col justify-start">
-                  <h4 className="font-bold text-sm text-indigo-900 border-b pb-2">3. Sostituzione Risorsa</h4>
-                  
+              {/* Riga 2: Selezione Sostituzione Risorse */}
+              <div className="bg-white/60 p-6 rounded-2xl border border-indigo-100/50 flex flex-col gap-5">
+                <h4 className="font-bold text-sm text-indigo-900 border-b pb-2">2. Sostituzione Risorsa</h4>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
-                    <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Risorsa da sostituire (A)</label>
+                    <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Risorsa da Sostituire (A) *</label>
                     <select
                       value={sourceResource}
                       onChange={e => setSourceResource(e.target.value)}
-                      className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-700"
+                      className="w-full p-3 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-800 cursor-pointer"
                     >
-                      <option value="">Seleziona risorsa...</option>
+                      <option value="">-- Seleziona Risorsa da Sostituire --</option>
                       {filteredDipendenti.map(d => (
                         <option key={d.id} value={d.nome}>{d.nome}</option>
                       ))}
@@ -2722,13 +3027,13 @@ export default function PianificazionePersonale() {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Nuova risorsa (B)</label>
+                    <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Nuova Risorsa Subentrante (B) *</label>
                     <select
                       value={targetResource}
                       onChange={e => setTargetResource(e.target.value)}
-                      className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-700"
+                      className="w-full p-3 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-800 cursor-pointer"
                     >
-                      <option value="">Seleziona risorsa...</option>
+                      <option value="">-- Seleziona Nuova Risorsa --</option>
                       {filteredDipendenti.map(d => (
                         <option key={d.id} value={d.nome}>{d.nome}</option>
                       ))}
@@ -2736,18 +3041,17 @@ export default function PianificazionePersonale() {
                   </div>
                 </div>
 
-              </div>
-
-              <div className="flex justify-end">
-                <button 
-                  type="submit"
-                  disabled={savingAllocations}
-                  onClick={() => setAllocAction('sostituisci')}
-                  className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black px-8 py-3.5 rounded-xl transition shadow-lg active:scale-95 disabled:opacity-50"
-                >
-                  <Save className="w-5 h-5" />
-                  {savingAllocations ? 'Sostituzione...' : 'Conferma ed Esegui Sostituzione'}
-                </button>
+                <div className="flex justify-end pt-2">
+                  <button
+                    type="submit"
+                    disabled={savingAllocations || !selectedCommessaId || !sourceResource || !targetResource}
+                    onClick={() => setAllocAction('sostituisci')}
+                    className="w-full md:w-auto px-8 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-md transition active:scale-95 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    <Save className="w-4 h-4" />
+                    <span>{savingAllocations ? 'Sostituzione in corso...' : 'Conferma ed Esegui Sostituzione Risorsa'}</span>
+                  </button>
+                </div>
               </div>
             </form>
           )}
@@ -2952,40 +3256,32 @@ export default function PianificazionePersonale() {
             <span className="w-4 h-4 rounded-lg bg-sky-50 border border-sky-200 shadow-sm shrink-0 flex items-center justify-center">
               <span className="w-1.5 h-1.5 rounded-full bg-sky-500"></span>
             </span>
-            <span>Sotto-utilizzato (&lt; 90%)</span>
+            <span>Sotto-utilizzato (&gt; 0% a 60%)</span>
           </div>
           <div className="flex items-center gap-3">
             <span className="w-4 h-4 rounded-lg bg-emerald-50 border border-emerald-200 shadow-sm shrink-0 flex items-center justify-center">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
             </span>
-            <span>Ottimale (90% - 100%)</span>
+            <span>Ottimale (&gt; 60% a 110%)</span>
           </div>
           <div className="flex items-center gap-3">
             <span className="w-4 h-4 rounded-lg bg-rose-50 border border-rose-200 shadow-sm shrink-0 flex items-center justify-center">
               <span className="w-1.5 h-1.5 rounded-full bg-rose-600"></span>
             </span>
-            <span>Sovraccarico (&gt; 100%)</span>
+            <span>Sovraccarico (&gt; 110%)</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span 
+              className="w-5 h-4 rounded-lg border border-blue-300 shadow-sm shrink-0"
+              style={{ backgroundImage: 'repeating-linear-gradient(45deg, #dbeafe 0px, #dbeafe 4px, #eff6ff 4px, #eff6ff 8px)' }}
+            ></span>
+            <span>Settimana in Ferie (100%)</span>
           </div>
         </div>
 
       </div>
 
-      <AssegnazioneModal 
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        dipendente={modalData.dipendente}
-        weekId={modalData.weekId}
-        weekLabel={modalData.weekLabel}
-        weekSub={modalData.weekSub}
-        commesseCatalog={selectableCommesse}
-        currentAssignments={assignments[`${modalData.dipendente}-${modalData.weekId}`] || []}
-        dipendentiList={dipendenti}
-        hasLeaves={getLeavesForResourceInWeek(modalData.dipendente, modalData.weekId).length > 0}
-        onSave={(updatedList, addedNotif, removedNotif) => {
-          handleLocalCellChange(modalData.dipendente, modalData.weekId, modalData.weekLabel, updatedList, addedNotif, removedNotif);
-          setIsModalOpen(false);
-        }}
-      />
+
 
       <ConfirmModal
         isOpen={confirmConfig.isOpen}
@@ -3003,100 +3299,149 @@ export default function PianificazionePersonale() {
           'Ingegneria':           { gradient: 'from-indigo-50/50 to-slate-50', titleColor: 'text-indigo-950', subtitleColor: 'text-indigo-700/80', ring: 'focus:ring-indigo-500' },
           'Sicurezza Cantieri':   { gradient: 'from-emerald-50/50 to-slate-50',titleColor: 'text-emerald-950',subtitleColor: 'text-emerald-700/80',ring: 'focus:ring-emerald-500' },
           'Consulenza Sicurezza': { gradient: 'from-amber-50/50 to-slate-50',  titleColor: 'text-amber-950',  subtitleColor: 'text-amber-700/80',  ring: 'focus:ring-amber-500' },
-          'Amministrazione':      { gradient: 'from-blue-50/50 to-slate-50',   titleColor: 'text-blue-950',   subtitleColor: 'text-blue-700/80',   ring: 'focus:ring-blue-500' },
         };
         const mc = areaModalColors[reqAreaTarget] || areaModalColors['Disegnatori'];
         return (
-        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-md flex items-center justify-center z-[9999] p-4 no-print animate-in fade-in duration-200">
-          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-lg border border-gray-100 flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-md flex items-center justify-center z-[9999] p-4 sm:p-6 no-print animate-in fade-in duration-200">
+          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-3xl border border-gray-100 flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
             <div className={`p-6 sm:p-8 border-b flex justify-between items-center bg-gradient-to-br ${mc.gradient} rounded-t-[2rem]`}>
               <div>
-                <h3 className={`text-xl font-bold ${mc.titleColor}`}>Richiedi Personale — {reqAreaTarget}</h3>
+                <h3 className={`text-xl font-extrabold ${mc.titleColor}`}>Richiedi Personale — {reqAreaTarget}</h3>
                 <p className={`text-xs ${mc.subtitleColor} mt-1`}>Invia una richiesta ai coordinatori dell'area <strong>{reqAreaTarget}</strong>.</p>
               </div>
               <button 
+                type="button"
                 onClick={() => setIsRequestModalOpen(false)}
-                className="text-gray-400 hover:text-gray-650 text-lg font-bold p-2 hover:bg-gray-100 rounded-full transition"
+                className="text-gray-400 hover:text-gray-650 text-lg font-bold p-2 hover:bg-gray-100 rounded-full transition cursor-pointer"
               >
                 ✕
               </button>
             </div>
             
-            <form onSubmit={handleSubmitRequest} className="p-6 sm:p-8 space-y-4 overflow-y-auto flex-1">
-              {/* Campo area (read-only) */}
-              <div className="bg-slate-50 rounded-xl px-4 py-2.5 border border-slate-100 flex items-center gap-2">
-                <span className="text-[10px] font-black text-gray-500 uppercase tracking-wider">Area richiesta:</span>
-                <span className="font-extrabold text-xs text-gray-800">{reqAreaTarget}</span>
-              </div>
+            <form onSubmit={handleSubmitRequest} className="p-6 sm:p-8 space-y-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                {/* Colonna Sinistra */}
+                <div className="space-y-4">
+                  <div className="bg-slate-50 rounded-xl px-4 py-2.5 border border-slate-100 flex items-center justify-between">
+                    <span className="text-[10px] font-black text-gray-500 uppercase tracking-wider">Area richiesta:</span>
+                    <span className="font-extrabold text-xs text-indigo-900 bg-indigo-50/80 px-2.5 py-1 rounded-lg border border-indigo-100">{reqAreaTarget}</span>
+                  </div>
 
-              <div>
-                <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Seleziona Commessa</label>
-                <select
-                  required
-                  value={reqCommessaId}
-                  onChange={e => setReqCommessaId(e.target.value)}
-                  className={`w-full p-3 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner`}
-                >
-                  <option value="">-- Seleziona Commessa --</option>
-                  {selectableCommesse.map(c => (
-                    <option key={c.id} value={c.id}>{c.nome} [{c.codiceCommessa}]</option>
-                  ))}
-                </select>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Data Inizio</label>
-                  <input
-                    required
-                    type="date"
-                    value={reqDataInizio}
-                    onChange={e => setReqDataInizio(e.target.value)}
-                    className={`w-full p-3 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner`}
-                  />
+                  <div>
+                    <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Seleziona Commessa *</label>
+                    <select
+                      required
+                      value={reqCommessaId}
+                      onChange={e => setReqCommessaId(e.target.value)}
+                      className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
+                    >
+                      <option value="">-- Seleziona Commessa --</option>
+                      {selectableCommesse.map(c => (
+                        <option key={c.id} value={c.id}>{c.nome} [{c.codiceCommessa}]</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1 flex items-center justify-between">
+                      <span>Risorsa Preferita</span>
+                      <span className="text-[10px] text-indigo-600 font-bold italic">(Opzionale)</span>
+                    </label>
+                    <select
+                      value={reqPreferredResource}
+                      onChange={e => setReqPreferredResource(e.target.value)}
+                      className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
+                    >
+                      <option value="">-- Nessuna preferenza (Assegna Coordinatore) --</option>
+                      {dipendenti
+                        .filter(d => !isSoci(d.nome) && d.macroArea === reqAreaTarget)
+                        .map(d => (
+                          <option key={d.id} value={d.nome}>{d.nome}</option>
+                        ))
+                      }
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Percentuale Carico Richiesta *</label>
+                    <select
+                      required
+                      value={reqPercentuale}
+                      onChange={e => setReqPercentuale(Number(e.target.value))}
+                      className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
+                    >
+                      {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
+                        <option key={pct} value={pct}>{pct}%</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Data Fine</label>
-                  <input
-                    required
-                    type="date"
-                    value={reqDataFine}
-                    onChange={e => setReqDataFine(e.target.value)}
-                    className={`w-full p-3 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner`}
-                  />
+
+                {/* Colonna Destra */}
+                <div className="space-y-4 flex flex-col justify-between">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Settimana Inizio *</label>
+                      <select
+                        value={(() => {
+                          const match = selectableWeekOptions.find(o => o.mondayStr === reqDataInizio);
+                          return match ? match.id : selectedStartWeekId;
+                        })()}
+                        onChange={e => {
+                          const id = e.target.value;
+                          const startOpt = selectableWeekOptions.find(o => o.id === id);
+                          if (startOpt) setReqDataInizio(startOpt.mondayStr);
+                        }}
+                        className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
+                      >
+                        {selectableWeekOptions.map(opt => (
+                          <option key={`req-start-${opt.id}`} value={opt.id}>{opt.label}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Settimana Fine *</label>
+                      <select
+                        value={(() => {
+                          const match = selectableWeekOptions.find(o => o.sundayStr === reqDataFine);
+                          return match ? match.id : selectedEndWeekId;
+                        })()}
+                        onChange={e => {
+                          const id = e.target.value;
+                          const endOpt = selectableWeekOptions.find(o => o.id === id);
+                          if (endOpt) setReqDataFine(endOpt.sundayStr);
+                        }}
+                        className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
+                      >
+                        {selectableWeekOptions.map(opt => (
+                          <option key={`req-end-${opt.id}`} value={opt.id}>{opt.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1 flex items-center justify-between">
+                      <span>Nota per il Coordinatore</span>
+                      <span className="text-[10px] text-gray-400 font-semibold italic">(Facoltativa)</span>
+                    </label>
+                    <textarea
+                      placeholder={`Es. Ho bisogno di una risorsa dell'area ${reqAreaTarget} con esperienza in...`}
+                      value={reqNota}
+                      onChange={e => setReqNota(e.target.value)}
+                      rows={3}
+                      className={`w-full p-3 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-semibold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner resize-none`}
+                    />
+                  </div>
                 </div>
               </div>
               
-              <div>
-                <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Percentuale di Carico Richiesta</label>
-                <select
-                  required
-                  value={reqPercentuale}
-                  onChange={e => setReqPercentuale(Number(e.target.value))}
-                  className={`w-full p-3 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner`}
-                >
-                  {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
-                    <option key={pct} value={pct}>{pct}%</option>
-                  ))}
-                </select>
-              </div>
-              
-              <div>
-                <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Nota Facoltativa</label>
-                <textarea
-                  placeholder={`Es. Ho bisogno di una risorsa dell'area ${reqAreaTarget} con esperienza in...`}
-                  value={reqNota}
-                  onChange={e => setReqNota(e.target.value)}
-                  rows={3}
-                  className={`w-full p-3 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-semibold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner resize-none`}
-                />
-              </div>
-              
-              <div className="flex gap-3 pt-4 border-t">
+              <div className="flex gap-3 pt-4 border-t border-gray-100">
                 <button
                   type="button"
                   onClick={() => setIsRequestModalOpen(false)}
-                  className="flex-1 bg-transparent hover:bg-gray-100 text-gray-700 font-extrabold py-3 rounded-xl border transition active:scale-95 text-xs text-center cursor-pointer"
+                  className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-extrabold py-3 rounded-xl transition active:scale-95 text-xs text-center cursor-pointer"
                 >
                   Chiudi
                 </button>

@@ -1,5 +1,11 @@
 export function getStartOfWeek(d: Date): Date {
   const date = new Date(d);
+  if (isNaN(date.getTime())) {
+    const today = new Date();
+    const day = today.getDay();
+    const diff = today.getDate() - day + (day === 0 ? -6 : 1);
+    return new Date(today.setDate(diff));
+  }
   const day = date.getDay();
   const diff = date.getDate() - day + (day === 0 ? -6 : 1);
   return new Date(date.setDate(diff));
@@ -7,12 +13,14 @@ export function getStartOfWeek(d: Date): Date {
 
 export function addDays(date: Date, days: number): Date {
   const res = new Date(date);
+  if (isNaN(res.getTime())) return new Date();
   res.setDate(res.getDate() + days);
   return res;
 }
 
 export function getWeekNumber(d: Date): number {
-  const date = new Date(d.getTime());
+  const input = new Date(d);
+  const date = isNaN(input.getTime()) ? new Date() : new Date(input.getTime());
   date.setHours(0, 0, 0, 0);
   date.setDate(date.getDate() + 3 - (date.getDay() + 6) % 7);
   const week1 = new Date(date.getFullYear(), 0, 4);

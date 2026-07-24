@@ -51,6 +51,7 @@ interface FerieContentProps {
 }
 
 const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: FerieContentProps) => {
+  const { userEmail } = useAuth();
   const [viewMode, setViewMode] = useState<'calendario' | 'tabella'>('calendario');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
   const [chiusureAziendali, setChiusureAziendali] = useState<Array<{ dataInizio: string; dataFine: string }>>([]);
@@ -85,6 +86,16 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       setDipendenteSelezionato(myAssociatedName);
     }
   }, [myAssociatedName]);
+
+  const targetDipName = (isHR || isAdmin) ? (dipendenteSelezionato || myAssociatedName) : myAssociatedName;
+  const targetDipObj = (dipendenti || []).find(d => d.nome === targetDipName);
+  const isCollaboratore = targetDipObj?.tipo === 'collaboratore';
+
+  useEffect(() => {
+    if (isCollaboratore && (tipoRichiesta === 'ferie' || tipoRichiesta === 'permesso' || tipoRichiesta === 'studio' || tipoRichiesta === 'donazione' || tipoRichiesta === 'elettorale')) {
+      setTipoRichiesta('assenza');
+    }
+  }, [isCollaboratore, tipoRichiesta]);
   
   // State per calendario
   const [currentMonth, setCurrentMonth] = useState(() => {
@@ -118,6 +129,21 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       }
       setChiusureAziendali(listClosures);
 
+      const collaboratoriNames = new Set(
+        (dipendenti || [])
+          .filter(d => d.tipo === 'collaboratore')
+          .map(d => (d.nome || '').toLowerCase().trim())
+      );
+
+      const mapRequestTipo = (dipName: string, docId: string, currentTipo: string) => {
+        const normName = (dipName || '').toLowerCase().trim();
+        if (collaboratoriNames.has(normName) && (currentTipo === 'ferie' || currentTipo === 'permesso')) {
+          updateDoc(doc(db, 'richieste_ferie', docId), { tipo: 'assenza' }).catch(() => {});
+          return 'assenza';
+        }
+        return currentTipo;
+      };
+
       if (isHR || isAdmin) {
         const halfYearAgo = new Date();
         halfYearAgo.setMonth(halfYearAgo.getMonth() - 6);
@@ -135,7 +161,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
             id: docSnap.id,
             dipendenteName: data.dipendenteName,
             data: data.data || '',
-            tipo: data.tipo,
+            tipo: mapRequestTipo(data.dipendenteName, docSnap.id, data.tipo),
             stato: data.stato || 'In attesa',
             frazioneTipo: data.frazioneTipo,
             dataInizio: data.dataInizio,
@@ -165,7 +191,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
             id: docSnap.id,
             dipendenteName: data.dipendenteName,
             data: data.data || '',
-            tipo: data.tipo,
+            tipo: mapRequestTipo(data.dipendenteName, docSnap.id, data.tipo),
             stato: data.stato || 'In attesa',
             frazioneTipo: data.frazioneTipo,
             dataInizio: data.dataInizio,
@@ -199,7 +225,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
             id: docSnap.id,
             dipendenteName: data.dipendenteName,
             data: data.data || '',
-            tipo: data.tipo,
+            tipo: mapRequestTipo(data.dipendenteName, docSnap.id, data.tipo),
             stato: data.stato || 'In attesa',
             frazioneTipo: data.frazioneTipo,
             dataInizio: data.dataInizio,
@@ -311,9 +337,9 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       return;
     }
 
-    if (tipoRichiesta === 'permesso' && frazioneTipo === 'orario') {
+    if ((tipoRichiesta === 'permesso' || tipoRichiesta === 'assenza') && frazioneTipo === 'orario') {
       if (!oraInizio || !oraFine) {
-        showToast("Inserisci l'ora di inizio e di fine del permesso.", "warning");
+        showToast("Inserisci l'ora di inizio e di fine dell'assenza.", "warning");
         return;
       }
       if (oraInizio >= oraFine) {
@@ -373,8 +399,8 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
           let hasConflict = false;
           let conflictReason = '';
 
-          const isExistFullDay = ['ferie', 'malattia', 'maternita', 'smart'].includes(exist.tipo) || (exist.tipo === 'permesso' && exist.frazioneTipo === 'giornata');
-          const isNewFullDay = ['ferie', 'malattia', 'maternita', 'smart'].includes(tipoRichiesta) || (tipoRichiesta === 'permesso' && frazioneTipo === 'giornata');
+          const isExistFullDay = ['ferie', 'malattia', 'maternita', 'smart'].includes(exist.tipo) || ((exist.tipo === 'permesso' || exist.tipo === 'assenza') && (exist.frazioneTipo === 'giornata' || !exist.frazioneTipo));
+          const isNewFullDay = ['ferie', 'malattia', 'maternita', 'smart'].includes(tipoRichiesta) || ((tipoRichiesta === 'permesso' || tipoRichiesta === 'assenza') && frazioneTipo === 'giornata');
 
           if (isExistFullDay || isNewFullDay) {
             hasConflict = true;
@@ -421,7 +447,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         payload.dataFine = dataFine;
       }
 
-      if (tipoRichiesta === 'permesso') {
+      if (tipoRichiesta === 'permesso' || tipoRichiesta === 'assenza') {
         payload.frazioneTipo = frazioneTipo;
         if (frazioneTipo === 'orario') {
           payload.oraInizio = oraInizio;
@@ -452,6 +478,39 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
     }
   };
 
+  const cleanAssignmentsForApprovedFullWeekLeave = async (dipName: string, startDateStr: string, endDateStr: string) => {
+    try {
+      if (!startDateStr || !endDateStr) return;
+      const start = new Date(startDateStr);
+      const end = new Date(endDateStr);
+      const curr = new Date(start);
+      
+      const weekIds = new Set<string>();
+      while (curr <= end) {
+        const year = curr.getFullYear();
+        const simple = new Date(year, 0, 4);
+        const dayOfWeek = simple.getDay();
+        const dayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+        const firstMonday = new Date(simple.setDate(simple.getDate() + dayOffset));
+        const diffDays = Math.floor((curr.getTime() - firstMonday.getTime()) / (1000 * 60 * 60 * 24));
+        const weekNum = Math.floor(diffDays / 7) + 1;
+        weekIds.add(`${year}-W${weekNum}`);
+        curr.setDate(curr.getDate() + 1);
+      }
+
+      for (const wkId of weekIds) {
+        const docId = `${dipName}-${wkId}`;
+        try {
+          await deleteDoc(doc(db, 'assegnazioni', docId));
+        } catch (err) {
+          // Documento potrebbe non esistere
+        }
+      }
+    } catch (e) {
+      console.error("Errore pulizia retroattiva assegnazioni:", e);
+    }
+  };
+
   const handleDecision = async (id: string, approva: boolean) => {
     try {
       const req = richieste.find(r => r.id === id);
@@ -462,6 +521,14 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         stato: newStatus
       });
 
+      if (approva) {
+        const startStr = req.dataInizio || req.data;
+        const endStr = req.dataFine || req.data;
+        if (startStr && endStr && (req.tipo === 'ferie' || req.tipo === 'malattia' || req.tipo === 'maternita')) {
+          await cleanAssignmentsForApprovedFullWeekLeave(req.dipendenteName, startStr, endStr);
+        }
+      }
+
       // Invia notifica e-mail al dipendente
       const targetDip = dipendenti.find(d => d.nome === req.dipendenteName);
       if (targetDip && targetDip.email) {
@@ -469,7 +536,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
           ? `dal ${formatDate(req.dataInizio)} al ${formatDate(req.dataFine)}` 
           : `il ${formatDate(req.dataInizio || req.data)}`;
         
-        if (req.tipo === 'permesso') {
+        if (req.tipo === 'permesso' || req.tipo === 'assenza') {
           if (req.frazioneTipo === 'mattina') dateDesc += ' (mattina)';
           else if (req.frazioneTipo === 'pomeriggio') dateDesc += ' (pomeriggio)';
           else if (req.frazioneTipo === 'giornata') dateDesc += ' (giornata intera)';
@@ -485,6 +552,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
           malattia: 'Malattia',
           maternita: 'Maternità',
           permesso: 'Permesso',
+          assenza: 'Assenza',
           smart: 'Lavoro da Casa',
           mattina: 'Assenza Mattina',
           pomeriggio: 'Assenza Pomeriggio'
@@ -525,7 +593,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
           ? `dal ${formatDate(req.dataInizio)} al ${formatDate(req.dataFine)}` 
           : `il ${formatDate(req.dataInizio || req.data)}`;
         
-        if (req.tipo === 'permesso') {
+        if (req.tipo === 'permesso' || req.tipo === 'assenza') {
           if (req.frazioneTipo === 'mattina') dateDesc += ' (mattina)';
           else if (req.frazioneTipo === 'pomeriggio') dateDesc += ' (pomeriggio)';
           else if (req.frazioneTipo === 'giornata') dateDesc += ' (giornata intera)';
@@ -541,6 +609,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
           malattia: 'Malattia',
           maternita: 'Maternità',
           permesso: 'Permesso',
+          assenza: 'Assenza',
           smart: 'Lavoro da Casa',
           mattina: 'Assenza Mattina',
           pomeriggio: 'Assenza Pomeriggio'
@@ -583,12 +652,14 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
     }
   };
 
-  const getTipoData = (tipo: string, frazioneTipo?: string) => {
+  const getTipoData = (tipo: string, frazioneTipo?: string, dipName?: string) => {
+    const isCollab = dipName ? (dipendenti || []).some(d => d.nome && d.nome.toLowerCase().trim() === dipName.toLowerCase().trim() && d.tipo === 'collaboratore') : false;
     const tipi: Record<string, {label: string, color: string}> = {
-      ferie: {label: 'Ferie', color: 'bg-red-500'},
+      ferie: {label: isCollab ? 'Assenza' : 'Ferie', color: 'bg-red-500'},
       malattia: {label: 'Malattia', color: 'bg-purple-600'},
       maternita: {label: 'Maternità', color: 'bg-pink-500'},
-      permesso: {label: 'Permesso', color: 'bg-amber-500'},
+      permesso: {label: isCollab ? 'Assenza' : 'Permesso', color: 'bg-amber-500'},
+      assenza: {label: 'Assenza', color: 'bg-amber-500'},
       smart: {label: 'Lavora da Casa', color: 'bg-blue-500'},
       mattina: {label: 'Assenza Mattina', color: 'bg-amber-500'},
       pomeriggio: {label: 'Assenza Pomeriggio', color: 'bg-amber-500'},
@@ -596,20 +667,21 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       donazione: {label: 'Permesso Donazione', color: 'bg-teal-500'},
       elettorale: {label: 'Permesso Elettorale', color: 'bg-indigo-500'}
     };
-    const base = tipi[tipo] || {label: tipo, color: 'bg-gray-500'};
-    if (tipo === 'permesso' && frazioneTipo) {
+    const base = tipi[tipo] || {label: isCollab ? 'Assenza' : tipo, color: 'bg-gray-500'};
+    if ((tipo === 'permesso' || tipo === 'assenza') && frazioneTipo) {
       const copy = { ...base };
-      if (frazioneTipo === 'mattina') copy.label = 'Permesso Mattina';
-      if (frazioneTipo === 'pomeriggio') copy.label = 'Permesso Pomeriggio';
-      if (frazioneTipo === 'giornata') copy.label = 'Permesso Giornata Intera';
-      if (frazioneTipo === 'orario') copy.label = 'Permesso Orario';
+      const prefix = (isCollab || tipo === 'assenza') ? 'Assenza' : 'Permesso';
+      if (frazioneTipo === 'mattina') copy.label = `${prefix} Mattina`;
+      if (frazioneTipo === 'pomeriggio') copy.label = `${prefix} Pomeriggio`;
+      if (frazioneTipo === 'giornata') copy.label = `${prefix} Giornata Intera`;
+      if (frazioneTipo === 'orario') copy.label = `${prefix} Orario`;
       return copy;
     }
     return base;
   };
 
-  const getTipoLabel = (tipo: string, frazioneTipo?: string) => {
-    const t = getTipoData(tipo, frazioneTipo);
+  const getTipoLabel = (tipo: string, frazioneTipo?: string, dipName?: string) => {
+    const t = getTipoData(tipo, frazioneTipo, dipName);
     return (
       <span className="text-xs sm:text-sm font-bold text-gray-600 bg-gray-100 px-2 py-1 rounded-lg capitalize">
         {t.label}
@@ -1080,7 +1152,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
 
           {/* Mappa delle altre richieste ordinate alfabeticamente */}
           {displayOthers.map(req => {
-            const t = getTipoData(req.tipo, req.frazioneTipo);
+            const t = getTipoData(req.tipo, req.frazioneTipo, req.dipendenteName);
             let bg = 'bg-gray-100 border-gray-200 text-gray-800';
             let dotBg = 'bg-gray-400';
             if(req.stato === 'Approvato') {
@@ -1097,7 +1169,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
             }
 
             let hourSuffix = '';
-            if (req.tipo === 'permesso') {
+            if (req.tipo === 'permesso' || req.tipo === 'assenza') {
               if (req.frazioneTipo === 'mattina') hourSuffix = ' AM';
               else if (req.frazioneTipo === 'pomeriggio') hourSuffix = ' PM';
               else if (req.frazioneTipo === 'giornata') hourSuffix = ' GI';
@@ -1250,20 +1322,33 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                     onChange={e => setTipoRichiesta(e.target.value)}
                     className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900"
                   >
-                    <option value="ferie">Ferie</option>
-                    <option value="permesso">Permesso</option>
-                    <option value="malattia">Malattia</option>
-                    <option value="maternita">Maternità</option>
-                    <option value="smart">Lavora da Casa</option>
-                    <option value="studio">Permesso Studio</option>
-                    <option value="donazione">Permesso Donazione</option>
-                    <option value="elettorale">Permesso Elettorale</option>
+                    {isCollaboratore ? (
+                      <>
+                        <option value="assenza">Assenza</option>
+                        <option value="malattia">Malattia</option>
+                        <option value="maternita">Maternità</option>
+                        <option value="smart">Lavora da Casa</option>
+                      </>
+                    ) : (
+                      <>
+                        <option value="ferie">Ferie</option>
+                        <option value="permesso">Permesso</option>
+                        <option value="malattia">Malattia</option>
+                        <option value="maternita">Maternità</option>
+                        <option value="smart">Lavora da Casa</option>
+                        <option value="studio">Permesso Studio</option>
+                        <option value="donazione">Permesso Donazione</option>
+                        <option value="elettorale">Permesso Elettorale</option>
+                      </>
+                    )}
                   </select>
                 </div>
 
-                {tipoRichiesta === 'permesso' && (
+                {(tipoRichiesta === 'permesso' || tipoRichiesta === 'assenza') && (
                   <div className="bg-white/40 p-4 rounded-2xl border border-green-150 space-y-4 animate-in fade-in duration-200">
-                    <label className="block text-xs font-black text-green-950 uppercase tracking-wider">Frazionamento Permesso</label>
+                    <label className="block text-xs font-black text-green-950 uppercase tracking-wider">
+                      {tipoRichiesta === 'assenza' ? 'Frazionamento Assenza' : 'Frazionamento Permesso'}
+                    </label>
                     <div className="grid grid-cols-2 gap-2.5">
                       {[
                         { value: 'giornata', label: 'Giornata Intera' },
@@ -1381,12 +1466,12 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                       <div className="flex flex-wrap items-center gap-2 sm:gap-4">
                         <span className="text-xs sm:text-sm font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded-lg">
                           {req.dataInizio && req.dataFine && req.dataInizio !== req.dataFine 
-                            ? `Dal ${formatDate(req.dataInizio)} al ${formatDate(req.dataFine)}${req.tipo === 'permesso' && req.oraInizio && req.oraFine ? ` (dalle ${req.oraInizio} alle ${req.oraFine}${req.pausaPranzo && req.pausaPranzoOre ? `, esclusa p. pranzo ${req.pausaPranzoOre.toString().replace('.', ',')}h` : ''})` : ''}`
-                            : req.tipo === 'permesso' && req.oraInizio && req.oraFine
+                            ? `Dal ${formatDate(req.dataInizio)} al ${formatDate(req.dataFine)}${(req.tipo === 'permesso' || req.tipo === 'assenza') && req.oraInizio && req.oraFine ? ` (dalle ${req.oraInizio} alle ${req.oraFine}${req.pausaPranzo && req.pausaPranzoOre ? `, esclusa p. pranzo ${req.pausaPranzoOre.toString().replace('.', ',')}h` : ''})` : ''}`
+                            : (req.tipo === 'permesso' || req.tipo === 'assenza') && req.oraInizio && req.oraFine
                               ? `Il ${formatDate(req.dataInizio || req.data)} dalle ${req.oraInizio} alle ${req.oraFine}${req.pausaPranzo && req.pausaPranzoOre ? ` (esclusa p. pranzo ${req.pausaPranzoOre.toString().replace('.', ',')}h)` : ''}`
                               : `Il ${formatDate(req.dataInizio || req.data)}`}
                         </span>
-                        {getTipoLabel(req.tipo)}
+                        {getTipoLabel(req.tipo, req.frazioneTipo, req.dipendenteName)}
                       </div>
                     </div>
                     
@@ -1475,6 +1560,10 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
 
             <div className="mt-8 flex flex-wrap gap-4 p-4 bg-gray-50 rounded-2xl border border-gray-100 justify-center">
               <div className="text-sm font-bold text-gray-500 mr-2">Legenda Colori:</div>
+              <div className="flex items-center gap-2 text-xs font-bold text-gray-700"><span className="w-3 h-3 rounded-full bg-sky-400 shadow-sm"></span> Ferie (Dipendenti)/Assenza (Collaboratori P.IVA)</div>
+              <div className="flex items-center gap-2 text-xs font-bold text-gray-700"><span className="w-3 h-3 rounded-full bg-amber-400 shadow-sm"></span> Permesso dipendenti/Assenza oraria Collaboratori</div>
+              <div className="flex items-center gap-2 text-xs font-bold text-gray-700"><span className="w-3 h-3 rounded-full bg-red-400 shadow-sm"></span> Malattia/Maternità</div>
+              <div className="flex items-center gap-2 text-xs font-bold text-gray-700"><span className="w-3 h-3 rounded-full bg-lime-500 shadow-sm"></span> Lavoro da Casa</div>
               <div className="flex items-center gap-2 text-xs font-bold text-gray-700"><span className="w-3 h-3 rounded-full bg-yellow-300 shadow-sm"></span> In attesa</div>
               <div className="flex items-center gap-2 text-xs font-bold text-gray-700"><span className="w-3 h-3 rounded-full bg-green-400 shadow-sm"></span> Approvato</div>
             </div>
@@ -1567,18 +1656,19 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                               const isApproved = req.stato === 'Approvato';
                               const isRejected = req.stato === 'Rifiutato';
 
-                              titleStr += `\nStato: ${req.stato}\nTipo: ${getTipoData(req.tipo, req.frazioneTipo).label}`;
-                              if (req.tipo === 'permesso' && req.oraInizio && req.oraFine && req.frazioneTipo !== 'mattina' && req.frazioneTipo !== 'pomeriggio' && req.frazioneTipo !== 'giornata') {
+                              titleStr += `\nStato: ${req.stato}\nTipo: ${getTipoData(req.tipo, req.frazioneTipo, dip.nome).label}`;
+                              if ((req.tipo === 'permesso' || req.tipo === 'assenza') && req.oraInizio && req.oraFine && req.frazioneTipo !== 'mattina' && req.frazioneTipo !== 'pomeriggio' && req.frazioneTipo !== 'giornata') {
                                 titleStr += `\nOrario: dalle ${req.oraInizio} alle ${req.oraFine}${req.pausaPranzo && req.pausaPranzoOre ? ` (esclusa p. pranzo ${req.pausaPranzoOre.toString().replace('.', ',')}h)` : ''}`;
                               }
                               if (req.note) titleStr += `\nNote: ${req.note}`;
 
                               if (isRejected) {
                                 cellBg = 'bg-red-50 border-red-200 text-red-800/60 line-through opacity-50';
-                              } else if (req.tipo === 'ferie') {
+                              } else if (req.tipo === 'ferie' || (req.tipo === 'assenza' && (!req.frazioneTipo || req.frazioneTipo === 'giornata'))) {
                                 cellBg = isApproved 
                                   ? 'bg-sky-500 hover:bg-sky-600 border-sky-600 text-white font-extrabold shadow-sm' 
                                   : 'bg-yellow-50 border-yellow-250 text-yellow-750 opacity-60';
+                                cellText = '';
                               } else if (['malattia', 'maternita'].includes(req.tipo)) {
                                 cellBg = isApproved 
                                   ? 'bg-red-500 hover:bg-red-600 border-red-600 text-white font-extrabold shadow-sm' 
@@ -1588,7 +1678,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                                 cellBg = isApproved 
                                   ? 'bg-emerald-500 hover:bg-emerald-600 border-emerald-600 text-white font-extrabold shadow-sm' 
                                   : 'bg-yellow-50 border-yellow-250 text-yellow-750 opacity-60';
-                              } else if (['mattina', 'pomeriggio', 'permesso'].includes(req.tipo)) {
+                              } else if (['mattina', 'pomeriggio', 'permesso', 'assenza'].includes(req.tipo)) {
                                 cellBg = isApproved 
                                   ? 'bg-amber-400 hover:bg-amber-500 border-amber-500 text-amber-950 font-extrabold shadow-sm' 
                                   : 'bg-yellow-50 border-yellow-250 text-yellow-750 opacity-60';
@@ -1609,7 +1699,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                                   }
                                   cellText = `${hrs.toString().replace('.', ',')}h`;
                                 } else {
-                                  cellText = 'P';
+                                  cellText = '';
                                 }
                               } else if (req.tipo === 'studio') {
                                 cellBg = isApproved 
@@ -1660,13 +1750,13 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
             <div className="mt-6 flex flex-wrap gap-4 p-5 bg-gray-50 rounded-2xl border border-gray-100 justify-center">
               <div className="text-xs font-bold text-gray-500 mr-2 self-center">Legenda Colori (Approvati):</div>
               <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
-                <span className="w-6 h-4 rounded border border-sky-600 bg-sky-500"></span> Ferie
+                <span className="w-6 h-4 rounded border border-sky-600 bg-sky-500"></span> Ferie (Dipendenti)/Assenza (Collaboratori P.IVA)
+              </div>
+              <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
+                <span className="w-6 h-4 rounded border border-amber-500 bg-amber-400"></span> Permesso dipendenti/Assenza oraria Collaboratori
               </div>
               <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
                 <span className="w-6 h-4 rounded border border-red-600 bg-red-500 flex items-center justify-center text-[10px] font-black text-white">M</span> Malattia/Maternità
-              </div>
-              <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
-                <span className="w-6 h-4 rounded border border-amber-500 bg-amber-400"></span> Permesso (AM: Mattina - PM: Pomeriggio - GI: Giornata Intera)
               </div>
               <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
                 <span className="w-6 h-4 rounded border border-emerald-600 bg-emerald-500"></span> Lavoro da casa

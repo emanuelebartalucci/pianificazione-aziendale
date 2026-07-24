@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, addDoc, doc, setDoc, deleteDoc, onSnapshot, updateDoc } from 'firebase/firestore';
@@ -270,9 +270,7 @@ export default function Impostazioni() {
   // Liste dinamiche da visualizzare (caricate da context o listener locali per eliminazione)
   const [adminsList, setAdminsList] = useState<{id: string, email: string}[]>([]);
   const [newPmEmail, setNewPmEmail] = useState('');
-  const [newCommercialeEmail, setNewCommercialeEmail] = useState('');
   const [pmsList, setPmsList] = useState<{id: string, email: string}[]>([]);
-  const [commercialiList, setCommercialiList] = useState<{id: string, email: string}[]>([]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -290,10 +288,7 @@ export default function Impostazioni() {
     const unsubPM = onSnapshot(collection(db, 'project_managers'), (snap) => {
       setPmsList(snap.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
     });
-    const unsubComm = onSnapshot(collection(db, 'commerciali'), (snap) => {
-      setCommercialiList(snap.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
-    });
-    return () => { unsubA(); unsubH(); unsubC(); unsubPM(); unsubComm(); };
+    return () => { unsubA(); unsubH(); unsubC(); unsubPM(); };
   }, [isAdmin]);
 
   if (!isAuthorized) {
@@ -609,37 +604,7 @@ export default function Impostazioni() {
     );
   };
 
-  const handleAddCommerciale = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if(newCommercialeEmail) {
-      if (commercialiList.some(c => c.email.toLowerCase() === newCommercialeEmail.toLowerCase())) {
-        showToast("Questo dipendente è già un Commerciale.", "warning");
-        return;
-      }
-      await addDoc(collection(db, 'commerciali'), { email: newCommercialeEmail.toLowerCase() });
-      await refreshData();
-      setNewCommercialeEmail('');
-      showToast("Commerciale nominato con successo!", "success");
-    }
-  };
 
-  const handleRemoveCommerciale = async (id: string) => {
-    triggerConfirm(
-      "Rimuovi Commerciale",
-      "Sei sicuro di voler revocare la nomina di questo Commerciale?",
-      async () => {
-        try {
-          await deleteDoc(doc(db, 'commerciali', id));
-          await refreshData();
-          showToast("Nomina Commerciale revocata con successo!", "success");
-        } catch (err) {
-          console.error("Errore rimozione Commerciale:", err);
-          showToast("Errore durante la revoca.", "error");
-        }
-      },
-      'danger'
-    );
-  };
 
   const handleRemoveDipendente = (id: string) => {
     const target = dipendenti.find(d => d.id === id);
@@ -910,6 +875,59 @@ export default function Impostazioni() {
     const dip = dipendenti.find(d => d.email?.toLowerCase() === email.toLowerCase());
     return dip ? dip.nome : email;
   };
+
+  const sortedDipendentiWithEmail = useMemo(() => {
+    return [...(dipendenti || [])]
+      .filter(d => d && d.email)
+      .sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'it'));
+  }, [dipendenti]);
+
+  const sortedAdminsList = useMemo(() => {
+    const superAdmins = ['aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it'].map(email => ({
+      id: email,
+      email,
+      name: getDipNomeFromEmail(email),
+      isSuperAdmin: true
+    }));
+
+    const dynamicAdmins = adminsList
+      .filter(a => a.email.toLowerCase() !== 'aprofeti@ingegno06.it' && a.email.toLowerCase() !== 'mcorbellini@ingegno06.it')
+      .map(a => ({
+        id: a.id,
+        email: a.email,
+        name: getDipNomeFromEmail(a.email),
+        isSuperAdmin: false
+      }));
+
+    return [...superAdmins, ...dynamicAdmins].sort((a, b) => a.name.localeCompare(b.name, 'it'));
+  }, [adminsList, dipendenti]);
+
+  const sortedHRList = useMemo(() => {
+    return hrList
+      .map(h => ({
+        id: h.id,
+        email: h.email,
+        name: getDipNomeFromEmail(h.email)
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'it'));
+  }, [hrList, dipendenti]);
+
+  const sortedPMsList = useMemo(() => {
+    return pmsList
+      .map((p: any) => ({
+        id: p.id,
+        email: p.email,
+        name: getDipNomeFromEmail(p.email)
+      }))
+      .sort((a: any, b: any) => a.name.localeCompare(b.name, 'it'));
+  }, [pmsList, dipendenti]);
+
+  const maxCoordinatorsCount = useMemo(() => {
+    const counts = (['Disegnatori', 'Ingegneria', 'Sicurezza Cantieri', 'Consulenza Sicurezza', 'Amministrazione'] as const).map(
+      areaName => (coordinatori || []).filter((c: any) => c.area === areaName).length
+    );
+    return Math.max(1, ...counts);
+  }, [coordinatori]);
 
   return (
     <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl p-6 sm:p-10 border border-white/50 no-print">
@@ -1253,41 +1271,27 @@ export default function Impostazioni() {
                   <form onSubmit={handleAddAdmin} className="flex gap-2 mb-4">
                     <select required value={newAdminEmail} onChange={e => setNewAdminEmail(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-red-400 transition shadow-inner font-medium text-red-900 text-xs">
                       <option value="">Seleziona dipendente</option>
-                      {dipendenti.filter(d => d.email).map(d => <option key={d.id} value={d.email}>{d.nome}</option>)}
+                      {sortedDipendentiWithEmail.map((d: any) => <option key={d.id} value={d.email}>{d.nome}</option>)}
                     </select>
                     <button type="submit" className="bg-red-600 text-white px-4 py-3 rounded-xl hover:bg-red-700 transition font-bold shadow-md active:scale-95 text-xs cursor-pointer">Aggiungi</button>
                   </form>
                 </div>
                 <div className="h-48 overflow-y-auto bg-white/50 rounded-xl divide-y border border-red-100">
-                  {/* Mostra sempre i Super Admin (hardcoded) */}
-                  {['aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it'].map(email => {
-                    const name = getDipNomeFromEmail(email);
-                    return (
-                      <div key={email} className="p-3 flex justify-between items-center text-sm">
-                        <div>
-                          <div className="font-bold text-red-900">{name}</div>
-                          <div className="text-xs text-red-700/70">{email}</div>
-                        </div>
+                  {sortedAdminsList.map((a: any) => (
+                    <div key={a.id} className="p-3 flex justify-between items-center text-sm">
+                      <div>
+                        <div className="font-bold text-red-900">{a.name}</div>
+                        <div className="text-xs text-red-700/70">{a.email}</div>
+                      </div>
+                      {a.isSuperAdmin ? (
                         <span className="p-1" title="Super Admin non eliminabile">
                           <Trash2 className="w-4 h-4 text-gray-300 cursor-not-allowed"/>
                         </span>
-                      </div>
-                    );
-                  })}
-                  
-                  {/* Mostra gli Admin dinamici dal database */}
-                  {adminsList.filter(a => a.email.toLowerCase() !== 'aprofeti@ingegno06.it' && a.email.toLowerCase() !== 'mcorbellini@ingegno06.it').map(a => {
-                    const name = getDipNomeFromEmail(a.email);
-                    return (
-                      <div key={a.id} className="p-3 flex justify-between items-center text-sm">
-                        <div>
-                          <div className="font-bold text-red-900">{name}</div>
-                          <div className="text-xs text-red-700/70">{a.email}</div>
-                        </div>
+                      ) : (
                         <button onClick={() => handleRemoveAdmin(a.id)} className="text-red-400 hover:text-red-600 p-1 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
-                      </div>
-                    );
-                  })}
+                      )}
+                    </div>
+                  ))}
                 </div>
               </section>
 
@@ -1299,24 +1303,21 @@ export default function Impostazioni() {
                   <form onSubmit={handleAddHR} className="flex gap-2 mb-4">
                     <select required value={newHrEmail} onChange={e => setNewHrEmail(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-fuchsia-400 transition shadow-inner font-medium text-fuchsia-900 text-xs">
                       <option value="">Seleziona dipendente</option>
-                      {dipendenti.filter(d => d.email).map(d => <option key={d.id} value={d.email}>{d.nome}</option>)}
+                      {sortedDipendentiWithEmail.map((d: any) => <option key={d.id} value={d.email}>{d.nome}</option>)}
                     </select>
                     <button type="submit" className="bg-fuchsia-600 text-white px-4 py-3 rounded-xl hover:bg-fuchsia-700 transition font-bold shadow-md active:scale-95 text-xs cursor-pointer">Nomina</button>
                   </form>
                 </div>
                 <div className="h-48 overflow-y-auto bg-white/50 rounded-xl divide-y border border-fuchsia-100">
-                  {hrList.map(h => {
-                    const name = getDipNomeFromEmail(h.email);
-                    return (
-                      <div key={h.id} className="p-3 flex justify-between items-center text-sm">
-                        <div>
-                          <div className="font-bold text-fuchsia-900">{name}</div>
-                          <div className="text-xs text-fuchsia-700/70">{h.email}</div>
-                        </div>
-                        <button onClick={() => handleRemoveHR(h.id)} className="text-fuchsia-400 hover:text-fuchsia-600 p-1 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
+                  {sortedHRList.map((h: any) => (
+                    <div key={h.id} className="p-3 flex justify-between items-center text-sm">
+                      <div>
+                        <div className="font-bold text-fuchsia-900">{h.name}</div>
+                        <div className="text-xs text-fuchsia-700/70">{h.email}</div>
                       </div>
-                    );
-                  })}
+                      <button onClick={() => handleRemoveHR(h.id)} className="text-fuchsia-400 hover:text-fuchsia-600 p-1 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
+                    </div>
+                  ))}
                 </div>
               </section>
 
@@ -1330,27 +1331,24 @@ export default function Impostazioni() {
                   <form onSubmit={handleAddPM} className="flex gap-2 mb-4">
                     <select required value={newPmEmail} onChange={e => setNewPmEmail(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-blue-400 transition shadow-inner font-medium text-blue-900 text-xs">
                       <option value="">Seleziona dipendente</option>
-                      {dipendenti.filter(d => d.email).map(d => <option key={d.id} value={d.email}>{d.nome}</option>)}
+                      {sortedDipendentiWithEmail.map((d: any) => <option key={d.id} value={d.email}>{d.nome}</option>)}
                     </select>
                     <button type="submit" className="bg-blue-600 text-white px-4 py-3 rounded-xl hover:bg-blue-700 transition font-bold shadow-md active:scale-95 text-xs cursor-pointer">Nomina</button>
                   </form>
                 </div>
                 <div className="h-48 overflow-y-auto bg-white/50 rounded-xl divide-y border border-blue-100">
-                  {pmsList.length === 0 ? (
+                  {sortedPMsList.length === 0 ? (
                     <p className="p-4 text-xs text-gray-400 italic font-bold">Nessun PM nominato.</p>
                   ) : (
-                    pmsList.map(p => {
-                      const name = getDipNomeFromEmail(p.email);
-                      return (
-                        <div key={p.id} className="p-3 flex justify-between items-center text-sm">
-                          <div>
-                            <div className="font-bold text-blue-900">{name}</div>
-                            <div className="text-xs text-blue-700/70">{p.email}</div>
-                          </div>
-                          <button onClick={() => handleRemovePM(p.id)} className="text-blue-405 hover:text-red-655 p-1 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
+                    sortedPMsList.map((p: any) => (
+                      <div key={p.id} className="p-3 flex justify-between items-center text-sm">
+                        <div>
+                          <div className="font-bold text-blue-900">{p.name}</div>
+                          <div className="text-xs text-blue-700/70">{p.email}</div>
                         </div>
-                      );
-                    })
+                        <button onClick={() => handleRemovePM(p.id)} className="text-blue-405 hover:text-red-655 p-1 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
+                      </div>
+                    ))
                   )}
                 </div>
               </section>
@@ -1366,106 +1364,117 @@ export default function Impostazioni() {
                 Visualizza e sposta i dipendenti e collaboratori tra le diverse macro aree funzionali.
               </p>
               
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 h-[650px]">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 items-stretch">
                 {(['Disegnatori', 'Ingegneria', 'Sicurezza Cantieri', 'Consulenza Sicurezza', 'Amministrazione'] as const).map(areaName => {
-                  const areaMembers = dipendenti.filter(d => d.macroArea === areaName && !isSoci(d.nome) && !coordinatori.some(c => c.email.toLowerCase() === d.email.toLowerCase() && c.area === areaName));
-                  const areaCoordinators = coordinatori.filter(c => c.area === areaName);
+                  const areaMembers = dipendenti
+                    .filter(d => d.macroArea === areaName && !isSoci(d.nome) && !coordinatori.some(c => c.email.toLowerCase() === d.email.toLowerCase() && c.area === areaName))
+                    .sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'it'));
+                  const areaCoordinators = coordinatori
+                    .filter(c => c.area === areaName)
+                    .sort((a, b) => getDipNomeFromEmail(a.email).localeCompare(getDipNomeFromEmail(b.email), 'it'));
                   
                   return (
                     <div key={areaName} className="bg-white p-4 rounded-2xl border border-indigo-100 shadow-sm flex flex-col h-full overflow-hidden">
-                      <h4 className="font-extrabold text-sm text-indigo-955 border-b pb-2 mb-3 uppercase tracking-wider flex justify-between items-center shrink-0">
-                        <span>{areaName}</span>
-                        <span className="bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full text-[10px] font-bold">
+                      <h4 className="font-extrabold text-sm text-indigo-955 border-b pb-2 mb-3 uppercase tracking-wider flex justify-between items-center shrink-0 min-h-[44px]">
+                        <span className="leading-tight pr-1">{areaName}</span>
+                        <span className="bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0">
                           {areaMembers.length + areaCoordinators.length}
                         </span>
                       </h4>
                       
-                      {/* Coordinatori di quest'area */}
-                      {areaCoordinators.length > 0 && (
-                        <div className="mb-4 space-y-1.5 border-b pb-3 no-print shrink-0">
-                          <div className="text-[10px] font-black text-teal-800 uppercase tracking-wide flex items-center gap-1 select-none">
-                            👑 Coordinatori ({areaCoordinators.length})
-                          </div>
-                          {areaCoordinators.map(c => {
-                            const name = getDipNomeFromEmail(c.email);
-                            const m = dipendenti.find(d => d.email?.toLowerCase() === c.email?.toLowerCase());
-                            if (!m) return null;
-                            const isEditing = editingEmployeeAreaId === m.id;
-                            
-                            return (
-                              <div key={c.id} className="p-2 bg-gradient-to-r from-teal-50 to-emerald-50 rounded-xl border border-teal-200 flex items-center justify-between text-xs min-h-[38px] gap-2">
-                                {isEditing ? (
-                                  <div className="flex flex-col gap-1.5 w-full">
-                                    <div className="flex items-center gap-1.5 w-full">
-                                      <select
-                                        autoFocus
-                                        value={m.macroArea || ''}
-                                        onChange={async (e) => {
-                                          const newArea = e.target.value;
-                                          // Rimuoviamo il coordinatore dall'area corrente
-                                          await deleteDoc(doc(db, 'coordinatori', c.id));
-                                          // Se l'utente imposta una nuova area, aggiorniamo la macroarea del dipendente
-                                          await handleUpdateMacroArea(m.id, newArea);
-                                          setEditingEmployeeAreaId(null);
-                                        }}
-                                        className="flex-1 p-1 border border-teal-300 rounded-lg bg-white text-[11px] font-bold text-gray-700 outline-none focus:border-teal-500"
-                                      >
-                                        <option value="">Nessuna Area (Rimuovi)</option>
-                                        <option value="Disegnatori">Disegnatori</option>
-                                        <option value="Ingegneria">Ingegneria</option>
-                                        <option value="Sicurezza Cantieri">Sicurezza Cantieri</option>
-                                        <option value="Consulenza Sicurezza">Consulenza Sicurezza</option>
-                                        <option value="Amministrazione">Amministrazione</option>
-                                      </select>
-                                      
-                                      <button
-                                        type="button"
-                                        onClick={() => setEditingEmployeeAreaId(null)}
-                                        className="text-gray-455 hover:text-gray-655 p-1 bg-white hover:bg-gray-50 rounded-lg border border-gray-150 transition-all shrink-0 cursor-pointer"
-                                      >
-                                        <X className="w-3.5 h-3.5" />
-                                      </button>
-                                    </div>
-                                    
-                                    <label className="flex items-center gap-1.5 text-[9px] font-bold text-gray-755 bg-white px-1.5 py-1 rounded-lg border border-gray-200 cursor-pointer w-fit select-none">
-                                      <input
-                                        type="checkbox"
-                                        checked={true}
-                                        onChange={async (e) => {
-                                          if (!e.target.checked) {
-                                            // Rimuoviamo coordinatore
-                                            await deleteDoc(doc(db, 'coordinatori', c.id));
-                                            await refreshData();
-                                            setEditingEmployeeAreaId(null);
-                                          }
-                                        }}
-                                        className="w-3 h-3 text-teal-650 rounded border-gray-300 cursor-pointer"
-                                      />
-                                      <span>Coordinatore</span>
-                                    </label>
-                                  </div>
-                                ) : (
-                                  <>
-                                    <div className="truncate pr-2">
-                                      <div className="font-extrabold text-teal-950 truncate" title={name}>{name}</div>
-                                      <div className="text-[9px] text-teal-700/80 truncate" title={c.email}>{c.email}</div>
-                                    </div>
-                                    <button 
-                                      onClick={() => setEditingEmployeeAreaId(m.id)} 
-                                      className="text-teal-600 hover:text-teal-850 p-1 bg-white hover:bg-teal-50 rounded-lg border border-teal-200 hover:border-teal-350 transition-all shrink-0 cursor-pointer font-bold"
-                                      title="Modifica ruolo/area"
-                                    >
-                                      <Pencil className="w-3.5 h-3.5"/>
-                                    </button>
-                                  </>
-                                )}
-                              </div>
-                            );
-                          })}
+                      {/* Coordinatori di quest'area con altezza dinamica perfettamente uniforme */}
+                      <div className="mb-4 space-y-1.5 border-b pb-3 no-print shrink-0 flex flex-col justify-start">
+                        <div className="text-[10px] font-black text-teal-800 uppercase tracking-wide flex items-center gap-1 select-none">
+                          👑 Coordinatori ({areaCoordinators.length})
                         </div>
-                      )}
+                        {areaCoordinators.map((c: any) => {
+                          const name = getDipNomeFromEmail(c.email);
+                          const m = dipendenti.find((d: any) => d.email?.toLowerCase() === c.email?.toLowerCase());
+                          if (!m) return null;
+                          const isEditing = editingEmployeeAreaId === m.id;
+                          
+                          return (
+                            <div key={c.id} className="p-2 bg-gradient-to-r from-teal-50 to-emerald-50 rounded-xl border border-teal-200 flex items-center justify-between text-xs gap-2">
+                              {isEditing ? (
+                                <div className="flex flex-col gap-1.5 w-full">
+                                  <div className="flex items-center gap-1.5 w-full">
+                                    <select
+                                      autoFocus
+                                      value={m.macroArea || ''}
+                                      onChange={async (e) => {
+                                        const newArea = e.target.value;
+                                        // Rimuoviamo il coordinatore dall'area corrente
+                                        await deleteDoc(doc(db, 'coordinatori', c.id));
+                                        // Se l'utente imposta una nuova area, aggiorniamo la macroarea del dipendente
+                                        await handleUpdateMacroArea(m.id, newArea);
+                                        setEditingEmployeeAreaId(null);
+                                      }}
+                                      className="flex-1 p-1 border border-teal-300 rounded-lg bg-white text-[11px] font-bold text-gray-700 outline-none focus:border-teal-500"
+                                    >
+                                      <option value="">Nessuna Area (Rimuovi)</option>
+                                      <option value="Disegnatori">Disegnatori</option>
+                                      <option value="Ingegneria">Ingegneria</option>
+                                      <option value="Sicurezza Cantieri">Sicurezza Cantieri</option>
+                                      <option value="Consulenza Sicurezza">Consulenza Sicurezza</option>
+                                      <option value="Amministrazione">Amministrazione</option>
+                                    </select>
+                                    
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingEmployeeAreaId(null)}
+                                      className="text-gray-455 hover:text-gray-655 p-1 bg-white hover:bg-gray-50 rounded-lg border border-gray-150 transition-all shrink-0 cursor-pointer"
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                  
+                                  <label className="flex items-center gap-1.5 text-[9px] font-bold text-gray-755 bg-white px-1.5 py-1 rounded-lg border border-gray-200 cursor-pointer w-fit select-none">
+                                    <input
+                                      type="checkbox"
+                                      checked={true}
+                                      onChange={async (e) => {
+                                        if (!e.target.checked) {
+                                          // Rimuoviamo coordinatore
+                                          await deleteDoc(doc(db, 'coordinatori', c.id));
+                                          await refreshData();
+                                          setEditingEmployeeAreaId(null);
+                                        }
+                                      }}
+                                      className="w-3 h-3 text-teal-650 rounded border-gray-300 cursor-pointer"
+                                    />
+                                    <span>Coordinatore</span>
+                                  </label>
+                                </div>
+                              ) : (
+                                <>
+                                  <div className="truncate pr-2">
+                                    <div className="font-extrabold text-teal-950 truncate" title={name}>{name}</div>
+                                    <div className="text-[9px] text-teal-700/80 truncate" title={c.email}>{c.email}</div>
+                                  </div>
+                                  <button 
+                                    onClick={() => setEditingEmployeeAreaId(m.id)} 
+                                    className="text-teal-600 hover:text-teal-850 p-1 bg-white hover:bg-teal-50 rounded-lg border border-teal-200 hover:border-teal-350 transition-all shrink-0 cursor-pointer font-bold"
+                                    title="Modifica ruolo/area"
+                                  >
+                                    <Pencil className="w-3.5 h-3.5"/>
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          );
+                        })}
+                        {Array.from({ length: Math.max(0, maxCoordinatorsCount - areaCoordinators.length) }).map((_, idx) => (
+                          <div key={`empty-coord-spacer-${idx}`} className="p-2 border border-transparent flex items-center justify-between text-xs opacity-0 pointer-events-none select-none" aria-hidden="true">
+                            <div className="truncate pr-2">
+                              <div className="font-extrabold text-transparent">Placeholder</div>
+                              <div className="text-[9px] text-transparent">placeholder@email.it</div>
+                            </div>
+                            <div className="w-5 h-5" />
+                          </div>
+                        ))}
+                      </div>
                       
-                      <div className="space-y-2 overflow-y-auto pr-1 scrollbar-thin flex-1">
+                      <div className="space-y-2 flex-1">
                           {areaMembers.length === 0 ? (
                             <p className="text-xs text-gray-400 italic">Nessun membro assegnato.</p>
                           ) : (
