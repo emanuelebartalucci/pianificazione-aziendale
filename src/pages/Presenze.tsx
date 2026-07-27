@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, doc, setDoc, getDocs, query, where, addDoc, updateDoc, getDoc } from 'firebase/firestore';
-import { FileText, Printer, Save, Send, CheckCircle, AlertCircle, Edit, MessageSquare, Clock, MapPin, Check, X, ShieldAlert, Download, RefreshCw } from 'lucide-react';
+import { collection, doc, setDoc, getDocs, query, where, addDoc, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
+import { FileText, Printer, Save, Send, CheckCircle, AlertCircle, Edit, Edit3, Trash2, MessageSquare, Clock, MapPin, Check, X, ShieldAlert, Download, RefreshCw } from 'lucide-react';
 import { queueMail } from '../utils/mailSender';
 import ConfirmModal from '../components/ConfirmModal';
 import { isItalianHoliday, isWeekend as isWeekendGlobal } from '../utils/date';
@@ -284,6 +284,13 @@ export default function Presenze() {
   const [directAuthMotivo, setDirectAuthMotivo] = useState('');
   const [directAuthLoading, setDirectAuthLoading] = useState(false);
 
+  // Modifica / Annullamento richieste weekend dipendenti
+  const [modifyingWeekendReq, setModifyingWeekendReq] = useState<any | null>(null);
+  const [modWeekendTipo, setModWeekendTipo] = useState<'annullamento' | 'modifica'>('annullamento');
+  const [modWeekendNuovaData, setModWeekendNuovaData] = useState('');
+  const [modWeekendMotivo, setModWeekendMotivo] = useState('');
+  const [modWeekendLoading, setModWeekendLoading] = useState(false);
+
   // Stati per badge notifica globali (solo per HR e non Admin)
   const [globalPendingInviatiCount, setGlobalPendingInviatiCount] = useState(0);
   const [globalPendingWeekendCount, setGlobalPendingWeekendCount] = useState(0);
@@ -354,6 +361,12 @@ export default function Presenze() {
     const isHoliday = isItalianHoliday(dateStr);
 
     if (isWk || isHoliday) {
+      if (approvedWeekends[dateStr]) {
+        return {
+          className: "text-emerald-950 font-black",
+          style: { background: 'linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%)' }
+        };
+      }
       return {
         className: "text-gray-500",
         style: { background: 'linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%)' }
@@ -702,9 +715,21 @@ export default function Presenze() {
           }
         }
 
+        const sixtyDaysAgo = new Date();
+        sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+        const sixtyDaysAgoIso = `${sixtyDaysAgo.getFullYear()}-${String(sixtyDaysAgo.getMonth() + 1).padStart(2, '0')}-${String(sixtyDaysAgo.getDate()).padStart(2, '0')}`;
+
         const listWk: any[] = [];
         wkSnap.forEach(docSnap => {
-          listWk.push({ id: docSnap.id, ...docSnap.data() });
+          const data = docSnap.data();
+          const reqDate = data.data || '';
+          if (data.stato === 'Annullato' || data.stato === 'annullato' || data.stato === 'Annullata' || data.stato === 'Revocato' || data.stato === 'revocato' || data.stato === 'Rifiutato' || data.stato === 'rifiutato') {
+            deleteDoc(doc(db, 'richieste_weekend', docSnap.id)).catch(() => {});
+            return;
+          }
+          if (!reqDate || reqDate >= sixtyDaysAgoIso) {
+            listWk.push({ id: docSnap.id, ...data });
+          }
         });
         setAllWeekendRequests(listWk.sort((a, b) => b.timestamp?.localeCompare(a.timestamp || '') || b.data.localeCompare(a.data)));
 
@@ -722,7 +747,8 @@ export default function Presenze() {
         setLoadingHR(false);
       }
 
-      if (viewMode === 'compila' && myAssociatedName) {
+      const targetEmpName = reviewingRapportino ? reviewingRapportino.dipendenteNome : myAssociatedName;
+      if ((viewMode === 'compila' && myAssociatedName) || reviewingRapportino) {
         setLoadingSheet(true);
         
         const startOfYear = `${selectedYear}-01-01`;
@@ -731,17 +757,17 @@ export default function Presenze() {
         const [leavesSnap, docSnap, wkAppSnap, wkAllSnap] = await Promise.all([
           getDocs(query(
             collection(db, 'richieste_ferie'),
-            where('dipendenteName', '==', myAssociatedName)
+            where('dipendenteName', '==', targetEmpName)
           )).catch(err => {
             console.error("Errore query ferie:", err);
             return null;
           }),
-          getDoc(doc(db, 'presenze', `${myAssociatedName}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`)),
-          getDocs(query(collection(db, 'richieste_weekend'), where('dipendenteName', '==', myAssociatedName), where('stato', '==', 'Approvato'))).catch(err => {
+          getDoc(doc(db, 'presenze', `${targetEmpName}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`)),
+          getDocs(query(collection(db, 'richieste_weekend'), where('dipendenteName', '==', targetEmpName), where('stato', '==', 'Approvato'))).catch(err => {
             console.error("Errore query weekend approvati:", err);
             return null;
           }),
-          getDocs(query(collection(db, 'richieste_weekend'), where('dipendenteName', '==', myAssociatedName))).catch(err => {
+          getDocs(query(collection(db, 'richieste_weekend'), where('dipendenteName', '==', targetEmpName))).catch(err => {
             console.error("Errore query all weekend:", err);
             return null;
           })
@@ -792,18 +818,29 @@ export default function Presenze() {
 
         const myWkList: any[] = [];
         if (wkAllSnap) {
+          const sixtyDaysAgo = new Date();
+          sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+          const sixtyDaysAgoIso = `${sixtyDaysAgo.getFullYear()}-${String(sixtyDaysAgo.getMonth() + 1).padStart(2, '0')}-${String(sixtyDaysAgo.getDate()).padStart(2, '0')}`;
+
           wkAllSnap.forEach(docSnap => {
-            myWkList.push({ id: docSnap.id, ...docSnap.data() });
+            const data = docSnap.data();
+            const reqDate = data.data || '';
+            if (data.stato === 'Annullato' || data.stato === 'annullato' || data.stato === 'Annullata' || data.stato === 'Revocato' || data.stato === 'revocato' || data.stato === 'Rifiutato' || data.stato === 'rifiutato') {
+              return;
+            }
+            if (!reqDate || reqDate >= sixtyDaysAgoIso) {
+              myWkList.push({ id: docSnap.id, ...data });
+            }
           });
         }
         setMyWeekendRequests(myWkList.sort((a, b) => b.data.localeCompare(a.data)));
 
         if (docSnap.exists()) {
           const data = docSnap.data() as RapportinoPresenze;
-          const isCollab = isCollaboratore(myAssociatedName, dipendenti);
+          const isCollab = isCollaboratore(targetEmpName, dipendenti);
           
-          if (isCollab && !data.collaboratoreData) {
-            const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === myAssociatedName.trim().toLowerCase());
+          if (isCollab && !data.collaboratoreData && targetEmpName) {
+            const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === targetEmpName.trim().toLowerCase());
             const dailyRate = profile?.dailyRate ?? 0;
             const inpsRate = profile?.inpsRate ?? 0;
             const ivaRate = profile?.ivaRate ?? 0;
@@ -832,8 +869,8 @@ export default function Presenze() {
               },
               profile?.oreContratto ?? 8
             );
-          } else if (isCollab && data.collaboratoreData) {
-            const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === myAssociatedName.trim().toLowerCase());
+          } else if (isCollab && data.collaboratoreData && targetEmpName) {
+            const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === targetEmpName.trim().toLowerCase());
             if (profile) {
               const updatedData = { ...data.collaboratoreData };
               if ((!updatedData.dailyRate || updatedData.dailyRate === 0) && profile.dailyRate) {
@@ -879,9 +916,9 @@ export default function Presenze() {
           }
 
           let finalData = { ...data, id: docSnap.id } as RapportinoPresenze;
-          if (finalData.stato === 'Bozza' || finalData.stato === 'Richiede Modifica') {
+          if ((finalData.stato === 'Bozza' || finalData.stato === 'Richiede Modifica') && targetEmpName) {
             try {
-              const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === myAssociatedName.trim().toLowerCase());
+              const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === targetEmpName.trim().toLowerCase());
               const contractHours = profile?.oreContratto ?? 8;
               const updatedGiorni = { ...finalData.giorni };
               let hasChanges = false;
@@ -1457,6 +1494,13 @@ export default function Presenze() {
       return;
     }
 
+    const todayObj = new Date();
+    const todayStr = `${todayObj.getFullYear()}-${String(todayObj.getMonth() + 1).padStart(2, '0')}-${String(todayObj.getDate()).padStart(2, '0')}`;
+    if (reqWeekendData <= todayStr) {
+      showToast("Le richieste di autorizzazione per lavoro festivo/straordinario devono essere inviate con almeno 1 giorno di anticipo (entro la mezzanotte del giorno precedente).", "warning");
+      return;
+    }
+
     setReqWeekendLoading(true);
     try {
       await addDoc(collection(db, 'richieste_weekend'), {
@@ -1479,15 +1523,26 @@ export default function Presenze() {
     }
   };
 
-  const handleWeekendDecision = async (id: string, approva: boolean) => {
+  const handleWeekendDecision = async (id: string, action: 'Approvato' | 'Rifiutato' | 'Revocato' | 'Annullato') => {
     try {
       const req = allWeekendRequests.find(r => r.id === id);
       if (!req) return;
       
-      const newStatus = approva ? 'Approvato' : 'Rifiutato';
-      await updateDoc(doc(db, 'richieste_weekend', id), {
-        stato: newStatus
-      });
+      const updates: Record<string, any> = { stato: action };
+
+      // Se accetta una modifica e la richiesta aveva una nuovaData
+      if (action === 'Approvato' && req.nuovaData) {
+        updates.data = req.nuovaData;
+        if (req.nuovoMotivo) updates.motivo = req.nuovoMotivo;
+        updates.nuovaData = null;
+        updates.nuovoMotivo = null;
+      }
+
+      if (action === 'Annullato' || action === 'Revocato' || action === 'Rifiutato') {
+        await deleteDoc(doc(db, 'richieste_weekend', id));
+      } else {
+        await updateDoc(doc(db, 'richieste_weekend', id), updates);
+      }
       loadPresenzeData();
 
       // Invia email al dipendente
@@ -1495,19 +1550,80 @@ export default function Presenze() {
       if (targetDip && targetDip.email) {
         const isSelfTarget = (targetDip.email.toLowerCase() === userEmail?.toLowerCase()) || (myAssociatedName && req.dipendenteName === myAssociatedName);
         if (!isSelfTarget) {
-          const subject = `[Notifica] Autorizzazione lavoro straordinario ${newStatus}`;
+          let actionText = 'aggiornata';
+          if (action === 'Approvato') actionText = 'approvata';
+          else if (action === 'Rifiutato') actionText = 'rifiutata';
+          else if (action === 'Revocato') actionText = 'revocata dall\'HR';
+          else if (action === 'Annullato') actionText = 'annullata';
+
+          const subject = `[Notifica] Autorizzazione lavoro festivo ${actionText}`;
           const htmlBody = `
             <p>Ciao <strong>${req.dipendenteName}</strong>,</p>
-            <p>La tua richiesta di autorizzazione per lavorare il giorno <strong>${formatDate(req.data)}</strong> (${req.motivo}) è stata <strong>${newStatus.toLowerCase()}</strong>.</p>
-            <p>Puoi procedere all'inserimento delle ore sul tuo foglio presenze se la richiesta è stata approvata.</p>
+            <p>La tua richiesta di autorizzazione per il lavoro festivo del giorno <strong>${formatDate(req.data)}</strong> (${req.motivo}) è stata <strong>${actionText}</strong>.</p>
+            ${action === 'Approvato' ? '<p>Puoi procedere all\'inserimento delle ore sul tuo foglio presenze.</p>' : ''}
           `;
-          const plainText = `Ciao ${req.dipendenteName},\n\nLa tua richiesta di autorizzazione per lavorare il giorno ${formatDate(req.data)} (${req.motivo}) è stata ${newStatus.toLowerCase()}.\n\nQuesta è una notifica automatica.`;
+          const plainText = `Ciao ${req.dipendenteName},\n\nLa tua richiesta di autorizzazione per il lavoro festivo del giorno ${formatDate(req.data)} (${req.motivo}) è stata ${actionText}.\n\nQuesta è una notifica automatica.`;
           await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
         }
       }
-      showToast(`Richiesta ${newStatus.toLowerCase()} con successo!`);
+      showToast(`Richiesta ${action.toLowerCase()} con successo!`);
     } catch (e) {
       console.error("Errore decisione weekend:", e);
+      showToast("Errore durante l'aggiornamento della richiesta.", "error");
+    }
+  };
+
+  const handleCancelPendingWeekendRequest = async (id: string) => {
+    triggerConfirm(
+      "Annulla Richiesta",
+      "Sei sicuro di voler eliminare questa richiesta di lavoro festivo in attesa?",
+      async () => {
+        try {
+          await deleteDoc(doc(db, 'richieste_weekend', id));
+          showToast("Richiesta eliminata con successo!");
+          loadPresenzeData();
+        } catch (err) {
+          console.error("Errore eliminazione richiesta:", err);
+          showToast("Errore durante l'eliminazione della richiesta.", "error");
+        }
+      }
+    );
+  };
+
+  const handleRequestWeekendModificationSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!modifyingWeekendReq) return;
+
+    setModWeekendLoading(true);
+    try {
+      if (modWeekendTipo === 'annullamento') {
+        await updateDoc(doc(db, 'richieste_weekend', modifyingWeekendReq.id), {
+          stato: 'Richiesta Annullamento',
+          noteModifica: modWeekendMotivo.trim() || 'Richiesta di annullamento dal dipendente'
+        });
+      } else {
+        if (!modWeekendNuovaData) {
+          showToast("Seleziona la nuova data desiderata!", "warning");
+          setModWeekendLoading(false);
+          return;
+        }
+        await updateDoc(doc(db, 'richieste_weekend', modifyingWeekendReq.id), {
+          stato: 'Richiesta Modifica',
+          nuovaData: modWeekendNuovaData,
+          nuovoMotivo: modWeekendMotivo.trim() || modifyingWeekendReq.motivo
+        });
+      }
+
+      setModifyingWeekendReq(null);
+      setModWeekendMotivo('');
+      setModWeekendNuovaData('');
+      showToast("Richiesta inviata all'HR con successo!");
+      loadPresenzeData();
+    } catch (err) {
+      console.error("Errore invio richiesta modifica/annullamento:", err);
+      showToast("Errore durante l'invio della richiesta.", "error");
+    } finally {
+      setModWeekendLoading(false);
     }
   };
 
@@ -2443,18 +2559,25 @@ export default function Presenze() {
   };
 
   // --- RENDER BADGE FOR STATUS ---
-  const getStatusBadge = (stato: RapportinoPresenze['stato'] | 'Non Iniziato') => {
+  const getStatusBadge = (stato: string) => {
     switch (stato) {
       case 'Approvato':
         return <span className="flex items-center gap-1.5 text-xs font-bold bg-green-100 text-green-700 px-3 py-1 rounded-full"><CheckCircle className="w-3.5 h-3.5"/> Approvato</span>;
       case 'Inviato':
-        return <span className="flex items-center gap-1.5 text-xs font-bold bg-blue-100 text-blue-700 px-3 py-1 rounded-full"><Clock className="w-3.5 h-3.5"/> Inviato</span>;
+      case 'In attesa':
+        return <span className="flex items-center gap-1.5 text-xs font-bold bg-blue-100 text-blue-700 px-3 py-1 rounded-full"><Clock className="w-3.5 h-3.5"/> In attesa</span>;
       case 'Richiede Modifica':
-        return <span className="flex items-center gap-1.5 text-xs font-bold bg-orange-100 text-orange-700 px-3 py-1 rounded-full"><AlertCircle className="w-3.5 h-3.5"/> Da Correggere</span>;
+      case 'Richiesta Modifica':
+        return <span className="flex items-center gap-1.5 text-xs font-bold bg-orange-100 text-orange-700 px-3 py-1 rounded-full"><AlertCircle className="w-3.5 h-3.5"/> Req. Modifica</span>;
+      case 'Richiesta Annullamento':
+        return <span className="flex items-center gap-1.5 text-xs font-bold bg-purple-100 text-purple-700 px-3 py-1 rounded-full animate-pulse"><Clock className="w-3.5 h-3.5"/> Req. Annullamento</span>;
+      case 'Revocato':
+      case 'Rifiutato':
+        return <span className="flex items-center gap-1.5 text-xs font-bold bg-rose-100 text-rose-700 px-3 py-1 rounded-full"><X className="w-3.5 h-3.5"/> {stato}</span>;
       case 'Bozza':
         return <span className="flex items-center gap-1.5 text-xs font-bold bg-yellow-100 text-yellow-700 px-3 py-1 rounded-full"><Edit className="w-3.5 h-3.5"/> Bozza</span>;
       default:
-        return <span className="flex items-center gap-1.5 text-xs font-bold bg-gray-100 text-gray-500 px-3 py-1 rounded-full"><X className="w-3.5 h-3.5"/> Non Iniziato</span>;
+        return <span className="flex items-center gap-1.5 text-xs font-bold bg-gray-100 text-gray-500 px-3 py-1 rounded-full"><X className="w-3.5 h-3.5"/> {stato || 'Non Iniziato'}</span>;
     }
   };
 
@@ -2692,16 +2815,58 @@ export default function Presenze() {
                           {req.stato === 'In attesa' ? (
                             <div className="flex justify-center gap-2">
                               <button 
-                                onClick={() => handleWeekendDecision(req.id, true)} 
-                                className="px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white font-bold rounded-lg text-[10px] shadow active:scale-95"
+                                onClick={() => handleWeekendDecision(req.id, 'Approvato')} 
+                                className="px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white font-bold rounded-lg text-[10px] shadow active:scale-95 cursor-pointer"
                               >
                                 Approva
                               </button>
                               <button 
-                                onClick={() => handleWeekendDecision(req.id, false)} 
-                                className="px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white font-bold rounded-lg text-[10px] shadow active:scale-95"
+                                onClick={() => handleWeekendDecision(req.id, 'Rifiutato')} 
+                                className="px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white font-bold rounded-lg text-[10px] shadow active:scale-95 cursor-pointer"
                               >
                                 Rifiuta
+                              </button>
+                            </div>
+                          ) : req.stato === 'Approvato' ? (
+                            <button 
+                              onClick={() => handleWeekendDecision(req.id, 'Revocato')} 
+                              className="px-2.5 py-1 bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 font-bold rounded-lg text-[10px] transition cursor-pointer"
+                              title="Revoca l'autorizzazione concessa"
+                            >
+                              Revoca Autorizzazione
+                            </button>
+                          ) : req.stato === 'Richiesta Annullamento' ? (
+                            <div className="flex justify-center gap-1.5">
+                              <button 
+                                onClick={() => handleWeekendDecision(req.id, 'Annullato')} 
+                                className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg text-[10px] transition cursor-pointer"
+                                title="Conferma l'annullamento richiesto dal dipendente"
+                              >
+                                Conferma Annullamento
+                              </button>
+                              <button 
+                                onClick={() => handleWeekendDecision(req.id, 'Approvato')} 
+                                className="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-lg text-[10px] transition cursor-pointer"
+                                title="Rigetta l'annullamento e mantieni approvato"
+                              >
+                                Mantieni Approvato
+                              </button>
+                            </div>
+                          ) : req.stato === 'Richiesta Modifica' ? (
+                            <div className="flex justify-center gap-1.5">
+                              <button 
+                                onClick={() => handleWeekendDecision(req.id, 'Approvato')} 
+                                className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-[10px] transition cursor-pointer"
+                                title="Accetta nuova data o motivo"
+                              >
+                                Accetta Modifica
+                              </button>
+                              <button 
+                                onClick={() => handleWeekendDecision(req.id, 'Approvato')} 
+                                className="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-lg text-[10px] transition cursor-pointer"
+                                title="Rifiuta la modifica e mantieni la data originale"
+                              >
+                                Mantieni Originale
                               </button>
                             </div>
                           ) : (
@@ -3124,7 +3289,7 @@ export default function Presenze() {
                     Autorizzazione Lavoro Weekend e Festività
                   </h3>
                   <p className="text-xs text-indigo-900/80 mb-5 leading-relaxed">
-                    Per poter registrare ore di lavoro il sabato, la domenica o nei giorni festivi, devi inviare una richiesta preventiva all'HR. Una volta approvata, i giorni corrispondenti saranno sbloccati nel tuo tabellone presenze.
+                    Per poter registrare ore di lavoro il sabato, la domenica o nei giorni festivi, devi inviare una richiesta preventiva all'HR <strong>entro la mezzanotte del giorno precedente</strong> (almeno 1 giorno di anticipo). Una volta approvata, i giorni corrispondenti saranno sbloccati nel tuo tabellone presenze.
                   </p>
 
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -3132,10 +3297,15 @@ export default function Presenze() {
                     <form onSubmit={handleRequestWeekendSubmit} className="space-y-4 bg-white/60 p-5 rounded-2xl border border-indigo-100">
                       <h4 className="text-sm font-bold text-indigo-900">Invia Nuova Richiesta</h4>
                       <div>
-                        <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Giorno</label>
+                        <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Giorno (con almeno 1 giorno di anticipo)</label>
                         <input 
                           type="date"
                           required
+                          min={(() => {
+                            const d = new Date();
+                            d.setDate(d.getDate() + 1);
+                            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                          })()}
                           value={reqWeekendData}
                           onChange={e => setReqWeekendData(e.target.value)}
                           className="w-full p-2.5 border-none bg-white rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm"
@@ -3170,11 +3340,46 @@ export default function Presenze() {
                         ) : (
                           myWeekendRequests.map(req => (
                             <div key={req.id} className="bg-white p-3 rounded-xl border border-gray-100 shadow-sm flex justify-between items-center gap-3">
-                              <div className="min-w-0">
-                                <div className="text-xs font-bold text-gray-900">{formatDate(req.data)}</div>
+                              <div className="min-w-0 flex-1">
+                                <div className="text-xs font-bold text-gray-900 flex items-center gap-2">
+                                  <span>{formatDate(req.data)}</span>
+                                  {req.nuovaData && (
+                                    <span className="text-[10px] text-indigo-600 font-extrabold">(Richiesta sposta a {formatDate(req.nuovaData)})</span>
+                                  )}
+                                </div>
                                 <div className="text-[10px] text-gray-500 truncate" title={req.motivo}>{req.motivo}</div>
+                                {req.noteModifica && (
+                                  <div className="text-[9px] text-purple-700 font-semibold italic truncate">Nota: {req.noteModifica}</div>
+                                )}
                               </div>
-                              <div className="shrink-0">{getStatusBadge(req.stato)}</div>
+                              <div className="shrink-0 flex items-center gap-2">
+                                {getStatusBadge(req.stato)}
+                                {req.stato === 'In attesa' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCancelPendingWeekendRequest(req.id)}
+                                    className="p-1 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 transition cursor-pointer"
+                                    title="Elimina richiesta in attesa"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                                {req.stato === 'Approvato' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setModifyingWeekendReq(req);
+                                      setModWeekendTipo('annullamento');
+                                      setModWeekendMotivo('');
+                                      setModWeekendNuovaData('');
+                                    }}
+                                    className="px-2 py-1 text-[10px] font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition cursor-pointer flex items-center gap-1"
+                                    title="Richiedi modifica o annullamento all'HR"
+                                  >
+                                    <Edit3 className="w-3 h-3" /> Modifica / Annulla
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           ))
                         )}
@@ -5781,6 +5986,104 @@ export default function Presenze() {
           });
         })()}
       </div>
+      {/* MODALE RICHIESTA MODIFICA / ANNULLAMENTO FESTIVO APPROVATO PER DIPENDENTE */}
+      {modifyingWeekendReq && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full border border-gray-150 p-6 flex flex-col gap-5 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex justify-between items-center">
+              <h3 className="text-lg font-black text-gray-900 flex items-center gap-2">
+                <FileText className="w-5 h-5 text-indigo-600" />
+                <span>Richiedi Modifica / Annullamento</span>
+              </h3>
+              <button 
+                onClick={() => setModifyingWeekendReq(null)} 
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-xl hover:bg-gray-100 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="bg-indigo-50 border border-indigo-100 p-3.5 rounded-2xl text-xs space-y-1">
+              <div className="font-extrabold text-indigo-950">
+                Giorno Approvato: {formatDate(modifyingWeekendReq.data)}
+              </div>
+              <div className="text-indigo-700 italic">
+                Motivo: {modifyingWeekendReq.motivo}
+              </div>
+            </div>
+
+            <form onSubmit={handleRequestWeekendModificationSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1.5 ml-1">Tipo di Richiesta</label>
+                <div className="grid grid-cols-2 gap-2 bg-gray-100 p-1 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => setModWeekendTipo('annullamento')}
+                    className={`py-2 text-xs font-bold rounded-lg transition cursor-pointer ${modWeekendTipo === 'annullamento' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
+                  >
+                    Annulla Festivo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setModWeekendTipo('modifica')}
+                    className={`py-2 text-xs font-bold rounded-lg transition cursor-pointer ${modWeekendTipo === 'modifica' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
+                  >
+                    Sposta Data / Motivo
+                  </button>
+                </div>
+              </div>
+
+              {modWeekendTipo === 'modifica' && (
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Nuova Data Desiderata</label>
+                  <input
+                    type="date"
+                    required
+                    min={(() => {
+                      const d = new Date();
+                      d.setDate(d.getDate() + 1);
+                      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                    })()}
+                    value={modWeekendNuovaData}
+                    onChange={e => setModWeekendNuovaData(e.target.value)}
+                    className="w-full p-2.5 border border-gray-200 bg-gray-50 rounded-xl text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">
+                  {modWeekendTipo === 'annullamento' ? 'Motivazione Annullamento (facoltativa)' : 'Nuova Motivazione / Note'}
+                </label>
+                <textarea
+                  rows={2}
+                  value={modWeekendMotivo}
+                  onChange={e => setModWeekendMotivo(e.target.value)}
+                  placeholder={modWeekendTipo === 'annullamento' ? "Es. Imprevisto personale, non posso lavorare..." : "Es. Spostato intervento in cantiere a domenica..."}
+                  className="w-full p-2.5 border border-gray-200 bg-gray-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setModifyingWeekendReq(null)}
+                  className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl text-xs transition cursor-pointer"
+                >
+                  Annulla
+                </button>
+                <button
+                  type="submit"
+                  disabled={modWeekendLoading}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow transition disabled:opacity-50 cursor-pointer"
+                >
+                  {modWeekendLoading ? 'Invio in corso...' : 'Invia Richiesta all\'HR'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

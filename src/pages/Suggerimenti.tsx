@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, addDoc, doc, deleteDoc, query, orderBy, setDoc, where, getDocs, getDoc } from 'firebase/firestore';
-import { Send, MessageSquare, Shield, Star, Filter, Trash2, LayoutList, Plus, ShieldCheck, FileText, Download, Edit3, BarChart3, Smile, Meh, Frown, ChevronUp, ChevronDown, RefreshCw } from 'lucide-react';
+import { Send, MessageSquare, Shield, Star, Filter, Trash2, LayoutList, Plus, ShieldCheck, FileText, Download, Edit3, BarChart3, Smile, ChevronUp, ChevronDown, RefreshCw, Eye } from 'lucide-react';
 import ConfirmModal from '../components/ConfirmModal';
 import { DEFAULT_QUESTIONS, getQuestionSection } from '../utils/defaultQuestionnaire';
 import QuestionnaireModal from '../components/QuestionnaireModal';
@@ -24,34 +24,7 @@ interface RispostaClima {
   createdAt: string;
 }
 
-const getOptionStyle = (label: string) => {
-  const l = label.toLowerCase();
-  if (l.includes('🟢') || l.includes('ottimo') || l.includes('sereno') || l.includes('bene') || l.includes('motivato')) {
-    return {
-      icon: Smile,
-      color: 'text-green-600 bg-green-50 border-green-200'
-    };
-  }
-  if (l.includes('🔴') || l.includes('stress') || l.includes('sovraccarico') || l.includes('male') || l.includes('pessimo')) {
-    return {
-      icon: Frown,
-      color: 'text-red-600 bg-red-50 border-red-200'
-    };
-  }
-  if (l.includes('🟡') || l.includes('gestibile') || l.includes('stanchezza') || l.includes('stanco') || l.includes('così così')) {
-    return {
-      icon: Meh,
-      color: 'text-amber-600 bg-amber-50 border-amber-200'
-    };
-  }
-  return {
-    icon: Smile,
-    color: 'text-indigo-600 bg-indigo-50 border-indigo-200'
-  };
-};
-
-const ClimaTrendChart = ({ responses }: { responses: RispostaClima[] }) => {
-  const [days, setDays] = useState<number>(30); // Default to last month (30 days)
+const ClimaTrendChart = ({ responses, days, onDaysChange }: { responses: RispostaClima[]; days: number; onDaysChange: (d: number) => void }) => {
 
   const dailyAverages = useMemo(() => {
     const groups: Record<string, { sum: number; count: number }> = {};
@@ -110,7 +83,7 @@ const ClimaTrendChart = ({ responses }: { responses: RispostaClima[] }) => {
         </h4>
         <select
           value={days}
-          onChange={e => setDays(Number(e.target.value))}
+          onChange={e => onDaysChange(Number(e.target.value))}
           className="px-3 py-1.5 border border-gray-200 bg-gray-50 rounded-xl text-xs font-bold text-gray-700 focus:ring-2 focus:ring-indigo-400 outline-none cursor-pointer"
         >
           <option value={7}>Ultimi 7 giorni attivi</option>
@@ -171,6 +144,7 @@ const ClimaTrendChart = ({ responses }: { responses: RispostaClima[] }) => {
 export default function Suggerimenti() {
   const { isAdmin, isHR, myAssociatedName, user } = useAuth();
   
+  const [climaDays, setClimaDays] = useState<number>(30); // Giorni selezionati nel grafico (sincronizzato con la card)
   const [activeTab, setActiveTab] = useState<'invia' | 'suggerimenti' | 'clima' | 'questionario'>('invia');
   const [questionnaireSubTab, setQuestionnaireSubTab] = useState<'risultati' | 'configura'>('risultati');
 
@@ -179,16 +153,19 @@ export default function Suggerimenti() {
   const [newCategoryName, setNewCategoryName] = useState('');
   const [catLoading, setCatLoading] = useState(false);
 
-  // Opzioni Clima
-  const [climaOptions, setClimaOptions] = useState<{ id: string; label: string; order?: number }[]>([]);
-  const [newClimaOptionName, setNewClimaOptionName] = useState('');
-  const [climaOptLoading, setClimaOptLoading] = useState(false);
-
   // Stato Form Suggerimenti
   const [categoria, setCategoria] = useState('');
   const [testo, setTesto] = useState('');
   const [loading, setLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
+
+  // IDs suggerimenti già letti dall'HR (persiste in localStorage)
+  const [readSuggIds, setReadSuggIds] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('hr_read_suggestions');
+      return saved ? new Set(JSON.parse(saved)) : new Set<string>();
+    } catch { return new Set<string>(); }
+  });
 
   // Dati da database
   const [suggerimenti, setSuggerimenti] = useState<Suggerimento[]>([]);
@@ -275,47 +252,6 @@ export default function Suggerimenti() {
         });
         list.sort((a, b) => a.nome.localeCompare(b.nome));
         setCategories(list);
-      }
-
-      // 2. Opzioni clima
-      const climaSnap = await getDocs(collection(db, 'opzioni_clima'));
-      if (climaSnap.empty) {
-        const defaultOpts = [
-          '🟢 Ottimo, sono sereno e motivato',
-          '🟡 Gestibile, ma sento un po\' di stanchezza',
-          '🔴 Stressante, mi sento in sovraccarico'
-        ];
-        const promises = defaultOpts.map((optName, index) => addDoc(collection(db, 'opzioni_clima'), { label: optName, order: index }));
-        await Promise.all(promises);
-        
-        const reloadClimaSnap = await getDocs(collection(db, 'opzioni_clima'));
-        const list: { id: string; label: string; order: number }[] = [];
-        let index = 0;
-        reloadClimaSnap.forEach(docSnap => {
-          const data = docSnap.data();
-          list.push({
-            id: docSnap.id,
-            label: data.label || '',
-            order: data.order !== undefined ? data.order : index
-          });
-          index++;
-        });
-        list.sort((a, b) => a.order - b.order);
-        setClimaOptions(list);
-      } else {
-        const list: { id: string; label: string; order: number }[] = [];
-        let index = 0;
-        climaSnap.forEach(docSnap => {
-          const data = docSnap.data();
-          list.push({
-            id: docSnap.id,
-            label: data.label || '',
-            order: data.order !== undefined ? data.order : index
-          });
-          index++;
-        });
-        list.sort((a, b) => a.order - b.order);
-        setClimaOptions(list);
       }
 
       // 3. Questionario
@@ -422,6 +358,15 @@ export default function Suggerimenti() {
     cleanupOldResponses();
   }, [isAdmin, isHR]);
 
+  // Segna tutti i suggerimenti come letti quando l'HR apre la tab
+  useEffect(() => {
+    if (activeTab !== 'suggerimenti' || suggerimenti.length === 0) return;
+    const allIds = suggerimenti.map(s => s.id);
+    const newReadIds = new Set([...readSuggIds, ...allIds]);
+    setReadSuggIds(newReadIds);
+    localStorage.setItem('hr_read_suggestions', JSON.stringify([...newReadIds]));
+  }, [activeTab, suggerimenti]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!categoria || !testo.trim()) {
@@ -497,71 +442,6 @@ export default function Suggerimenti() {
       async () => {
         try {
           await deleteDoc(doc(db, 'categorie_suggerimenti', catId));
-          loadData();
-        } catch (err) {
-          console.error(err);
-        }
-      },
-      'danger'
-    );
-  };
-
-  // Opzioni Clima Handlers
-  const handleAddClimaOption = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newClimaOptionName.trim()) return;
-
-    if (climaOptions.some(o => o.label.toLowerCase() === newClimaOptionName.trim().toLowerCase())) {
-      showToast("Questa opzione esiste già!", "warning");
-      return;
-    }
-
-    setClimaOptLoading(true);
-    try {
-      const maxOrder = climaOptions.reduce((max, opt) => (opt.order !== undefined && opt.order > max ? opt.order : max), -1);
-      await addDoc(collection(db, 'opzioni_clima'), { 
-        label: newClimaOptionName.trim(),
-        order: maxOrder + 1
-      });
-      setNewClimaOptionName('');
-      loadData();
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setClimaOptLoading(false);
-    }
-  };
-
-  const handleMoveClimaOption = async (optId: string, direction: 'up' | 'down') => {
-    const index = climaOptions.findIndex(o => o.id === optId);
-    if (index === -1) return;
-
-    if (direction === 'up' && index === 0) return;
-    if (direction === 'down' && index === climaOptions.length - 1) return;
-
-    const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    const optionA = climaOptions[index];
-    const optionB = climaOptions[targetIndex];
-
-    try {
-      const orderA = optionA.order !== undefined ? optionA.order : index;
-      const orderB = optionB.order !== undefined ? optionB.order : targetIndex;
-
-      await setDoc(doc(db, 'opzioni_clima', optionA.id), { label: optionA.label, order: orderB });
-      await setDoc(doc(db, 'opzioni_clima', optionB.id), { label: optionB.label, order: orderA });
-      loadData();
-    } catch (err) {
-      console.error("Errore nello spostamento dell'opzione clima:", err);
-    }
-  };
-
-  const handleDeleteClimaOption = (optId: string, optLabel: string) => {
-    triggerConfirm(
-      "Elimina Opzione Clima",
-      `Sei sicuro di voler eliminare l'opzione "${optLabel}"? I dipendenti non la visualizzeranno più nel questionario random.`,
-      async () => {
-        try {
-          await deleteDoc(doc(db, 'opzioni_clima', optId));
           loadData();
         } catch (err) {
           console.error(err);
@@ -745,60 +625,36 @@ export default function Suggerimenti() {
     };
   }, [suggerimenti]);
 
-  // Statistiche Clima Dinamico
+  // Numero di suggerimenti non ancora letti dall'HR
+  const unreadSuggCount = useMemo(() => {
+    return suggerimenti.filter(s => !readSuggIds.has(s.id)).length;
+  }, [suggerimenti, readSuggIds]);
+
+  // Statistiche Clima Dinamico — filtrate per periodo selezionato nel grafico
   const climaStatsDynamic = useMemo(() => {
-    const total = climaResponses.length;
+    // Filtra le risposte per gli ultimi `climaDays` giorni attivi (stessa logica del grafico)
+    const groups: Record<string, number[]> = {};
+    climaResponses.forEach(r => {
+      if (!groups[r.data]) groups[r.data] = [];
+      groups[r.data].push(Number(r.voto));
+    });
+    const sortedDates = Object.keys(groups).sort();
+    const lastDates = sortedDates.slice(-climaDays);
+    const filteredResponses = climaResponses.filter(r => lastDates.includes(r.data));
+
+    const total = filteredResponses.length;
     if (total === 0) {
       return { media: 0, count: 0, distribution: {} as Record<string, { count: number; pct: number }> };
     }
-    const sommaVoti = climaResponses.reduce((acc, curr) => acc + Number(curr.voto), 0);
+    const sommaVoti = filteredResponses.reduce((acc, curr) => acc + Number(curr.voto), 0);
     const media = Number((sommaVoti / total).toFixed(1));
-
-    const counts: Record<string, number> = {};
-    // Inizializza i conteggi per le opzioni attualmente configurate
-    climaOptions.forEach(o => {
-      counts[o.label] = 0;
-    });
-
-    climaResponses.forEach(r => {
-      const respText = r.risposta ? r.risposta.trim() : '';
-      if (!respText) return;
-
-      const matchedOption = climaOptions.find(o => {
-        const oL = o.label.toLowerCase().trim();
-        const rL = respText.toLowerCase();
-        // Cerca corrispondenze (es. "Ottimo" corrisponde a "🟢 Ottimo, sono sereno e motivato")
-        return oL === rL || oL.includes(rL) || rL.includes(oL);
-      });
-
-      if (matchedOption) {
-        counts[matchedOption.label] = (counts[matchedOption.label] || 0) + 1;
-      } else {
-        counts[respText] = (counts[respText] || 0) + 1;
-      }
-    });
-
-    const distribution: Record<string, { count: number; pct: number }> = {};
-    const allKeys = Array.from(new Set([
-      ...climaOptions.map(o => o.label),
-      ...Object.keys(counts)
-    ]));
-
-    allKeys.forEach(key => {
-      if (!key) return;
-      const cnt = counts[key] || 0;
-      distribution[key] = {
-        count: cnt,
-        pct: total > 0 ? Math.round((cnt / total) * 100) : 0
-      };
-    });
 
     return {
       media,
       count: total,
-      distribution
+      distribution: {} as Record<string, { count: number; pct: number }>
     };
-  }, [climaResponses, climaOptions]);
+  }, [climaResponses, climaDays]);
 
   // Statistiche Questionario HR (Auto-aggiornanti)
   const questionnaireStats = useMemo(() => {
@@ -931,9 +787,9 @@ export default function Suggerimenti() {
             >
               <LayoutList className="w-4 h-4" /> 
               <span>Suggerimenti Anonimi</span>
-              {isHR && suggerimenti.length > 0 && (
+              {isHR && unreadSuggCount > 0 && (
                 <span className="bg-red-500 text-white text-[10px] font-extrabold px-1.5 py-0.5 rounded-full ml-1 min-w-[1.25rem] text-center inline-block">
-                  {suggerimenti.length}
+                  {unreadSuggCount}
                 </span>
               )}
             </button>
@@ -1151,143 +1007,65 @@ export default function Suggerimenti() {
       {/* SEZIONE BENESSERE & STRESS (HR/ADMIN) */}
       {activeTab === 'clima' && (isAdmin || isHR) && (
         <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl p-6 sm:p-10 border border-white/50 flex flex-col mb-10 animate-fadeIn">
-          {/* STATS OVERVIEW CLIMA */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            <div className="bg-gradient-to-br from-indigo-50 to-purple-50 p-6 rounded-3xl border border-indigo-100 flex flex-col justify-between gap-4">
-              <div>
-                <h4 className="text-sm font-bold text-indigo-950/70 uppercase tracking-wider mb-1">Livello Benessere Medio</h4>
-                <div className="text-4xl font-black text-indigo-900 flex items-baseline gap-2">
-                  {climaStatsDynamic.media}
-                  <span className="text-sm font-bold opacity-75">/ 10</span>
-                </div>
-              </div>
-              <div className="flex gap-0.5 flex-wrap">
-                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(star => (
-                  <Star key={star} className={`w-3.5 h-3.5 ${Math.round(climaStatsDynamic.media) >= star ? 'text-indigo-600 fill-indigo-600' : 'text-gray-300'}`} />
-                ))}
-              </div>
-            </div>
 
-            <div className="bg-gradient-to-br from-emerald-50 to-teal-50 p-6 rounded-3xl border border-emerald-100 flex items-center justify-between">
-              <div>
-                <h4 className="text-sm font-bold text-emerald-950/70 uppercase tracking-wider mb-1">Totale Test Giornalieri</h4>
-                <div className="text-4xl font-black text-emerald-900">{climaStatsDynamic.count}</div>
-              </div>
-              <div className="p-4 bg-emerald-600 text-white rounded-2xl"><ShieldCheck className="w-6 h-6" /></div>
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center pb-6 border-b border-gray-100 mb-6 gap-4">
+            <div>
+              <h3 className="text-xl font-black text-indigo-950 flex items-center gap-2">
+                <span>🌱 Benessere & Stress Aziendale</span>
+              </h3>
+              <p className="text-xs text-gray-500 font-semibold mt-0.5">
+                Monitoraggio continuo del clima lavorativo e delle valutazioni registrate.
+              </p>
             </div>
+            <button
+              onClick={() => setIsTestClimaOpen(true)}
+              className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-md hover:shadow-lg transition-all active:scale-95 flex items-center gap-2 cursor-pointer shrink-0"
+              title="Apri l'interfaccia a stelle 1-10 per provare il questionario clima"
+            >
+              <Eye className="w-4 h-4" />
+              <span>Prova Questionario Clima</span>
+            </button>
+          </div>
 
-            {/* GESTIONE OPZIONI CLIMA */}
-            <div className="bg-gradient-to-br from-purple-50 to-pink-50 p-6 rounded-3xl border border-purple-200 flex flex-col justify-between gap-4 col-span-1 lg:col-span-2">
-              <div>
-                <div className="flex justify-between items-center mb-2 gap-2">
-                  <h4 className="text-sm font-bold text-purple-950/80 uppercase tracking-wider">Opzioni Questionario Clima</h4>
-                  <button 
-                    type="button"
-                    onClick={() => setIsTestClimaOpen(true)}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded-xl text-xs font-bold transition shadow-sm cursor-pointer border border-indigo-700"
-                  >
-                    👁️ Prova (Anteprima)
-                  </button>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* COLONNA SINISTRA: le 2 card KPI */}
+            <div className="flex flex-col gap-6">
+              {/* Card Benessere Medio */}
+              <div className="bg-gradient-to-br from-indigo-50 to-purple-50 p-6 rounded-3xl border border-indigo-100 flex flex-col justify-between gap-4 flex-1">
+                <div>
+                  <h4 className="text-sm font-bold text-indigo-950/70 uppercase tracking-wider mb-1">Livello Benessere Medio</h4>
+                  <div className="text-5xl font-black text-indigo-900 flex items-baseline gap-2 mt-2">
+                    {climaStatsDynamic.media}
+                    <span className="text-base font-bold opacity-75">/ 10</span>
+                  </div>
                 </div>
-                <div className="max-h-[140px] overflow-y-auto pr-1 space-y-1.5 mb-2">
-                  {climaOptions.map((opt, idx) => (
-                    <div key={opt.id} className="flex justify-between items-center bg-white p-2 rounded-xl border border-purple-100 shadow-sm gap-2">
-                      <span className="text-xs font-bold text-purple-950 truncate flex-1">{opt.label}</span>
-                      <div className="flex items-center gap-1">
-                        <div className="flex items-center gap-0.5 bg-gray-50 p-0.5 rounded-lg border border-gray-200">
-                          <button
-                            type="button"
-                            disabled={idx === 0}
-                            onClick={() => handleMoveClimaOption(opt.id, 'up')}
-                            className="text-gray-400 hover:text-indigo-600 p-1 rounded-lg hover:bg-gray-200 transition disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
-                            title="Sposta su"
-                          >
-                            <ChevronUp className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            disabled={idx === climaOptions.length - 1}
-                            onClick={() => handleMoveClimaOption(opt.id, 'down')}
-                            className="text-gray-400 hover:text-indigo-600 p-1 rounded-lg hover:bg-gray-200 transition disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
-                            title="Sposta giù"
-                          >
-                            <ChevronDown className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                        <button 
-                          type="button"
-                          onClick={() => handleDeleteClimaOption(opt.id, opt.label)}
-                          className="text-gray-400 hover:text-red-600 p-1 rounded-lg hover:bg-red-50 transition cursor-pointer"
-                          title="Elimina opzione"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
+                <div className="flex gap-0.5 flex-wrap">
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(star => (
+                    <Star key={star} className={`w-4 h-4 ${Math.round(climaStatsDynamic.media) >= star ? 'text-indigo-600 fill-indigo-600' : 'text-gray-300'}`} />
                   ))}
                 </div>
               </div>
-              <form onSubmit={handleAddClimaOption} className="flex gap-2">
-                <input
-                  type="text"
-                  required
-                  placeholder="Nuova opzione (es. 🟢 Ottimo)..."
-                  value={newClimaOptionName}
-                  onChange={e => setNewClimaOptionName(e.target.value)}
-                  disabled={climaOptLoading}
-                  className="flex-1 px-3 py-2 text-xs font-bold text-purple-950 border border-purple-200/50 bg-white rounded-xl focus:ring-2 focus:ring-purple-400 outline-none placeholder-gray-400"
-                />
-                <button
-                  type="submit"
-                  disabled={climaOptLoading}
-                  className="bg-purple-600 text-white p-2 rounded-xl hover:bg-purple-700 active:scale-95 disabled:opacity-50 transition flex items-center justify-center shrink-0 cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" />
-                </button>
-              </form>
-            </div>
-          </div>
 
-          {/* RIPARTIZIONE & ANDAMENTO GRAPHICS */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="bg-gradient-to-br from-slate-50 to-zinc-100 p-6 rounded-3xl border border-slate-200 flex flex-col justify-start gap-4 shadow-inner">
-              <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Distribuzione Risposte</h4>
-              <div className="space-y-3.5">
-                {Object.keys(climaStatsDynamic.distribution).length === 0 ? (
-                  <p className="text-xs text-gray-450 font-bold italic text-center py-6">Nessuna opzione caricata.</p>
-                ) : (
-                  Object.entries(climaStatsDynamic.distribution).map(([label, info]) => {
-                    const style = getOptionStyle(label);
-                    return (
-                      <div key={label} className="space-y-1">
-                        <div className="flex justify-between text-[11px] font-bold text-gray-700">
-                          <span className="truncate pr-2">{label}</span>
-                          <span className="shrink-0">{info.count} ({info.pct}%)</span>
-                        </div>
-                        <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden border border-gray-300/30">
-                          <div 
-                            className={`h-full rounded-full transition-all duration-500 ${
-                              style.color.includes('text-green') ? 'bg-green-500' :
-                              style.color.includes('text-red') ? 'bg-red-500' :
-                              style.color.includes('text-amber') ? 'bg-amber-500' :
-                              'bg-indigo-500'
-                            }`} 
-                            style={{ width: `${info.pct}%` }}
-                          ></div>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
+              {/* Card Totale Risposte */}
+              <div className="bg-gradient-to-br from-emerald-50 to-teal-50 p-6 rounded-3xl border border-emerald-100 flex items-center justify-between flex-1">
+                <div>
+                  <h4 className="text-sm font-bold text-emerald-950/70 uppercase tracking-wider mb-1">
+                    Risposte — Ultimi {climaDays} giorni attivi
+                  </h4>
+                  <div className="text-5xl font-black text-emerald-900 mt-2">{climaStatsDynamic.count}</div>
+                </div>
+                <div className="p-4 bg-emerald-600 text-white rounded-2xl shrink-0"><ShieldCheck className="w-7 h-7" /></div>
               </div>
             </div>
 
+            {/* COLONNA DESTRA: grafico andamento */}
             <div className="lg:col-span-2">
-              <ClimaTrendChart responses={climaResponses} />
+              <ClimaTrendChart responses={climaResponses} days={climaDays} onDaysChange={setClimaDays} />
             </div>
           </div>
         </div>
       )}
+
 
       {/* SEZIONE 3: QUESTIONARIO HR (EDITING & RISULTATI AUTO-AGGIORNANTI) */}
       {activeTab === 'questionario' && (isAdmin || isHR) && (

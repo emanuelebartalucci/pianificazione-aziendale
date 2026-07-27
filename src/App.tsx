@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { APP_VERSION, APP_RELEASE_DATE, getPrintDateString } from './config/version';
 
 // Pages
 import Login from './pages/Login';
@@ -12,6 +13,7 @@ import Presenze from './pages/Presenze';
 import Suggerimenti from './pages/Suggerimenti';
 import PianificazionePersonale from './pages/PianificazionePersonale';
 import Prenotazioni from './pages/Prenotazioni';
+import Organigramma from './pages/Organigramma';
 
 // Components
 import Navbar from './components/Navbar';
@@ -25,6 +27,24 @@ function ScrollToTop() {
   }, [pathname]);
 
   return null;
+}
+
+function PrintVersionFooter() {
+  const [printDate, setPrintDate] = useState('');
+
+  useEffect(() => {
+    const updateDate = () => setPrintDate(getPrintDateString());
+    updateDate();
+    window.addEventListener('beforeprint', updateDate);
+    return () => window.removeEventListener('beforeprint', updateDate);
+  }, []);
+
+  return (
+    <div className="print-footer-watermark hidden print:flex">
+      <span>Piattaforma Pianificazione Aziendale</span>
+      <span>{APP_VERSION} — Data Stampa: {printDate || getPrintDateString()}</span>
+    </div>
+  );
 }
 
 function App() {
@@ -55,6 +75,7 @@ function App() {
   return (
     <Router>
       <ScrollToTop />
+      <PrintVersionFooter />
       {user ? (
         <div className="bg-gray-100 text-gray-900 font-sans min-h-screen flex flex-col justify-between">
           <div className="flex-1">
@@ -70,12 +91,21 @@ function App() {
                 <Route path="/suggerimenti" element={<Suggerimenti />} />
                 <Route path="/pianificazione-personale" element={<PianificazionePersonale />} />
                 <Route path="/prenotazioni" element={<Prenotazioni />} />
+                <Route path="/organigramma" element={<Organigramma />} />
                 <Route path="*" element={<Navigate to="/" />} />
               </Routes>
             </main>
           </div>
-          <footer className="text-center py-6 text-xs text-gray-400 opacity-40 select-none print:hidden">
-            Sviluppato da Emanuele Bartalucci
+          <footer className="py-6 px-6 text-xs text-gray-400 select-none print:hidden border-t border-gray-200/50 mt-auto">
+            <div className="max-w-[1400px] mx-auto grid grid-cols-1 sm:grid-cols-3 items-center gap-2 text-center">
+              <div className="hidden sm:block"></div>
+              <span className="opacity-60 font-medium text-center">Sviluppato da Emanuele Bartalucci</span>
+              <div className="sm:text-right">
+                <span className="inline-block font-bold bg-gray-200/70 px-3 py-1 rounded-full text-gray-600 border border-gray-300/50">
+                  {APP_VERSION} ({APP_RELEASE_DATE})
+                </span>
+              </div>
+            </div>
           </footer>
         </div>
       ) : (

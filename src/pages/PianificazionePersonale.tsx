@@ -6,6 +6,7 @@ import { Users, ChevronLeft, ChevronRight, Save, Download, ZoomIn, ZoomOut, Tras
 import { getWeekNumber, getStartOfWeek, addDays, isItalianHoliday } from '../utils/date';
 
 import ConfirmModal from '../components/ConfirmModal';
+import { PianificazioneModal } from '../components/PianificazioneModal';
 import { addPendingNotification, getPendingNotifications, clearPendingNotifications, sendAllPendingNotifications } from '../utils/pendingNotifications';
 import { isCollaboratore, isSoci } from './Impostazioni';
 import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
@@ -135,7 +136,6 @@ export default function PianificazionePersonale() {
     approvedLeaves = [],
     richiesteDisegnatori = []
   } = useAuth();
-  
   const [commessaSearchText, setCommessaSearchText] = useState('');
   const [isCommessaDropdownOpen, setIsCommessaDropdownOpen] = useState(false);
   const [timelineWeeks, setTimelineWeeks] = useState<WeekInfo[]>([]); // weeks for the load grid
@@ -1301,21 +1301,21 @@ export default function PianificazionePersonale() {
     }
   };
 
+  const [planningModal, setPlanningModal] = useState<{
+    isOpen: boolean;
+    tab?: 'commessa' | 'risorsa' | 'sostituisci';
+    commessaId?: string;
+    risorsa?: string;
+    weekId?: string;
+  }>({ isOpen: false });
+
   const handleCellClick = (dipNome: string, weekId: string, _weekLabel?: string, _weekSub?: string) => {
-    setActiveTab('risorsa');
-    setSelectedResourceForTab(dipNome);
-
-    if (weekId) {
-      const matchedOpt = selectableWeekOptions.find(o => o.id === weekId);
-      if (matchedOpt) {
-        setSelectedStartWeekId(matchedOpt.id);
-        setSelectedEndWeekId(matchedOpt.id);
-      }
-    }
-
-    setTimeout(() => {
-      plannerContainerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 50);
+    setPlanningModal({
+      isOpen: true,
+      tab: 'risorsa',
+      risorsa: dipNome,
+      weekId: weekId
+    });
   };
 
   const handleConfirmAssignments = async (e: React.FormEvent) => {
@@ -1921,7 +1921,22 @@ export default function PianificazionePersonale() {
           return (
             <td 
               key={wIndex} 
-              onClick={() => canDirectlyEditCell && handleCellClick(dip.nome, wk.id, wk.label, wk.sub)}
+              onMouseDown={(e) => {
+                if (canDirectlyEditCell && e.button === 1) e.preventDefault();
+              }}
+              onAuxClick={(e) => {
+                if (canDirectlyEditCell && e.button === 1) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  window.open(`/pianificazione-personale?tab=risorsa&risorsa=${encodeURIComponent(dip.nome)}&weekId=${encodeURIComponent(wk.id)}`, '_blank');
+                }
+              }}
+              onClick={(e) => {
+                if (canDirectlyEditCell && e.button === 0) {
+                  e.preventDefault();
+                  handleCellClick(dip.nome, wk.id, wk.label, wk.sub);
+                }
+              }}
               className={`border-l border-b border-slate-900 align-middle transition-colors ${canDirectlyEditCell ? 'cursor-pointer' : 'cursor-default'} ${bgClass} ${
                 isUltraNarrow ? 'p-1' : isNarrow ? 'p-1.5' : 'p-3'
               }`}
@@ -3458,6 +3473,22 @@ export default function PianificazionePersonale() {
         </div>
         );
       })()}
+
+      <PianificazioneModal
+        isOpen={planningModal.isOpen}
+        onClose={() => setPlanningModal(prev => ({ ...prev, isOpen: false }))}
+        initialTab={planningModal.tab}
+        initialCommessaId={planningModal.commessaId}
+        initialResourceName={planningModal.risorsa}
+        initialWeekId={planningModal.weekId}
+        onRequestAreaResource={(area, _commId, _wkId, personName) => {
+          setPlanningModal(prev => ({ ...prev, isOpen: false }));
+          openRequestModalForArea(area as MacroArea);
+          if (personName) {
+            setReqPreferredResource(personName);
+          }
+        }}
+      />
     </div>
   );
 }

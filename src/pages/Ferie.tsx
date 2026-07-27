@@ -2,9 +2,10 @@ import { useState, useEffect, useMemo, memo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, addDoc, doc, updateDoc, deleteDoc, query, where, getDocs } from 'firebase/firestore';
-import { Calendar, CheckCircle, XCircle, Clock, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
+import { Calendar, CheckCircle, XCircle, Clock, ChevronLeft, ChevronRight, RefreshCw, Pencil, Trash2, AlertTriangle, X } from 'lucide-react';
 import { queueMail } from '../utils/mailSender';
 import { isItalianHoliday, isWeekend } from '../utils/date';
+import { getPrintFooterHtml } from '../config/version';
 
 const formatDate = (dateStr: string) => {
   if (!dateStr) return '';
@@ -19,7 +20,7 @@ interface RichiestaFerie {
   dipendenteName: string;
   data: string;
   tipo: string;
-  stato: 'In attesa' | 'Approvato' | 'Rifiutato';
+  stato: 'In attesa' | 'Approvato' | 'Rifiutato' | 'Richiesta Annullamento' | 'Richiesta Modifica';
   frazioneTipo?: 'mattina' | 'pomeriggio' | 'giornata' | 'orario';
   dataInizio?: string;
   dataFine?: string;
@@ -30,6 +31,17 @@ interface RichiestaFerie {
   timestamp?: string;
   note?: string;
   comunicazioneId?: string;
+  richiestaModifica?: {
+    tipoAzione: 'annullamento' | 'modifica';
+    nuovaDataInizio?: string;
+    nuovaDataFine?: string;
+    nuovaOraInizio?: string;
+    nuovaOraFine?: string;
+    nuovaFrazioneTipo?: 'mattina' | 'pomeriggio' | 'giornata' | 'orario';
+    nuovoTipo?: string;
+    motivazione?: string;
+    dataRichiesta?: string;
+  };
 }
 
 const TIME_OPTIONS = Array.from({ length: 48 }).map((_, i) => {
@@ -53,14 +65,14 @@ interface FerieContentProps {
 const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: FerieContentProps) => {
   const { userEmail } = useAuth();
   const [viewMode, setViewMode] = useState<'calendario' | 'tabella'>('calendario');
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' | 'info' } | null>(null);
   const [chiusureAziendali, setChiusureAziendali] = useState<Array<{ dataInizio: string; dataFine: string }>>([]);
 
   const isInChiusuraAziendaleLocal = (dateStr: string) => {
     return chiusureAziendali.some(c => dateStr >= c.dataInizio && dateStr <= c.dataFine);
   };
 
-  const showToast = (message: string, type: 'success' | 'warning' | 'error' = 'success') => {
+  const showToast = (message: string, type: 'success' | 'warning' | 'error' | 'info' = 'success') => {
     setToast({ message, type });
     setTimeout(() => {
       setToast(null);
@@ -115,6 +127,21 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
   const [cancellationReason, setCancellationReason] = useState('');
   const [cancellationLoading, setCancellationLoading] = useState(false);
 
+  // States per richiesta modifica / annullamento da parte del dipendente
+  const [modifyingRequest, setModifyingRequest] = useState<RichiestaFerie | null>(null);
+  const [modTipoAzione, setModTipoAzione] = useState<'annullamento' | 'modifica'>('annullamento');
+  const [modDataInizio, setModDataInizio] = useState('');
+  const [modDataFine, setModDataFine] = useState('');
+  const [modOraInizio, setModOraInizio] = useState('09:00');
+  const [modOraFine, setModOraFine] = useState('18:00');
+  const [modFrazioneTipo, setModFrazioneTipo] = useState<'mattina' | 'pomeriggio' | 'giornata' | 'orario'>('giornata');
+  const [modTipo, setModTipo] = useState('ferie');
+  const [modMotivazione, setModMotivazione] = useState('');
+  const [modLoading, setModLoading] = useState(false);
+
+  // States per il filtraggio della lista richieste
+  const [requestTab, setRequestTab] = useState<'tutte' | 'in_attesa' | 'approvate' | 'storico'>('tutte');
+
   const loadFerieData = async () => {
     try {
       const closuresSnap = await getDocs(collection(db, 'chiusure_aziendali')).catch(err => {
@@ -145,9 +172,9 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       };
 
       if (isHR || isAdmin) {
-        const halfYearAgo = new Date();
-        halfYearAgo.setMonth(halfYearAgo.getMonth() - 6);
-        const startLimit = halfYearAgo.toLocaleDateString('sv-SE');
+        const twoYearsAgo = new Date();
+        twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
+        const startLimit = twoYearsAgo.toLocaleDateString('sv-SE');
 
         const q = query(
           collection(db, 'richieste_ferie'),
@@ -172,7 +199,8 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
             note: data.note || '',
             comunicazioneId: data.comunicazioneId || '',
             pausaPranzo: data.pausaPranzo || false,
-            pausaPranzoOre: data.pausaPranzoOre || 0
+            pausaPranzoOre: data.pausaPranzoOre || 0,
+            richiestaModifica: data.richiestaModifica || null
           });
         });
         setHrRichieste(list);
@@ -202,7 +230,8 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
             note: data.note || '',
             comunicazioneId: data.comunicazioneId || '',
             pausaPranzo: data.pausaPranzo || false,
-            pausaPranzoOre: data.pausaPranzoOre || 0
+            pausaPranzoOre: data.pausaPranzoOre || 0,
+            richiestaModifica: data.richiestaModifica || null
           });
         });
         setMyRichieste(listMy);
@@ -236,7 +265,8 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
             note: data.note || '',
             comunicazioneId: data.comunicazioneId || '',
             pausaPranzo: data.pausaPranzo || false,
-            pausaPranzoOre: data.pausaPranzoOre || 0
+            pausaPranzoOre: data.pausaPranzoOre || 0,
+            richiestaModifica: data.richiestaModifica || null
           });
         });
         setOthersApprovedRichieste(listOthers);
@@ -288,24 +318,52 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
     });
   }, [hrRichieste, requestsList, isHR, isAdmin]);
 
-  const listRichieste = useMemo(() => {
-    if (isHR) {
-      // Ottieni la data odierna nel formato YYYY-MM-DD
-      const todayStr = new Date().toLocaleDateString('sv-SE'); // Formato YYYY-MM-DD
-      return richieste.filter(r => {
-        const dateLimit = r.dataFine || r.dataInizio || r.data || '';
-        return (!dateLimit || dateLimit >= todayStr) && r.note !== 'Chiusure Aziendali' && r.stato === 'In attesa';
-      });
-    }
-    // For regular users, show only their own requests in the list (approved of others are calendar-only)
-    return richieste
-      .filter(r => r.dipendenteName === myAssociatedName && r.note !== 'Chiusure Aziendali')
-      .slice(0, 10);
-  }, [richieste, isHR, myAssociatedName]);
-
   const pendingCount = useMemo(() => {
-    return listRichieste.filter(r => r.stato === 'In attesa').length;
-  }, [listRichieste]);
+    const list = (isHR || isAdmin) ? hrRichieste : myRichieste;
+    return list.filter(r => r.stato === 'In attesa' || r.stato === 'Richiesta Annullamento' || r.stato === 'Richiesta Modifica').length;
+  }, [hrRichieste, myRichieste, isHR, isAdmin]);
+
+  const filteredRequestsList = useMemo(() => {
+    let baseList = (isHR || isAdmin) ? hrRichieste : requestsList;
+
+    // Per utenti standard, mostra le proprie richieste per la lista registro
+    if (!isHR && !isAdmin) {
+      baseList = baseList.filter(r => r.dipendenteName === myAssociatedName && r.note !== 'Chiusure Aziendali');
+    } else {
+      baseList = baseList.filter(r => r.note !== 'Chiusure Aziendali');
+    }
+
+    // Filtra per Tab
+    if (requestTab === 'in_attesa') {
+      baseList = baseList.filter(r => r.stato === 'In attesa' || r.stato === 'Richiesta Annullamento' || r.stato === 'Richiesta Modifica');
+    } else if (requestTab === 'approvate') {
+      baseList = baseList.filter(r => r.stato === 'Approvato');
+    } else if (requestTab === 'storico') {
+      baseList = baseList.filter(r => r.stato === 'Rifiutato');
+    }
+
+    // Escludi dalla vista registro le ferie la cui data ultima è antecedente a 60 giorni fa per mantenere la sezione pulita
+    const sixtyDaysAgo = new Date();
+    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+    const sixtyDaysAgoStr = sixtyDaysAgo.toLocaleDateString('sv-SE');
+
+    baseList = baseList.filter(r => {
+      const lastDate = r.dataFine || r.dataInizio || r.data || '';
+      return !lastDate || lastDate >= sixtyDaysAgoStr;
+    });
+
+    // Ordina in ordine cronologico dalla richiesta con la data più avanti nel tempo a quella più indietro
+    return baseList.sort((a, b) => {
+      const dateA = a.dataInizio || a.data || '';
+      const dateB = b.dataInizio || b.data || '';
+      if (dateA !== dateB) {
+        return dateB.localeCompare(dateA);
+      }
+      const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+      const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+      return timeB - timeA;
+    });
+  }, [hrRichieste, requestsList, isHR, isAdmin, myAssociatedName, requestTab]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -644,11 +702,207 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
     }
   };
 
+  // Funzioni di gestione per richieste di modifica / annullamento da parte del dipendente
+  const openModificationModal = (req: RichiestaFerie) => {
+    setModifyingRequest(req);
+    setModTipoAzione('annullamento');
+    setModDataInizio(req.dataInizio || req.data || '');
+    setModDataFine(req.dataFine || req.data || '');
+    setModOraInizio(req.oraInizio || '09:00');
+    setModOraFine(req.oraFine || '18:00');
+    setModFrazioneTipo(req.frazioneTipo || 'giornata');
+    setModTipo(req.tipo || 'ferie');
+    setModMotivazione('');
+  };
+
+  const handleSendModificationRequest = async () => {
+    if (!modifyingRequest) return;
+    if (modTipoAzione === 'modifica' && (!modDataInizio || !modDataFine)) {
+      showToast("Seleziona le nuove date per la modifica.", "warning");
+      return;
+    }
+    setModLoading(true);
+    try {
+      const newStato = modTipoAzione === 'annullamento' ? 'Richiesta Annullamento' : 'Richiesta Modifica';
+      const payloadModifica: any = {
+        tipoAzione: modTipoAzione,
+        motivazione: modMotivazione.trim(),
+        dataRichiesta: new Date().toISOString()
+      };
+      if (modTipoAzione === 'modifica') {
+        payloadModifica.nuovaDataInizio = modDataInizio;
+        payloadModifica.nuovaDataFine = modDataFine;
+        payloadModifica.nuovoTipo = modTipo;
+        payloadModifica.nuovaFrazioneTipo = modFrazioneTipo;
+        if (modFrazioneTipo === 'orario') {
+          payloadModifica.nuovaOraInizio = modOraInizio;
+          payloadModifica.nuovaOraFine = modOraFine;
+        }
+      }
+
+      await updateDoc(doc(db, 'richieste_ferie', modifyingRequest.id), {
+        stato: newStato,
+        richiestaModifica: payloadModifica
+      });
+
+      // Invia notifica email all'HR (Chiara)
+      const hrEmails = ['chiara@ingegno06.it', 'aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it'];
+      const subject = `[Notifica HR] ${newStato} da parte di ${modifyingRequest.dipendenteName}`;
+      const dateDesc = modifyingRequest.dataInizio && modifyingRequest.dataFine && modifyingRequest.dataInizio !== modifyingRequest.dataFine
+        ? `dal ${formatDate(modifyingRequest.dataInizio)} al ${formatDate(modifyingRequest.dataFine)}`
+        : `il ${formatDate(modifyingRequest.dataInizio || modifyingRequest.data)}`;
+
+      let modDetail = '';
+      if (modTipoAzione === 'annullamento') {
+        modDetail = `<p>Il dipendente richiede l'<strong>annullamento completo</strong> delle ferie/permessi approvati per il periodo <strong>${dateDesc}</strong>.</p>`;
+      } else {
+        const newDateDesc = modDataInizio === modDataFine ? `il ${formatDate(modDataInizio)}` : `dal ${formatDate(modDataInizio)} al ${formatDate(modDataFine)}`;
+        modDetail = `<p>Il dipendente richiede di <strong>modificare</strong> le ferie/permessi approvati dal periodo <strong>${dateDesc}</strong> al nuovo periodo <strong>${newDateDesc}</strong>.</p>`;
+      }
+
+      const htmlBody = `
+        <p>Ciao Chiara / HR Team,</p>
+        <p>È stata inviata una <strong>${newStato}</strong> per le ferie/permessi già approvati di <strong>${modifyingRequest.dipendenteName}</strong>.</p>
+        ${modDetail}
+        ${modMotivazione.trim() ? `<p><strong>Motivazione del dipendente:</strong> ${modMotivazione.trim()}</p>` : ''}
+        <p>Accedi all'area <em>Permessi e Ferie</em> per approvare o gestire la richiesta.</p>
+      `;
+      const plainText = `Ciao HR Team,\n\nRichiesta ${newStato} da parte di ${modifyingRequest.dipendenteName}.\nMotivazione: ${modMotivazione.trim()}\n\nAccedi alla piattaforma per gestire la richiesta.`;
+
+      for (const email of hrEmails) {
+        await queueMail(email, subject, htmlBody, plainText);
+      }
+
+      showToast("Richiesta di modifica/annullamento inviata all'HR con successo!", "success");
+      setModifyingRequest(null);
+      loadFerieData();
+    } catch (err) {
+      console.error("Errore invio richiesta modifica:", err);
+      showToast("Errore durante l'invio della richiesta.", "error");
+    } finally {
+      setModLoading(false);
+    }
+  };
+
+  const handleHRApproveModification = async (req: RichiestaFerie) => {
+    if (!req.richiestaModifica) return;
+    try {
+      const mod = req.richiestaModifica;
+      const newStart = mod.nuovaDataInizio || req.dataInizio || req.data;
+      const newEnd = mod.nuovaDataFine || req.dataFine || req.data;
+      const newTipo = mod.nuovoTipo || req.tipo;
+      const newFrazione = mod.nuovaFrazioneTipo || req.frazioneTipo;
+      const newOraInizio = mod.nuovaOraInizio || req.oraInizio;
+      const newOraFine = mod.nuovaOraFine || req.oraFine;
+
+      await updateDoc(doc(db, 'richieste_ferie', req.id), {
+        stato: 'Approvato',
+        dataInizio: newStart,
+        dataFine: newEnd,
+        data: newStart,
+        tipo: newTipo,
+        frazioneTipo: newFrazione,
+        oraInizio: newOraInizio || null,
+        oraFine: newOraFine || null,
+        richiestaModifica: null
+      });
+
+      if (newStart && newEnd && (newTipo === 'ferie' || newTipo === 'malattia' || newTipo === 'maternita')) {
+        await cleanAssignmentsForApprovedFullWeekLeave(req.dipendenteName, newStart, newEnd);
+      }
+
+      const targetDip = dipendenti.find(d => d.nome === req.dipendenteName);
+      if (targetDip && targetDip.email) {
+        const subject = `[Notifica] Modifica Ferie/Permesso Approvata`;
+        const htmlBody = `
+          <p>Ciao <strong>${req.dipendenteName}</strong>,</p>
+          <p>La tua richiesta di <strong>modifica</strong> delle ferie/permessi è stata <strong>approvata dall'HR</strong>.</p>
+          <p>Nuovo periodo approvato: dal <strong>${formatDate(newStart)}</strong> al <strong>${formatDate(newEnd)}</strong>.</p>
+        `;
+        const plainText = `Ciao ${req.dipendenteName},\n\nLa tua richiesta di modifica è stata approvata dall'HR.\nNuovo periodo: dal ${formatDate(newStart)} al ${formatDate(newEnd)}.`;
+        await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+      }
+
+      showToast("Modifica approvata ed applicata con successo!", "success");
+      loadFerieData();
+    } catch (err) {
+      console.error(err);
+      showToast("Errore durante l'applicazione della modifica.", "error");
+    }
+  };
+
+  const handleHRApproveCancellation = async (req: RichiestaFerie) => {
+    try {
+      await deleteDoc(doc(db, 'richieste_ferie', req.id));
+
+      const targetDip = dipendenti.find(d => d.nome === req.dipendenteName);
+      if (targetDip && targetDip.email) {
+        const subject = `[Notifica] Annullamento Ferie/Permesso Confermato`;
+        const htmlBody = `
+          <p>Ciao <strong>${req.dipendenteName}</strong>,</p>
+          <p>La tua richiesta di <strong>annullamento</strong> per le ferie/permessi del <strong>${formatDate(req.dataInizio || req.data)}</strong> è stata <strong>confermata dall'HR</strong>.</p>
+          <p>Il giorno/periodo è stato ripristinato nel tuo calendario.</p>
+        `;
+        const plainText = `Ciao ${req.dipendenteName},\n\nLa tua richiesta di annullamento per il ${formatDate(req.dataInizio || req.data)} è stata confermata dall'HR.`;
+        await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+      }
+
+      showToast("Annullamento approvato con successo!", "success");
+      loadFerieData();
+    } catch (err) {
+      console.error(err);
+      showToast("Errore durante l'annullamento.", "error");
+    }
+  };
+
+  const handleHRRejectModificationOrCancellation = async (req: RichiestaFerie) => {
+    try {
+      await updateDoc(doc(db, 'richieste_ferie', req.id), {
+        stato: 'Approvato',
+        richiestaModifica: null
+      });
+
+      const targetDip = dipendenti.find(d => d.nome === req.dipendenteName);
+      if (targetDip && targetDip.email) {
+        const subject = `[Notifica] Richiesta Modifica/Annullamento non accolta`;
+        const htmlBody = `
+          <p>Ciao <strong>${req.dipendenteName}</strong>,</p>
+          <p>La tua richiesta di modifica/annullamento per le ferie/permessi del <strong>${formatDate(req.dataInizio || req.data)}</strong> non è stata accolta. La richiesta originale rimane confermata ed approvata.</p>
+        `;
+        const plainText = `Ciao ${req.dipendenteName},\n\nLa tua richiesta di modifica/annullamento per il ${formatDate(req.dataInizio || req.data)} non è stata accolta.`;
+        await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+      }
+
+      showToast("Richiesta ripristinata allo stato approvato originale.", "info");
+      loadFerieData();
+    } catch (err) {
+      console.error(err);
+      showToast("Errore durante l'operazione.", "error");
+    }
+  };
+
+  const handleWithdrawPendingRequest = async (reqId: string) => {
+    try {
+      await deleteDoc(doc(db, 'richieste_ferie', reqId));
+      showToast("Richiesta in attesa ritirata con successo.", "success");
+      loadFerieData();
+    } catch (err) {
+      showToast("Errore durante l'annullamento.", "error");
+    }
+  };
+
   const getStatusBadge = (stato: string) => {
     switch(stato) {
-      case 'Approvato': return <span className="flex items-center gap-1 text-[10px] sm:text-xs font-bold bg-green-100 text-green-700 px-2 py-1 rounded-full"><CheckCircle className="w-3 h-3"/> {stato}</span>;
-      case 'Rifiutato': return <span className="flex items-center gap-1 text-[10px] sm:text-xs font-bold bg-red-100 text-red-700 px-2 py-1 rounded-full"><XCircle className="w-3 h-3"/> {stato}</span>;
-      default: return <span className="flex items-center gap-1 text-[10px] sm:text-xs font-bold bg-yellow-100 text-yellow-700 px-2 py-1 rounded-full"><Clock className="w-3 h-3"/> {stato}</span>;
+      case 'Approvato': 
+        return <span className="flex items-center gap-1 text-[10px] sm:text-xs font-bold bg-green-100 text-green-700 px-2.5 py-1 rounded-full"><CheckCircle className="w-3.5 h-3.5"/> Approvato</span>;
+      case 'Rifiutato': 
+        return <span className="flex items-center gap-1 text-[10px] sm:text-xs font-bold bg-red-100 text-red-700 px-2.5 py-1 rounded-full"><XCircle className="w-3.5 h-3.5"/> Rifiutato</span>;
+      case 'Richiesta Annullamento': 
+        return <span className="flex items-center gap-1 text-[10px] sm:text-xs font-bold bg-amber-100 text-amber-800 px-2.5 py-1 rounded-full border border-amber-300"><AlertTriangle className="w-3.5 h-3.5 text-amber-600"/> Richiesta Annullamento</span>;
+      case 'Richiesta Modifica': 
+        return <span className="flex items-center gap-1 text-[10px] sm:text-xs font-bold bg-orange-100 text-orange-800 px-2.5 py-1 rounded-full border border-orange-300"><Pencil className="w-3.5 h-3.5 text-orange-600"/> Richiesta Modifica</span>;
+      default: 
+        return <span className="flex items-center gap-1 text-[10px] sm:text-xs font-bold bg-yellow-100 text-yellow-700 px-2 py-1 rounded-full"><Clock className="w-3.5 h-3.5"/> In attesa</span>;
     }
   };
 
@@ -706,7 +960,10 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
     });
 
     richieste.forEach(req => {
-      if (req.stato !== 'Approvato') return;
+      // Include anche 'Richiesta Modifica' e 'Richiesta Annullamento': il periodo originale
+      // approvato è ancora valido finché l'HR non ha accettato la modifica/annullamento.
+      const isVisibleInPrint = req.stato === 'Approvato' || req.stato === 'Richiesta Modifica' || req.stato === 'Richiesta Annullamento';
+      if (!isVisibleInPrint) return;
       const start = req.dataInizio || req.data;
       const end = req.dataFine || req.data;
       if (!start || !end) return;
@@ -764,26 +1021,28 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
           cellText = 'X';
           textColor = '#ffffff';
         } else if (isSpecialDay) {
-          cellBg = '#f3f4f6'; // Grigio weekend
-          textColor = '#9ca3af';
+          cellBg = '#f3f4f6';
         } else if (tipo) {
-          if (tipo === 'ferie') {
-            cellBg = '#38bdf8'; // Sky Blue (Ferie)
+          const isCollabDip = dip.tipo === 'collaboratore';
+          const isFractional = Boolean(reqObj.frazioneTipo || (reqObj.oraInizio && reqObj.oraFine) || tipo === 'mattina' || tipo === 'pomeriggio');
+
+          if (tipo === 'ferie' || (isCollabDip && (tipo === 'assenza' || tipo === 'ferie') && !isFractional)) {
+            cellBg = '#38bdf8'; // Sky Blue (Ferie Dipendenti / Assenza Giornata Intera Collaboratori)
             textColor = '#ffffff';
           } else if (['malattia', 'maternita'].includes(tipo)) {
-            cellBg = '#ef4444'; // Rosso (Malattia)
+            cellBg = '#ef4444'; // Rosso (Malattia / Maternità)
             cellText = 'M';
             textColor = '#ffffff';
           } else if (tipo === 'smart') {
-            cellBg = '#84cc16'; // Verde (Smart Working)
+            cellBg = '#84cc16'; // Verde Lime (Lavora da Casa)
             textColor = '#ffffff';
-          } else if (['mattina', 'pomeriggio', 'permesso'].includes(tipo)) {
-            cellBg = '#facc15'; // Giallo
+          } else if (['mattina', 'pomeriggio', 'permesso', 'assenza'].includes(tipo) || (isCollabDip && isFractional)) {
+            cellBg = '#facc15'; // Giallo (Permesso Dipendenti / Assenza Oraria Collaboratori)
             textColor = '#713f12';
             
-            if (tipo === 'mattina' || reqObj.frazioneTipo === 'mattina') {
+            if (reqObj.frazioneTipo === 'mattina' || tipo === 'mattina') {
               cellText = 'AM';
-            } else if (tipo === 'pomeriggio' || reqObj.frazioneTipo === 'pomeriggio') {
+            } else if (reqObj.frazioneTipo === 'pomeriggio' || tipo === 'pomeriggio') {
               cellText = 'PM';
             } else if (reqObj.frazioneTipo === 'giornata') {
               cellText = 'GI';
@@ -797,7 +1056,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
               }
               cellText = `${hrs.toString().replace('.', ',')}h`;
             } else {
-              cellText = 'P';
+              cellText = isCollabDip ? 'A' : 'P';
             }
           } else if (tipo === 'studio') {
             cellBg = '#c084fc'; // Purple
@@ -828,14 +1087,19 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
 
     const headerDaysHtml = Array.from({ length: 31 }).map((_, i) => {
       const day = i + 1;
-      if (day > numDays) return '<th></th>';
+      if (day > numDays) {
+        return `<th class="empty-cell">${day}</th>`;
+      }
+
       const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       const dateObj = new Date(year, month, day);
       const dayOfWeek = dateObj.getDay();
       const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
       const isHoliday = isItalianHoliday(dateStr);
-      const classAttr = (isWknd || isHoliday) ? ' class="wknd-hdr"' : '';
-      return `<th${classAttr}>${day}</th>`;
+      const isSpecialDay = isWknd || isHoliday;
+
+      const style = isSpecialDay ? ' style="background-color: #e5e7eb !important; color: #6b7280 !important;"' : '';
+      return `<th${style}>${day}</th>`;
     }).join('');
 
     const htmlContent = `
@@ -847,56 +1111,45 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
             * {
               -webkit-print-color-adjust: exact !important;
               print-color-adjust: exact !important;
-              color-adjust: exact !important;
               box-sizing: border-box;
             }
             @page {
               size: A4 portrait;
-              margin: 0.6cm;
+              margin: 0.5cm;
             }
             html, body {
-              height: 99%;
               margin: 0;
               padding: 0;
-              font-family: 'Inter', -apple-system, sans-serif;
-              color: #1f2937;
-              font-size: 7px;
-            }
-            .container {
-              display: flex;
-              flex-direction: column;
-              height: 100%;
-              justify-content: space-between;
+              font-family: 'Inter', -apple-system, Arial, sans-serif;
+              color: #111827;
+              background-color: #ffffff;
+              font-size: 6.5px;
             }
             .header-container {
               display: flex;
               justify-content: space-between;
               align-items: flex-end;
               border-bottom: 2px solid #111827;
-              padding-bottom: 8px;
-              margin-bottom: 12px;
-            }
-            .header-left {
-              display: flex;
-              flex-direction: column;
+              padding-bottom: 6px;
+              margin-bottom: 8px;
             }
             .title-main {
               font-weight: 900;
-              font-size: 21px;
+              font-size: 18px;
               letter-spacing: -0.02em;
               color: #111827;
               text-transform: uppercase;
             }
             .title-sub {
               font-weight: 700;
-              font-size: 9.5px;
+              font-size: 9px;
               color: #6b7280;
               text-transform: uppercase;
-              letter-spacing: 0.08em;
+              letter-spacing: 0.05em;
               margin-top: 1px;
             }
             .logo-img {
-              height: 38px;
+              height: 32px;
               object-fit: contain;
             }
             table {
@@ -905,14 +1158,12 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
               table-layout: fixed;
               border: 0.5px solid #d1d5db;
             }
-            tr {
-              background-color: #ffffff !important;
-            }
             th, td {
-              border: 0.5px solid #e5e7eb;
-              padding: 3.5px 0;
+              border: 0.5px solid #d1d5db;
+              padding: 2px 0;
               text-align: center;
               font-size: 6px;
+              font-weight: bold;
               height: 14px;
             }
             th {
@@ -923,8 +1174,8 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
             }
             .name-cell {
               text-align: left;
-              padding-left: 5px;
-              font-weight: 750;
+              padding-left: 4px;
+              font-weight: 800;
               font-size: 6.5px;
               color: #111827;
               border-right: 1px solid #d1d5db;
@@ -933,124 +1184,119 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
               text-overflow: ellipsis;
               background-color: #ffffff !important;
             }
-
-            .wknd-hdr {
-              background-color: #e5e7eb !important;
-              color: #4b5563;
-            }
             .empty-cell {
               background-color: #f9fafb !important;
             }
             .legend-box {
-              margin-top: 12px;
+              margin-top: 8px;
               border-top: 1px solid #e5e7eb;
-              padding-top: 6px;
+              padding-top: 5px;
             }
             .legend-title {
               font-weight: 850;
               text-transform: uppercase;
               letter-spacing: 0.05em;
-              margin-bottom: 5px;
-              font-size: 7px;
+              margin-bottom: 4px;
+              font-size: 6.5px;
               color: #374151;
             }
             .legend-items {
               display: flex;
               flex-wrap: wrap;
-              gap: 4px 10px;
+              gap: 3px 8px;
             }
             .legend-item {
               display: flex;
               align-items: center;
-              gap: 4px;
-              font-size: 6px;
+              gap: 3px;
+              font-size: 5.8px;
               font-weight: 700;
               color: #4b5563;
               background-color: #f9fafb !important;
               border: 0.5px solid #e5e7eb;
-              padding: 2.5px 5px;
-              border-radius: 4px;
+              padding: 2px 4px;
+              border-radius: 3px;
             }
             .color-block {
-              width: 18px;
+              width: 12px;
               height: 9px;
               border-radius: 2px;
               border: 0.5px solid #d1d5db;
               display: inline-flex;
               align-items: center;
               justify-content: center;
-              font-size: 5px;
+              font-size: 5.5px;
               font-weight: 900;
             }
           </style>
         </head>
         <body>
-          <div class="container">
+          <div class="header-container">
             <div>
-              <div class="header-container">
-                <div class="header-left">
-                  <div class="title-main">${monthLabel} ${year}</div>
-                  <div class="title-sub">Pianificazione Ferie & Assenze</div>
-                </div>
-                <div class="header-right">
-                  <img src="${window.location.origin}/Logo.png" alt="Logo Ingegno" class="logo-img" />
-                </div>
-              </div>
-              <table>
-                <colgroup>
-                  <col style="width: 18%;" />
-                  ${Array.from({ length: 31 }).map(() => '<col style="width: 2.64%;" />').join('')}
-                </colgroup>
-                <thead>
-                  <tr>
-                    <th>ELENCO PERSONALE</th>
-                    ${headerDaysHtml}
-                  </tr>
-                </thead>
-                <tbody>
-                  ${rowsHtml}
-                </tbody>
-              </table>
+              <div class="title-main">${monthLabel} ${year}</div>
+              <div class="title-sub">Pianificazione Ferie & Assenze — Documento Aziendale</div>
             </div>
+            <div>
+              <img src="${window.location.origin}/Logo.png" alt="Logo Ingegno" class="logo-img" />
+            </div>
+          </div>
 
-            <div class="legend-box">
-              <div class="legend-title">Legenda:</div>
-              <div class="legend-items">
-                <div class="legend-item">
-                  <div class="color-block" style="background-color: #38bdf8 !important;"></div>
-                  <span>FERIE</span>
-                </div>
-                <div class="legend-item">
-                  <div class="color-block" style="background-color: #ef4444 !important; color: #ffffff !important;">M</div>
-                  <span>MALATTIA/MATERNITÀ</span>
-                </div>
-                <div class="legend-item">
-                  <div class="color-block" style="background-color: #facc15 !important;"></div>
-                  <span>PERMESSO (AM: Mattina - PM: Pomeriggio - GI: Giornata Intera)</span>
-                </div>
-                <div class="legend-item">
-                  <div class="color-block" style="background-color: #84cc16 !important;"></div>
-                  <span>LAVORA DA CASA</span>
-                </div>
-                <div class="legend-item">
-                  <div class="color-block" style="background-color: #c084fc !important; color: #581c87 !important;">S</div>
-                  <span>PERMESSO STUDIO</span>
-                </div>
-                <div class="legend-item">
-                  <div class="color-block" style="background-color: #2dd4bf !important; color: #115e59 !important;">D</div>
-                  <span>PERMESSO DONAZIONE</span>
-                </div>
-                <div class="legend-item">
-                  <div class="color-block" style="background-color: #818cf8 !important; color: #312e81 !important;">E</div>
-                  <span>PERMESSO ELETTORALE</span>
-                </div>
-                <div class="legend-item">
-                  <div class="color-block" style="background-color: #4b5563 !important; color: #ffffff !important;">X</div>
-                  <span>CESSATO / INATTIVO</span>
-                </div>
+          <div class="table-container">
+            <table>
+              <colgroup>
+                <col style="width: 18%;" />
+                ${Array.from({ length: 31 }).map(() => `<col style="width: 2.64%;" />`).join('')}
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>ELENCO PERSONALE</th>
+                  ${headerDaysHtml}
+                </tr>
+              </thead>
+              <tbody>
+                ${rowsHtml}
+              </tbody>
+            </table>
+          </div>
+
+          <div class="legend-box">
+            <div class="legend-title">Legenda:</div>
+            <div class="legend-items">
+              <div class="legend-item">
+                <div class="color-block" style="background-color: #38bdf8 !important;"></div>
+                <span>FERIE (DIPENDENTI) / ASSENZA (COLLABORATORI P.IVA)</span>
+              </div>
+              <div class="legend-item">
+                <div class="color-block" style="background-color: #facc15 !important;"></div>
+                <span>PERMESSO (DIPENDENTI) / ASSENZA ORARIA (COLLABORATORI)</span>
+              </div>
+              <div class="legend-item">
+                <div class="color-block" style="background-color: #ef4444 !important; color: #ffffff !important;">M</div>
+                <span>MALATTIA / MATERNITÀ</span>
+              </div>
+              <div class="legend-item">
+                <div class="color-block" style="background-color: #84cc16 !important;"></div>
+                <span>LAVORA DA CASA</span>
+              </div>
+              <div class="legend-item">
+                <div class="color-block" style="background-color: #c084fc !important; color: #581c87 !important;">S</div>
+                <span>PERMESSO STUDIO</span>
+              </div>
+              <div class="legend-item">
+                <div class="color-block" style="background-color: #2dd4bf !important; color: #115e59 !important;">D</div>
+                <span>PERMESSO DONAZIONE</span>
+              </div>
+              <div class="legend-item">
+                <div class="color-block" style="background-color: #818cf8 !important; color: #312e81 !important;">E</div>
+                <span>PERMESSO ELETTORALE</span>
+              </div>
+              <div class="legend-item">
+                <div class="color-block" style="background-color: #4b5563 !important; color: #ffffff !important;">X</div>
+                <span>CESSATO / INATTIVO</span>
               </div>
             </div>
           </div>
+          ${getPrintFooterHtml()}
           <script>
             function closeWindow() {
               try { window.close(); } catch(e) {}
@@ -1224,284 +1470,420 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
           </h2>
         </div>
         
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-stretch">
           
           {/* FORM NUOVA RICHIESTA */}
-          <div className="bg-gradient-to-br from-green-50 to-emerald-50 p-8 rounded-3xl border border-green-100 shadow-sm h-fit">
-            <h3 className="font-extrabold text-2xl mb-6 text-green-950">Nuova Richiesta Personale</h3>
-            
-            <div className="bg-emerald-600/10 border border-emerald-500/20 rounded-2xl p-4 mb-5 text-xs text-emerald-950 leading-relaxed font-semibold flex gap-2.5 items-start">
-              <span className="w-5 h-5 shrink-0 bg-emerald-600 text-white rounded-full flex items-center justify-center font-extrabold text-[10px]">i</span>
-              <div>
-                <strong>Nota Importante:</strong> Prima di inoltrare la richiesta all'HR, assicurati di esserti accordato a voce con il tuo superiore diretto. L'HR verificherà la sovrapposizione complessiva delle richieste dando per scontato il preventivo benestare del tuo responsabile.
+          <div className="bg-white/70 backdrop-blur-xl p-6 sm:p-8 rounded-3xl border border-gray-100 shadow-sm flex flex-col justify-between h-full">
+            <div>
+              <div className="pb-3 border-b border-gray-150 mb-6">
+                <h3 className="font-extrabold text-xl text-gray-900 flex items-center gap-2">
+                  Nuova Richiesta Personale
+                </h3>
+                <p className="text-xs text-gray-500 font-medium mt-0.5">
+                  Compila il modulo per inoltrare la tua richiesta all'HR
+                </p>
               </div>
-            </div>
+              
+              <div className="bg-emerald-600/10 border border-emerald-500/20 rounded-2xl p-4 mb-5 text-xs text-emerald-950 leading-relaxed font-semibold flex gap-2.5 items-start">
+                <span className="w-5 h-5 shrink-0 bg-emerald-600 text-white rounded-full flex items-center justify-center font-extrabold text-[10px]">i</span>
+                <div>
+                  <strong>Nota Importante:</strong> Assicurati di esserti accordato a voce con il tuo responsabile prima di inoltrare la richiesta.
+                </div>
+              </div>
 
-            {!myAssociatedName && !(isAdmin || isHR) ? (
-              <div className="bg-yellow-100 text-yellow-800 p-4 rounded-xl text-sm font-medium">
-                Il tuo profilo non è associato ad un nome nell'anagrafica. Contatta un amministratore per poter richiedere le ferie.
-              </div>
-            ) : (
-              <form onSubmit={handleSubmit} className="space-y-5">
-                {isHR && (
+              {!myAssociatedName && !(isAdmin || isHR) ? (
+                <div className="bg-yellow-100 text-yellow-800 p-4 rounded-xl text-sm font-medium">
+                  Il tuo profilo non è associato ad un nome nell'anagrafica. Contatta un amministratore per poter richiedere le ferie.
+                </div>
+              ) : (
+                <form onSubmit={handleSubmit} className="space-y-5">
+                  {isHR && (
+                    <div>
+                      <label className="block text-sm font-bold text-green-900 mb-1.5 ml-1">Dipendente</label>
+                      <select
+                        value={dipendenteSelezionato}
+                        onChange={e => setDipendenteSelezionato(e.target.value)}
+                        required
+                        className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900"
+                      >
+                        <option value="">-- Seleziona Dipendente --</option>
+                        {dipendenti.filter(d => !d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')).map(d => (
+                          <option key={d.id} value={d.nome}>{d.nome}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  
+                  <div className="flex bg-white/50 p-1 rounded-xl shadow-inner border border-green-100/50">
+                    <button
+                      type="button"
+                      onClick={() => setRequestMode('singolo')}
+                      className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${requestMode === 'singolo' ? 'bg-green-600 text-white shadow-sm' : 'text-green-800/70 hover:text-green-900'}`}
+                    >
+                      Giorno Singolo
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRequestMode('range')}
+                      className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${requestMode === 'range' ? 'bg-green-600 text-white shadow-sm' : 'text-green-800/70 hover:text-green-900'}`}
+                    >
+                      Intervallo di Date
+                    </button>
+                  </div>
+
+                  {requestMode === 'singolo' ? (
+                    <div>
+                      <label className="block text-sm font-bold text-green-900 mb-1.5 ml-1">Giorno di assenza</label>
+                      <input 
+                        type="date" 
+                        required 
+                        value={dataRichiesta}
+                        onChange={e => setDataRichiesta(e.target.value)}
+                        className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900"
+                      />
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-green-900 mb-1.5 ml-1">Data Inizio</label>
+                        <input 
+                          type="date" 
+                          required 
+                          value={dataInizio}
+                          onChange={e => setDataInizio(e.target.value)}
+                          className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900 text-xs sm:text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-green-900 mb-1.5 ml-1">Data Fine</label>
+                        <input 
+                          type="date" 
+                          required 
+                          value={dataFine}
+                          onChange={e => setDataFine(e.target.value)}
+                          className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900 text-xs sm:text-sm"
+                        />
+                      </div>
+                    </div>
+                  )}
+
                   <div>
-                    <label className="block text-sm font-bold text-green-900 mb-1.5 ml-1">Dipendente</label>
-                    <select
-                      value={dipendenteSelezionato}
-                      onChange={e => setDipendenteSelezionato(e.target.value)}
-                      required
+                    <label className="block text-sm font-bold text-green-900 mb-1.5 ml-1">Tipo di assenza</label>
+                    <select 
+                      value={tipoRichiesta} 
+                      onChange={e => setTipoRichiesta(e.target.value)}
                       className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900"
                     >
-                      <option value="">-- Seleziona Dipendente --</option>
-                      {dipendenti.filter(d => !d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')).map(d => (
-                        <option key={d.id} value={d.nome}>{d.nome}</option>
-                      ))}
+                      {isCollaboratore ? (
+                        <>
+                          <option value="assenza">Assenza</option>
+                          <option value="malattia">Malattia</option>
+                          <option value="maternita">Maternità</option>
+                          <option value="smart">Lavora da Casa</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="ferie">Ferie</option>
+                          <option value="permesso">Permesso</option>
+                          <option value="malattia">Malattia</option>
+                          <option value="maternita">Maternità</option>
+                          <option value="smart">Lavora da Casa</option>
+                          <option value="studio">Permesso Studio</option>
+                          <option value="donazione">Permesso Donazione</option>
+                          <option value="elettorale">Permesso Elettorale</option>
+                        </>
+                      )}
                     </select>
                   </div>
-                )}
-                
-                <div className="flex bg-white/50 p-1 rounded-xl shadow-inner border border-green-100/50">
-                  <button
-                    type="button"
-                    onClick={() => setRequestMode('singolo')}
-                    className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${requestMode === 'singolo' ? 'bg-green-600 text-white shadow-sm' : 'text-green-800/70 hover:text-green-900'}`}
-                  >
-                    Giorno Singolo
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setRequestMode('range')}
-                    className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${requestMode === 'range' ? 'bg-green-600 text-white shadow-sm' : 'text-green-800/70 hover:text-green-900'}`}
-                  >
-                    Intervallo di Date
-                  </button>
-                </div>
 
-                {requestMode === 'singolo' ? (
-                  <div>
-                    <label className="block text-sm font-bold text-green-900 mb-1.5 ml-1">Giorno di assenza</label>
-                    <input 
-                      type="date" 
-                      required 
-                      value={dataRichiesta}
-                      onChange={e => setDataRichiesta(e.target.value)}
-                      className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900"
-                    />
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-green-900 mb-1.5 ml-1">Data Inizio</label>
-                      <input 
-                        type="date" 
-                        required 
-                        value={dataInizio}
-                        onChange={e => setDataInizio(e.target.value)}
-                        className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900 text-xs sm:text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-green-900 mb-1.5 ml-1">Data Fine</label>
-                      <input 
-                        type="date" 
-                        required 
-                        value={dataFine}
-                        onChange={e => setDataFine(e.target.value)}
-                        className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900 text-xs sm:text-sm"
-                      />
-                    </div>
-                  </div>
-                )}
-
-
-                
-                <div>
-                  <label className="block text-sm font-bold text-green-900 mb-1.5 ml-1">Tipo di assenza</label>
-                  <select 
-                    value={tipoRichiesta} 
-                    onChange={e => setTipoRichiesta(e.target.value)}
-                    className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900"
-                  >
-                    {isCollaboratore ? (
-                      <>
-                        <option value="assenza">Assenza</option>
-                        <option value="malattia">Malattia</option>
-                        <option value="maternita">Maternità</option>
-                        <option value="smart">Lavora da Casa</option>
-                      </>
-                    ) : (
-                      <>
-                        <option value="ferie">Ferie</option>
-                        <option value="permesso">Permesso</option>
-                        <option value="malattia">Malattia</option>
-                        <option value="maternita">Maternità</option>
-                        <option value="smart">Lavora da Casa</option>
-                        <option value="studio">Permesso Studio</option>
-                        <option value="donazione">Permesso Donazione</option>
-                        <option value="elettorale">Permesso Elettorale</option>
-                      </>
-                    )}
-                  </select>
-                </div>
-
-                {(tipoRichiesta === 'permesso' || tipoRichiesta === 'assenza') && (
-                  <div className="bg-white/40 p-4 rounded-2xl border border-green-150 space-y-4 animate-in fade-in duration-200">
-                    <label className="block text-xs font-black text-green-950 uppercase tracking-wider">
-                      {tipoRichiesta === 'assenza' ? 'Frazionamento Assenza' : 'Frazionamento Permesso'}
-                    </label>
-                    <div className="grid grid-cols-2 gap-2.5">
-                      {[
-                        { value: 'giornata', label: 'Giornata Intera' },
-                        { value: 'mattina', label: 'Solo Mattina (AM)' },
-                        { value: 'pomeriggio', label: 'Solo Pomeriggio (PM)' },
-                        { value: 'orario', label: 'Orario Specifico' }
-                      ].map((item) => (
-                        <button
-                          key={item.value}
-                          type="button"
-                          onClick={() => setFrazioneTipo(item.value as any)}
-                          className={`p-3 rounded-xl border text-xs font-bold text-center transition-all ${
-                            frazioneTipo === item.value
-                              ? 'bg-green-600 text-white border-transparent shadow-sm'
-                              : 'bg-white/60 text-green-900 border-green-100 hover:bg-white'
-                          }`}
-                        >
-                          {item.value === frazioneTipo && <span className="mr-1">✓</span>}
-                          {item.label}
-                        </button>
-                      ))}
-                    </div>
-                          {frazioneTipo === 'orario' && (
-                      <div className="space-y-4 pt-2 border-t border-green-100 animate-in slide-in-from-top-2 duration-200">
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-xs font-bold text-green-900 mb-1 ml-1">Ora Inizio</label>
-                            <select 
-                              required 
-                              value={oraInizio}
-                              onChange={e => setOraInizio(e.target.value)}
-                              className="w-full p-3 border-none rounded-xl bg-white/70 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-bold text-green-900 text-xs cursor-pointer"
-                            >
-                              {TIME_OPTIONS.map(opt => (
-                                <option key={opt} value={opt}>{opt}</option>
-                              ))}
-                            </select>
-                          </div>
-                          <div>
-                            <label className="block text-xs font-bold text-green-900 mb-1 ml-1">Ora Fine</label>
-                            <select 
-                              required 
-                              value={oraFine}
-                              onChange={e => setOraFine(e.target.value)}
-                              className="w-full p-3 border-none rounded-xl bg-white/70 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-bold text-green-900 text-xs cursor-pointer"
-                            >
-                              {TIME_OPTIONS.map(opt => (
-                                <option key={opt} value={opt}>{opt}</option>
-                              ))}
-                            </select>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-3 bg-white/50 p-3 rounded-xl border border-green-100/50">
-                          <label className="flex items-center gap-2.5 cursor-pointer text-xs font-bold text-green-950 select-none">
-                            <input 
-                              type="checkbox" 
-                              checked={pausaPranzo}
-                              onChange={e => setPausaPranzo(e.target.checked)}
-                              className="w-4.5 h-4.5 rounded border-green-200 text-green-600 focus:ring-green-500 cursor-pointer"
-                            />
-                            <span>Pausa pranzo all'interno della fascia oraria</span>
-                          </label>
-                        </div>
-
-                        {pausaPranzo && (
-                          <div className="animate-in slide-in-from-top-2 duration-200">
-                            <label className="block text-xs font-bold text-green-900 mb-1 ml-1">Durata pausa pranzo da sottrarre</label>
-                            <select 
-                              value={pausaPranzoOre}
-                              onChange={e => setPausaPranzoOre(e.target.value)}
-                              className="w-full p-3 border-none rounded-xl bg-white/70 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-bold text-green-900 text-xs cursor-pointer"
-                            >
-                              {PAUSA_PRANZO_OPTIONS.map(opt => (
-                                <option key={opt.value} value={opt.value}>{opt.label}</option>
-                              ))}
-                            </select>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-                
-                <button 
-                  type="submit" 
-                  disabled={loading}
-                  className="w-full bg-green-600 text-white font-bold py-4 rounded-xl hover:bg-green-700 transition shadow-lg active:scale-95 disabled:opacity-50 disabled:active:scale-100 mt-4"
-                >
-                  {loading ? 'Invio in corso...' : 'Invia Richiesta'}
-                </button>
-              </form>
-            )}
-          </div>
-
-          {/* LISTA RICHIESTE */}
-          <div className="bg-white/60 p-8 rounded-3xl border border-gray-100 shadow-inner">
-             <h3 className="font-extrabold text-2xl mb-6 text-gray-900 flex items-center gap-2">
-               {isHR ? "Richieste da Gestire" : "Le tue richieste"}
-               {isHR && pendingCount > 0 && (
-                 <span className="bg-red-500 text-white text-xs font-extrabold px-2 py-0.5 rounded-full">
-                   {pendingCount}
-                 </span>
-               )}
-             </h3>
-            
-            <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
-              {listRichieste.length === 0 ? (
-                <p className="text-center text-gray-400 py-10 font-medium">Nessuna richiesta presente.</p>
-              ) : (
-                listRichieste.map(req => (
-                  <div key={req.id} className="p-4 sm:p-5 border border-gray-100 rounded-2xl bg-white shadow-sm hover:shadow-md transition-shadow flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 group">
-                    <div className="space-y-1.5 flex-1 min-w-0">
-                      <div className="font-bold text-base sm:text-lg text-gray-900 truncate">{req.dipendenteName}</div>
-                      <div className="flex flex-wrap items-center gap-2 sm:gap-4">
-                        <span className="text-xs sm:text-sm font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded-lg">
-                          {req.dataInizio && req.dataFine && req.dataInizio !== req.dataFine 
-                            ? `Dal ${formatDate(req.dataInizio)} al ${formatDate(req.dataFine)}${(req.tipo === 'permesso' || req.tipo === 'assenza') && req.oraInizio && req.oraFine ? ` (dalle ${req.oraInizio} alle ${req.oraFine}${req.pausaPranzo && req.pausaPranzoOre ? `, esclusa p. pranzo ${req.pausaPranzoOre.toString().replace('.', ',')}h` : ''})` : ''}`
-                            : (req.tipo === 'permesso' || req.tipo === 'assenza') && req.oraInizio && req.oraFine
-                              ? `Il ${formatDate(req.dataInizio || req.data)} dalle ${req.oraInizio} alle ${req.oraFine}${req.pausaPranzo && req.pausaPranzoOre ? ` (esclusa p. pranzo ${req.pausaPranzoOre.toString().replace('.', ',')}h)` : ''}`
-                              : `Il ${formatDate(req.dataInizio || req.data)}`}
-                        </span>
-                        {getTipoLabel(req.tipo, req.frazioneTipo, req.dipendenteName)}
-                      </div>
-                    </div>
-                    
-                    <div className="flex flex-row sm:flex-col items-center sm:items-end justify-between w-full sm:w-auto gap-3">
-                      {getStatusBadge(req.stato)}
-                      
-                      {isHR && req.stato === 'In attesa' && (
-                        <div className="flex gap-2">
-                          <button 
-                            onClick={() => handleDecision(req.id, true)} 
-                            className="px-3 py-1.5 text-xs font-bold bg-green-500 text-white rounded-lg hover:bg-green-600 transition shadow-sm active:scale-95"
+                  {(tipoRichiesta === 'permesso' || tipoRichiesta === 'assenza') && (
+                    <div className="bg-white/40 p-4 rounded-2xl border border-green-150 space-y-4 animate-in fade-in duration-200">
+                      <label className="block text-xs font-black text-green-950 uppercase tracking-wider">
+                        {tipoRichiesta === 'assenza' ? 'Frazionamento Assenza' : 'Frazionamento Permesso'}
+                      </label>
+                      <div className="grid grid-cols-2 gap-2.5">
+                        {[
+                          { value: 'giornata', label: 'Giornata Intera' },
+                          { value: 'mattina', label: 'Solo Mattina (AM)' },
+                          { value: 'pomeriggio', label: 'Solo Pomeriggio (PM)' },
+                          { value: 'orario', label: 'Orario Specifico' }
+                        ].map((item) => (
+                          <button
+                            key={item.value}
+                            type="button"
+                            onClick={() => setFrazioneTipo(item.value as any)}
+                            className={`p-3 rounded-xl border text-xs font-bold text-center transition-all ${
+                              frazioneTipo === item.value
+                                ? 'bg-green-600 text-white border-transparent shadow-sm'
+                                : 'bg-white/60 text-green-900 border-green-100 hover:bg-white'
+                            }`}
                           >
-                            Approva
+                            {item.value === frazioneTipo && <span className="mr-1">✓</span>}
+                            {item.label}
                           </button>
-                          <button 
-                            onClick={() => handleDecision(req.id, false)} 
-                            className="px-3 py-1.5 text-xs font-bold bg-red-500 text-white rounded-lg hover:bg-red-600 transition shadow-sm active:scale-95"
-                          >
-                            Rifiuta
-                          </button>
+                        ))}
+                      </div>
+                      {frazioneTipo === 'orario' && (
+                        <div className="space-y-4 pt-2 border-t border-green-100 animate-in slide-in-from-top-2 duration-200">
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-xs font-bold text-green-900 mb-1 ml-1">Ora Inizio</label>
+                              <select 
+                                required 
+                                value={oraInizio}
+                                onChange={e => setOraInizio(e.target.value)}
+                                className="w-full p-3 border-none rounded-xl bg-white/70 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-bold text-green-900 text-xs cursor-pointer"
+                              >
+                                {TIME_OPTIONS.map(opt => (
+                                  <option key={opt} value={opt}>{opt}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-xs font-bold text-green-900 mb-1 ml-1">Ora Fine</label>
+                              <select 
+                                required 
+                                value={oraFine}
+                                onChange={e => setOraFine(e.target.value)}
+                                className="w-full p-3 border-none rounded-xl bg-white/70 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-bold text-green-900 text-xs cursor-pointer"
+                              >
+                                {TIME_OPTIONS.map(opt => (
+                                  <option key={opt} value={opt}>{opt}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-3 bg-white/50 p-3 rounded-xl border border-green-100/50">
+                            <label className="flex items-center gap-2.5 cursor-pointer text-xs font-bold text-green-950 select-none">
+                              <input 
+                                type="checkbox" 
+                                checked={pausaPranzo}
+                                onChange={e => setPausaPranzo(e.target.checked)}
+                                className="w-4.5 h-4.5 rounded border-green-200 text-green-600 focus:ring-green-500 cursor-pointer"
+                              />
+                              <span>Pausa pranzo all'interno della fascia oraria</span>
+                            </label>
+                          </div>
+
+                          {pausaPranzo && (
+                            <div className="animate-in slide-in-from-top-2 duration-200">
+                              <label className="block text-xs font-bold text-green-900 mb-1 ml-1">Durata pausa pranzo da sottrarre</label>
+                              <select 
+                                value={pausaPranzoOre}
+                                onChange={e => setPausaPranzoOre(e.target.value)}
+                                className="w-full p-3 border-none rounded-xl bg-white/70 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-bold text-green-900 text-xs cursor-pointer"
+                              >
+                                {PAUSA_PRANZO_OPTIONS.map(opt => (
+                                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
-                  </div>
-                ))
+                  )}
+                  
+                  <button 
+                    type="submit" 
+                    disabled={loading}
+                    className="w-full bg-green-600 text-white font-bold py-4 rounded-xl hover:bg-green-700 transition shadow-lg active:scale-95 disabled:opacity-50 disabled:active:scale-100 mt-4"
+                  >
+                    {loading ? 'Invio in corso...' : 'Invia Richiesta'}
+                  </button>
+                </form>
+              )}
+            </div>
+          </div>
+
+          {/* LISTA E REGISTRO RICHIESTE */}
+          <div className="bg-white/70 backdrop-blur-xl p-6 sm:p-8 rounded-3xl border border-gray-100 shadow-sm flex flex-col h-full">
+            <div className="flex flex-col gap-4 h-full">
+              <div className="pb-3 border-b border-gray-150">
+                <h3 className="font-extrabold text-xl text-gray-900 flex items-center gap-2">
+                  {isHR ? "Gestione e Registro Permessi" : "Registro Ferie e Permessi"}
+                  {pendingCount > 0 && (
+                    <span className="bg-amber-500 text-white text-xs font-black px-2.5 py-0.5 rounded-full shadow-xs">
+                      {pendingCount}
+                    </span>
+                  )}
+                </h3>
+                <p className="text-xs text-gray-500 font-medium mt-0.5">
+                  {isHR ? "Consulta e gestisci le richieste pervenute ed i cambi approvati" : "Filtra le tue richieste ed invia modifiche per i permessi approvati"}
+                </p>
+              </div>
+
+              {/* TAB DI FILTRAGGIO */}
+            <div className="flex flex-wrap items-center gap-1.5 border-b border-gray-100 pb-2.5">
+              {[
+                { id: 'tutte', label: 'Tutte', count: (isHR ? hrRichieste : requestsList.filter(r => r.dipendenteName === myAssociatedName)).length },
+                { id: 'in_attesa', label: 'In Attesa / Modifiche', count: (isHR ? hrRichieste : requestsList.filter(r => r.dipendenteName === myAssociatedName)).filter(r => r.stato === 'In attesa' || r.stato === 'Richiesta Annullamento' || r.stato === 'Richiesta Modifica').length },
+                { id: 'approvate', label: 'Approvate', count: (isHR ? hrRichieste : requestsList.filter(r => r.dipendenteName === myAssociatedName)).filter(r => r.stato === 'Approvato').length },
+                { id: 'storico', label: 'Rifiutate', count: (isHR ? hrRichieste : requestsList.filter(r => r.dipendenteName === myAssociatedName)).filter(r => r.stato === 'Rifiutato').length }
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setRequestTab(tab.id as any)}
+                  className={`px-3 py-1.5 rounded-xl text-[11px] font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+                    requestTab === tab.id
+                      ? 'bg-green-600 text-white shadow-sm'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <span>{tab.label}</span>
+                  <span className={`px-1.5 py-0.2 rounded-full text-[9.5px] ${requestTab === tab.id ? 'bg-white/30 text-white' : 'bg-slate-200 text-slate-700'}`}>
+                    {tab.count}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            {/* LISTA CARD RICHIESTE */}
+            <div className="space-y-3 flex-1 overflow-y-auto pr-1 max-h-[460px] custom-scrollbar">
+              {filteredRequestsList.length === 0 ? (
+                <div className="text-center text-gray-400 py-10 font-medium bg-slate-50/50 rounded-2xl border border-dashed border-slate-200 text-xs">
+                  Nessuna richiesta presente per i filtri correnti.
+                </div>
+              ) : (
+                filteredRequestsList.map(req => {
+                  const isMyReq = req.dipendenteName === myAssociatedName;
+                  const hasModificationPending = req.stato === 'Richiesta Annullamento' || req.stato === 'Richiesta Modifica';
+
+                  return (
+                    <div 
+                      key={req.id} 
+                      className={`p-3.5 sm:p-4 border rounded-2xl transition-all flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 ${
+                        hasModificationPending 
+                          ? 'bg-amber-50/70 border-amber-200 shadow-xs' 
+                          : 'bg-white border-slate-200/80 shadow-2xs hover:shadow-xs'
+                      }`}
+                    >
+                      <div className="space-y-1.5 flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-extrabold text-sm text-gray-900 truncate">{req.dipendenteName}</span>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[11px] font-extrabold text-gray-700 bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200/60">
+                            {req.dataInizio && req.dataFine && req.dataInizio !== req.dataFine 
+                              ? `Dal ${formatDate(req.dataInizio)} al ${formatDate(req.dataFine)}${(req.tipo === 'permesso' || req.tipo === 'assenza') && req.oraInizio && req.oraFine ? ` (${req.oraInizio}-${req.oraFine}${req.pausaPranzo && req.pausaPranzoOre ? `, esc. pranzo ${req.pausaPranzoOre.toString().replace('.', ',')}h` : ''})` : ''}`
+                              : (req.tipo === 'permesso' || req.tipo === 'assenza') && req.oraInizio && req.oraFine
+                                ? `Il ${formatDate(req.dataInizio || req.data)} dalle ${req.oraInizio} alle ${req.oraFine}${req.pausaPranzo && req.pausaPranzoOre ? ` (esc. pranzo ${req.pausaPranzoOre.toString().replace('.', ',')}h)` : ''}`
+                                : `Il ${formatDate(req.dataInizio || req.data)}`}
+                          </span>
+                          {getTipoLabel(req.tipo, req.frazioneTipo, req.dipendenteName)}
+                        </div>
+
+                        {/* ANTEPRIMA MODIFICA RICHIESTA (SE IN ATTESA DI ANNULLAMENTO/MODIFICA) */}
+                        {req.richiestaModifica && (
+                          <div className="mt-1.5 p-2.5 bg-amber-100/60 border border-amber-200 rounded-xl text-xs space-y-0.5 text-amber-950">
+                            <div className="font-black flex items-center gap-1 text-amber-900 uppercase text-[10px]">
+                              <AlertTriangle className="w-3 h-3 text-amber-600" />
+                              <span>{req.richiestaModifica.tipoAzione === 'annullamento' ? 'Richiesta di Annullamento' : 'Richiesta di Modifica'}</span>
+                            </div>
+                            {req.richiestaModifica.tipoAzione === 'modifica' && (
+                              <div className="font-bold text-amber-900 text-[11px]">
+                                Nuovo Periodo: Dal {formatDate(req.richiestaModifica.nuovaDataInizio || '')} al {formatDate(req.richiestaModifica.nuovaDataFine || '')}
+                              </div>
+                            )}
+                            {req.richiestaModifica.motivazione && (
+                              <div className="italic text-amber-900/90 font-medium text-[10.5px]">
+                                "{req.richiestaModifica.motivazione}"
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex flex-col items-start sm:items-end justify-between w-full sm:w-auto gap-2 shrink-0 border-t sm:border-t-0 pt-2 sm:pt-0">
+                        <div className="flex items-center gap-2">
+                          {getStatusBadge(req.stato)}
+                        </div>
+
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {/* AZIONE DIPENDENTE SU RICHIESTA APPROVATA: MODIFICA / ANNULLA (MATITINA) */}
+                          {isMyReq && req.stato === 'Approvato' && (
+                            <button
+                              type="button"
+                              onClick={() => openModificationModal(req)}
+                              className="flex items-center gap-1 px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300/80 rounded-lg text-[11px] font-extrabold transition-all shadow-2xs hover:shadow-xs active:scale-95 cursor-pointer"
+                              title="Richiedi modifica o annullamento all'HR (Chiara)"
+                            >
+                              <Pencil className="w-3 h-3 text-amber-700" />
+                              <span>Modifica / Annulla</span>
+                            </button>
+                          )}
+
+                          {/* AZIONE DIPENDENTE SU RICHIESTA IN ATTESA: ANNULLA BOZZA */}
+                          {isMyReq && req.stato === 'In attesa' && (
+                            <button
+                              type="button"
+                              onClick={() => handleWithdrawPendingRequest(req.id)}
+                              className="flex items-center gap-1 px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-[11px] font-extrabold transition active:scale-95 cursor-pointer"
+                              title="Ritira la richiesta in attesa"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                              <span>Ritira</span>
+                            </button>
+                          )}
+
+                          {/* AZIONI HR PER RICHIESTE IN ATTESA */}
+                          {(isHR || isAdmin) && req.stato === 'In attesa' && (
+                            <div className="flex gap-1.5">
+                              <button 
+                                onClick={() => handleDecision(req.id, true)} 
+                                className="px-2.5 py-1 text-[11px] font-extrabold bg-green-600 hover:bg-green-700 text-white rounded-lg transition shadow-2xs active:scale-95 cursor-pointer"
+                              >
+                                Approva
+                              </button>
+                              <button 
+                                onClick={() => handleDecision(req.id, false)} 
+                                className="px-2.5 py-1 text-[11px] font-extrabold bg-rose-600 hover:bg-rose-700 text-white rounded-lg transition shadow-2xs active:scale-95 cursor-pointer"
+                              >
+                                Rifiuta
+                              </button>
+                            </div>
+                          )}
+
+                          {/* AZIONI HR PER RICHIESTE DI ANNULLAMENTO / MODIFICA */}
+                          {(isHR || isAdmin) && (req.stato === 'Richiesta Annullamento' || req.stato === 'Richiesta Modifica') && (
+                            <div className="flex flex-wrap gap-1.5">
+                              {req.stato === 'Richiesta Annullamento' ? (
+                                <button 
+                                  onClick={() => handleHRApproveCancellation(req)} 
+                                  className="px-2.5 py-1 text-[11px] font-extrabold bg-red-600 hover:bg-red-700 text-white rounded-lg transition shadow-2xs active:scale-95 cursor-pointer"
+                                >
+                                  Conferma Annullamento
+                                </button>
+                              ) : (
+                                <button 
+                                  onClick={() => handleHRApproveModification(req)} 
+                                  className="px-2.5 py-1 text-[11px] font-extrabold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition shadow-2xs active:scale-95 cursor-pointer"
+                                >
+                                  Applica Modifica
+                                </button>
+                              )}
+                              <button 
+                                onClick={() => handleHRRejectModificationOrCancellation(req)} 
+                                className="px-2 py-1 text-[11px] font-bold bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg transition cursor-pointer"
+                              >
+                                Rifiuta Cambio
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
               )}
             </div>
           </div>
         </div>
       </div>
+    </div>
 
       {/* CALENDARIO VIEW */}
       <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl p-6 sm:p-10 border border-white/50 no-print">
@@ -1774,6 +2156,152 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
           </>
         )}
       </div>
+
+      {/* MODALE RICHIESTA MODIFICA / ANNULLAMENTO FERIE APPROVATE PER DIPENDENTE */}
+      {modifyingRequest && (
+        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-md flex items-center justify-center z-[9999] p-4 sm:p-6 no-print animate-in fade-in duration-200">
+          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-xl border border-gray-100 flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+            
+            {/* Header Modale */}
+            <div className="p-5 sm:p-6 border-b bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 text-white flex justify-between items-center">
+              <div className="flex items-center gap-2.5">
+                <Pencil className="w-5 h-5 text-amber-200" />
+                <h3 className="text-lg font-black tracking-tight">Richiesta Modifica / Annullamento</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModifyingRequest(null)}
+                className="text-white/80 hover:text-white p-1 hover:bg-white/10 rounded-full transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 sm:p-6 space-y-5 overflow-y-auto max-h-[80vh]">
+              {/* Card di Riepilogo Richiesta Approvata Attuale */}
+              <div className="bg-amber-50/80 border border-amber-200 p-4 rounded-2xl space-y-1 text-xs">
+                <div className="font-extrabold text-amber-950 text-sm">{modifyingRequest.dipendenteName}</div>
+                <div className="font-bold text-amber-900">
+                  {modifyingRequest.dataInizio && modifyingRequest.dataFine && modifyingRequest.dataInizio !== modifyingRequest.dataFine
+                    ? `Periodo Approvato: Dal ${formatDate(modifyingRequest.dataInizio)} al ${formatDate(modifyingRequest.dataFine)}`
+                    : `Giorno Approvato: ${formatDate(modifyingRequest.dataInizio || modifyingRequest.data)}`}
+                </div>
+                <div className="text-amber-800 font-semibold">
+                  Tipo: {getTipoData(modifyingRequest.tipo, modifyingRequest.frazioneTipo, modifyingRequest.dipendenteName).label}
+                </div>
+              </div>
+
+              {/* Selettore Tipo Azione: Annullamento vs Modifica */}
+              <div className="space-y-2">
+                <label className="block text-xs font-black text-gray-800 uppercase tracking-wider">Cosa desideri richiedere all'HR (Chiara)?</label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setModTipoAzione('annullamento')}
+                    className={`p-3.5 rounded-2xl border text-xs font-extrabold text-center transition-all flex flex-col items-center gap-1.5 cursor-pointer ${
+                      modTipoAzione === 'annullamento'
+                        ? 'bg-red-600 text-white border-transparent shadow-md'
+                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>Annulla Ferie Approvate</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setModTipoAzione('modifica')}
+                    className={`p-3.5 rounded-2xl border text-xs font-extrabold text-center transition-all flex flex-col items-center gap-1.5 cursor-pointer ${
+                      modTipoAzione === 'modifica'
+                        ? 'bg-indigo-600 text-white border-transparent shadow-md'
+                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <Pencil className="w-4 h-4" />
+                    <span>Modifica Date / Orari</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Campi di Modifica se selezionato 'modifica' */}
+              {modTipoAzione === 'modifica' && (
+                <div className="space-y-3.5 bg-slate-50 p-4 rounded-2xl border border-slate-200 animate-in fade-in duration-200">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-gray-700 mb-1">Nuova Data Inizio *</label>
+                      <input 
+                        type="date"
+                        value={modDataInizio}
+                        onChange={e => setModDataInizio(e.target.value)}
+                        className="w-full p-2.5 rounded-xl border border-slate-200 text-xs font-bold text-gray-800 bg-white outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-gray-700 mb-1">Nuova Data Fine *</label>
+                      <input 
+                        type="date"
+                        value={modDataFine}
+                        onChange={e => setModDataFine(e.target.value)}
+                        className="w-full p-2.5 rounded-xl border border-slate-200 text-xs font-bold text-gray-800 bg-white outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">Tipo Assenza</label>
+                    <select
+                      value={modTipo}
+                      onChange={e => setModTipo(e.target.value)}
+                      className="w-full p-2.5 rounded-xl border border-slate-200 text-xs font-bold text-gray-800 bg-white outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                    >
+                      <option value="ferie">Ferie</option>
+                      <option value="permesso">Permesso</option>
+                      <option value="malattia">Malattia</option>
+                      <option value="smart">Lavora da Casa</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              {/* Nota / Motivazione per HR */}
+              <div>
+                <label className="block text-xs font-bold text-gray-800 mb-1 flex items-center justify-between">
+                  <span>Motivazione / Nota per l'HR (Chiara)</span>
+                  <span className="text-[10px] text-gray-400 font-normal italic">(Facoltativa)</span>
+                </label>
+                <textarea
+                  placeholder={modTipoAzione === 'annullamento' ? "Spiega all'HR il motivo dell'annullamento delle ferie..." : "Spiega all'HR il motivo della modifica del periodo..."}
+                  value={modMotivazione}
+                  onChange={e => setModMotivazione(e.target.value)}
+                  rows={3}
+                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 resize-none"
+                />
+              </div>
+            </div>
+
+            {/* Footer Modale */}
+            <div className="p-4 border-t border-gray-150 flex gap-3 bg-gray-50">
+              <button
+                type="button"
+                onClick={() => setModifyingRequest(null)}
+                className="flex-1 py-3 px-4 rounded-xl border border-gray-300 text-xs font-bold text-gray-700 hover:bg-gray-100 transition cursor-pointer"
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                onClick={handleSendModificationRequest}
+                disabled={modLoading}
+                className="flex-1 py-3 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-extrabold transition shadow-md disabled:opacity-50 cursor-pointer"
+              >
+                {modLoading ? "Invio in corso..." : "Invia Richiesta all'HR"}
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
 
       {cancellationRequest && (
         <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">

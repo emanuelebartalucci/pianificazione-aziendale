@@ -2,11 +2,13 @@ import { useState, useMemo, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, doc, setDoc, addDoc, deleteDoc, getDocs } from 'firebase/firestore';
-import { Briefcase, ChevronLeft, ChevronRight, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw } from 'lucide-react';
+import { Briefcase, ChevronLeft, ChevronRight, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw, Printer, Plus } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays } from '../utils/date';
 import { queueMail } from '../utils/mailSender';
 import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
 import ConfirmModal from '../components/ConfirmModal';
+import { PianificazioneModal } from '../components/PianificazioneModal';
+import { getPrintFooterHtml } from '../config/version';
 import { TIPOLOGIE_COMMESSE, isSoci } from './Impostazioni';
 
 const isWeekWithinRange = (wkDateObj: Date | undefined, startStr?: string, endStr?: string): boolean => {
@@ -101,6 +103,7 @@ const getInitials = (name?: string | null): string => {
 interface CommessaProgetto {
   descrizione: string;
   pm: string;
+  utentiDaAbilitare?: string[];
   sgq: 'SI' | 'NO';
   verificatori: string[];
   compilatore: string;
@@ -223,6 +226,7 @@ export default function Commesse() {
     {
       descrizione: 'FORMAZIONE - Attività formative sulla commessa',
       pm: '',
+      utentiDaAbilitare: [],
       sgq: 'NO',
       verificatori: [],
       compilatore: '',
@@ -248,8 +252,17 @@ export default function Commesse() {
   const [clientSearchText, setClientSearchText] = useState('');
   const [isClientDropdownOpen, setIsClientDropdownOpen] = useState(false);
 
-  // Search filter for catalogo
+  // Search and Advanced Filters for Catalogo Commesse
   const [searchCommessaQuery, setSearchCommessaQuery] = useState('');
+  const [catalogoStatoFilter, setCatalogoStatoFilter] = useState<'Aperta' | 'Tutte' | 'Chiusa'>('Aperta'); // Default solo Aperte!
+  const [catalogoRespFilter, setCatalogoRespFilter] = useState<string>('');
+  const [catalogoPMFilter, setCatalogoPMFilter] = useState<string>('');
+  const [catalogoClienteFilter, setCatalogoClienteFilter] = useState<string>('');
+  const [catalogoAnnoFilter, setCatalogoAnnoFilter] = useState<string>('');
+  const [catalogoTipologiaFilter, setCatalogoTipologiaFilter] = useState<string>('');
+  const [catalogoSortBy, setCatalogoSortBy] = useState<'codice' | 'anno' | 'tipologia' | 'titolo' | 'cliente' | 'stato' | 'responsabile' | 'pm'>('codice');
+  const [catalogoSortDir, setCatalogoSortDir] = useState<'asc' | 'desc'>('asc');
+  const [showNewCommessaForm, setShowNewCommessaForm] = useState(true);
   
   const weekColumnMinWidth = useMemo(() => {
     // Estimating remaining width of a container on standard screen (approx 900px)
@@ -385,6 +398,14 @@ export default function Commesse() {
   const [reqChangeNotes, setReqChangeNotes] = useState('');
   const [sendingResourceRequest, setSendingResourceRequest] = useState(false);
 
+  const [planningModal, setPlanningModal] = useState<{
+    isOpen: boolean;
+    tab?: 'commessa' | 'risorsa' | 'sostituisci';
+    commessaId?: string;
+    risorsa?: string;
+    weekId?: string;
+  }>({ isOpen: false });
+
   const handleResourcePillClick = (e: React.MouseEvent, personName: string, personPct: number, commId: string, commNome: string, wkId: string, wkLabel: string) => {
     e.stopPropagation();
 
@@ -396,9 +417,38 @@ export default function Commesse() {
     );
     const canDirectlyManage = isAdmin || isSoci(myAssociatedName) || isCoordOfResourceArea;
 
+    if (e.button === 1) {
+      // Rotellina (Middle Click) -> Nuova Scheda
+      if (canDirectlyManage) {
+        window.open(`/pianificazione-personale?tab=risorsa&risorsa=${encodeURIComponent(personName)}&weekId=${encodeURIComponent(wkId)}`, '_blank');
+      }
+      return;
+    }
+
     if (canDirectlyManage) {
-      window.open(`/pianificazione-personale?tab=risorsa&risorsa=${encodeURIComponent(personName)}&weekId=${encodeURIComponent(wkId)}`, '_blank');
+      // Tasto Sinistro (Left Click) -> Modale di Gestione Diretta
+      setPlanningModal({
+        isOpen: true,
+        tab: 'risorsa',
+        risorsa: personName,
+        commessaId: commId,
+        weekId: wkId
+      });
     } else {
+      // Se il gestore è un Coordinatore di un'altra area o il PM/Responsabile della commessa, oppure la risorsa stessa:
+      const targetCommessa = commesse.find(c => c.id === commId);
+      const isPMOrRespOfCommessa = targetCommessa ? (
+        areNamesEqual(targetCommessa.responsabile, myAssociatedName) ||
+        (Array.isArray(targetCommessa.pm) ? targetCommessa.pm : [targetCommessa.pm]).some(pmName => areNamesEqual(pmName, myAssociatedName))
+      ) : false;
+      const isAnyCoordinator = (coordinatori || []).some(c => c.email?.toLowerCase() === userEmail?.toLowerCase());
+
+      const canSendChangeRequest = isAnyCoordinator || isPMOrRespOfCommessa || areNamesEqual(personName, myAssociatedName);
+
+      if (!canSendChangeRequest) {
+        return;
+      }
+
       const coordObjs = (coordinatori || []).filter(c => c.area === macroArea);
       const coordEmails = coordObjs.map(c => c.email?.toLowerCase()).filter(Boolean);
       const coordDip = dipendenti.find(d => d.email && coordEmails.includes(d.email.toLowerCase()));
@@ -933,7 +983,18 @@ export default function Commesse() {
       const totalJuniorDays = editProgetti.reduce((acc, p) => acc + (p.sgq === 'NO' ? Number(p.giornateJunior) || 0 : 0), 0);
       const pmsUnivoci = Array.from(new Set(editProgetti.map(p => p.pm).filter(name => name !== '')));
 
-      const updates = {
+      // Rileva se la commessa viene chiusa adesso (transizione verso "Chiusa")
+      const wasAlreadyClosed = (editingCommessa as any).stato === 'Chiusa';
+      const isClosingNow = editStato === 'Chiusa' && !wasAlreadyClosed;
+
+      // Data di chiusura: sempre la data odierna al momento della chiusura; non viene mai sovrascritta se già presente
+      const todayIso = new Date().toISOString().slice(0, 10);
+      const existingDataChiusura = (editingCommessa as any).dataChiusura || null;
+      const dataChiusura = editStato === 'Chiusa'
+        ? (existingDataChiusura || todayIso)
+        : null;
+
+      const updates: Record<string, any> = {
         responsabile: editResponsabile,
         pm: pmsUnivoci,
         giornateSeniorProject: totalSeniorDays,
@@ -942,10 +1003,64 @@ export default function Commesse() {
         dataInizio: editDataInizio,
         dataFine: editDataFine,
         stato: editStato,
-        progetti: editProgetti
+        progetti: editProgetti,
+        ...(dataChiusura ? { dataChiusura } : {})
       };
 
       await setDoc(docRef, updates, { merge: true });
+
+      // --- Pulizia assegnazioni future se la commessa viene chiusa ora ---
+      if (isClosingNow) {
+        const chiusuraDate = new Date(todayIso);
+        chiusuraDate.setHours(0, 0, 0, 0);
+
+        const assSnap = await getDocs(collection(db, 'assegnazioni'));
+        let settimaneRipulite = 0;
+
+        for (const assDocSnap of assSnap.docs) {
+          const docId = assDocSnap.id; // formato: {dipName}-{YYYY-Www}
+          const match = docId.match(/^(.+)-(\d{4}-W\d{1,2})$/);
+          if (!match) continue;
+
+          const weekId = match[2]; // es. "2026-W32"
+          const [yearStr, weekStr] = weekId.split('-W');
+          const year = parseInt(yearStr);
+          const week = parseInt(weekStr);
+
+          // Calcola il lunedì della settimana weekId (algoritmo ISO)
+          const jan4 = new Date(year, 0, 4);
+          const jan4Day = jan4.getDay() || 7;
+          const weekStart = new Date(jan4);
+          weekStart.setDate(jan4.getDate() - jan4Day + 1 + (week - 1) * 7);
+          weekStart.setHours(0, 0, 0, 0);
+
+          // Mantieni la settimana corrente, rimuovi solo quelle strettamente future
+          if (weekStart <= chiusuraDate) continue;
+
+          const currentLista: any[] = assDocSnap.data().lista || [];
+          const updatedLista = currentLista.filter(
+            (ass: any) => ass.commessaId !== editingCommessa.id
+          );
+
+          if (updatedLista.length === currentLista.length) continue; // Nessuna entry per questa commessa
+
+          settimaneRipulite++;
+          if (updatedLista.length === 0) {
+            await deleteDoc(doc(db, 'assegnazioni', docId));
+          } else {
+            await setDoc(doc(db, 'assegnazioni', docId), { lista: updatedLista });
+          }
+        }
+
+        if (settimaneRipulite > 0) {
+          showToast(
+            `Commessa chiusa. Rimosse assegnazioni future su ${settimaneRipulite} settimane.`,
+            'success'
+          );
+        } else {
+          showToast('Commessa chiusa. Nessuna assegnazione futura da rimuovere.', 'success');
+        }
+      }
 
       // Invia notifiche email se sono state fatte assegnazioni (escludendo l'auto-assegnazione)
       if (editResponsabile && editResponsabile !== editingCommessa.responsabile) {
@@ -965,8 +1080,8 @@ export default function Commesse() {
       }
 
       // Notifica ai PM aggiunti (escludendo l'auto-assegnazione)
-      const oldPMs = Array.isArray(editingCommessa.pm) 
-        ? editingCommessa.pm 
+      const oldPMs = Array.isArray(editingCommessa.pm)
+        ? editingCommessa.pm
         : (editingCommessa.pm ? [editingCommessa.pm] : []);
       const addedPMs = pmsUnivoci.filter((p: string) => !oldPMs.includes(p));
 
@@ -987,7 +1102,9 @@ export default function Commesse() {
       }
 
       setEditingCommessa(null);
-      showToast("Dettagli commessa salvati con successo!", "success");
+      if (!isClosingNow) {
+        showToast("Dettagli commessa salvati con successo!", "success");
+      }
     } catch (err) {
       console.error("Errore salvataggio dettagli commessa:", err);
       showToast("Si è verificato un errore durante il salvataggio.", "error");
@@ -1004,13 +1121,53 @@ export default function Commesse() {
     setBaseDate(new Date());
   };
 
+  const getCommessaTipologiaCode = (c: any): string => {
+    if (c.codiceCommessa) {
+      const match = String(c.codiceCommessa).trim().match(/^([A-Za-z]+)(\d{2})/);
+      if (match) {
+        const codeFromPrefix = match[1].toUpperCase();
+        if (TIPOLOGIE_COMMESSE[codeFromPrefix]) {
+          return codeFromPrefix;
+        }
+      }
+    }
+
+    if (c.tipologia) {
+      const raw = String(c.tipologia).trim();
+      if (TIPOLOGIE_COMMESSE[raw.toUpperCase()]) {
+        return raw.toUpperCase();
+      }
+      const dashParts = raw.split(' - ');
+      if (dashParts[0] && TIPOLOGIE_COMMESSE[dashParts[0].toUpperCase()]) {
+        return dashParts[0].toUpperCase();
+      }
+      const foundKey = Object.keys(TIPOLOGIE_COMMESSE).find(k => 
+        TIPOLOGIE_COMMESSE[k].toLowerCase() === raw.toLowerCase()
+      );
+      if (foundKey) return foundKey;
+      return raw.toUpperCase();
+    }
+
+    if (c.nome) {
+      const match = String(c.nome).trim().match(/^([A-Za-z]+)(\d{2})/);
+      if (match) {
+        const codeFromPrefix = match[1].toUpperCase();
+        if (TIPOLOGIE_COMMESSE[codeFromPrefix]) {
+          return codeFromPrefix;
+        }
+      }
+    }
+
+    return '';
+  };
+
   const getParsedField = (c: any, field: 'anno' | 'tipologia') => {
-    if (c[field]) return c[field];
+    if (field === 'tipologia') return getCommessaTipologiaCode(c);
+    if (c.anno) return c.anno;
     if (!c.codiceCommessa) return '';
     const match = c.codiceCommessa.match(/^([A-Za-z]+)(\d{2})/);
     if (!match) return '';
-    if (field === 'anno') return `20${match[2]}`;
-    return match[1].toUpperCase();
+    return `20${match[2]}`;
   };
 
 
@@ -1039,7 +1196,16 @@ export default function Commesse() {
 
   const responsabiliMacroAreeList = useMemo(() => {
     const coordEmails = new Set((coordinatori || []).map(c => (c && c.email && typeof c.email === 'string') ? c.email.toLowerCase() : '').filter(Boolean));
-    return (dipendenti || []).filter(d => d && d.email && typeof d.email === 'string' && coordEmails.has(d.email.toLowerCase()));
+    const sociIdentifiers = ['aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it', 'profeti andrea', 'corbellini matteo', 'profeti', 'corbellini'];
+
+    return (dipendenti || []).filter(d => {
+      if (!d || !d.nome) return false;
+      const dEmail = (d.email || '').toLowerCase();
+      const dNome = d.nome.toLowerCase();
+      const isCoord = dEmail && coordEmails.has(dEmail);
+      const isSocio = sociIdentifiers.some(s => dEmail.includes(s) || dNome.includes(s));
+      return isCoord || isSocio;
+    });
   }, [dipendenti, coordinatori]);
 
   const pmsList = useMemo(() => {
@@ -1063,6 +1229,201 @@ export default function Commesse() {
       return areNamesEqual(c.responsabile, myAssociatedName) || isPM;
     });
   }, [commesse, isAdmin, myAssociatedName]);
+
+  const selectableAnniCatalogo = useMemo(() => {
+    const set = new Set<string>();
+    commesseGestibili.forEach(c => {
+      const ann = getParsedField(c, 'anno');
+      if (ann) set.add(ann);
+    });
+    return Array.from(set).sort((a, b) => b.localeCompare(a));
+  }, [commesseGestibili]);
+
+  const selectableClientiCatalogo = useMemo(() => {
+    const set = new Set<string>();
+    commesseGestibili.forEach(c => {
+      const cli = (c as any).cliente;
+      if (cli && cli.trim()) set.add(cli.trim());
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'it', { sensitivity: 'base' }));
+  }, [commesseGestibili]);
+
+  const selectableResponsabiliCatalogo = useMemo(() => {
+    const set = new Set<string>();
+    commesseGestibili.forEach(c => {
+      const r = getOfficialName(c.responsabile);
+      if (r && r.trim()) set.add(r.trim());
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'it', { sensitivity: 'base' }));
+  }, [commesseGestibili]);
+
+  const selectablePMsCatalogo = useMemo(() => {
+    const set = new Set<string>();
+    commesseGestibili.forEach(c => {
+      const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
+      pmArray.forEach(p => {
+        const pName = getOfficialName(p);
+        if (pName && pName.trim()) set.add(pName.trim());
+      });
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'it', { sensitivity: 'base' }));
+  }, [commesseGestibili]);
+
+  const selectableTipologieCatalogo = useMemo(() => {
+    const set = new Set<string>();
+    Object.keys(TIPOLOGIE_COMMESSE).forEach(k => set.add(k));
+    commesseGestibili.forEach(c => {
+      const tipCode = getCommessaTipologiaCode(c);
+      if (tipCode) set.add(tipCode);
+    });
+    return Array.from(set).sort();
+  }, [commesseGestibili]);
+
+  const filteredAndSortedCatalogoCommesse = useMemo(() => {
+    let list = commesseGestibili.filter(c => {
+      const cStato = (c as any).stato || 'Aperta';
+
+      // 1. Filtro di Default per Stato (Default: Aperta)
+      if (catalogoStatoFilter === 'Aperta' && cStato !== 'Aperta') return false;
+      if (catalogoStatoFilter === 'Chiusa' && cStato !== 'Chiusa') return false;
+
+      // 2. Ricerca Testuale
+      const queryStr = searchCommessaQuery.toLowerCase();
+      const codice = ((c as any).codiceCommessa || (c.nome ? c.nome.split(' - ')[0] : '') || '').toLowerCase();
+      const titolo = ((c as any).titolo || c.nome || '').toLowerCase();
+      const cliente = ((c as any).cliente || '').toLowerCase();
+      const resp = (getOfficialName(c.responsabile) || '').toLowerCase();
+      const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
+      const pmStr = pmArray.map(p => getOfficialName(p)).join(', ').toLowerCase();
+
+      if (queryStr && !codice.includes(queryStr) && !titolo.includes(queryStr) && !cliente.includes(queryStr) && !resp.includes(queryStr) && !pmStr.includes(queryStr) && !c.nome.toLowerCase().includes(queryStr)) {
+        return false;
+      }
+
+      // 3. Filtro Responsabile
+      if (catalogoRespFilter) {
+        const cResp = getOfficialName(c.responsabile) || '';
+        if (!areNamesEqual(cResp, catalogoRespFilter)) return false;
+      }
+
+      // 4. Filtro PM
+      if (catalogoPMFilter) {
+        const pmList = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
+        if (!pmList.some(p => areNamesEqual(getOfficialName(p), catalogoPMFilter))) return false;
+      }
+
+      // 5. Filtro Cliente
+      if (catalogoClienteFilter) {
+        const cCli = (c as any).cliente || '';
+        if (cCli.trim().toLowerCase() !== catalogoClienteFilter.trim().toLowerCase()) return false;
+      }
+
+      // 6. Filtro Anno
+      if (catalogoAnnoFilter) {
+        const cAnno = getParsedField(c, 'anno');
+        if (cAnno !== catalogoAnnoFilter) return false;
+      }
+
+      // 7. Filtro Tipologia
+      if (catalogoTipologiaFilter) {
+        const cTip = getParsedField(c, 'tipologia');
+        if (cTip !== catalogoTipologiaFilter) return false;
+      }
+
+      return true;
+    });
+
+    // Ordinamento Cronologico o Alfabetico
+    list.sort((a, b) => {
+      let valA = '';
+      let valB = '';
+
+      if (catalogoSortBy === 'codice') {
+        valA = (a as any).codiceCommessa || a.nome || '';
+        valB = (b as any).codiceCommessa || b.nome || '';
+      } else if (catalogoSortBy === 'anno') {
+        valA = getParsedField(a, 'anno');
+        valB = getParsedField(b, 'anno');
+      } else if (catalogoSortBy === 'tipologia') {
+        valA = getCommessaTipologiaCode(a);
+        valB = getCommessaTipologiaCode(b);
+      } else if (catalogoSortBy === 'titolo') {
+        valA = (a as any).titolo || a.nome || '';
+        valB = (b as any).titolo || b.nome || '';
+      } else if (catalogoSortBy === 'cliente') {
+        valA = (a as any).cliente || '';
+        valB = (b as any).cliente || '';
+      } else if (catalogoSortBy === 'stato') {
+        valA = (a as any).stato || 'Aperta';
+        valB = (b as any).stato || 'Aperta';
+      } else if (catalogoSortBy === 'responsabile') {
+        valA = getOfficialName(a.responsabile) || '';
+        valB = getOfficialName(b.responsabile) || '';
+      } else if (catalogoSortBy === 'pm') {
+        const pmArrayA = Array.isArray(a.pm) ? a.pm : (a.pm ? [a.pm] : []);
+        const pmArrayB = Array.isArray(b.pm) ? b.pm : (b.pm ? [b.pm] : []);
+        valA = pmArrayA.map(p => getOfficialName(p)).join(', ');
+        valB = pmArrayB.map(p => getOfficialName(p)).join(', ');
+      }
+
+      const cmp = valA.localeCompare(valB, 'it', { numeric: true, sensitivity: 'base' });
+      return catalogoSortDir === 'asc' ? cmp : -cmp;
+    });
+
+    return list;
+  }, [
+    commesseGestibili,
+    catalogoStatoFilter,
+    searchCommessaQuery,
+    catalogoRespFilter,
+    catalogoPMFilter,
+    catalogoClienteFilter,
+    catalogoAnnoFilter,
+    catalogoTipologiaFilter,
+    catalogoSortBy,
+    catalogoSortDir
+  ]);
+
+  const handleColumnHeaderSort = (field: 'codice' | 'anno' | 'tipologia' | 'titolo' | 'cliente' | 'stato' | 'responsabile' | 'pm') => {
+    if (catalogoSortBy === field) {
+      setCatalogoSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setCatalogoSortBy(field);
+      setCatalogoSortDir('asc');
+    }
+  };
+
+  const hasActiveCatalogoFilters = useMemo(() => {
+    return Boolean(
+      searchCommessaQuery ||
+      catalogoRespFilter ||
+      catalogoPMFilter ||
+      catalogoClienteFilter ||
+      catalogoAnnoFilter ||
+      catalogoTipologiaFilter ||
+      catalogoStatoFilter !== 'Aperta'
+    );
+  }, [
+    searchCommessaQuery,
+    catalogoRespFilter,
+    catalogoPMFilter,
+    catalogoClienteFilter,
+    catalogoAnnoFilter,
+    catalogoTipologiaFilter,
+    catalogoStatoFilter
+  ]);
+
+  const resetCatalogoFilters = () => {
+    setSearchCommessaQuery('');
+    setCatalogoStatoFilter('Aperta');
+    setCatalogoRespFilter('');
+    setCatalogoPMFilter('');
+    setCatalogoClienteFilter('');
+    setCatalogoAnnoFilter('');
+    setCatalogoTipologiaFilter('');
+    setCatalogoSortBy('codice');
+    setCatalogoSortDir('asc');
+  };
 
   const handleAddCommessa = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1127,10 +1488,15 @@ export default function Commesse() {
           sgqInfo = `<strong>SGQ:</strong> No<br/><strong>Giornate:</strong> Senior: ${p.giornateSenior} gg | Project: ${p.giornateProject} gg | Junior: ${p.giornateJunior} gg`;
         }
         const formattedDesc = (p.descrizione || '').replace(/\n/g, '<br/>');
+        const utentiAbilitareList = (Array.isArray(p.utentiDaAbilitare) && p.utentiDaAbilitare.length > 0)
+          ? p.utentiDaAbilitare.join(', ')
+          : 'Nessuno specificato';
+
         progettiHtml += `
           <tr style="background-color: ${index % 2 === 0 ? '#f9fafb' : '#ffffff'};">
             <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-weight: 600; font-size: 13px; line-height: 1.45;">${formattedDesc || '(Nessuna descrizione)'}</td>
             <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 13px; vertical-align: top;">${p.pm || 'Non assegnato'}</td>
+            <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 12px; line-height: 1.45; vertical-align: top; color: #047857; font-weight: 600;">${utentiAbilitareList}</td>
             <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 12px; line-height: 1.5; vertical-align: top;">${sgqInfo}</td>
           </tr>
         `;
@@ -1158,6 +1524,7 @@ export default function Commesse() {
             <tr>
               <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Descrizione Progetto</th>
               <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Project Manager</th>
+              <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Utenti da Abilitare</th>
               <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Configurazione / SGQ</th>
             </tr>
           </thead>
@@ -1182,6 +1549,7 @@ export default function Commesse() {
         {
           descrizione: 'FORMAZIONE - Attività formative sulla commessa',
           pm: '',
+          utentiDaAbilitare: [],
           sgq: 'NO',
           verificatori: [],
           compilatore: '',
@@ -1236,6 +1604,144 @@ export default function Commesse() {
     });
   };
 
+  const handlePrintCatalogoCommesse = () => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    const htmlContent = `
+      <html>
+        <head>
+          <title>Catalogo Commesse</title>
+          <style>
+            body {
+              font-family: Arial, sans-serif;
+              margin: 30px;
+              color: #333;
+            }
+            h1 {
+              text-align: center;
+              margin-bottom: 30px;
+              font-size: 24px;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-top: 20px;
+              font-size: 12px;
+            }
+            th, td {
+              border: 1px solid #ccc;
+              padding: 10px 12px;
+              text-align: left;
+            }
+            th {
+              background-color: #f3f4f6;
+              font-weight: bold;
+            }
+            tr:nth-child(even) {
+              background-color: #fcfcfc;
+            }
+          </style>
+        </head>
+        <body>
+          <h1>Catalogo Commesse ${catalogoStatoFilter === 'Aperta' ? 'Aperte' : catalogoStatoFilter === 'Chiusa' ? 'Chiuse' : ''}</h1>
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 5%;">#</th>
+                <th style="width: 12%;">Codice</th>
+                <th style="width: 30%;">Titolo</th>
+                <th style="width: 20%;">Cliente</th>
+                <th style="width: 8%;">Tipologia</th>
+                <th style="width: 5%;">Anno</th>
+                <th style="width: 10%;">Stato</th>
+                <th style="width: 10%;">Responsabile</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${filteredAndSortedCatalogoCommesse.map((c, index) => {
+                const cod = (c as any).codiceCommessa || c.nome.split(' - ')[0] || '';
+                const tit = (c as any).titolo || c.nome.split(' - ').slice(1).join(' - ') || c.nome;
+                const cli = (c as any).cliente || '-';
+                const tip = c.tipologia ? (TIPOLOGIE_COMMESSE[c.tipologia] || c.tipologia) : '-';
+                const ann = c.anno || '-';
+                const sta = (c as any).stato || 'Aperta';
+                const resp = getOfficialName(c.responsabile) || '-';
+                return `
+                  <tr>
+                    <td>${index + 1}</td>
+                    <td><strong>${cod}</strong></td>
+                    <td>${tit}</td>
+                    <td>${cli}</td>
+                    <td>${tip}</td>
+                    <td>${ann}</td>
+                    <td>${sta}</td>
+                    <td>${resp}</td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+          ${getPrintFooterHtml()}
+          <script>
+            function closeWindow() {
+              try { window.close(); } catch(e) {}
+            }
+            window.onafterprint = closeWindow;
+            window.onload = function() {
+              setTimeout(function() {
+                window.print();
+                closeWindow();
+                setTimeout(closeWindow, 500);
+              }, 250);
+            };
+            window.onfocus = function() {
+              setTimeout(closeWindow, 300);
+            };
+          </script>
+        </body>
+      </html>
+    `;
+
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
+  };
+
+  const handleExportCatalogoExcel = () => {
+    const headers = ['Codice Commessa', 'Anno', 'Tipologia', 'Titolo', 'Cliente', 'Stato', 'Responsabile', 'PM', 'Data Inizio', 'Data Fine'];
+    
+    const rows = filteredAndSortedCatalogoCommesse.map(c => {
+      const cod = (c as any).codiceCommessa || c.nome.split(' - ')[0] || '';
+      const ann = c.anno || '';
+      const tip = c.tipologia || '';
+      const tit = (c as any).titolo || c.nome.split(' - ').slice(1).join(' - ') || c.nome;
+      const cli = (c as any).cliente || '';
+      const sta = (c as any).stato || 'Aperta';
+      const resp = getOfficialName(c.responsabile) || '';
+      const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
+      const pmStr = pmArray.map(p => getOfficialName(p)).join(', ');
+      const dIni = c.dataInizio || '';
+      const dFin = c.dataFine || '';
+
+      return [cod, ann, tip, tit, cli, sta, resp, pmStr, dIni, dFin].map(val => {
+        const cleanVal = String(val).replace(/"/g, '""');
+        return `"${cleanVal}"`;
+      }).join(';');
+    });
+
+    const csvContent = '\uFEFF' + [headers.join(';'), ...rows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `Catalogo_Commesse_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    showToast("Esportazione Excel completata con successo!", "success");
+  };
 
   return (
     <div className="flex flex-col gap-6">
@@ -1713,8 +2219,26 @@ export default function Commesse() {
                             return (
                               <td 
                                 key={wIndex} 
-                                onClick={() => {
-                                  window.open(`/pianificazione-personale?tab=commessa&commessaId=${encodeURIComponent(comm.id)}&weekId=${encodeURIComponent(wk.id)}`, '_blank');
+                                onMouseDown={(e) => {
+                                  if (e.button === 1) e.preventDefault();
+                                }}
+                                onAuxClick={(e) => {
+                                  if (e.button === 1) {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    window.open(`/pianificazione-personale?tab=commessa&commessaId=${encodeURIComponent(comm.id)}&weekId=${encodeURIComponent(wk.id)}`, '_blank');
+                                  }
+                                }}
+                                onClick={(e) => {
+                                  if (e.button === 0) {
+                                    e.preventDefault();
+                                    setPlanningModal({
+                                      isOpen: true,
+                                      tab: 'commessa',
+                                      commessaId: comm.id,
+                                      weekId: wk.id
+                                    });
+                                  }
                                 }}
                                 className={`group/weekcell relative ${isUltraNarrow ? 'p-1' : 'p-2'} border-l border-b border-gray-100 align-top ${
                                   isCurrentWeek ? 'ring-2 ring-inset ring-blue-300' : ''
@@ -1730,9 +2254,27 @@ export default function Commesse() {
                                 >
                                   {/* Barra colorata tenue in cima alla casella stile intestazione */}
                                   <div
+                                    onMouseDown={(e) => {
+                                      if (e.button === 1) e.preventDefault();
+                                    }}
+                                    onAuxClick={(e) => {
+                                      if (e.button === 1) {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        window.open(`/pianificazione-personale?tab=commessa&commessaId=${encodeURIComponent(comm.id)}&weekId=${encodeURIComponent(wk.id)}`, '_blank');
+                                      }
+                                    }}
                                     onClick={(e) => {
-                                      e.stopPropagation();
-                                      window.open(`/pianificazione-personale?tab=commessa&commessaId=${encodeURIComponent(comm.id)}&weekId=${encodeURIComponent(wk.id)}`, '_blank');
+                                      if (e.button === 0) {
+                                        e.stopPropagation();
+                                        e.preventDefault();
+                                        setPlanningModal({
+                                          isOpen: true,
+                                          tab: 'commessa',
+                                          commessaId: comm.id,
+                                          weekId: wk.id
+                                        });
+                                      }
                                     }}
                                     className="w-full h-1.5 rounded-t-xs bg-indigo-150/40 group-hover/weekcell:bg-indigo-600 transition-colors cursor-pointer mb-1 shrink-0"
                                     title={`Gestisci commessa per questa settimana (${comm.nome} - ${wk.label})`}
@@ -1775,6 +2317,8 @@ export default function Commesse() {
                                        return (
                                          <div 
                                            key={pIdx} 
+                                           onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
+                                           onAuxClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
                                            onClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
                                            className={`text-[9px] font-black text-center py-1 px-0.5 rounded-md border flex items-center justify-center shadow-sm select-none cursor-pointer hover:ring-2 hover:ring-indigo-400 transition-all ${
                                              isAllWeekOnLeave
@@ -1795,6 +2339,8 @@ export default function Commesse() {
                                        return (
                                          <div 
                                            key={pIdx} 
+                                           onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
+                                           onAuxClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
                                            onClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
                                            className={`text-[10px] font-bold py-1 px-1.5 rounded-md border flex items-center justify-between gap-1 shadow-sm truncate select-none w-full cursor-pointer hover:ring-2 hover:ring-indigo-400 transition-all ${
                                              isAllWeekOnLeave
@@ -1815,6 +2361,8 @@ export default function Commesse() {
                                      return (
                                        <div 
                                          key={pIdx} 
+                                         onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
+                                         onAuxClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
                                          onClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
                                          className={`text-[11px] p-1.5 rounded-lg border flex items-center justify-between gap-1 shadow-sm w-full select-none cursor-pointer hover:ring-2 hover:ring-indigo-400 transition-all hover:scale-[1.01] ${
                                            isAllWeekOnLeave
@@ -1852,14 +2400,42 @@ export default function Commesse() {
       {(activeTab === 'gestione' && (isAdmin || isResponsabileDiQualcheCommessa)) && (
         <div className="space-y-8">
           <section className="bg-gradient-to-br from-emerald-50 to-teal-50 p-6 rounded-3xl border border-emerald-100 shadow-sm">
-            <div className="flex justify-between items-center mb-4">
+            <div className="flex justify-between items-center mb-4 flex-wrap gap-3">
               <h3 className="text-xl font-bold text-emerald-900 flex items-center gap-2">
                 <Briefcase className="w-6 h-6 text-emerald-600" /> Catalogo Commesse
               </h3>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setShowNewCommessaForm(prev => !prev)}
+                  className="flex items-center gap-1.5 bg-emerald-700 text-white hover:bg-emerald-800 px-3.5 py-1.5 rounded-xl text-xs font-black transition shadow-sm active:scale-95 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" /> {showNewCommessaForm ? 'Nascondi Form Nuova Commessa' : 'Nuova Commessa'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePrintCatalogoCommesse}
+                  className="flex items-center gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 px-3.5 py-1.5 rounded-xl text-xs font-bold transition shadow-sm active:scale-95 cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" /> Stampa Lista
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportCatalogoExcel}
+                  className="flex items-center gap-1.5 bg-teal-600 text-white hover:bg-teal-700 px-3.5 py-1.5 rounded-xl text-xs font-bold transition shadow-sm active:scale-95 cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" /> Esporta Excel
+                </button>
+              </div>
             </div>
             
-            {isAdmin && (
-              <div className="mb-6 bg-white/50 p-5 rounded-2xl border border-emerald-100/50 shadow-inner">
+            {showNewCommessaForm && (
+              <div className="mb-6 bg-white/70 backdrop-blur-md p-5 rounded-2xl border border-emerald-100 shadow-sm animate-in fade-in zoom-in-95 duration-200">
+                <div className="flex justify-between items-center pb-3 mb-4 border-b border-emerald-100/80">
+                  <h4 className="text-sm font-black text-emerald-950 uppercase tracking-wider flex items-center gap-2">
+                    <span>➕ Inserisci Nuova Commessa nel Catalogo</span>
+                  </h4>
+                </div>
                 <form onSubmit={handleAddCommessa} className="space-y-4">
                 
                 {/* Selettore Cliente Ricercabile */}
@@ -1912,10 +2488,12 @@ export default function Commesse() {
                                 setClientSearchText(c.nome);
                                 setIsClientDropdownOpen(false);
                               }}
-                              className="w-full text-left p-3 hover:bg-emerald-50 text-xs font-semibold text-gray-700 transition-colors flex justify-between items-center cursor-pointer"
+                              className="w-full text-left px-3 py-2 hover:bg-emerald-50 text-xs font-semibold text-gray-700 transition-colors flex flex-col gap-0.5 cursor-pointer"
                             >
-                              <span>{c.nome}</span>
-                              <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-black">Cod. {c.codice}</span>
+                              <span className="truncate w-full font-bold text-gray-800">{c.nome}</span>
+                              <span className="text-[9.5px] text-emerald-650 font-semibold italic">
+                                Cod. Cliente: {c.codice}
+                              </span>
                             </button>
                           ));
                         })()}
@@ -1924,22 +2502,43 @@ export default function Commesse() {
                   )}
                 </div>
 
+                {/* Selezione Tipologia e Anno per generazione automatica Codice Commessa */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
-                    <label className="block text-[10px] font-bold text-emerald-950 mb-1 ml-1">Tipologia</label>
-                    <select value={newCommessaTipologia} onChange={e => setNewCommessaTipologia(e.target.value)} className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs">
-                      {Object.entries(TIPOLOGIE_COMMESSE).map(([code, desc]) => (
-                        <option key={code} value={code}>{code} - {desc}</option>
+                    <label className="block text-[10px] font-bold text-emerald-950 mb-1 ml-1">Tipologia Commessa *</label>
+                    <select
+                      value={newCommessaTipologia}
+                      onChange={e => setNewCommessaTipologia(e.target.value)}
+                      className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs"
+                    >
+                      {Object.entries(TIPOLOGIE_COMMESSE).map(([code, label]) => (
+                        <option key={code} value={code}>{code} - {label}</option>
                       ))}
                     </select>
                   </div>
+
                   <div>
-                    <label className="block text-[10px] font-bold text-emerald-950 mb-1 ml-1">Anno</label>
-                    <input required type="text" maxLength={4} placeholder="Es. 2026" value={newCommessaAnno} onChange={e => setNewCommessaAnno(e.target.value)} className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs text-center" />
+                    <label className="block text-[10px] font-bold text-emerald-950 mb-1 ml-1">Anno Riferimento *</label>
+                    <input
+                      type="text"
+                      maxLength={2}
+                      placeholder="Es. 26"
+                      value={newCommessaAnno}
+                      onChange={e => setNewCommessaAnno(e.target.value)}
+                      className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs"
+                    />
                   </div>
+
                   <div>
-                    <label className="block text-[10px] font-bold text-emerald-950 mb-1 ml-1">Progressivo</label>
-                    <input required type="text" maxLength={2} placeholder="Es. A" value={newCommessaLettera} onChange={e => setNewCommessaLettera(e.target.value.toUpperCase())} className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs text-center" />
+                    <label className="block text-[10px] font-bold text-emerald-950 mb-1 ml-1">Progressivo Lettera (A-Z) *</label>
+                    <input
+                      type="text"
+                      maxLength={1}
+                      placeholder="Es. A"
+                      value={newCommessaLettera}
+                      onChange={e => setNewCommessaLettera(e.target.value.toUpperCase())}
+                      className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs uppercase"
+                    />
                   </div>
                 </div>
 
@@ -1975,7 +2574,7 @@ export default function Commesse() {
 
                 <div className="grid grid-cols-1 gap-3">
                   <div>
-                    <label className="block text-[10px] font-bold text-emerald-950 mb-1 ml-1">Responsabile (Selezionato tra i Coordinatori)</label>
+                    <label className="block text-[10px] font-bold text-emerald-950 mb-1 ml-1">Responsabile (Coordinatori e Soci)</label>
                     <select value={newCommessaResponsabile} onChange={e => setNewCommessaResponsabile(e.target.value)} className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs">
                       <option value="">-- Nessuno --</option>
                       {responsabiliMacroAreeList.map(r => (
@@ -2008,13 +2607,15 @@ export default function Commesse() {
                           />
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {/* RIGA 2: PM | SELETTORE UTENTI DA ABILITARE | LISTA UTENTI SELEZIONATI */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
+                          {/* Colonna 1: Project Manager */}
                           <div>
                             <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Project Manager (Opzionale)</label>
                             <select
                               value={progetto.pm}
                               onChange={e => handleUpdateProgettoField(idx, { pm: e.target.value })}
-                              className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
+                              className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs h-[38px]"
                             >
                               <option value="">-- Nessun PM --</option>
                               {pmsList.map(pm => (
@@ -2023,12 +2624,64 @@ export default function Commesse() {
                             </select>
                           </div>
 
+                          {/* Colonna 2: Selettore Utenti da Abilitare */}
                           <div>
+                            <label className="block text-[9px] font-bold text-indigo-900 mb-1 ml-1">Utenti da Abilitare (Tutte le Categorie)</label>
+                            <select
+                              value=""
+                              onChange={e => {
+                                const val = e.target.value;
+                                const current = progetto.utentiDaAbilitare || [];
+                                if (val && !current.includes(val)) {
+                                  handleUpdateProgettoField(idx, { utentiDaAbilitare: [...current, val] });
+                                }
+                              }}
+                              className="w-full p-2 border border-indigo-200 rounded-lg bg-indigo-50/40 focus:bg-white outline-none focus:ring-1 focus:ring-emerald-400 font-bold text-gray-700 text-xs h-[38px]"
+                            >
+                              <option value="">+ Seleziona Utente da Abilitare...</option>
+                              {dipendenti.filter(d => !(progetto.utentiDaAbilitare || []).includes(d.nome)).map(d => (
+                                <option key={d.id} value={d.nome}>{d.nome} {d.macroArea ? `(${d.macroArea})` : ''}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* Colonna 3: Lista Ordinata Utenti Selezionati (Dove prima c'era Abilitato SGQ) */}
+                          <div>
+                            <label className="block text-[9px] font-bold text-emerald-950 mb-1 ml-1">
+                              Utenti Selezionati ({progetto.utentiDaAbilitare?.length || 0})
+                            </label>
+                            <div className="bg-emerald-50/50 p-2 border border-emerald-100 rounded-lg min-h-[38px] max-h-[120px] overflow-y-auto flex flex-wrap gap-1">
+                              {(!progetto.utentiDaAbilitare || progetto.utentiDaAbilitare.length === 0) ? (
+                                <span className="text-[10px] text-gray-400 italic p-1">Nessun utente selezionato</span>
+                              ) : (
+                                progetto.utentiDaAbilitare.map(uName => (
+                                  <div key={uName} className="flex items-center gap-1.5 bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-lg text-[10px] font-bold text-emerald-900 shadow-2xs">
+                                    <span>{uName}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const updatedList = (progetto.utentiDaAbilitare || []).filter(x => x !== uName);
+                                        handleUpdateProgettoField(idx, { utentiDaAbilitare: updatedList });
+                                      }}
+                                      className="text-emerald-600 hover:text-emerald-800 transition cursor-pointer font-black"
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* RIGA 3: ABILITATO SGQ SOTTO */}
+                        <div className="pt-2 border-t border-gray-150/60 flex items-center gap-3">
+                          <div className="w-full sm:w-1/3">
                             <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Abilitato SGQ</label>
                             <select
                               value={progetto.sgq}
                               onChange={e => handleUpdateProgettoField(idx, { sgq: e.target.value as 'SI' | 'NO' })}
-                              className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
+                              className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs h-[38px]"
                             >
                               <option value="NO">NO</option>
                               <option value="SI">SI</option>
@@ -2141,61 +2794,199 @@ export default function Commesse() {
             </div>
           )}
 
-            {/* Box di ricerca commesse */}
-            <div className="mb-3">
-              <input 
-                type="text" 
-                placeholder="Cerca commessa per codice, titolo, cliente o responsabile..." 
-                value={searchCommessaQuery} 
-                onChange={e => setSearchCommessaQuery(e.target.value)} 
-                className="w-full p-3 border-none rounded-xl bg-white focus:bg-white outline-none focus:ring-2 focus:ring-emerald-400 transition shadow-inner font-semibold text-xs text-gray-700" 
-              />
+            {/* PANNELLO FILTRI IN 2 RIGHE E SPAZIATO */}
+            <div className="mb-4 bg-white/85 backdrop-blur-md p-4 rounded-2xl border border-emerald-100/90 shadow-sm space-y-3">
+              {/* RIGA 1: RICERCA TESTUALE + CONTATORE COMMESSE + SELETTORE STATO */}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div className="flex-1 w-full sm:w-auto flex items-center gap-3">
+                  <div className="relative flex-1">
+                    <input
+                      type="text"
+                      placeholder="🔍 Cerca codice, titolo, cliente, note..."
+                      value={searchCommessaQuery}
+                      onChange={e => setSearchCommessaQuery(e.target.value)}
+                      className="w-full p-2.5 pl-3 border border-emerald-100 rounded-xl bg-white focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs shadow-xs"
+                    />
+                  </div>
+                  <span className="text-[11px] text-gray-600 font-extrabold bg-emerald-50/80 px-3 py-1.5 rounded-xl border border-emerald-100 shrink-0 whitespace-nowrap">
+                    Visualizzate <strong className="text-emerald-950 font-black">{filteredAndSortedCatalogoCommesse.length}</strong> di {commesseGestibili.length} commesse
+                  </span>
+                </div>
+
+                {/* SELETTORE STATO (APERTE / TUTTE / CHIUSE) */}
+                <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                  <div className="flex bg-gray-100 p-1 rounded-xl gap-1 border border-gray-200/60 shadow-inner">
+                    <button
+                      type="button"
+                      onClick={() => setCatalogoStatoFilter('Aperta')}
+                      className={`px-3 py-1.5 rounded-lg text-[10.5px] font-black transition-all cursor-pointer ${
+                        catalogoStatoFilter === 'Aperta'
+                          ? 'bg-emerald-600 text-white shadow-xs'
+                          : 'text-gray-600 hover:text-gray-900'
+                      }`}
+                      title="Mostra solo commesse aperte (Default)"
+                    >
+                      🟢 Solo Aperte
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCatalogoStatoFilter('Tutte')}
+                      className={`px-3 py-1.5 rounded-lg text-[10.5px] font-black transition-all cursor-pointer ${
+                        catalogoStatoFilter === 'Tutte'
+                          ? 'bg-emerald-600 text-white shadow-xs'
+                          : 'text-gray-600 hover:text-gray-900'
+                      }`}
+                      title="Mostra sia commesse aperte che chiuse"
+                    >
+                      ⚪ Tutte
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCatalogoStatoFilter('Chiusa')}
+                      className={`px-3 py-1.5 rounded-lg text-[10.5px] font-black transition-all cursor-pointer ${
+                        catalogoStatoFilter === 'Chiusa'
+                          ? 'bg-emerald-600 text-white shadow-xs'
+                          : 'text-gray-600 hover:text-gray-900'
+                      }`}
+                      title="Mostra solo commesse chiuse"
+                    >
+                      🔴 Solo Chiuse
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* RIGA 2: FILTRI SPECIFICI (CLIENTE, RESPONSABILE, PM, ANNO, TIPOLOGIA, RESET) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 pt-2.5 border-t border-emerald-100/60 items-center">
+                {/* Cliente */}
+                <div>
+                  <label className="block text-[9.5px] font-extrabold text-gray-500 mb-1 ml-0.5 uppercase tracking-wide">Cliente</label>
+                  <select
+                    value={catalogoClienteFilter}
+                    onChange={e => setCatalogoClienteFilter(e.target.value)}
+                    className="w-full p-2 border border-emerald-100 rounded-xl bg-white focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs shadow-xs"
+                  >
+                    <option value="">-- Tutti i Clienti --</option>
+                    {selectableClientiCatalogo.map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Responsabile */}
+                <div>
+                  <label className="block text-[9.5px] font-extrabold text-gray-500 mb-1 ml-0.5 uppercase tracking-wide">Responsabile</label>
+                  <select
+                    value={catalogoRespFilter}
+                    onChange={e => setCatalogoRespFilter(e.target.value)}
+                    className="w-full p-2 border border-emerald-100 rounded-xl bg-white focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs shadow-xs"
+                  >
+                    <option value="">-- Tutti i Responsabili --</option>
+                    {selectableResponsabiliCatalogo.map(r => (
+                      <option key={r} value={r}>{r}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* PM */}
+                <div>
+                  <label className="block text-[9.5px] font-extrabold text-gray-500 mb-1 ml-0.5 uppercase tracking-wide">Project Manager (PM)</label>
+                  <select
+                    value={catalogoPMFilter}
+                    onChange={e => setCatalogoPMFilter(e.target.value)}
+                    className="w-full p-2 border border-emerald-100 rounded-xl bg-white focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs shadow-xs"
+                  >
+                    <option value="">-- Tutti i PM --</option>
+                    {selectablePMsCatalogo.map(pm => (
+                      <option key={pm} value={pm}>{pm}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Anno */}
+                <div>
+                  <label className="block text-[9.5px] font-extrabold text-gray-500 mb-1 ml-0.5 uppercase tracking-wide">Anno</label>
+                  <select
+                    value={catalogoAnnoFilter}
+                    onChange={e => setCatalogoAnnoFilter(e.target.value)}
+                    className="w-full p-2 border border-emerald-100 rounded-xl bg-white focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs shadow-xs"
+                  >
+                    <option value="">-- Tutti gli Anni --</option>
+                    {selectableAnniCatalogo.map(a => (
+                      <option key={a} value={a}>{a}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Tipologia & Reset */}
+                <div className="flex gap-2 items-end">
+                  <div className="flex-1">
+                    <label className="block text-[9.5px] font-extrabold text-gray-500 mb-1 ml-0.5 uppercase tracking-wide">Tipologia</label>
+                    <select
+                      value={catalogoTipologiaFilter}
+                      onChange={e => setCatalogoTipologiaFilter(e.target.value)}
+                      className="w-full p-2 border border-emerald-100 rounded-xl bg-white focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs shadow-xs"
+                    >
+                      <option value="">-- Tutte le Tipologie --</option>
+                      {selectableTipologieCatalogo.map(tip => (
+                        <option key={tip} value={tip}>{tip} - {TIPOLOGIE_COMMESSE[tip] || tip}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {hasActiveCatalogoFilters && (
+                    <button
+                      type="button"
+                      onClick={resetCatalogoFilters}
+                      className="p-2 h-[35px] text-xs font-extrabold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-xl transition cursor-pointer shrink-0"
+                      title="Azzera tutti i filtri"
+                    >
+                      Reset
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
 
-            <div className="max-h-[450px] overflow-auto bg-white/50 rounded-xl border border-emerald-100">
+            <div className="max-h-[480px] overflow-auto bg-white/50 rounded-xl border border-emerald-100">
               <table className="w-full text-left border-collapse text-xs">
-                <thead className="sticky top-0 bg-emerald-100 text-emerald-900 font-extrabold shadow-sm z-10">
+                <thead className="sticky top-0 bg-emerald-100 text-emerald-900 font-extrabold shadow-sm z-10 select-none">
                   <tr>
-                    <th className="p-2.5">Codice</th>
-                    <th className="p-2.5">Anno</th>
-                    <th className="p-2.5">Tip.</th>
-                    <th className="p-2.5">Titolo</th>
-                    <th className="p-2.5">Cliente</th>
-                    <th className="p-2.5">Stato</th>
-                    <th className="p-2.5">Resp.</th>
-                    <th className="p-2.5">PM</th>
+                    <th className="p-2.5 cursor-pointer hover:bg-emerald-200 transition" onClick={() => handleColumnHeaderSort('codice')}>
+                      Codice {catalogoSortBy === 'codice' ? (catalogoSortDir === 'asc' ? '↑' : '↓') : '↕'}
+                    </th>
+                    <th className="p-2.5 cursor-pointer hover:bg-emerald-200 transition" onClick={() => handleColumnHeaderSort('anno')}>
+                      Anno {catalogoSortBy === 'anno' ? (catalogoSortDir === 'asc' ? '↑' : '↓') : '↕'}
+                    </th>
+                    <th className="p-2.5 cursor-pointer hover:bg-emerald-200 transition" onClick={() => handleColumnHeaderSort('tipologia')}>
+                      Tip. {catalogoSortBy === 'tipologia' ? (catalogoSortDir === 'asc' ? '↑' : '↓') : '↕'}
+                    </th>
+                    <th className="p-2.5 cursor-pointer hover:bg-emerald-200 transition" onClick={() => handleColumnHeaderSort('titolo')}>
+                      Titolo {catalogoSortBy === 'titolo' ? (catalogoSortDir === 'asc' ? '↑' : '↓') : '↕'}
+                    </th>
+                    <th className="p-2.5 cursor-pointer hover:bg-emerald-200 transition" onClick={() => handleColumnHeaderSort('cliente')}>
+                      Cliente {catalogoSortBy === 'cliente' ? (catalogoSortDir === 'asc' ? '↑' : '↓') : '↕'}
+                    </th>
+                    <th className="p-2.5 text-center cursor-pointer hover:bg-emerald-200 transition" onClick={() => handleColumnHeaderSort('stato')}>
+                      Stato {catalogoSortBy === 'stato' ? (catalogoSortDir === 'asc' ? '↑' : '↓') : '↕'}
+                    </th>
+                    <th className="p-2.5 cursor-pointer hover:bg-emerald-200 transition" onClick={() => handleColumnHeaderSort('responsabile')}>
+                      Resp. {catalogoSortBy === 'responsabile' ? (catalogoSortDir === 'asc' ? '↑' : '↓') : '↕'}
+                    </th>
+                    <th className="p-2.5 cursor-pointer hover:bg-emerald-200 transition" onClick={() => handleColumnHeaderSort('pm')}>
+                      PM {catalogoSortBy === 'pm' ? (catalogoSortDir === 'asc' ? '↑' : '↓') : '↕'}
+                    </th>
                     <th className="p-2.5 text-center"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-emerald-50/60 font-medium text-emerald-950">
-                  {(() => {
-                    const filtered = commesseGestibili.filter(c => {
-                      const queryStr = searchCommessaQuery.toLowerCase();
-                      const codice = (c as any).codiceCommessa || '';
-                      const titolo = (c as any).titolo || c.nome || '';
-                      const cliente = (c as any).cliente || '';
-                      const resp = c.responsabile || '';
-                      const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
-                      const pmStr = pmArray.join(', ');
-                      return codice.toLowerCase().includes(queryStr) ||
-                             titolo.toLowerCase().includes(queryStr) ||
-                             cliente.toLowerCase().includes(queryStr) ||
-                             resp.toLowerCase().includes(queryStr) ||
-                             pmStr.toLowerCase().includes(queryStr) ||
-                             c.nome.toLowerCase().includes(queryStr);
-                    });
-
-                    if (filtered.length === 0) {
-                      return (
-                        <tr>
-                          <td colSpan={8} className="p-8 text-center text-gray-400 font-bold italic">
-                            Nessuna commessa trovata.
-                          </td>
-                        </tr>
-                      );
-                    }
-
-                    return filtered.map(c => {
+                  {filteredAndSortedCatalogoCommesse.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="p-8 text-center text-gray-400 font-bold italic">
+                        Nessuna commessa trovata con i filtri selezionati.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredAndSortedCatalogoCommesse.map(c => {
                       const computedTipologia = getParsedField(c, 'tipologia');
                       const computedAnno = getParsedField(c, 'anno');
                       const computedColor = TIPOLOGIA_COLORS[computedTipologia] || c.colore || '#64748b';
@@ -2241,8 +3032,8 @@ export default function Commesse() {
                           </td>
                         </tr>
                       );
-                    });
-                  })()}
+                    })
+                  )}
                 </tbody>
               </table>
             </div>
@@ -2269,7 +3060,7 @@ export default function Commesse() {
             </div>
 
             <form onSubmit={handleSaveCommessaDetails} className="flex-1 flex flex-col gap-6 min-h-0">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start overflow-y-auto pr-1">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
                 {/* COLONNA SINISTRA: Informazioni Generali */}
                 <div className="space-y-4 md:col-span-1 md:border-r md:pr-6 md:border-gray-150">
                   <h4 className="text-xs font-black text-gray-900 uppercase tracking-wide">Dettagli Commessa</h4>
@@ -2642,6 +3433,43 @@ export default function Commesse() {
           </div>
         </div>
       )}
+
+      <PianificazioneModal
+        isOpen={planningModal.isOpen}
+        onClose={() => setPlanningModal(prev => ({ ...prev, isOpen: false }))}
+        initialTab={planningModal.tab}
+        initialCommessaId={planningModal.commessaId}
+        initialResourceName={planningModal.risorsa}
+        initialWeekId={planningModal.weekId}
+        onRequestAreaResource={(macroArea, commId, wkId, personName) => {
+          setPlanningModal(prev => ({ ...prev, isOpen: false }));
+          const comm = commesse.find(c => c.id === commId);
+          const commNome = comm ? comm.nome : '';
+          const coordObjs = (coordinatori || []).filter(c => c.area === macroArea);
+          const coordEmails = coordObjs.map(c => c.email?.toLowerCase()).filter(Boolean);
+          const coordDip = dipendenti.find(d => d.email && coordEmails.includes(d.email.toLowerCase()));
+          const coordName = coordDip ? coordDip.nome : (coordObjs[0]?.email || 'Coordinatore d\'Area');
+          const coordEmail = coordDip?.email || coordObjs[0]?.email || '';
+
+          setResourceChangeModal({
+            isOpen: true,
+            personName: personName || `Risorsa ${macroArea}`,
+            macroArea,
+            coordName,
+            coordEmail,
+            commessaId: commId,
+            commessaNome: commNome,
+            weekId: wkId,
+            weekLabel: `Settimana ${wkId}`,
+            currentPct: 100
+          });
+          setReqStartWeekId(wkId);
+          setReqEndWeekId(wkId);
+          setReqNewPercentuale('100');
+          setReqChangeType('modifica_spostamento');
+          setReqChangeNotes('');
+        }}
+      />
 
       <ConfirmModal
         isOpen={confirmConfig.isOpen}

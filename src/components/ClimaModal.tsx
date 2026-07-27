@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { db } from '../services/firebase';
-import { collection, addDoc, onSnapshot } from 'firebase/firestore';
+import { collection, addDoc } from 'firebase/firestore';
 import { Smile, X, ShieldCheck, Star } from 'lucide-react';
 
 interface ClimaModalProps {
@@ -9,70 +9,19 @@ interface ClimaModalProps {
   isPreview?: boolean;
 }
 
-const getOptionStyle = (label: string) => {
-  const l = label.toLowerCase();
-  if (l.includes('🟢') || l.includes('ottimo') || l.includes('sereno') || l.includes('bene') || l.includes('motivato')) {
-    return {
-      color: 'text-green-600 bg-green-50 border-green-200'
-    };
-  }
-  if (l.includes('🔴') || l.includes('stress') || l.includes('sovraccarico') || l.includes('male') || l.includes('pessimo')) {
-    return {
-      color: 'text-red-600 bg-red-50 border-red-200'
-    };
-  }
-  if (l.includes('🟡') || l.includes('gestibile') || l.includes('stanchezza') || l.includes('stanco') || l.includes('così così')) {
-    return {
-      color: 'text-amber-600 bg-amber-50 border-amber-200'
-    };
-  }
-  return {
-    color: 'text-indigo-600 bg-indigo-50 border-indigo-200'
-  };
-};
 
 export default function ClimaModal({ isOpen, onClose, isPreview = false }: ClimaModalProps) {
-  const [selectedOption, setSelectedOption] = useState<string>('');
   const [rating, setRating] = useState<number>(0);
   const [hoverRating, setHoverRating] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [options, setOptions] = useState<{ id: string; label: string }[]>([]);
   const [showSuccess, setShowSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const unsub = onSnapshot(collection(db, 'opzioni_clima'), (snapshot) => {
-      if (!snapshot.empty) {
-        const list: { id: string; label: string; order: number }[] = [];
-        let idx = 0;
-        snapshot.forEach(docSnap => {
-          const data = docSnap.data();
-          list.push({
-            id: docSnap.id,
-            label: data.label || '',
-            order: data.order !== undefined ? data.order : idx
-          });
-          idx++;
-        });
-        list.sort((a, b) => a.order - b.order);
-        setOptions(list);
-      } else {
-        setOptions([
-          { id: 'default1', label: '🟢 Ottimo, sono sereno e motivato' },
-          { id: 'default2', label: '🟡 Gestibile, ma sento un po\' di stanchezza' },
-          { id: 'default3', label: '🔴 Stressante, mi sento in sovraccarico' }
-        ]);
-      }
-    });
-    return () => unsub();
-  }, [isOpen]);
 
   if (!isOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedOption) return;
+    if (rating === 0) return;
 
     if (isPreview) {
       setShowSuccess(true);
@@ -89,7 +38,6 @@ export default function ClimaModal({ isOpen, onClose, isPreview = false }: Clima
       const dateStr = today.toISOString().split('T')[0];
 
       await addDoc(collection(db, 'risposte_clima'), {
-        risposta: selectedOption,
         voto: rating,
         data: dateStr,
         createdAt: today.toISOString()
@@ -164,37 +112,18 @@ export default function ClimaModal({ isOpen, onClose, isPreview = false }: Clima
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-3.5 sm:space-y-4.5">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-3">
-            {options.map((opt) => {
-              const style = getOptionStyle(opt.label);
-              const isSelected = selectedOption === opt.label;
-              return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => setSelectedOption(opt.label)}
-                  className={`w-full p-2.5 sm:p-3 rounded-xl border text-center font-bold text-xs sm:text-sm transition-all active:scale-[0.98] flex items-center justify-center min-h-[3.25rem] sm:min-h-[3.75rem] ${
-                    isSelected 
-                      ? `${style.color} ring-2 ring-indigo-400 border-transparent font-black` 
-                      : 'bg-gray-50 border-gray-100 text-gray-700 hover:bg-gray-100/50'
-                  }`}
-                >
-                  <span>{opt.label}</span>
-                </button>
-              );
-            })}
-          </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
 
-          <div className="space-y-2 bg-gray-50/50 border border-gray-100 rounded-xl p-2.5 sm:p-3">
-            <div className="flex justify-between items-center text-[10px] sm:text-xs font-black text-gray-500 uppercase tracking-wider">
-              <span>Livello di Stress/Benessere</span>
-              <span className="text-indigo-600 font-black text-xs sm:text-sm">
-                {rating > 0 ? `${rating} / 10` : 'Da selezionare'}
+          {/* Scala a stelle 1-10 */}
+          <div className="space-y-3 bg-gray-50/60 border border-gray-100 rounded-2xl p-4 sm:p-5">
+            <div className="flex justify-between items-center">
+              <span className="text-xs font-black text-gray-600 uppercase tracking-wider">Valutazione Benessere</span>
+              <span className={`text-sm font-black ${rating > 0 ? 'text-amber-500' : 'text-gray-400'}`}>
+                {rating > 0 ? `${rating} / 10` : 'Seleziona un voto'}
               </span>
             </div>
-            
-            <div className="flex justify-center gap-0.5 sm:gap-1 py-0">
+
+            <div className="flex justify-center gap-1 py-1">
               {Array.from({ length: 10 }, (_, index) => {
                 const starValue = index + 1;
                 const isFilled = hoverRating !== null ? starValue <= hoverRating : starValue <= rating;
@@ -206,11 +135,12 @@ export default function ClimaModal({ isOpen, onClose, isPreview = false }: Clima
                     onMouseEnter={() => setHoverRating(starValue)}
                     onMouseLeave={() => setHoverRating(null)}
                     className="p-0.5 transition-transform hover:scale-125 focus:outline-none cursor-pointer"
+                    title={`${starValue}`}
                   >
                     <Star
-                      className={`w-5 h-5 sm:w-6 sm:h-6 transition-colors duration-150 ${
-                        isFilled 
-                          ? 'fill-amber-400 text-amber-400' 
+                      className={`w-7 h-7 sm:w-8 sm:h-8 transition-colors duration-150 ${
+                        isFilled
+                          ? 'fill-amber-400 text-amber-400'
                           : 'text-gray-300 hover:text-amber-300'
                       }`}
                     />
@@ -219,9 +149,9 @@ export default function ClimaModal({ isOpen, onClose, isPreview = false }: Clima
               })}
             </div>
 
-            <div className="flex justify-between text-[9px] sm:text-[10px] text-gray-400 font-extrabold px-1">
-              <span>Molto Stressato (1)</span>
-              <span>Ottimo (10)</span>
+            <div className="flex justify-between text-[10px] text-gray-400 font-extrabold px-1">
+              <span>😔 Molto Stressato (1)</span>
+              <span>😄 Ottimo (10)</span>
             </div>
           </div>
 
@@ -233,10 +163,10 @@ export default function ClimaModal({ isOpen, onClose, isPreview = false }: Clima
 
           <button
             type="submit"
-            disabled={submitting || !selectedOption || rating === 0}
-            className="w-full py-2.5 sm:py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm transition shadow-lg hover:shadow-indigo-600/20 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none cursor-pointer"
+            disabled={submitting || rating === 0}
+            className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm transition shadow-lg hover:shadow-indigo-600/20 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none cursor-pointer"
           >
-            {submitting ? 'Invio in corso...' : 'Invia Risposta Anonima'}
+            {submitting ? 'Invio in corso...' : 'Invia Risposta Anonima ⭐'}
           </button>
         </form>
       </div>

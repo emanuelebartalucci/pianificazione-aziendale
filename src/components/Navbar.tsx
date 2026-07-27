@@ -1,9 +1,19 @@
-import { LogOut, Home, KeyRound, X, Shield, RefreshCw } from 'lucide-react';
+import { LogOut, Home, KeyRound, X, Shield, RefreshCw, Network } from 'lucide-react';
 import { signOut, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from 'firebase/auth';
-import { auth } from '../services/firebase';
+import { auth, db } from '../services/firebase';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { isSoci } from '../pages/Impostazioni';
+
+interface UpcomingHolidayWork {
+  id: string;
+  dipendenteName: string;
+  dipendenteEmail: string;
+  data: string;
+  motivo: string;
+}
 
 export default function Navbar() {
   const navigate = useNavigate();
@@ -15,6 +25,53 @@ export default function Navbar() {
   const [pwError, setPwError] = useState('');
   const [pwSuccess, setPwSuccess] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Stato per Presenze Festivi nei prossimi 7 giorni (Solo Soci / Admin)
+  const [upcomingHolidayWorkList, setUpcomingHolidayWorkList] = useState<UpcomingHolidayWork[]>([]);
+  const [isHolidayModalOpen, setIsHolidayModalOpen] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    const fetchUpcomingHolidays = async () => {
+      if (isSoci(myAssociatedName) || isAdmin) {
+        try {
+          const todayObj = new Date();
+          const todayIso = `${todayObj.getFullYear()}-${String(todayObj.getMonth() + 1).padStart(2, '0')}-${String(todayObj.getDate()).padStart(2, '0')}`;
+          const next7DaysObj = new Date(todayObj);
+          next7DaysObj.setDate(next7DaysObj.getDate() + 7);
+          const next7DaysIso = `${next7DaysObj.getFullYear()}-${String(next7DaysObj.getMonth() + 1).padStart(2, '0')}-${String(next7DaysObj.getDate()).padStart(2, '0')}`;
+
+          const qWkApproved = query(
+            collection(db, 'richieste_weekend'),
+            where('stato', '==', 'Approvato')
+          );
+          const wkAppSnap = await getDocs(qWkApproved);
+          const list: UpcomingHolidayWork[] = [];
+          wkAppSnap.forEach(docSnap => {
+            const data = docSnap.data();
+            const reqDate = data.data || '';
+            if (reqDate && reqDate >= todayIso && reqDate <= next7DaysIso) {
+              list.push({
+                id: docSnap.id,
+                dipendenteName: data.dipendenteName || '',
+                dipendenteEmail: data.dipendenteEmail || '',
+                data: reqDate,
+                motivo: data.motivo || 'Autorizzazione straordinario / festivo'
+              });
+            }
+          });
+          list.sort((a, b) => a.data.localeCompare(b.data));
+          setUpcomingHolidayWorkList(list);
+        } catch (err) {
+          console.error("Errore fetch presenze festivi in Navbar:", err);
+        }
+      } else {
+        setUpcomingHolidayWorkList([]);
+      }
+    };
+
+    fetchUpcomingHolidays();
+  }, [user, myAssociatedName, isAdmin]);
 
   const handleLogout = async () => {
     await signOut(auth);
@@ -91,10 +148,39 @@ export default function Navbar() {
         <div className="flex items-center gap-4">
           <button 
             onClick={() => navigate('/')}
-            className="text-sm font-medium text-gray-600 hover:text-blue-600 flex items-center gap-1 transition-colors animate-in fade-in duration-300"
+            className={`text-sm font-medium flex items-center gap-1 transition-colors animate-in fade-in duration-300 ${
+              location.pathname === '/' ? 'text-blue-600 font-bold' : 'text-gray-600 hover:text-blue-600'
+            }`}
           >
             <Home className="w-4 h-4" /> <span className="hidden sm:inline">Dashboard</span>
           </button>
+
+          <button 
+            onClick={() => navigate('/organigramma')}
+            className={`text-sm font-medium flex items-center gap-1 transition-colors animate-in fade-in duration-300 ${
+              location.pathname === '/organigramma' ? 'text-blue-600 font-bold' : 'text-gray-600 hover:text-blue-600'
+            }`}
+          >
+            <Network className="w-4 h-4" /> <span className="hidden sm:inline">Organigramma</span>
+          </button>
+
+          {/* BADGE PRESENZE FESTIVI (PROSSIMI 7 GIORNI) PER SOCI E ADMIN */}
+          {(isSoci(myAssociatedName) || isAdmin) && upcomingHolidayWorkList.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setIsHolidayModalOpen(true)}
+              className="flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 px-2.5 py-1 rounded-xl text-xs font-black transition-all cursor-pointer shadow-2xs active:scale-95 animate-in fade-in"
+              title="Clicca per visualizzare le risorse autorizzate nei festivi/weekend nei prossimi 7 giorni"
+            >
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+              </span>
+              <Shield className="w-3.5 h-3.5 text-amber-700" />
+              <span>🛡️ {upcomingHolidayWorkList.length} Festivi (7gg)</span>
+            </button>
+          )}
+
           <div className="flex items-center gap-3 border-l pl-4">
             <div className="flex flex-col items-start hidden sm:flex">
               {isSuggerimenti ? (
@@ -134,6 +220,69 @@ export default function Navbar() {
           </div>
         </div>
       </header>
+
+      {/* Modal Presenze Festivi (Prossimi 7 giorni) */}
+      {isHolidayModalOpen && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-50 p-4 no-print transition-all">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-gradient-to-r from-amber-500 to-amber-600 p-5 flex justify-between items-center text-white">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-white/20 rounded-xl">
+                  <Shield className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base leading-tight">Sicurezza Presenze Festivi</h3>
+                  <p className="text-[11px] text-amber-100 font-medium">Persone autorizzate nei prossimi 7 giorni</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setIsHolidayModalOpen(false)} 
+                className="hover:bg-white/20 p-1.5 rounded-full transition-colors text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-3">
+              <p className="text-xs text-gray-600 font-semibold">
+                Elenco delle risorse autorizzate ad accedere in ditta nei giorni festivi o di weekend durante la settimana in corso:
+              </p>
+
+              <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
+                {upcomingHolidayWorkList.map(req => {
+                  const dateParts = req.data.split('-');
+                  const formattedDate = dateParts.length === 3 ? `${dateParts[2]}/${dateParts[1]}/${dateParts[0]}` : req.data;
+                  return (
+                    <div key={req.id} className="p-3.5 bg-amber-50/80 border border-amber-200/90 rounded-2xl flex items-center justify-between gap-3 shadow-2xs">
+                      <div className="flex items-start gap-3">
+                        <div className="px-2.5 py-1 bg-amber-200 text-amber-950 rounded-xl text-xs font-black shrink-0 text-center border border-amber-300/80">
+                          📅 {formattedDate}
+                        </div>
+                        <div>
+                          <div className="text-xs font-black text-gray-900">{req.dipendenteName}</div>
+                          <div className="text-[11px] font-bold text-gray-600 italic leading-snug">{req.motivo}</div>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 shrink-0">
+                        ✓ Autorizzato
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="pt-3 border-t border-gray-100 flex justify-end">
+                <button
+                  onClick={() => setIsHolidayModalOpen(false)}
+                  className="px-4 py-2 bg-gray-900 hover:bg-gray-800 text-white font-bold text-xs rounded-xl transition cursor-pointer"
+                >
+                  Chiudi
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal Cambio Password */}
       {isPasswordModalOpen && (

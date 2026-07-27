@@ -6,6 +6,7 @@ import { Shield, UserCheck, Star, Users, Plus, Trash2, Settings, Printer, Buildi
 import ConfirmModal from '../components/ConfirmModal';
 import { wrapMailTemplate } from '../utils/mailTemplate';
 import { queueMail } from '../utils/mailSender';
+import { getPrintFooterHtml } from '../config/version';
 
 
 const COLLABORATORI = [
@@ -34,6 +35,9 @@ export const TIPOLOGIE_COMMESSE: Record<string, string> = {
   'CS': 'Consulenza sicurezza aziendale',
   'DL': 'Direzione lavori',
   'E': 'Editing vari',
+  'F': 'Formazione interna',
+  'G': 'Gare (Enti Pubblici e Privati)',
+  'M': 'Manutenzioni ed Editing',
   'P': 'Progettazione',
   'PE': 'Perizia',
   'PR': 'Preventivi e computi metrici',
@@ -42,6 +46,7 @@ export const TIPOLOGIE_COMMESSE: Record<string, string> = {
   'RI': 'Rischio idraulico',
   'S': 'Sicurezza (Servizi di CSP-CSE)',
   'SF': 'Studio di fattibilità',
+  'U': 'Gestione Ufficio e Interna',
   'V': 'Valutazione ambientale, integrata'
 };
 
@@ -266,6 +271,8 @@ export default function Impostazioni() {
   const [newClientNome, setNewClientNome] = useState('');
   const [searchClientQuery, setSearchClientQuery] = useState('');
   const [clientiList, setClientiList] = useState<{id: string, codice: string, nome: string}[]>([]);
+  const [editingClient, setEditingClient] = useState<{ id: string; codice: string; nome: string } | null>(null);
+  const [editClientNome, setEditClientNome] = useState('');
 
   // Liste dinamiche da visualizzare (caricate da context o listener locali per eliminazione)
   const [adminsList, setAdminsList] = useState<{id: string, email: string}[]>([]);
@@ -354,19 +361,27 @@ export default function Impostazioni() {
     }
   };
 
-  const handleRemoveClient = async (id: string) => {
-    triggerConfirm(
-      "Rimuovi Cliente",
-      "Sei sicuro di voler rimuovere questo cliente dall'anagrafica?",
-      async () => {
-        try {
-          await deleteDoc(doc(db, 'clienti', id));
-        } catch (err) {
-          console.error("Errore rimozione cliente:", err);
-          showToast("Si è verificato un errore durante la rimozione.", "error");
-        }
-      }
-    );
+  const handleEditClient = (client: { id: string; codice: string; nome: string }) => {
+    setEditingClient(client);
+    setEditClientNome(client.nome);
+  };
+
+  const handleSaveClientEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingClient || !editClientNome.trim()) {
+      showToast("Inserisci una ragione sociale valida.", "warning");
+      return;
+    }
+    try {
+      await updateDoc(doc(db, 'clienti', editingClient.id), {
+        nome: editClientNome.trim()
+      });
+      showToast("Ragione sociale del cliente aggiornata con successo!", "success");
+      setEditingClient(null);
+    } catch (err) {
+      console.error("Errore aggiornamento cliente:", err);
+      showToast("Si è verificato un errore durante la modifica del cliente.", "error");
+    }
   };
 
   const handleAddGreeting = async (e: React.FormEvent) => {
@@ -687,6 +702,7 @@ export default function Impostazioni() {
               `).join('')}
             </tbody>
           </table>
+          ${getPrintFooterHtml()}
           <script>
             function closeWindow() {
               try { window.close(); } catch(e) {}
@@ -766,6 +782,7 @@ export default function Impostazioni() {
               `).join('')}
             </tbody>
           </table>
+          ${getPrintFooterHtml()}
           <script>
             function closeWindow() {
               try { window.close(); } catch(e) {}
@@ -845,6 +862,7 @@ export default function Impostazioni() {
               `).join('')}
             </tbody>
           </table>
+          ${getPrintFooterHtml()}
           <script>
             function closeWindow() {
               try { window.close(); } catch(e) {}
@@ -1110,10 +1128,12 @@ export default function Impostazioni() {
                             <td className="p-2.5 font-semibold text-gray-800">{c.nome}</td>
                             <td className="p-2.5 text-center">
                               <button
-                                onClick={() => handleRemoveClient(c.id)}
-                                className="text-blue-400 hover:text-red-655 p-1 transition-colors cursor-pointer"
+                                type="button"
+                                onClick={() => handleEditClient(c)}
+                                className="text-blue-600 hover:text-blue-800 p-1.5 hover:bg-blue-100/60 rounded-lg transition-colors cursor-pointer"
+                                title="Modifica Ragione Sociale"
                               >
-                                <Trash2 className="w-4 h-4"/>
+                                <Pencil className="w-4 h-4"/>
                               </button>
                             </td>
                           </tr>
@@ -2199,6 +2219,68 @@ export default function Impostazioni() {
         </div>
       )}
 
+
+      {/* MODALE MODIFICA CLIENTE */}
+      {editingClient && (
+        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl border border-gray-100 p-6 sm:p-8 max-w-md w-full animate-in fade-in zoom-in-95 duration-200 flex flex-col gap-5">
+            <div className="flex justify-between items-center pb-3 border-b border-gray-100">
+              <h3 className="font-extrabold text-lg text-gray-900 flex items-center gap-2">
+                <Building2 className="w-5 h-5 text-blue-600" />
+                <span>Modifica Ragione Sociale</span>
+              </h3>
+              <button 
+                onClick={() => setEditingClient(null)} 
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-full hover:bg-gray-100 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveClientEdit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1 ml-1">Codice Cliente (Progressivo Invariabile)</label>
+                <input
+                  type="text"
+                  disabled
+                  value={editingClient.codice}
+                  className="w-full p-3 border-none rounded-xl bg-gray-100 text-gray-500 font-extrabold text-sm text-center cursor-not-allowed"
+                />
+                <p className="text-[10px] text-gray-400 italic mt-1 ml-1">
+                  Il codice cliente progressivo è permanente per garantire la coerenza dello storico commesse.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Ragione Sociale *</label>
+                <input
+                  type="text"
+                  required
+                  value={editClientNome}
+                  onChange={e => setEditClientNome(e.target.value)}
+                  className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500 outline-none font-bold text-gray-800 text-sm shadow-inner"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingClient(null)}
+                  className="flex-1 py-3 rounded-xl border border-gray-200 text-xs font-bold text-gray-600 hover:bg-gray-50 transition cursor-pointer"
+                >
+                  Annulla
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold transition shadow-md cursor-pointer"
+                >
+                  Salva Modifiche
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       <ConfirmModal
         isOpen={confirmConfig.isOpen}

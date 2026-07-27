@@ -178,6 +178,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
               email: doc.data().email || '',
               area: doc.data().area || ''
             }));
+            
+            // Eccezione esplicita per Corbellini Matteo (mcorbellini@ingegno06.it) per l'area Amministrazione
+            if (!list.some(c => c.email?.toLowerCase().trim() === 'mcorbellini@ingegno06.it' && c.area === 'Amministrazione')) {
+              list.push({
+                id: 'default-mcorbellini-amministrazione',
+                email: 'mcorbellini@ingegno06.it',
+                area: 'Amministrazione'
+              });
+            }
+
             setCoordinatori(list);
           }));
 
