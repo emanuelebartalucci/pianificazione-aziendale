@@ -1,13 +1,14 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, doc, setDoc, addDoc, deleteDoc, getDocs } from 'firebase/firestore';
-import { Briefcase, ChevronLeft, ChevronRight, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw, Printer, Plus } from 'lucide-react';
+import { Briefcase, ChevronLeft, ChevronRight, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw, Printer, Plus, UserCheck, MoveVertical } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays } from '../utils/date';
 import { queueMail } from '../utils/mailSender';
 import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
 import ConfirmModal from '../components/ConfirmModal';
 import { PianificazioneModal } from '../components/PianificazioneModal';
+import { ResourceAvailabilityModal } from '../components/ResourceAvailabilityModal';
 import { getPrintFooterHtml } from '../config/version';
 import { TIPOLOGIE_COMMESSE, isSoci } from './Impostazioni';
 
@@ -171,8 +172,71 @@ export default function Commesse() {
     assegnazioni: assignments = {}, 
     approvedLeaves = [], 
     coordinatori = [], 
-    pmsEmails = []
+    pmsEmails = [],
+    prioritaCommesse = {}
   } = useAuth();
+
+  const [tableHeight, setTableHeight] = useState<number>(650);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+  const heightTextRef = useRef<HTMLSpanElement>(null);
+  const animationFrameRef = useRef<number | null>(null);
+
+  const handleMouseDownResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startClientY = e.clientY;
+    const startScrollY = window.scrollY;
+    const startHeight = tableContainerRef.current ? tableContainerRef.current.clientHeight : tableHeight;
+    let currentHeight = startHeight;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const deltaViewportY = moveEvent.clientY - startClientY;
+      const deltaScrollY = window.scrollY - startScrollY;
+      const totalDelta = deltaViewportY + deltaScrollY;
+
+      const newHeight = Math.max(300, Math.min(3000, startHeight + totalDelta));
+      currentHeight = newHeight;
+
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+
+      animationFrameRef.current = requestAnimationFrame(() => {
+        if (tableContainerRef.current) {
+          tableContainerRef.current.style.maxHeight = `${currentHeight}px`;
+        }
+        if (heightTextRef.current) {
+          heightTextRef.current.textContent = `Trascina per ridimensionare altezza (${currentHeight}px)`;
+        }
+
+        const viewportHeight = window.innerHeight;
+        const cursorY = moveEvent.clientY;
+        if (cursorY > viewportHeight - 50) {
+          window.scrollBy(0, 8);
+        } else if (cursorY < 50) {
+          window.scrollBy(0, -8);
+        }
+      });
+    };
+
+    const handleMouseUp = () => {
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      setTableHeight(currentHeight);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
+  const myCoordinatedAreas = useMemo((): string[] => {
+    if (!userEmail) return [];
+    return coordinatori
+      .filter(c => c.email && c.email.toLowerCase() === userEmail.toLowerCase())
+      .map(c => c.area);
+  }, [userEmail, coordinatori]);
 
   const getOfficialName = (inputName?: string | null) => {
     if (!inputName) return '';
@@ -273,6 +337,7 @@ export default function Commesse() {
 
   const isNarrow = useMemo(() => parseInt(weekColumnMinWidth) < 80, [weekColumnMinWidth]);
   const isUltraNarrow = useMemo(() => parseInt(weekColumnMinWidth) < 50, [weekColumnMinWidth]);
+  const [isAvailabilityModalOpen, setIsAvailabilityModalOpen] = useState(false);
 
 
   
@@ -366,37 +431,54 @@ export default function Commesse() {
     return { startStr, endStr };
   };
 
-  // Stato per la modale di richiesta modifica risorsa al coordinatore
-  const [resourceChangeModal, setResourceChangeModal] = useState<{
-    isOpen: boolean;
-    personName: string;
-    macroArea: string;
-    coordName: string;
-    coordEmail: string;
-    commessaId: string;
-    commessaNome: string;
-    weekId: string;
-    weekLabel: string;
-    currentPct: number;
-  }>({
-    isOpen: false,
-    personName: '',
-    macroArea: '',
-    coordName: '',
-    coordEmail: '',
-    commessaId: '',
-    commessaNome: '',
-    weekId: '',
-    weekLabel: '',
-    currentPct: 100
-  });
+  // Modale Richiedi Personale — [Area] (Sostituisce vecchia modale richiesta coordinatore)
+  const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
+  const [reqAreaTarget, setReqAreaTarget] = useState('Disegnatori');
+  const [reqCommessaId, setReqCommessaId] = useState('');
+  const [reqDataInizio, setReqDataInizio] = useState('');
+  const [reqDataFine, setReqDataFine] = useState('');
+  const [reqPercentuale, setReqPercentuale] = useState<number>(100);
+  const [reqPreferredResource, setReqPreferredResource] = useState('');
+  const [reqNota, setReqNota] = useState('');
+  const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
 
-  const [reqStartWeekId, setReqStartWeekId] = useState('');
-  const [reqEndWeekId, setReqEndWeekId] = useState('');
-  const [reqNewPercentuale, setReqNewPercentuale] = useState('100');
-  const [reqChangeType, setReqChangeType] = useState('modifica_spostamento');
-  const [reqChangeNotes, setReqChangeNotes] = useState('');
-  const [sendingResourceRequest, setSendingResourceRequest] = useState(false);
+  const selectableWeekOptions = useMemo(() => {
+    const options: { id: string; mondayStr: string; sundayStr: string; label: string; weekNum: number; year: number }[] = [];
+    const today = new Date();
+    let currentMonday = getStartOfWeek(addDays(today, -84));
+    const months = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
+
+    for (let i = 0; i < 80; i++) {
+      const sunday = addDays(currentMonday, 6);
+      const wkNum = getWeekNumber(currentMonday);
+      const y = currentMonday.getFullYear();
+
+      const mY = currentMonday.getFullYear();
+      const mM = String(currentMonday.getMonth() + 1).padStart(2, '0');
+      const mD = String(currentMonday.getDate()).padStart(2, '0');
+      const mondayStr = `${mY}-${mM}-${mD}`;
+
+      const sY = sunday.getFullYear();
+      const sM = String(sunday.getMonth() + 1).padStart(2, '0');
+      const sD = String(sunday.getDate()).padStart(2, '0');
+      const sundayStr = `${sY}-${sM}-${sD}`;
+
+      const startFormatted = `${currentMonday.getDate()} ${months[currentMonday.getMonth()]}`;
+      const endFormatted = `${sunday.getDate()} ${months[sunday.getMonth()]} ${sunday.getFullYear()}`;
+
+      options.push({
+        id: `${y}-W${wkNum}`,
+        mondayStr,
+        sundayStr,
+        label: `Sett. ${wkNum} (${startFormatted} - ${endFormatted})`,
+        weekNum: wkNum,
+        year: y
+      });
+
+      currentMonday = addDays(currentMonday, 7);
+    }
+    return options;
+  }, []);
 
   const [planningModal, setPlanningModal] = useState<{
     isOpen: boolean;
@@ -406,7 +488,7 @@ export default function Commesse() {
     weekId?: string;
   }>({ isOpen: false });
 
-  const handleResourcePillClick = (e: React.MouseEvent, personName: string, personPct: number, commId: string, commNome: string, wkId: string, wkLabel: string) => {
+  const handleResourcePillClick = (e: React.MouseEvent, personName: string, personPct: number, commId: string, _commNome: string, wkId: string, _wkLabel: string) => {
     e.stopPropagation();
 
     const dip = dipendenti.find(d => areNamesEqual(d.nome, personName));
@@ -435,7 +517,6 @@ export default function Commesse() {
         weekId: wkId
       });
     } else {
-      // Se il gestore è un Coordinatore di un'altra area o il PM/Responsabile della commessa, oppure la risorsa stessa:
       const targetCommessa = commesse.find(c => c.id === commId);
       const isPMOrRespOfCommessa = targetCommessa ? (
         areNamesEqual(targetCommessa.responsabile, myAssociatedName) ||
@@ -449,124 +530,124 @@ export default function Commesse() {
         return;
       }
 
-      const coordObjs = (coordinatori || []).filter(c => c.area === macroArea);
-      const coordEmails = coordObjs.map(c => c.email?.toLowerCase()).filter(Boolean);
-      const coordDip = dipendenti.find(d => d.email && coordEmails.includes(d.email.toLowerCase()));
-      const coordName = coordDip ? coordDip.nome : (coordObjs[0]?.email || 'Coordinatore d\'Area');
-      const coordEmail = coordDip?.email || coordObjs[0]?.email || '';
-
-      setResourceChangeModal({
-        isOpen: true,
-        personName,
-        macroArea,
-        coordName,
-        coordEmail,
-        commessaId: commId,
-        commessaNome: commNome,
-        weekId: wkId,
-        weekLabel: wkLabel,
-        currentPct: personPct || 100
-      });
-      setReqStartWeekId(wkId);
-      setReqEndWeekId(wkId);
-      setReqNewPercentuale(String(personPct || 100));
-      setReqChangeType('modifica_spostamento');
-      setReqChangeNotes('');
+      const weekRange = getWeekDateRange(wkId);
+      setReqAreaTarget(macroArea || 'Disegnatori');
+      setReqCommessaId(commId);
+      setReqPreferredResource(personName && dipendenti.some(d => d.nome === personName) ? personName : '');
+      setReqPercentuale(personPct || 100);
+      setReqDataInizio(weekRange.startStr);
+      setReqDataFine(weekRange.endStr);
+      setReqNota('');
+      setIsRequestModalOpen(true);
     }
   };
 
-  const handleSendResourceChangeRequest = async (e: React.FormEvent) => {
+  const handleWeekCellClick = (e: React.MouseEvent, comm: any, wk: any) => {
+    if (e.button !== 0) return;
     e.preventDefault();
-    setSendingResourceRequest(true);
+
+    const isPMOrRespOfCommessa = comm ? (
+      areNamesEqual(comm.responsabile, myAssociatedName) ||
+      (Array.isArray(comm.pm) ? comm.pm : [comm.pm]).some((pmName: string) => areNamesEqual(pmName, myAssociatedName))
+    ) : false;
+    const isAnyCoordinator = (coordinatori || []).some(c => c.email?.toLowerCase() === userEmail?.toLowerCase());
+    const canDirectlyManageWeek = isAdmin || isSoci(myAssociatedName) || isAnyCoordinator || isPMOrRespOfCommessa;
+
+    if (canDirectlyManageWeek) {
+      setPlanningModal({
+        isOpen: true,
+        tab: 'commessa',
+        commessaId: comm.id,
+        weekId: wk.id
+      });
+    } else {
+      const myDip = dipendenti.find(d => areNamesEqual(d.nome, myAssociatedName));
+      const macroArea = myDip?.macroArea || 'Disegnatori';
+      const weekRange = getWeekDateRange(wk.id);
+      setReqAreaTarget(macroArea);
+      setReqCommessaId(comm.id);
+      setReqPreferredResource('');
+      setReqPercentuale(100);
+      setReqDataInizio(weekRange.startStr);
+      setReqDataFine(weekRange.endStr);
+      setReqNota('');
+      setIsRequestModalOpen(true);
+    }
+  };
+
+  const handleSubmitRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reqCommessaId || !reqDataInizio || !reqDataFine || !reqPercentuale) {
+      showToast("Compila tutti i campi richiesti.", "warning");
+      return;
+    }
+    setIsSubmittingRequest(true);
     try {
-      const startInfo = getWeekDateRange(reqStartWeekId);
-      const endInfo = getWeekDateRange(reqEndWeekId);
-      const dataInizio = startInfo.startStr;
-      const dataFine = endInfo.endStr;
-      const pct = reqChangeType === 'annullamento' ? 0 : (parseInt(reqNewPercentuale) || 100);
-
-      let tipoLabel = '🔄 Modifica / Spostamento Assegnazione (Date e Percentuale)';
-      if (reqChangeType === 'annullamento') tipoLabel = '❌ Annullamento / Rimozione Completa';
-      if (reqChangeType === 'altro') tipoLabel = '💬 Altra Richiesta / Informazioni';
-
-      // 1. Salva in `richieste_disegnatori` per far comparire la richiesta nel pannello Coordinatore in Pianificazione Personale
+      const commObj = commesse.find(c => c.id === reqCommessaId);
+      const commName = commObj ? commObj.nome : '';
+      
       await addDoc(collection(db, 'richieste_disegnatori'), {
-        area: resourceChangeModal.macroArea,
-        commessaId: resourceChangeModal.commessaId,
-        commessaName: resourceChangeModal.commessaNome,
-        commessaNome: resourceChangeModal.commessaNome,
-        dataInizio,
-        dataFine,
-        percentuale: pct,
-        risorsaPreferita: resourceChangeModal.personName,
-        richiedenteNome: myAssociatedName,
+        commessaId: reqCommessaId,
+        commessaName: commName,
+        commessaNome: commName,
+        dataInizio: reqDataInizio,
+        dataFine: reqDataFine,
+        percentuale: Number(reqPercentuale),
+        risorsaPreferita: reqPreferredResource || '',
+        nota: reqNota,
+        richiedenteNome: myAssociatedName || userEmail || '',
         richiedenteEmail: userEmail,
-        coordinatoreNome: resourceChangeModal.coordName,
-        coordinatoreEmail: resourceChangeModal.coordEmail,
-        tipoRichiesta: tipoLabel,
-        nota: reqChangeNotes,
-        originalWeekId: resourceChangeModal.weekId,
-        nuovaStartWeekId: reqStartWeekId,
-        nuovaEndWeekId: reqEndWeekId,
         stato: 'in_attesa',
+        area: reqAreaTarget,
         createdAt: new Date().toISOString()
       });
 
-      // 2. Salva in `richieste_modifica_risorsa`
-      await addDoc(collection(db, 'richieste_modifica_risorsa'), {
-        risorsaNome: resourceChangeModal.personName,
-        risorsaMacroArea: resourceChangeModal.macroArea,
-        coordinatoreNome: resourceChangeModal.coordName,
-        coordinatoreEmail: resourceChangeModal.coordEmail,
-        richiedenteNome: myAssociatedName,
-        richiedenteEmail: userEmail,
-        commessaId: resourceChangeModal.commessaId,
-        commessaNome: resourceChangeModal.commessaNome,
-        weekId: resourceChangeModal.weekId,
-        nuovaStartWeekId: reqStartWeekId,
-        nuovaEndWeekId: reqEndWeekId,
-        dataInizio,
-        dataFine,
-        percentuale: pct,
-        tipoRichiesta: tipoLabel,
-        note: reqChangeNotes,
-        stato: 'in_attesa',
-        createdAt: new Date().toISOString()
-      });
-
-      // 3. Email al Coordinatore
-      if (resourceChangeModal.coordEmail) {
-        const subject = `[Richiesta Modifica Risorsa] ${resourceChangeModal.personName} - Commessa ${resourceChangeModal.commessaNome}`;
+      const coordAreaEmails = (coordinatori || [])
+        .filter(c => c.area === reqAreaTarget && c.email)
+        .map(c => c.email.toLowerCase());
+      
+      if (coordAreaEmails.length > 0) {
+        const richiedente = myAssociatedName || userEmail;
+        const subject = `[Richiesta Personale] Richiesta risorsa ${reqAreaTarget} per commessa ${commName}`;
         const htmlBody = `
           <div style="font-family: Arial, sans-serif; color: #1e293b; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px;">
-            <h2 style="color: #2563eb; margin-top: 0;">✉️ Richiesta al Coordinatore d'Area</h2>
-            <p>Ciao <strong>${resourceChangeModal.coordName}</strong>,</p>
-            <p><strong>${myAssociatedName}</strong> ti ha inviato una richiesta di modifica per la risorsa <strong>${resourceChangeModal.personName}</strong> (Area: ${resourceChangeModal.macroArea}).</p>
-            <div style="background-color: #f8fafc; padding: 15px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #2563eb;">
-              <p style="margin: 0 0 8px 0;"><strong>Commessa:</strong> ${resourceChangeModal.commessaNome}</p>
-              <p style="margin: 0 0 8px 0;"><strong>Tipo Richiesta:</strong> ${tipoLabel}</p>
-              <p style="margin: 0 0 8px 0;"><strong>Nuovo Periodo Richiesto:</strong> dal ${dataInizio} al ${dataFine} (${reqStartWeekId} ➔ ${reqEndWeekId})</p>
-              <p style="margin: 0 0 8px 0;"><strong>Nuova Percentuale:</strong> ${pct}%</p>
-              <p style="margin: 0;"><strong>Motivazione / Note:</strong> ${reqChangeNotes || 'Nessuna nota specificata'}</p>
-            </div>
-            <p>Puoi approvare direttamente questa richiesta con 1-click dal tuo pannello in <strong>Pianificazione Personale</strong>.</p>
-            <p style="font-size: 12px; color: #64748b;">Questa email è stata generata automaticamente dal sistema di Pianificazione Aziendale.</p>
+            <h2 style="color: #4f46e5; margin-top: 0;">📥 Nuova Richiesta Personale</h2>
+            <p>Gentile Coordinatore,</p>
+            <p>È stata ricevuta una nuova richiesta di personale per l'area <strong>${reqAreaTarget}</strong>.</p>
+            <table border="0" cellpadding="6" cellspacing="0" style="font-size:13px;color:#374151;width:100%">
+              <tr><td style="font-weight:bold;width:180px">Commessa:</td><td>${commName}</td></tr>
+              <tr><td style="font-weight:bold">Richiedente:</td><td>${richiedente} (${userEmail})</td></tr>
+              <tr><td style="font-weight:bold">Periodo:</td><td>dal ${reqDataInizio} al ${reqDataFine}</td></tr>
+              <tr><td style="font-weight:bold">Carico Richiesto:</td><td>${reqPercentuale}%</td></tr>
+              ${reqPreferredResource ? `<tr><td style="font-weight:bold">Risorsa Preferita:</td><td><strong style="color:#4f46e5">${reqPreferredResource}</strong></td></tr>` : ''}
+              ${reqNota ? `<tr><td style="font-weight:bold">Nota:</td><td><em>${reqNota}</em></td></tr>` : ''}
+            </table>
+            <p style="margin-top:16px">Accedi alla <strong>Pianificazione del Personale e Carichi</strong> per gestire questa richiesta e assegnare la risorsa.</p>
           </div>
         `;
-        const plainText = `Ciao ${resourceChangeModal.coordName},\n\n${myAssociatedName} ti ha inviato una richiesta per la risorsa ${resourceChangeModal.personName}.\nCommessa: ${resourceChangeModal.commessaNome}\nPeriodo: dal ${dataInizio} al ${dataFine}\nPercentuale: ${pct}%\nTipo: ${tipoLabel}\nNote: ${reqChangeNotes || 'Nessuna'}`;
-
-        await queueMail(resourceChangeModal.coordEmail, subject, htmlBody, plainText);
+        for (const email of coordAreaEmails) {
+          if (email.toLowerCase() !== userEmail.toLowerCase()) {
+            await queueMail(email, subject, htmlBody);
+          }
+        }
       }
 
-      showToast(`Richiesta inviata con successo al Coordinatore ${resourceChangeModal.coordName}!`, 'success');
-      setResourceChangeModal(prev => ({ ...prev, isOpen: false }));
+      showToast(`Richiesta ${reqAreaTarget} inviata con successo!`, "success");
+      setIsRequestModalOpen(false);
+      setReqCommessaId('');
+      setReqDataInizio('');
+      setReqDataFine('');
+      setReqPercentuale(100);
+      setReqPreferredResource('');
+      setReqNota('');
     } catch (err) {
-      console.error(err);
+      console.error("Errore salvataggio richiesta:", err);
       showToast("Errore durante l'invio della richiesta.", "error");
     } finally {
-      setSendingResourceRequest(false);
+      setIsSubmittingRequest(false);
     }
   };
+
 
   // const handleSelectCommessaFilter = (commId: string) => {
   //   if (commId) {
@@ -1779,6 +1860,17 @@ export default function Commesse() {
             >
               <RefreshCw className="w-4 h-4" />
             </button>
+
+            {myAssociatedName && !isAdmin && !isSoci(myAssociatedName) && myCoordinatedAreas.length === 0 && (
+              <button
+                type="button"
+                onClick={() => setIsAvailabilityModalOpen(true)}
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-xl text-xs font-black transition shadow-2xs cursor-pointer ml-2"
+              >
+                <UserCheck className="w-4 h-4 text-emerald-600" />
+                <span>Segnala Disponibilità / Chiedi Lavoro</span>
+              </button>
+            )}
           </div>
         </h2>
         
@@ -1821,7 +1913,7 @@ export default function Commesse() {
       {activeTab === 'consultazione' && (
         <>
           {/* TIMELINE TABLE CARD */}
-          <div className="bg-white rounded-[2rem] shadow-xl border relative mb-10 flex flex-col max-h-[750px] pb-4">
+          <div className="bg-white rounded-[2rem] shadow-sm border border-gray-200 relative mb-10 flex flex-col overflow-hidden">
             
                         {/* TOOLBAR */}
             <div className="p-4 border-b border-gray-200 flex flex-col lg:flex-row lg:items-center justify-between gap-4 no-print bg-gray-50/50 rounded-t-[2rem] shrink-0 py-4">
@@ -2087,16 +2179,20 @@ export default function Commesse() {
                     />
                   </div>
                   
-                  <button onClick={handleExportToExcel} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition shadow-md active:scale-95 cursor-pointer">
+                  <button onClick={handleExportToExcel} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition shadow-md active:scale-95 cursor-pointer">
                     <Download className="w-4 h-4" /> Esporta Excel
                   </button>
                 </div>
               </div>
             </div>
-{/* Load Grid Wrapper with clipping for rounded corners */}
-            <div className="w-full flex-1 overflow-hidden rounded-b-2xl flex flex-col">
-              <div className="w-full overflow-auto scrollbar-thin flex-1">
-                <table className="w-full text-left border-separate border-spacing-0 text-xs">
+
+            {/* Load Grid Wrapper */}
+            <div 
+              ref={tableContainerRef}
+              className="w-full overflow-auto scrollbar-thin"
+              style={{ maxHeight: `${tableHeight}px` }}
+            >
+              <table className="w-full text-left border-separate border-spacing-0 text-xs">
                 <thead className="sticky top-0 z-30 bg-white shadow-sm border-b-2 border-gray-200">
                   {/* Month Group Header Row */}
                   <tr className="bg-gray-50 border-b text-[11px] font-black text-gray-500 text-center uppercase tracking-wider" style={{ height: '40px' }}>
@@ -2216,6 +2312,24 @@ export default function Commesse() {
                             const isWithinRange = isWeekWithinRange(wk.dateObj, comm.dataInizio, comm.dataFine);
                             const commColor = (comm.tipologia && TIPOLOGIA_COLORS[comm.tipologia]) || comm.colore || '#3b82f6';
                             const cellBg = isWithinRange ? hexToRgba(commColor, 0.08) : undefined;
+                            
+                            const prioKey = `${comm.id}_${wk.id}`;
+                            const weekPriority = prioritaCommesse[prioKey] || 'Standard';
+
+                            let priorityBorderStyle = '';
+                            let priorityTopBarColor = 'bg-indigo-150/40 group-hover/weekcell:bg-indigo-600';
+                            let priorityTitle = `Pianificazione settimana (${comm.nome} - ${wk.label})`;
+
+                            if (weekPriority === 'Alta') {
+                              priorityBorderStyle = 'ring-2 ring-inset ring-red-500 border-red-500 shadow-xs';
+                              priorityTopBarColor = 'bg-red-500';
+                              priorityTitle += ' - PRIORITÀ ALTA 🔴';
+                            } else if (weekPriority === 'Bassa') {
+                              priorityBorderStyle = 'ring-2 ring-inset ring-sky-400 border-sky-400';
+                              priorityTopBarColor = 'bg-sky-400';
+                              priorityTitle += ' - Priorità Bassa 🔵';
+                            }
+
                             return (
                               <td 
                                 key={wIndex} 
@@ -2229,20 +2343,10 @@ export default function Commesse() {
                                     window.open(`/pianificazione-personale?tab=commessa&commessaId=${encodeURIComponent(comm.id)}&weekId=${encodeURIComponent(wk.id)}`, '_blank');
                                   }
                                 }}
-                                onClick={(e) => {
-                                  if (e.button === 0) {
-                                    e.preventDefault();
-                                    setPlanningModal({
-                                      isOpen: true,
-                                      tab: 'commessa',
-                                      commessaId: comm.id,
-                                      weekId: wk.id
-                                    });
-                                  }
-                                }}
+                                onClick={(e) => handleWeekCellClick(e, comm, wk)}
                                 className={`group/weekcell relative ${isUltraNarrow ? 'p-1' : 'p-2'} border-l border-b border-gray-100 align-top ${
                                   isCurrentWeek ? 'ring-2 ring-inset ring-blue-300' : ''
-                                } cursor-pointer hover:bg-indigo-100/70 hover:ring-2 hover:ring-inset hover:ring-indigo-400 hover:shadow-md transition-all`}
+                                } ${priorityBorderStyle} cursor-pointer hover:bg-indigo-100/70 hover:ring-2 hover:ring-inset hover:ring-indigo-400 hover:shadow-md transition-all`}
                                 style={{ backgroundColor: cellBg, minWidth: weekColumnMinWidth, width: weekColumnMinWidth }}
                               >
                                 <div 
@@ -2265,19 +2369,11 @@ export default function Commesse() {
                                       }
                                     }}
                                     onClick={(e) => {
-                                      if (e.button === 0) {
-                                        e.stopPropagation();
-                                        e.preventDefault();
-                                        setPlanningModal({
-                                          isOpen: true,
-                                          tab: 'commessa',
-                                          commessaId: comm.id,
-                                          weekId: wk.id
-                                        });
-                                      }
+                                      e.stopPropagation();
+                                      handleWeekCellClick(e, comm, wk);
                                     }}
-                                    className="w-full h-1.5 rounded-t-xs bg-indigo-150/40 group-hover/weekcell:bg-indigo-600 transition-colors cursor-pointer mb-1 shrink-0"
-                                    title={`Gestisci commessa per questa settimana (${comm.nome} - ${wk.label})`}
+                                    className={`w-full h-1.5 rounded-t-xs ${priorityTopBarColor} transition-colors cursor-pointer mb-1 shrink-0`}
+                                    title={priorityTitle}
                                   />
 
                                   {assignedPeople.map((person, pIdx) => {
@@ -2390,9 +2486,41 @@ export default function Commesse() {
                 )}
               </table>
             </div>
-          </div>
-        </div>
 
+            {/* MANIGLIA DI RIDIMENSIONAMENTO TRASCINABILE IN BASSO */}
+            <div 
+              onMouseDown={handleMouseDownResize}
+              className="w-full bg-slate-100 hover:bg-indigo-100 border-t border-gray-200 py-1.5 flex items-center justify-center gap-2 cursor-row-resize select-none transition-colors group"
+              title="Clicca e trascina in verticale per regolare l'altezza del tabellone"
+            >
+              <MoveVertical className="w-4 h-4 text-gray-500 group-hover:text-indigo-600 transition-colors" />
+              <span ref={heightTextRef} className="text-[10px] font-black uppercase text-gray-600 group-hover:text-indigo-900 tracking-wider">
+                Trascina per ridimensionare altezza ({tableHeight}px)
+              </span>
+            </div>
+
+            {/* Legenda Priorità Settimanali */}
+            <div className="p-4 bg-gray-50/50 flex flex-wrap items-center justify-between gap-4 text-xs border-t border-gray-150">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-black uppercase text-indigo-950 tracking-wider">Legenda Priorità Settimanale:</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-3 text-xs font-bold text-gray-700">
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-50/80 border border-red-300 ring-2 ring-inset ring-red-500">
+                  <span>🔴</span>
+                  <span className="font-extrabold text-red-950">Priorità Alta</span>
+                </div>
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-gray-200">
+                  <span>⚪</span>
+                  <span className="font-extrabold text-gray-700">Priorità Standard</span>
+                </div>
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-50/80 border border-sky-300 ring-2 ring-inset ring-sky-400">
+                  <span>🔵</span>
+                  <span className="font-extrabold text-sky-950">Priorità Bassa</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
         </>
       )}
 
@@ -3291,148 +3419,188 @@ export default function Commesse() {
         </div>
       )}
 
-      {/* MODALE RICHIESTA MODIFICA RISORSA ESTERNA AL COORDINATORE */}
-      {resourceChangeModal.isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs no-print">
-          <div className="bg-white rounded-3xl shadow-2xl max-w-xl w-full p-6 sm:p-8 border border-slate-100 flex flex-col gap-5 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-start justify-between gap-4 border-b pb-4">
-              <div>
-                <h3 className="text-lg font-extrabold text-indigo-950 flex items-center gap-2">
-                  <span>✉️ Richiesta al Coordinatore d'Area</span>
-                </h3>
-                <p className="text-xs text-gray-500 font-medium mt-1">
-                  La risorsa <strong className="text-indigo-700">{resourceChangeModal.personName}</strong> appartiene alla Macroarea <strong className="text-slate-800">{resourceChangeModal.macroArea || 'Generica'}</strong>.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setResourceChangeModal(prev => ({ ...prev, isOpen: false }))}
-                className="text-gray-400 hover:text-gray-600 p-1.5 rounded-xl hover:bg-gray-100 transition cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+      {/* MODALE RICHIESTA PERSONALE — [AREA] (SOSTITUISCE VECCHIA MODALE RICHIESTA COORDINATORE) */}
+      {isRequestModalOpen && (() => {
+        const areaModalColors: Record<string, { gradient: string; titleColor: string; subtitleColor: string; ring: string }> = {
+          'Disegnatori':          { gradient: 'from-teal-50/50 to-slate-50',   titleColor: 'text-teal-950',   subtitleColor: 'text-teal-700/80',   ring: 'focus:ring-teal-500' },
+          'Ingegneria':           { gradient: 'from-indigo-50/50 to-slate-50', titleColor: 'text-indigo-950', subtitleColor: 'text-indigo-700/80', ring: 'focus:ring-indigo-500' },
+          'Sicurezza Cantieri':   { gradient: 'from-emerald-50/50 to-slate-50',titleColor: 'text-emerald-950',subtitleColor: 'text-emerald-700/80',ring: 'focus:ring-emerald-500' },
+          'Consulenza Sicurezza': { gradient: 'from-amber-50/50 to-slate-50',  titleColor: 'text-amber-950',  subtitleColor: 'text-amber-700/80',  ring: 'focus:ring-amber-500' },
+          'Amministrazione':      { gradient: 'from-blue-50/50 to-slate-50',   titleColor: 'text-blue-950',   subtitleColor: 'text-blue-700/80',   ring: 'focus:ring-blue-500' },
+        };
+        const mc = areaModalColors[reqAreaTarget] || areaModalColors['Disegnatori'];
 
-            <div className="bg-indigo-50/60 p-4 rounded-2xl border border-indigo-100 flex flex-col gap-2 text-xs text-indigo-950 font-medium">
-              <div className="flex items-center justify-between">
-                <span className="text-gray-500 font-bold uppercase tracking-wider text-[10px]">Coordinatore Destinatario:</span>
-                <span className="font-extrabold text-indigo-900">{resourceChangeModal.coordName} {resourceChangeModal.coordEmail ? `(${resourceChangeModal.coordEmail})` : ''}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-gray-500 font-bold uppercase tracking-wider text-[10px]">Commessa:</span>
-                <span className="font-bold text-slate-800 truncate max-w-[250px]">{resourceChangeModal.commessaNome}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-gray-500 font-bold uppercase tracking-wider text-[10px]">Settimana:</span>
-                <span className="font-extrabold text-blue-700">{resourceChangeModal.weekId}</span>
-              </div>
-            </div>
-
-            <form onSubmit={handleSendResourceChangeRequest} className="flex flex-col gap-4">
-              <div>
-                <label className="block text-xs font-extrabold text-gray-700 uppercase tracking-wider mb-1 ml-1">
-                  Tipo di Intervento Richiesto
-                </label>
-                <select
-                  value={reqChangeType}
-                  onChange={e => setReqChangeType(e.target.value)}
-                  className="w-full p-3 border border-gray-200 rounded-xl font-bold text-xs bg-white text-gray-800 focus:ring-2 focus:ring-indigo-400 outline-none shadow-xs"
+        return (
+          <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-md flex items-center justify-center z-[9999] p-4 sm:p-6 no-print animate-in fade-in duration-200">
+            <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-3xl border border-gray-100 flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+              <div className={`p-6 sm:p-8 border-b flex justify-between items-center bg-gradient-to-br ${mc.gradient} rounded-t-[2rem]`}>
+                <div>
+                  <h3 className={`text-xl font-extrabold ${mc.titleColor}`}>Richiedi Personale — {reqAreaTarget}</h3>
+                  <p className={`text-xs ${mc.subtitleColor} mt-1`}>Invia una richiesta ai coordinatori dell'area <strong>{reqAreaTarget}</strong>.</p>
+                </div>
+                <button 
+                  type="button"
+                  onClick={() => setIsRequestModalOpen(false)}
+                  className="text-gray-400 hover:text-gray-650 text-lg font-bold p-2 hover:bg-gray-100 rounded-full transition cursor-pointer"
                 >
-                  <option value="modifica_spostamento">🔄 Modifica / Spostamento Assegnazione (Date e Percentuale)</option>
-                  <option value="annullamento">❌ Richiedi Annullamento / Rimozione Completa</option>
-                  <option value="altro">💬 Altra Richiesta / Informazioni</option>
-                </select>
+                  ✕
+                </button>
               </div>
+              
+              <form onSubmit={handleSubmitRequest} className="p-6 sm:p-8 space-y-5">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  {/* Colonna Sinistra */}
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Area Richiesta *</label>
+                      <select
+                        required
+                        value={reqAreaTarget}
+                        onChange={e => {
+                          setReqAreaTarget(e.target.value);
+                          setReqPreferredResource('');
+                        }}
+                        className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
+                      >
+                        <option value="Disegnatori">Disegnatori</option>
+                        <option value="Ingegneria">Ingegneria</option>
+                        <option value="Sicurezza Cantieri">Sicurezza Cantieri</option>
+                        <option value="Consulenza Sicurezza">Consulenza Sicurezza</option>
+                        <option value="Amministrazione">Amministrazione</option>
+                      </select>
+                    </div>
 
-              {reqChangeType === 'modifica_spostamento' && (
-                <>
-                  <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200/80 flex flex-col gap-3">
-                    <label className="block text-xs font-extrabold text-indigo-950 uppercase tracking-wider ml-0.5">
-                      Nuovo Periodo Richiesto (Settimane)
-                    </label>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Seleziona Commessa *</label>
+                      <select
+                        required
+                        value={reqCommessaId}
+                        onChange={e => setReqCommessaId(e.target.value)}
+                        className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
+                      >
+                        <option value="">-- Seleziona Commessa --</option>
+                        {commesseGestibili.map(c => (
+                          <option key={c.id} value={c.id}>{c.nome} [{c.codiceCommessa || c.id}]</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1 flex items-center justify-between">
+                        <span>Risorsa Preferita</span>
+                        <span className="text-[10px] text-indigo-600 font-bold italic">(Opzionale)</span>
+                      </label>
+                      <select
+                        value={reqPreferredResource}
+                        onChange={e => setReqPreferredResource(e.target.value)}
+                        className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
+                      >
+                        <option value="">-- Nessuna preferenza (Assegna Coordinatore) --</option>
+                        {dipendenti
+                          .filter(d => !isSoci(d.nome) && d.macroArea === reqAreaTarget)
+                          .map(d => (
+                            <option key={d.id} value={d.nome}>{d.nome}</option>
+                          ))
+                        }
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Percentuale Carico Richiesta *</label>
+                      <select
+                        required
+                        value={reqPercentuale}
+                        onChange={e => setReqPercentuale(Number(e.target.value))}
+                        className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
+                      >
+                        {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
+                          <option key={pct} value={pct}>{pct}%</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Colonna Destra */}
+                  <div className="space-y-4 flex flex-col justify-between">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
-                        <span className="text-[10px] text-gray-500 font-bold ml-1 mb-1 block">Da Settimana:</span>
+                        <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Settimana Inizio *</label>
                         <select
-                          value={reqStartWeekId}
+                          value={(() => {
+                            const match = selectableWeekOptions.find(o => o.mondayStr === reqDataInizio);
+                            return match ? match.id : (selectableWeekOptions[0]?.id || '');
+                          })()}
                           onChange={e => {
-                            setReqStartWeekId(e.target.value);
-                            if (e.target.value > reqEndWeekId) setReqEndWeekId(e.target.value);
+                            const id = e.target.value;
+                            const startOpt = selectableWeekOptions.find(o => o.id === id);
+                            if (startOpt) setReqDataInizio(startOpt.mondayStr);
                           }}
-                          className="w-full p-2.5 border border-gray-200 rounded-xl font-bold text-xs bg-white text-gray-800 focus:ring-2 focus:ring-indigo-400 outline-none shadow-2xs"
+                          className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
                         >
-                          {activeWeeks.map(w => (
-                            <option key={w.id} value={w.id}>{w.label} ({w.sub})</option>
+                          {selectableWeekOptions.map(opt => (
+                            <option key={`req-start-${opt.id}`} value={opt.id}>{opt.label}</option>
                           ))}
                         </select>
                       </div>
 
                       <div>
-                        <span className="text-[10px] text-gray-500 font-bold ml-1 mb-1 block">A Settimana:</span>
+                        <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Settimana Fine *</label>
                         <select
-                          value={reqEndWeekId}
-                          onChange={e => setReqEndWeekId(e.target.value)}
-                          className="w-full p-2.5 border border-gray-200 rounded-xl font-bold text-xs bg-white text-gray-800 focus:ring-2 focus:ring-indigo-400 outline-none shadow-2xs"
+                          value={(() => {
+                            const match = selectableWeekOptions.find(o => o.sundayStr === reqDataFine);
+                            return match ? match.id : (selectableWeekOptions[0]?.id || '');
+                          })()}
+                          onChange={e => {
+                            const id = e.target.value;
+                            const endOpt = selectableWeekOptions.find(o => o.id === id);
+                            if (endOpt) setReqDataFine(endOpt.sundayStr);
+                          }}
+                          className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
                         >
-                          {activeWeeks.map(w => (
-                            <option key={w.id} value={w.id}>{w.label} ({w.sub})</option>
+                          {selectableWeekOptions.map(opt => (
+                            <option key={`req-end-${opt.id}`} value={opt.id}>{opt.label}</option>
                           ))}
                         </select>
                       </div>
                     </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1 flex items-center justify-between">
+                        <span>Nota per il Coordinatore</span>
+                        <span className="text-[10px] text-gray-400 font-semibold italic">(Facoltativa)</span>
+                      </label>
+                      <textarea
+                        placeholder={`Es. Ho bisogno di una risorsa dell'area ${reqAreaTarget} con esperienza in...`}
+                        value={reqNota}
+                        onChange={e => setReqNota(e.target.value)}
+                        rows={3}
+                        className={`w-full p-3 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-semibold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner resize-none`}
+                      />
+                    </div>
                   </div>
-
-                  <div>
-                    <label className="block text-xs font-extrabold text-gray-700 uppercase tracking-wider mb-1 ml-1">
-                      Nuova Percentuale di Occupazione Richiesta
-                    </label>
-                    <select
-                      value={reqNewPercentuale}
-                      onChange={e => setReqNewPercentuale(e.target.value)}
-                      className="w-full p-3 border border-gray-200 rounded-xl font-bold text-xs bg-white text-gray-800 focus:ring-2 focus:ring-indigo-400 outline-none shadow-xs"
-                    >
-                      {['10', '20', '30', '40', '50', '60', '70', '80', '90', '100'].map(pct => (
-                        <option key={pct} value={pct}>{pct}% di carico lavoro</option>
-                      ))}
-                    </select>
-                  </div>
-                </>
-              )}
-
-              <div>
-                <label className="block text-xs font-extrabold text-gray-700 uppercase tracking-wider mb-1 ml-1">
-                  Motivazione / Note per il Coordinatore
-                </label>
-                <textarea
-                  rows={3}
-                  value={reqChangeNotes}
-                  onChange={e => setReqChangeNotes(e.target.value)}
-                  placeholder="Spiega la motivazione della richiesta (es. esigenze di cantiere, slittamento date, necessità di sostituire la risorsa)..."
-                  className="w-full p-3 border border-gray-200 rounded-xl text-xs font-medium text-gray-800 focus:ring-2 focus:ring-indigo-400 outline-none shadow-xs resize-none"
-                  required
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-3 pt-3 border-t">
-                <button
-                  type="button"
-                  onClick={() => setResourceChangeModal(prev => ({ ...prev, isOpen: false }))}
-                  className="px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-xs rounded-xl transition cursor-pointer"
-                >
-                  Annulla
-                </button>
-                <button
-                  type="submit"
-                  disabled={sendingResourceRequest}
-                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-md transition cursor-pointer disabled:opacity-50"
-                >
-                  {sendingResourceRequest ? 'Invio in corso...' : '✉️ Invia Richiesta al Coordinatore'}
-                </button>
-              </div>
-            </form>
+                </div>
+                
+                <div className="flex gap-3 pt-4 border-t border-gray-100">
+                  <button
+                    type="button"
+                    onClick={() => setIsRequestModalOpen(false)}
+                    className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-extrabold py-3 rounded-xl transition active:scale-95 text-xs text-center cursor-pointer"
+                  >
+                    Chiudi
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmittingRequest}
+                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold py-3 rounded-xl shadow-md transition active:scale-95 text-xs text-center disabled:opacity-50 cursor-pointer"
+                  >
+                    {isSubmittingRequest ? "Invio in corso..." : `Invia Richiesta ${reqAreaTarget}`}
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       <PianificazioneModal
         isOpen={planningModal.isOpen}
@@ -3443,32 +3611,22 @@ export default function Commesse() {
         initialWeekId={planningModal.weekId}
         onRequestAreaResource={(macroArea, commId, wkId, personName) => {
           setPlanningModal(prev => ({ ...prev, isOpen: false }));
-          const comm = commesse.find(c => c.id === commId);
-          const commNome = comm ? comm.nome : '';
-          const coordObjs = (coordinatori || []).filter(c => c.area === macroArea);
-          const coordEmails = coordObjs.map(c => c.email?.toLowerCase()).filter(Boolean);
-          const coordDip = dipendenti.find(d => d.email && coordEmails.includes(d.email.toLowerCase()));
-          const coordName = coordDip ? coordDip.nome : (coordObjs[0]?.email || 'Coordinatore d\'Area');
-          const coordEmail = coordDip?.email || coordObjs[0]?.email || '';
-
-          setResourceChangeModal({
-            isOpen: true,
-            personName: personName || `Risorsa ${macroArea}`,
-            macroArea,
-            coordName,
-            coordEmail,
-            commessaId: commId,
-            commessaNome: commNome,
-            weekId: wkId,
-            weekLabel: `Settimana ${wkId}`,
-            currentPct: 100
-          });
-          setReqStartWeekId(wkId);
-          setReqEndWeekId(wkId);
-          setReqNewPercentuale('100');
-          setReqChangeType('modifica_spostamento');
-          setReqChangeNotes('');
+          const targetArea = macroArea || 'Disegnatori';
+          const weekRange = getWeekDateRange(wkId);
+          setReqAreaTarget(targetArea);
+          setReqCommessaId(commId);
+          setReqPreferredResource(personName && dipendenti.some(d => d.nome === personName) ? personName : '');
+          setReqPercentuale(100);
+          setReqDataInizio(weekRange.startStr);
+          setReqDataFine(weekRange.endStr);
+          setReqNota('');
+          setIsRequestModalOpen(true);
         }}
+      />
+
+      <ResourceAvailabilityModal
+        isOpen={isAvailabilityModalOpen}
+        onClose={() => setIsAvailabilityModalOpen(false)}
       />
 
       <ConfirmModal

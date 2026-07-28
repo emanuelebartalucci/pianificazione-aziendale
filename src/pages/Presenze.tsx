@@ -56,10 +56,13 @@ interface GiornoPresenza {
   permessi: number;
   malattia: boolean;
   trasferta: boolean;
+  rimborsoKm?: boolean; // NEW: row K in presenze grid
   luogoTrasferta?: string;
   noteGiorno?: string;
-  itinerarioTrasferta?: string; // NEW
-  kmTrasferta?: number; // NEW
+  itinerarioTrasferta?: string;
+  kmTrasferta?: number;
+  marcaAutomezzo?: string; // NEW: vehicle info per trip/day
+  modelloAutomezzo?: string; // NEW: vehicle info per trip/day
   oreContratto?: number;
   permessoStudio?: number;
   permessoDonazione?: number;
@@ -74,7 +77,9 @@ interface RapportinoPresenze {
   anno: number;
   stato: 'Bozza' | 'Inviato' | 'Approvato' | 'Richiede Modifica';
   noteDipendente: string;
+  comunicazioniHR?: string;
   noteHR: string;
+  hrModified?: boolean;
   submittedAt?: string;
   approvedAt?: string;
   approvedBy?: string;
@@ -605,6 +610,7 @@ export default function Presenze() {
         anno: selectedYear,
         stato: 'Bozza',
         noteDipendente: '',
+        comunicazioniHR: '',
         noteHR: '',
         giorni,
         timestamp: new Date().toISOString()
@@ -916,7 +922,7 @@ export default function Presenze() {
           }
 
           let finalData = { ...data, id: docSnap.id } as RapportinoPresenze;
-          if ((finalData.stato === 'Bozza' || finalData.stato === 'Richiede Modifica') && targetEmpName) {
+          if ((finalData.stato === 'Bozza' || finalData.stato === 'Richiede Modifica') && !finalData.hrModified && targetEmpName) {
             try {
               const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === targetEmpName.trim().toLowerCase());
               const contractHours = profile?.oreContratto ?? 8;
@@ -1835,6 +1841,37 @@ export default function Presenze() {
     );
   };
 
+  const handleHRRevokeApproval = () => {
+    if (!reviewingRapportino) return;
+    const isCollab = isCollaboratore(reviewingRapportino.dipendenteNome, dipendenti);
+    triggerConfirm(
+      isCollab ? "Revoca Approvazione Bozza Fattura" : "Revoca Approvazione Rapportino",
+      isCollab 
+        ? `Sei sicuro di voler revocare l'approvazione della bozza fattura di ${reviewingRapportino.dipendenteNome}? Il documento tornerà modificabile.`
+        : `Sei sicuro di voler revocare l'approvazione del foglio presenze di ${reviewingRapportino.dipendenteNome}? Il documento tornerà modificabile.`,
+      async () => {
+        try {
+          const docRef = doc(db, 'presenze', reviewingRapportino.id);
+          const updated: RapportinoPresenze = {
+            ...reviewingRapportino,
+            stato: 'Inviato',
+            approvedAt: undefined,
+            approvedBy: undefined
+          };
+          await setDoc(docRef, updated);
+
+          setReviewingRapportino(updated);
+          showToast("Approvazione revocata con successo. Il documento è ora sbloccato e modificabile.", "success");
+          loadPresenzeData();
+        } catch (err) {
+          console.error("Errore revoca approvazione:", err);
+          showToast("Errore durante la revoca dell'approvazione.", "error");
+        }
+      },
+      'warning'
+    );
+  };
+
   const handleHRRequestChanges = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!reviewingRapportino || !hrFeedbackNote.trim()) return;
@@ -1880,14 +1917,19 @@ export default function Presenze() {
   const handleHRSaveModifications = async () => {
     if (!reviewingRapportino) return;
     try {
+      const updatedSheet: RapportinoPresenze = {
+        ...reviewingRapportino,
+        hrModified: true
+      };
       const docRef = doc(db, 'presenze', reviewingRapportino.id);
-      await setDoc(docRef, reviewingRapportino);
+      await setDoc(docRef, updatedSheet);
 
       const isCollab = isCollaboratore(reviewingRapportino.dipendenteNome, dipendenti);
       if (isCollab && reviewingRapportino.collaboratoreData) {
         await saveCollabProfileRates(reviewingRapportino.collaboratoreData, reviewingRapportino.dipendenteNome);
       }
 
+      setReviewingRapportino(updatedSheet);
       showToast("Modifiche salvate con successo!");
       loadPresenzeData();
     } catch (err) {
@@ -1896,10 +1938,14 @@ export default function Presenze() {
     }
   };
 
-  // --- DECIMAL FORMATTING UTILITY ---
+  // --- DECIMAL FORMATTING UTILITY (Italian Locale: "." for thousands, "," for decimals) ---
   const formatDec = (val: number | string | undefined | null): string => {
-    if (val === undefined || val === null) return '';
-    return val.toString().replace('.', ',');
+    if (val === undefined || val === null || val === '') return '';
+    const num = typeof val === 'number' ? val : parseFloat(val.toString().replace(/\./g, '').replace(',', '.'));
+    if (isNaN(num)) return val.toString();
+    return num.toLocaleString('it-IT', {
+      maximumFractionDigits: 2
+    });
   };
 
   // --- CALCULATION TOTALS FOR A SINGLE SHEET ---
@@ -1917,6 +1963,9 @@ export default function Presenze() {
     let oreDonazione = 0;
     let oreElettorale = 0;
 
+    let ggRimborsoKm = 0;
+    let totalKm = 0;
+
     for (let d = 1; d <= numDays; d++) {
       const g = giorni[String(d)];
       if (g) {
@@ -1929,6 +1978,8 @@ export default function Presenze() {
           oreMalattia += Number(g.oreContratto || contractHours || 8);
         }
         if (g.trasferta) ggTrasferta++;
+        if (g.rimborsoKm) ggRimborsoKm++;
+        totalKm += Number(g.kmTrasferta || 0);
 
         oreStudio += Number(g.permessoStudio || 0);
         oreDonazione += Number(g.permessoDonazione || 0);
@@ -1939,7 +1990,7 @@ export default function Presenze() {
       }
     }
 
-    return { oreOrd, oreStra, oreFerie, orePerm, ggMalattia, oreMalattia, ggTrasferta, ggIntere, ggMezze, oreStudio, oreDonazione, oreElettorale };
+    return { oreOrd, oreStra, oreFerie, orePerm, ggMalattia, oreMalattia, ggTrasferta, ggRimborsoKm, totalKm, ggIntere, ggMezze, oreStudio, oreDonazione, oreElettorale };
   };
 
   // --- EXPORT TO EXCEL (CSV COMPATIBLE) ---
@@ -2581,13 +2632,18 @@ export default function Presenze() {
     }
   };
 
-  // --- PREPARE DATA FOR TRANSFER LIST ---
+  // --- PREPARE DATA FOR SPETTANTI TRASFERTE E RIMBORSI KM ---
   const getTrasferteList = (giorni: { [giorno: string]: GiornoPresenza }, numDays: number) => {
-    const list: { giorno: number; luogo: string }[] = [];
+    const list: { giorno: number; luogo: string; trasferta: boolean; rimborsoKm: boolean }[] = [];
     for (let d = 1; d <= numDays; d++) {
       const g = giorni[String(d)];
-      if (g && g.trasferta) {
-        list.push({ giorno: d, luogo: g.luogoTrasferta || '' });
+      if (g && (g.trasferta || g.rimborsoKm || (g.kmTrasferta && g.kmTrasferta > 0) || (g.luogoTrasferta && g.luogoTrasferta.trim() !== ''))) {
+        list.push({
+          giorno: d,
+          luogo: g.luogoTrasferta || '',
+          trasferta: !!g.trasferta,
+          rimborsoKm: !!g.rimborsoKm
+        });
       }
     }
     return list;
@@ -3057,14 +3113,31 @@ export default function Presenze() {
                           )}
                           <td className="p-4 text-center no-print">
                             {sheet ? (
-                              <button 
-                                onClick={() => {
-                                  setReviewingRapportino(JSON.parse(JSON.stringify(sheet))); // clone object
-                                }}
-                                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md transition active:scale-95"
-                              >
-                                Esamina
-                              </button>
+                              <div className="flex items-center justify-center gap-2">
+                                <button 
+                                  onClick={() => {
+                                    setReviewingRapportino(JSON.parse(JSON.stringify(sheet))); // clone object
+                                  }}
+                                  className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md transition active:scale-95 cursor-pointer"
+                                >
+                                  Esamina
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setPrintTargetSheet(sheet);
+                                    setTimeout(() => {
+                                      window.print();
+                                      setPrintTargetSheet(null);
+                                    }, 150);
+                                  }}
+                                  className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs rounded-xl border border-slate-300 transition active:scale-95 flex items-center gap-1 cursor-pointer shadow-2xs"
+                                  title={hrTab === 'collaboratori' ? "Stampa unicamente la bozza fattura di questo collaboratore" : "Stampa unicamente il foglio ore di questo dipendente"}
+                                >
+                                  <Printer className="w-3.5 h-3.5 text-slate-600" />
+                                  <span className="hidden xl:inline">Stampa</span>
+                                </button>
+                              </div>
                             ) : (
                               <span className="text-xs text-gray-400 font-medium italic">Nessun dato</span>
                             )}
@@ -3822,7 +3895,7 @@ export default function Presenze() {
                                 <td key={i} style={dayStyle.style} className={`p-0 border-r border-gray-200 h-10 align-middle text-center ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.ore > 0 ? 'bg-emerald-50/70 font-semibold' : '')}`}>
                                   {!outOfMonth && giorno && (
                                     <div className="w-full h-full flex items-center justify-center font-bold text-gray-900 text-xs">
-                                      {giorno.ore > 0 ? giorno.ore : '-'}
+                                      {giorno.ore > 0 ? formatDec(giorno.ore) : '-'}
                                     </div>
                                   )}
                                   {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
@@ -3884,7 +3957,7 @@ export default function Presenze() {
                                 <td key={i} style={dayStyle.style} className={`p-0 border-r border-gray-200 h-10 align-middle text-center ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.permessi > 0 ? 'bg-indigo-100/70' : '')}`}>
                                   {!outOfMonth && giorno && (
                                     <div className="w-full h-full flex items-center justify-center font-bold text-indigo-600 text-xs">
-                                      {giorno.permessi > 0 ? giorno.permessi : '-'}
+                                      {giorno.permessi > 0 ? formatDec(giorno.permessi) : '-'}
                                     </div>
                                   )}
                                   {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
@@ -3914,7 +3987,7 @@ export default function Presenze() {
                                 <td key={i} style={dayStyle.style} className={`p-0 border-r border-gray-200 h-10 align-middle text-center ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.ferie > 0 ? 'bg-green-100/70' : '')}`}>
                                   {!outOfMonth && giorno && (
                                     <div className="w-full h-full flex items-center justify-center font-bold text-green-700 text-xs">
-                                      {giorno.ferie > 0 ? giorno.ferie : '-'}
+                                      {giorno.ferie > 0 ? formatDec(giorno.ferie) : '-'}
                                     </div>
                                   )}
                                   {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
@@ -3974,7 +4047,7 @@ export default function Presenze() {
                                 <td key={i} style={dayStyle.style} className={`p-0 border-r border-gray-200 h-10 align-middle text-center ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.permessoStudio ? 'bg-purple-100/70' : '')}`}>
                                   {!outOfMonth && giorno && (
                                     <div className="w-full h-full flex items-center justify-center font-bold text-purple-700 text-xs">
-                                      {(giorno.permessoStudio ?? 0) > 0 ? giorno.permessoStudio : '-'}
+                                      {(giorno.permessoStudio ?? 0) > 0 ? formatDec(giorno.permessoStudio) : '-'}
                                     </div>
                                   )}
                                   {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
@@ -4004,7 +4077,7 @@ export default function Presenze() {
                                 <td key={i} style={dayStyle.style} className={`p-0 border-r border-gray-200 h-10 align-middle text-center ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.permessoDonazione ? 'bg-teal-100/70' : '')}`}>
                                   {!outOfMonth && giorno && (
                                     <div className="w-full h-full flex items-center justify-center font-bold text-teal-700 text-xs">
-                                      {(giorno.permessoDonazione ?? 0) > 0 ? giorno.permessoDonazione : '-'}
+                                      {(giorno.permessoDonazione ?? 0) > 0 ? formatDec(giorno.permessoDonazione) : '-'}
                                     </div>
                                   )}
                                   {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
@@ -4034,7 +4107,7 @@ export default function Presenze() {
                                 <td key={i} style={dayStyle.style} className={`p-0 border-r border-gray-200 h-10 align-middle text-center ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.permessoElettorale ? 'bg-indigo-100/70' : '')}`}>
                                   {!outOfMonth && giorno && (
                                     <div className="w-full h-full flex items-center justify-center font-bold text-indigo-700 text-xs">
-                                      {(giorno.permessoElettorale ?? 0) > 0 ? giorno.permessoElettorale : '-'}
+                                      {(giorno.permessoElettorale ?? 0) > 0 ? formatDec(giorno.permessoElettorale) : '-'}
                                     </div>
                                   )}
                                   {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
@@ -4081,59 +4154,310 @@ export default function Presenze() {
                               {calculateTotals(rapportino.giorni, daysInMonth).ggTrasferta} gg
                             </td>
                           </tr>
+
+                          {/* DIPENDENTI STANDARD RIGA 7: CONTRASSEGNO RIMBORSO KM */}
+                          <tr className="hover:bg-gray-50/50 transition-colors h-10">
+                            <td className="px-3 py-2 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 whitespace-nowrap h-10 align-middle">
+                              <div className="flex items-center gap-1.5">
+                                <span>Rimborso Km</span>
+                                <span className="text-[9px] font-bold bg-amber-100 text-amber-800 px-1 py-0.5 rounded font-mono">K</span>
+                              </div>
+                            </td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const outOfMonth = d > daysInMonth;
+                              const giorno = rapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
+
+                              return (
+                                <td key={i} style={dayStyle.style} className={`p-0 border-r border-gray-200 h-10 align-middle text-center ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || ''}`}>
+                                  {!outOfMonth && giorno && (
+                                    <div className="w-full h-full flex justify-center items-center">
+                                      <input 
+                                        type="checkbox"
+                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || isCellDisabled(d, 'lavoro')}
+                                        checked={giorno.rimborsoKm || false}
+                                        onChange={e => handleCellChange(dayStr(d), 'rimborsoKm', e.target.checked)}
+                                        className="w-4 h-4 rounded text-amber-600 focus:ring-amber-400 cursor-pointer"
+                                      />
+                                    </div>
+                                  )}
+                                  {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                                </td>
+                              );
+                            })}
+                            <td className="p-2 font-bold text-amber-700 bg-gray-50 border-l-2 border-gray-300 text-xs h-10 align-middle">
+                              {calculateTotals(rapportino.giorni, daysInMonth).ggRimborsoKm} gg
+                            </td>
+                          </tr>
                         </>
                       )}
                     </tbody>
                   </table>
                 </div>
 
-                {/* DETTAGLIO LOCALITA TRASFERTE E NOTE IN BASSO */}
-                <div className="p-6 bg-gray-50/50 border-t grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* DETTAGLIO SPOSTAMENTI, NOTA SPESE E NOTE IN BASSO */}
+                <div className="p-6 bg-gray-50/50 border-t space-y-6">
                   
-                  {/* Sezione Trasferte Dettagli */}
+                  {/* 1. SEZIONE Dettaglio Spostamenti, Trasferte e Rimborso Km (A TUTTA LARGHEZZA) */}
                   <div className="space-y-4">
-                    <h4 className="font-extrabold text-sm text-gray-800 flex items-center gap-1.5">
-                      <MapPin className="w-4 h-4 text-blue-600" />
-                      Dettaglio Località Trasferte del Mese
+                    <h4 className="font-extrabold text-sm text-gray-800 flex items-center justify-between gap-1.5 border-b pb-2">
+                      <span className="flex items-center gap-1.5">
+                        <MapPin className="w-4 h-4 text-amber-600" />
+                        <span>Dettaglio Spostamenti, Trasferte e Rimborso Km</span>
+                      </span>
+                      <span className="text-[10px] font-extrabold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-full border border-indigo-100">
+                        Totale Km: {calculateTotals(rapportino.giorni, daysInMonth).totalKm} Km
+                      </span>
                     </h4>
                     
                     {getTrasferteList(rapportino.giorni, daysInMonth).length === 0 ? (
-                      <p className="text-xs text-gray-400 italic font-medium p-2">Nessun giorno contrassegnato come trasferta nel tabellone.</p>
+                      <p className="text-xs text-gray-400 italic font-medium p-2">Nessun giorno contrassegnato come Trasferta (T) o Rimborso Km (K) nel tabellone presenze.</p>
                     ) : (
-                      <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
-                        {getTrasferteList(rapportino.giorni, daysInMonth).map(({ giorno, luogo }) => (
-                          <div key={giorno} className="flex items-center gap-3 bg-white p-2 rounded-xl border shadow-sm">
-                            <span className="text-xs font-bold bg-blue-100 text-blue-800 px-2 py-0.5 rounded">Giorno {giorno}</span>
-                            <input 
-                              type="text"
-                              placeholder="Località o cantiere (es. Milano)"
-                              disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                              value={luogo}
-                              onChange={e => handleCellChange(dayStr(giorno), 'luogoTrasferta', e.target.value)}
-                              className="flex-1 p-1.5 text-xs border border-gray-200 rounded-lg outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400"
-                            />
-                          </div>
-                        ))}
+                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 max-h-96 overflow-y-auto pr-1">
+                        {getTrasferteList(rapportino.giorni, daysInMonth).map(({ giorno, luogo, trasferta, rimborsoKm }) => {
+                          const gPres = rapportino.giorni[dayStr(giorno)] || {};
+                          return (
+                            <div key={giorno} className="bg-white p-3 rounded-2xl border border-gray-200 shadow-xs space-y-2">
+                              <div className="flex items-center justify-between border-b border-gray-100 pb-1.5">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-black text-gray-800">Giorno {giorno}</span>
+                                  {trasferta && <span className="text-[9px] font-extrabold bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Trasferta (T)</span>}
+                                  {rimborsoKm && <span className="text-[9px] font-extrabold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">Rimborso Km (K)</span>}
+                                </div>
+                                <div className="flex items-center gap-1 text-[11px] font-bold text-gray-700">
+                                  <span>Km:</span>
+                                  <input 
+                                    type="number"
+                                    min={0}
+                                    placeholder="0"
+                                    disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                    value={gPres.kmTrasferta === 0 ? '' : gPres.kmTrasferta || ''}
+                                    onChange={e => handleCellChange(dayStr(giorno), 'kmTrasferta', e.target.value === '' ? 0 : Number(e.target.value))}
+                                    className="w-20 p-1 text-center border border-amber-300 rounded-lg bg-amber-50/50 font-extrabold text-amber-900 outline-none focus:border-amber-500"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <div>
+                                  <label className="block text-[9px] font-bold text-gray-400 mb-0.5">Destinazione / Località</label>
+                                  <input 
+                                    type="text"
+                                    placeholder="Es. Milano / Cantiere X"
+                                    disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                    value={luogo}
+                                    onChange={e => handleCellChange(dayStr(giorno), 'luogoTrasferta', e.target.value)}
+                                    className="w-full p-1.5 text-xs border border-gray-200 rounded-lg outline-none focus:border-indigo-400 font-medium"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[9px] font-bold text-gray-400 mb-0.5">Itinerario (Tratta A/R)</label>
+                                  <input 
+                                    type="text"
+                                    placeholder="Es. Sede - Milano - Sede"
+                                    disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                    value={gPres.itinerarioTrasferta || ''}
+                                    onChange={e => handleCellChange(dayStr(giorno), 'itinerarioTrasferta', e.target.value)}
+                                    className="w-full p-1.5 text-xs border border-gray-200 rounded-lg outline-none focus:border-indigo-400 font-medium"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-0.5">
+                                <div>
+                                  <label className="block text-[9px] font-bold text-gray-400 mb-0.5">Marca Automezzo</label>
+                                  <input 
+                                    type="text"
+                                    placeholder="Es. Fiat"
+                                    disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                    value={gPres.marcaAutomezzo || ''}
+                                    onChange={e => handleCellChange(dayStr(giorno), 'marcaAutomezzo', e.target.value)}
+                                    className="w-full p-1.5 text-xs border border-gray-200 rounded-lg outline-none focus:border-indigo-400 font-medium"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[9px] font-bold text-gray-400 mb-0.5">Modello Automezzo</label>
+                                  <input 
+                                    type="text"
+                                    placeholder="Es. Panda"
+                                    disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                    value={gPres.modelloAutomezzo || ''}
+                                    onChange={e => handleCellChange(dayStr(giorno), 'modelloAutomezzo', e.target.value)}
+                                    className="w-full p-1.5 text-xs border border-gray-200 rounded-lg outline-none focus:border-indigo-400 font-medium"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
 
-                  {/* Note Dipendente ed Avvisi */}
-                  <div className="space-y-4 border-l pl-0 md:pl-6 border-gray-200/60">
+                  {/* 2. SEZIONE NOTA SPESE VARIE SOSTENUTE (€) SOTTO IL DETTAGLIO SPOSTAMENTI */}
+                  <div className="pt-4 border-t border-gray-200/80 space-y-3 no-print">
+                    <div className="flex justify-between items-center">
+                      <h4 className="font-extrabold text-sm text-gray-800 uppercase tracking-wider flex items-center gap-1.5">
+                        <FileText className="w-4 h-4 text-indigo-600" />
+                        <span>Nota Spese Varie Sostenute (€)</span>
+                      </h4>
+                      <div className="text-xs font-bold text-gray-600">
+                        Totale Spese: <span className="font-black text-indigo-700">{formatDec((
+                          (rapportino.rimborsoSpeseData?.speseViaggio || 0) +
+                          (rapportino.rimborsoSpeseData?.speseTaxiBus || 0) +
+                          (rapportino.rimborsoSpeseData?.speseParcheggi || 0) +
+                          (rapportino.rimborsoSpeseData?.speseVitto || 0) +
+                          (rapportino.rimborsoSpeseData?.speseAlloggio || 0) +
+                          (rapportino.rimborsoSpeseData?.spesePedaggi || 0) +
+                          (rapportino.rimborsoSpeseData?.speseAltro || 0)
+                        ).toFixed(2))} €</span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 mb-1">Viaggio (Treno/Aereo)</label>
+                        <input 
+                          type="number"
+                          step="any"
+                          min="0"
+                          disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                          value={rapportino.rimborsoSpeseData?.speseViaggio === 0 ? '' : rapportino.rimborsoSpeseData?.speseViaggio || ''}
+                          onChange={e => handleRimborsoFieldChange('speseViaggio', e.target.value === '' ? 0 : Number(e.target.value))}
+                          className="w-full p-2 border rounded-xl text-xs text-right font-bold outline-none focus:border-indigo-400 bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 mb-1">Taxi / Autobus</label>
+                        <input 
+                          type="number"
+                          step="any"
+                          min="0"
+                          disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                          value={rapportino.rimborsoSpeseData?.speseTaxiBus === 0 ? '' : rapportino.rimborsoSpeseData?.speseTaxiBus || ''}
+                          onChange={e => handleRimborsoFieldChange('speseTaxiBus', e.target.value === '' ? 0 : Number(e.target.value))}
+                          className="w-full p-2 border rounded-xl text-xs text-right font-bold outline-none focus:border-indigo-400 bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 mb-1">Parcheggi</label>
+                        <input 
+                          type="number"
+                          step="any"
+                          min="0"
+                          disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                          value={rapportino.rimborsoSpeseData?.speseParcheggi === 0 ? '' : rapportino.rimborsoSpeseData?.speseParcheggi || ''}
+                          onChange={e => handleRimborsoFieldChange('speseParcheggi', e.target.value === '' ? 0 : Number(e.target.value))}
+                          className="w-full p-2 border rounded-xl text-xs text-right font-bold outline-none focus:border-indigo-400 bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 mb-1">Vitto</label>
+                        <input 
+                          type="number"
+                          step="any"
+                          min="0"
+                          disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                          value={rapportino.rimborsoSpeseData?.speseVitto === 0 ? '' : rapportino.rimborsoSpeseData?.speseVitto || ''}
+                          onChange={e => handleRimborsoFieldChange('speseVitto', e.target.value === '' ? 0 : Number(e.target.value))}
+                          className="w-full p-2 border rounded-xl text-xs text-right font-bold outline-none focus:border-indigo-400 bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 mb-1">Alloggio</label>
+                        <input 
+                          type="number"
+                          step="any"
+                          min="0"
+                          disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                          value={rapportino.rimborsoSpeseData?.speseAlloggio === 0 ? '' : rapportino.rimborsoSpeseData?.speseAlloggio || ''}
+                          onChange={e => handleRimborsoFieldChange('speseAlloggio', e.target.value === '' ? 0 : Number(e.target.value))}
+                          className="w-full p-2 border rounded-xl text-xs text-right font-bold outline-none focus:border-indigo-400 bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 mb-1">Pedaggi</label>
+                        <input 
+                          type="number"
+                          step="any"
+                          min="0"
+                          disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                          value={rapportino.rimborsoSpeseData?.spesePedaggi === 0 ? '' : rapportino.rimborsoSpeseData?.spesePedaggi || ''}
+                          onChange={e => handleRimborsoFieldChange('spesePedaggi', e.target.value === '' ? 0 : Number(e.target.value))}
+                          className="w-full p-2 border rounded-xl text-xs text-right font-bold outline-none focus:border-indigo-400 bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 mb-1">Altro</label>
+                        <input 
+                          type="number"
+                          step="any"
+                          min="0"
+                          disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                          value={rapportino.rimborsoSpeseData?.speseAltro === 0 ? '' : rapportino.rimborsoSpeseData?.speseAltro || ''}
+                          onChange={e => handleRimborsoFieldChange('speseAltro', e.target.value === '' ? 0 : Number(e.target.value))}
+                          className="w-full p-2 border rounded-xl text-xs text-right font-bold outline-none focus:border-indigo-400 bg-white"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="pt-1">
+                      <label className="block text-xs font-bold text-gray-500 mb-1 ml-1">Specificare voce Altro (se valorizzata)</label>
+                      <input 
+                        type="text"
+                        placeholder="Es. Acquisto materiale ufficio urgente"
+                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                        value={rapportino.rimborsoSpeseData?.altroSpecificare || ''}
+                        onChange={e => handleRimborsoFieldChange('altroSpecificare', e.target.value)}
+                        className="w-full p-2.5 border rounded-xl text-xs outline-none focus:border-indigo-400 font-medium text-gray-800 bg-white"
+                      />
+                    </div>
+                  </div>
+
+                  {/* 3. IN FONDO AL MODULO: CERTIFICATI E COMUNICAZIONI PER L'HR */}
+                  <div className="pt-4 border-t border-gray-200/80 grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Sezione 1: Certificati / Note Presenze (Figurerà nella Stampa PDF) */}
                     <div className="space-y-1.5">
-                      <label className="block text-sm font-extrabold text-gray-800">
-                        Note Dipendente
+                      <label className="block text-sm font-extrabold text-gray-800 flex items-center justify-between gap-1.5">
+                        <span className="flex items-center gap-1.5">
+                          <FileText className="w-4 h-4 text-emerald-600" />
+                          <span>Certificati</span>
+                        </span>
+                        <span className="text-[9px] font-extrabold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">Incluso in Stampa PDF</span>
                       </label>
                       <p className="text-[10px] text-gray-500 leading-relaxed font-bold">
-                        * NEL CASO DI MALATTIA, MATERNITÀ O ALTRI TIPI DI PERMESSI PARTICOLARI INDICARE NELLE NOTE IL N° DEL CERTIFICATO
+                        * N.B. Inserire qui eventuali numeri di protocollo dei certificati medici (malattia, maternità) o note ufficiali sulle presenze da includere nel foglio ore stampato.
                       </p>
                       <textarea
-                        rows={3}
-                        placeholder="Inserisci qui eventuali note di malattia, dettagli o segnalazioni..."
+                        rows={2}
+                        placeholder="Es. Certificato di malattia N° PUC 123456789 dal 12 al 15..."
                         disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
                         value={rapportino.noteDipendente || ''}
                         onChange={e => setRapportino({ ...rapportino, noteDipendente: e.target.value })}
-                        className="w-full mt-2 p-3 text-xs border rounded-xl bg-white outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 font-medium"
+                        className="w-full mt-2 p-3 text-xs border border-gray-300 rounded-xl bg-white outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 font-medium"
+                      />
+                    </div>
+
+                    {/* Sezione 2: Comunicazioni per l'HR (Uso Interno - ESCLUSA DALLA STAMPA) */}
+                    <div className="space-y-1.5 no-print">
+                      <label className="block text-sm font-extrabold text-gray-800 flex items-center justify-between gap-1.5">
+                        <span className="flex items-center gap-1.5">
+                          <MessageSquare className="w-4 h-4 text-indigo-600" />
+                          <span>Comunicazioni per l'HR</span>
+                        </span>
+                        <span className="text-[9px] font-extrabold bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">Escluso dalla Stampa</span>
+                      </label>
+                      <p className="text-[10px] text-gray-500 leading-relaxed font-bold">
+                        * N.B. Spazio riservato a comunicazioni interne per l'amministrazione (es. "Ho fatto ore in più, per favore scalatele dai permessi presi nel mese"). Non apparirà nel PDF stampato.
+                      </p>
+                      <textarea
+                        rows={2}
+                        placeholder="Inserisci qui eventuali comunicazioni o richieste di aggiustamento per l'HR..."
+                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                        value={rapportino.comunicazioniHR || ''}
+                        onChange={e => setRapportino({ ...rapportino, comunicazioniHR: e.target.value })}
+                        className="w-full mt-2 p-3 text-xs border border-indigo-200 rounded-xl bg-indigo-50/30 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-medium"
                       />
                     </div>
                   </div>
@@ -4164,255 +4488,6 @@ export default function Presenze() {
               )}
             </>
           )}
-
-          {activeTab === 'spese' && (
-            <>
-              {/* NOTA SPESE E RIMBORSO TRASFERTE PER DIPENDENTI */}
-                <div className="bg-white rounded-[2rem] shadow-xl border overflow-hidden p-6 sm:p-8 space-y-6 no-print">
-                  <div className="border-b pb-4">
-                    <h4 className="font-extrabold text-lg text-gray-900">Nota Spese e Trasferte</h4>
-                    <p className="text-xs text-gray-500 font-semibold">Compila i dati dell'automezzo, le spese sostenute e il dettaglio dei chilometri percorsi per le trasferte del mese.</p>
-                  </div>
-
-                  {/* Dati Veicolo */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-gray-500 mb-1 ml-1">Marca Automezzo</label>
-                      <input 
-                        type="text"
-                        placeholder="Es. Fiat"
-                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                        value={rapportino.rimborsoSpeseData?.marcaAutomezzo || ''}
-                        onChange={e => handleRimborsoFieldChange('marcaAutomezzo', e.target.value)}
-                        className="w-full p-2.5 border rounded-xl text-xs outline-none focus:border-indigo-400 font-bold text-gray-800"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-gray-500 mb-1 ml-1">Modello Automezzo</label>
-                      <input 
-                        type="text"
-                        placeholder="Es. Panda"
-                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                        value={rapportino.rimborsoSpeseData?.modelloAutomezzo || ''}
-                        onChange={e => handleRimborsoFieldChange('modelloAutomezzo', e.target.value)}
-                        className="w-full p-2.5 border rounded-xl text-xs outline-none focus:border-indigo-400 font-bold text-gray-800"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Spese Varie */}
-                  <div className="space-y-3">
-                    <h5 className="text-xs font-extrabold text-gray-700 uppercase tracking-wider">Spese Varie Sostenute (€)</h5>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 mb-1">Viaggio (Treno/Aereo)</label>
-                        <input 
-                          type="number"
-                          step="any"
-                          min="0"
-                          disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                          value={rapportino.rimborsoSpeseData?.speseViaggio === 0 ? '' : rapportino.rimborsoSpeseData?.speseViaggio || ''}
-                          onChange={e => handleRimborsoFieldChange('speseViaggio', e.target.value === '' ? 0 : Number(e.target.value))}
-                          className="w-full p-2 border rounded-xl text-xs text-right font-bold outline-none focus:border-indigo-400"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 mb-1">Taxi / Autobus</label>
-                        <input 
-                          type="number"
-                          step="any"
-                          min="0"
-                          disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                          value={rapportino.rimborsoSpeseData?.speseTaxiBus === 0 ? '' : rapportino.rimborsoSpeseData?.speseTaxiBus || ''}
-                          onChange={e => handleRimborsoFieldChange('speseTaxiBus', e.target.value === '' ? 0 : Number(e.target.value))}
-                          className="w-full p-2 border rounded-xl text-xs text-right font-bold outline-none focus:border-indigo-400"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 mb-1">Parcheggi</label>
-                        <input 
-                          type="number"
-                          step="any"
-                          min="0"
-                          disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                          value={rapportino.rimborsoSpeseData?.speseParcheggi === 0 ? '' : rapportino.rimborsoSpeseData?.speseParcheggi || ''}
-                          onChange={e => handleRimborsoFieldChange('speseParcheggi', e.target.value === '' ? 0 : Number(e.target.value))}
-                          className="w-full p-2 border rounded-xl text-xs text-right font-bold outline-none focus:border-indigo-400"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 mb-1">Vitto</label>
-                        <input 
-                          type="number"
-                          step="any"
-                          min="0"
-                          disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                          value={rapportino.rimborsoSpeseData?.speseVitto === 0 ? '' : rapportino.rimborsoSpeseData?.speseVitto || ''}
-                          onChange={e => handleRimborsoFieldChange('speseVitto', e.target.value === '' ? 0 : Number(e.target.value))}
-                          className="w-full p-2 border rounded-xl text-xs text-right font-bold outline-none focus:border-indigo-400"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 mb-1">Alloggio</label>
-                        <input 
-                          type="number"
-                          step="any"
-                          min="0"
-                          disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                          value={rapportino.rimborsoSpeseData?.speseAlloggio === 0 ? '' : rapportino.rimborsoSpeseData?.speseAlloggio || ''}
-                          onChange={e => handleRimborsoFieldChange('speseAlloggio', e.target.value === '' ? 0 : Number(e.target.value))}
-                          className="w-full p-2 border rounded-xl text-xs text-right font-bold outline-none focus:border-indigo-400"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 mb-1">Pedaggi</label>
-                        <input 
-                          type="number"
-                          step="any"
-                          min="0"
-                          disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                          value={rapportino.rimborsoSpeseData?.spesePedaggi === 0 ? '' : rapportino.rimborsoSpeseData?.spesePedaggi || ''}
-                          onChange={e => handleRimborsoFieldChange('spesePedaggi', e.target.value === '' ? 0 : Number(e.target.value))}
-                          className="w-full p-2 border rounded-xl text-xs text-right font-bold outline-none focus:border-indigo-400"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 mb-1">Altro</label>
-                        <input 
-                          type="number"
-                          step="any"
-                          min="0"
-                          disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                          value={rapportino.rimborsoSpeseData?.speseAltro === 0 ? '' : rapportino.rimborsoSpeseData?.speseAltro || ''}
-                          onChange={e => handleRimborsoFieldChange('speseAltro', e.target.value === '' ? 0 : Number(e.target.value))}
-                          className="w-full p-2 border rounded-xl text-xs text-right font-bold outline-none focus:border-indigo-400"
-                        />
-                      </div>
-                    </div>
-                    {/* Altro Specificare */}
-                    <div className="pt-1">
-                      <label className="block text-xs font-bold text-gray-500 mb-1 ml-1">Specificare voce Altro (se valorizzata)</label>
-                      <input 
-                        type="text"
-                        placeholder="Es. Acquisto materiale ufficio urgente"
-                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                        value={rapportino.rimborsoSpeseData?.altroSpecificare || ''}
-                        onChange={e => handleRimborsoFieldChange('altroSpecificare', e.target.value)}
-                        className="w-full p-2.5 border rounded-xl text-xs outline-none focus:border-indigo-400 font-medium text-gray-800"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Dettaglio Trasferte (Tratte e Km) */}
-                  <div className="space-y-3">
-                    <h5 className="text-xs font-extrabold text-gray-700 uppercase tracking-wider">Itinerari e Chilometri per Trasferta</h5>
-                    {getTrasferteList(rapportino.giorni, daysInMonth).length === 0 ? (
-                      <p className="text-xs text-gray-400 italic">Nessun giorno segnato in trasferta (T) nel tabellone presenze.</p>
-                    ) : (
-                      <div className="border rounded-2xl overflow-hidden shadow-inner bg-gray-50 max-h-80 overflow-y-auto scrollbar-thin">
-                        <table className="w-full text-left border-collapse text-xs">
-                          <thead>
-                            <tr className="bg-gray-100 border-b border-gray-200 uppercase font-bold text-gray-500 text-[10px]">
-                              <th className="p-3 w-16">Giorno</th>
-                              <th className="p-3">Destinazione</th>
-                              <th className="p-3">Itinerario (Tratta A/R)</th>
-                              <th className="p-3 w-32 text-right">Km Percorsi</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-gray-200 font-semibold text-gray-700">
-                            {getTrasferteList(rapportino.giorni, daysInMonth).map(({ giorno, luogo }) => {
-                              const gPresenza = rapportino.giorni[dayStr(giorno)];
-                              return (
-                                <tr key={giorno}>
-                                  <td className="p-3 font-bold">Gg {giorno}</td>
-                                  <td className="p-3">
-                                    <input 
-                                      type="text"
-                                      placeholder="Località (Milano, ecc.)"
-                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                                      value={luogo}
-                                      onChange={e => handleCellChange(dayStr(giorno), 'luogoTrasferta', e.target.value)}
-                                      className="w-full p-1.5 border rounded bg-white text-xs"
-                                    />
-                                  </td>
-                                  <td className="p-3">
-                                    <input 
-                                      type="text"
-                                      placeholder="Sede - Destinazione - Sede"
-                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                                      value={gPresenza.itinerarioTrasferta || ''}
-                                      onChange={e => handleCellChange(dayStr(giorno), 'itinerarioTrasferta', e.target.value)}
-                                      className="w-full p-1.5 border rounded bg-white text-xs"
-                                    />
-                                  </td>
-                                  <td className="p-3 text-right">
-                                    <input 
-                                      type="number"
-                                      min="0"
-                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                                      value={gPresenza.kmTrasferta === 0 ? '' : gPresenza.kmTrasferta || ''}
-                                      onChange={e => handleCellChange(dayStr(giorno), 'kmTrasferta', e.target.value === '' ? 0 : Number(e.target.value))}
-                                      className="w-24 p-1.5 border rounded bg-white text-xs text-right font-bold"
-                                    />
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Riepilogo Totali */}
-                  {(() => {
-                    const rim = rapportino.rimborsoSpeseData;
-                    const totalKm = Object.values(rapportino.giorni).reduce((sum, g) => sum + (g.kmTrasferta || 0), 0);
-                    const totalAltreSpese = (rim?.speseViaggio || 0) + (rim?.speseTaxiBus || 0) + (rim?.speseParcheggi || 0) + (rim?.speseVitto || 0) + (rim?.speseAlloggio || 0) + (rim?.spesePedaggi || 0) + (rim?.speseAltro || 0);
-                    return (
-                      <div className="bg-indigo-50/40 p-5 rounded-2xl border border-indigo-100 flex flex-col sm:flex-row justify-between gap-4 font-bold text-gray-800 text-xs">
-                        <div>
-                          <div className="text-[10px] text-gray-500 font-extrabold uppercase">Distanza Totale</div>
-                          <div className="text-lg font-black text-indigo-900 mt-1">{totalKm} Km</div>
-                        </div>
-                        <div>
-                          <div className="text-[10px] text-gray-500 font-extrabold uppercase">Altre Spese Totali</div>
-                          <div className="text-lg font-black text-indigo-900 mt-1">{formatDec(totalAltreSpese.toFixed(2))} €</div>
-                        </div>
-                        <div className="text-right">
-                          <div className="text-[10px] text-indigo-600 font-extrabold uppercase font-mono">Dati Automezzo logs</div>
-                          <div className="text-xs text-gray-600 mt-1 leading-normal font-medium">
-                            I Km percorsi verranno contabilizzati dal consulente del lavoro per il rimborso.
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
-
-                {/* PULSANTI DI AZIONE PER TAB SPESE */}
-                {(rapportino.stato === 'Bozza' || rapportino.stato === 'Richiede Modifica') && (
-                  <div className="flex justify-end gap-3 no-print mt-6">
-                    <button 
-                      onClick={handleSaveDraft}
-                      disabled={saving || submitting}
-                      className="flex items-center gap-2 bg-white hover:bg-gray-100 text-gray-700 border border-gray-200 font-extrabold px-6 py-3.5 rounded-xl transition shadow-md active:scale-95 disabled:opacity-50"
-                    >
-                      <Save className="w-4 h-4" />
-                      {saving ? 'Salvataggio...' : 'Salva Bozza'}
-                    </button>
-                    <button 
-                      onClick={handleSubmitToHR}
-                      disabled={saving || submitting}
-                      className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold px-7 py-3.5 rounded-xl transition shadow-lg active:scale-95 disabled:opacity-50"
-                    >
-                      <Send className="w-4 h-4" />
-                      {submitting ? 'Invio in corso...' : 'Invia a HR'}
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
           </>
         )}
       </div>
@@ -4440,22 +4515,39 @@ export default function Presenze() {
                 </h3>
                 <p className="text-[11px] opacity-80 font-bold mt-0.5">Mese: {MESI[selectedMonth-1]} {selectedYear} | Email: {reviewingRapportino.dipendenteEmail}</p>
               </div>
-              <button 
-                onClick={() => setReviewingRapportino(null)} 
-                className="hover:bg-white/20 p-2 rounded-full transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-3">
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setPrintTargetSheet(reviewingRapportino);
+                    setTimeout(() => {
+                      window.print();
+                      setPrintTargetSheet(null);
+                    }, 150);
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white/20 hover:bg-white/30 text-white rounded-xl text-xs font-extrabold transition active:scale-95 cursor-pointer shadow-xs border border-white/30"
+                  title={isCollab ? "Stampa unicamente questa bozza di fattura" : "Stampa unicamente questo foglio ore"}
+                >
+                  <Printer className="w-4 h-4 text-white" />
+                  <span>Stampa Singolo Documento</span>
+                </button>
+                <button 
+                  onClick={() => setReviewingRapportino(null)} 
+                  className="hover:bg-white/20 p-2 rounded-full transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             {/* Corpo Modal */}
             <div className="p-6 overflow-y-auto flex-1 space-y-6">
               
-              {/* Stato Attuale e Note Dipendente */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="bg-gray-50 p-4 rounded-xl border flex items-center justify-between">
+              {/* Stato Attuale e Note/Comunicazioni */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="bg-gray-50 p-4 rounded-xl border flex flex-col justify-between">
                   <div>
-                    <div className="text-[10px] text-gray-500 font-bold uppercase">Stato del Fglio Ore</div>
+                    <div className="text-[10px] text-gray-500 font-bold uppercase">Stato del Foglio Ore</div>
                     <div className="mt-1 flex items-center gap-2">
                       {getStatusBadge(reviewingRapportino.stato)}
                       {reviewingRapportino.stato === 'Inviato' && reviewingRapportino.submittedAt && (
@@ -4463,13 +4555,48 @@ export default function Presenze() {
                       )}
                     </div>
                   </div>
+                  {reviewingRapportino.hrModified && (
+                    <div className="mt-2 text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-1 rounded-lg border border-indigo-100 flex items-center gap-1">
+                      <Check className="w-3 h-3 text-indigo-600" />
+                      Rettificato manualmente da HR
+                    </div>
+                  )}
                 </div>
 
-                <div className="bg-gray-50 p-4 rounded-xl border">
-                  <div className="text-[10px] text-gray-500 font-bold uppercase">Note Dipendente</div>
-                  <div className="mt-1 text-xs font-semibold text-gray-700 whitespace-pre-line italic">
-                    {reviewingRapportino.noteDipendente ? `"${reviewingRapportino.noteDipendente}"` : "Nessuna nota inserita."}
+                {/* Sezione 1: Certificati (Stampati in PDF) */}
+                <div className="bg-emerald-50/40 p-4 rounded-xl border border-emerald-200 flex flex-col justify-between">
+                  <div className="flex justify-between items-center mb-1">
+                    <div className="text-[10px] text-emerald-900 font-extrabold uppercase flex items-center gap-1">
+                      <FileText className="w-3.5 h-3.5 text-emerald-600" />
+                      Certificati
+                    </div>
+                    <span className="text-[9px] font-extrabold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">Incluso in PDF</span>
                   </div>
+                  <textarea
+                    rows={2}
+                    value={reviewingRapportino.noteDipendente || ''}
+                    onChange={e => setReviewingRapportino({ ...reviewingRapportino, noteDipendente: e.target.value })}
+                    placeholder="Certificati medici, protocolli o note ufficiali..."
+                    className="w-full text-xs font-medium text-gray-800 bg-white p-2 border border-emerald-200 rounded-lg outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                </div>
+
+                {/* Sezione 2: Comunicazioni per l'HR (Uso Interno - Escluso da Stampa) */}
+                <div className="bg-indigo-50/40 p-4 rounded-xl border border-indigo-200 no-print flex flex-col justify-between">
+                  <div className="flex justify-between items-center mb-1">
+                    <div className="text-[10px] text-indigo-950 font-extrabold uppercase flex items-center gap-1">
+                      <MessageSquare className="w-3.5 h-3.5 text-indigo-600" />
+                      Comunicazioni HR
+                    </div>
+                    <span className="text-[9px] font-bold bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">Escluso da PDF</span>
+                  </div>
+                  <textarea
+                    rows={2}
+                    value={reviewingRapportino.comunicazioniHR || ''}
+                    onChange={e => setReviewingRapportino({ ...reviewingRapportino, comunicazioniHR: e.target.value })}
+                    placeholder="Messaggi interni dal dipendente all'HR..."
+                    className="w-full text-xs font-medium text-gray-800 bg-white p-2 border border-indigo-200 rounded-lg outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
                 </div>
               </div>
 
@@ -5196,28 +5323,42 @@ export default function Presenze() {
                   </div>
                 </div>
 
-                {/* Dettaglio Trasferte (Tratte e Km) */}
+                {/* Dettaglio Spostamenti, Trasferte e Rimborso Km */}
                 <div className="space-y-3">
-                  <h5 className="text-[10px] font-extrabold text-gray-700 uppercase tracking-wider">Itinerari e Chilometri per Trasferta</h5>
+                  <div className="flex justify-between items-center">
+                    <h5 className="text-[10px] font-extrabold text-gray-700 uppercase tracking-wider">Itinerari, Veicoli e Chilometri per Trasferta e Rimborso Km</h5>
+                    <span className="text-[10px] font-extrabold text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-full border border-indigo-100">
+                      Totale Km: {calculateTotals(reviewingRapportino.giorni, daysInMonth).totalKm} Km
+                    </span>
+                  </div>
+
                   {getTrasferteList(reviewingRapportino.giorni, daysInMonth).length === 0 ? (
-                    <p className="text-xs text-gray-400 italic">Nessun giorno segnato in trasferta (T) nel tabellone presenze.</p>
+                    <p className="text-xs text-gray-400 italic">Nessun giorno segnato in Trasferta (T) o Rimborso Km (K) nel tabellone presenze.</p>
                   ) : (
-                    <div className="border rounded-2xl overflow-hidden shadow-inner bg-gray-50 max-h-[250px] overflow-y-auto scrollbar-thin">
+                    <div className="border rounded-2xl overflow-hidden shadow-inner bg-gray-50 max-h-[280px] overflow-y-auto scrollbar-thin">
                       <table className="w-full text-left border-collapse text-xs">
                         <thead>
                           <tr className="bg-gray-100 border-b border-gray-200 uppercase font-bold text-gray-500 text-[9px]">
-                            <th className="p-2.5 w-16">Giorno</th>
+                            <th className="p-2.5 w-24">Giorno</th>
                             <th className="p-2.5">Destinazione</th>
                             <th className="p-2.5">Itinerario (Tratta A/R)</th>
-                            <th className="p-2.5 w-28 text-right">Km Percorsi</th>
+                            <th className="p-2.5 w-32">Marca Auto</th>
+                            <th className="p-2.5 w-32">Modello Auto</th>
+                            <th className="p-2.5 w-24 text-right">Km Percorsi</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200 font-semibold text-gray-700">
-                          {getTrasferteList(reviewingRapportino.giorni, daysInMonth).map(({ giorno }) => {
-                            const gPresenza = reviewingRapportino.giorni[dayStr(giorno)];
+                          {getTrasferteList(reviewingRapportino.giorni, daysInMonth).map(({ giorno, trasferta, rimborsoKm }) => {
+                            const gPresenza = reviewingRapportino.giorni[dayStr(giorno)] || {};
                             return (
                               <tr key={giorno}>
-                                <td className="p-2 font-bold">Gg {giorno}</td>
+                                <td className="p-2.5 font-bold">
+                                  <div className="flex items-center gap-1">
+                                    <span>Gg {giorno}</span>
+                                    {trasferta && <span className="text-[8px] font-extrabold bg-blue-100 text-blue-700 px-1 rounded">T</span>}
+                                    {rimborsoKm && <span className="text-[8px] font-extrabold bg-amber-100 text-amber-800 px-1 rounded">K</span>}
+                                  </div>
+                                </td>
                                 <td className="p-2">
                                   <input 
                                     type="text"
@@ -5236,13 +5377,31 @@ export default function Presenze() {
                                     className="w-full p-1.5 border rounded bg-white text-xs"
                                   />
                                 </td>
+                                <td className="p-2">
+                                  <input 
+                                    type="text"
+                                    placeholder="Fiat"
+                                    value={gPresenza.marcaAutomezzo || ''}
+                                    onChange={e => handleReviewCellChange(dayStr(giorno), 'marcaAutomezzo', e.target.value)}
+                                    className="w-full p-1.5 border rounded bg-white text-xs"
+                                  />
+                                </td>
+                                <td className="p-2">
+                                  <input 
+                                    type="text"
+                                    placeholder="Panda"
+                                    value={gPresenza.modelloAutomezzo || ''}
+                                    onChange={e => handleReviewCellChange(dayStr(giorno), 'modelloAutomezzo', e.target.value)}
+                                    className="w-full p-1.5 border rounded bg-white text-xs"
+                                  />
+                                </td>
                                 <td className="p-2 text-right">
                                   <input 
                                     type="number"
                                     min="0"
                                     value={gPresenza.kmTrasferta === 0 ? '' : gPresenza.kmTrasferta || ''}
                                     onChange={e => handleReviewCellChange(dayStr(giorno), 'kmTrasferta', e.target.value === '' ? 0 : Number(e.target.value))}
-                                    className="w-24 p-1.5 border rounded bg-white text-xs text-right font-bold"
+                                    className="w-20 p-1.5 border rounded bg-amber-50/50 text-xs text-right font-bold text-amber-900 border-amber-300"
                                   />
                                 </td>
                               </tr>
@@ -5285,16 +5444,32 @@ export default function Presenze() {
 
             {/* Footer Modal con Azioni */}
             <div className="p-5 border-t bg-gray-50 flex justify-between items-center shrink-0">
-              <div className="flex gap-2">
+              <div className="flex items-center gap-2">
                 <button 
                   onClick={handleHRSaveModifications}
-                  className="px-4 py-2.5 bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold rounded-xl text-xs transition active:scale-95"
+                  className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-xl text-xs transition shadow active:scale-95 cursor-pointer"
                 >
                   Salva Modifiche
                 </button>
+
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setPrintTargetSheet(reviewingRapportino);
+                    setTimeout(() => {
+                      window.print();
+                      setPrintTargetSheet(null);
+                    }, 150);
+                  }}
+                  className="px-3.5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 font-extrabold rounded-xl text-xs border border-gray-300 transition active:scale-95 flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                  title={isCollab ? "Stampa unicamente questa bozza di fattura" : "Stampa unicamente questo foglio ore"}
+                >
+                  <Printer className="w-4 h-4 text-gray-600" />
+                  <span>Stampa Singolo Documento</span>
+                </button>
               </div>
 
-              <div className="flex gap-3">
+              <div className="flex items-center gap-3">
                 {/* Mostra "Richiedi Modifica" ed "Approva" solo se lo stato non è già Approvato */}
                 {reviewingRapportino.stato !== 'Approvato' && (
                   <>
@@ -5303,7 +5478,7 @@ export default function Presenze() {
                         setHrFeedbackNote(reviewingRapportino.noteHR || '');
                         setIsFeedbackModalOpen(true);
                       }}
-                      className="px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl text-xs transition shadow active:scale-95"
+                      className="px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl text-xs transition shadow active:scale-95 cursor-pointer"
                     >
                       Richiedi Modifica
                     </button>
@@ -5313,7 +5488,7 @@ export default function Presenze() {
                       className={`px-5 py-2.5 font-bold rounded-xl text-xs transition active:scale-95 ${
                         reviewingRapportino.stato === 'Bozza'
                           ? 'bg-gray-300 text-gray-500 cursor-not-allowed shadow-none'
-                          : 'bg-green-600 hover:bg-green-700 text-white shadow-md'
+                          : 'bg-green-600 hover:bg-green-700 text-white shadow-md cursor-pointer'
                       }`}
                       title={reviewingRapportino.stato === 'Bozza' ? (isCollab ? "Non è possibile approvare una bozza fattura in stato Bozza" : "Non è possibile approvare un rapportino in stato Bozza") : undefined}
                     >
@@ -5322,8 +5497,18 @@ export default function Presenze() {
                   </>
                 )}
                 {reviewingRapportino.stato === 'Approvato' && (
-                  <div className="text-xs font-bold text-green-700 flex items-center gap-1.5 p-2 bg-green-50 rounded-lg">
-                    <Check className="w-4 h-4"/> Già Approvato
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs font-bold text-green-700 flex items-center gap-1.5 px-3 py-2 bg-green-50 rounded-xl border border-green-200">
+                      <Check className="w-4 h-4"/> Approvato
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleHRRevokeApproval}
+                      className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white font-extrabold rounded-xl text-xs transition shadow-md active:scale-95 flex items-center gap-1.5 cursor-pointer"
+                      title="Revoca l'approvazione per apportare modifiche o richiedere correzioni"
+                    >
+                      <span>🔓 Revoca Approvazione / Sblocca Modifica</span>
+                    </button>
                   </div>
                 )}
               </div>
@@ -5629,6 +5814,20 @@ export default function Presenze() {
                           })}
                           <td className="p-1 font-extrabold bg-gray-100">{formatDec(totals.ggTrasferta)} gg</td>
                         </tr>
+                        <tr>
+                          <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">RIMBORSO KM (K)</td>
+                          {Array.from({ length: 31 }).map((_, i) => {
+                            const d = i + 1;
+                            const val = sheetToPrint.giorni[dayStr(d)]?.rimborsoKm;
+                            const out = d > daysInMonth;
+                            return (
+                              <td key={i} className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}>
+                                {!out && val ? 'K' : ''}
+                              </td>
+                            );
+                          })}
+                          <td className="p-1 font-extrabold bg-gray-100">{formatDec(totals.ggRimborsoKm)} gg</td>
+                        </tr>
                       </tbody>
                     </table>
 
@@ -5764,30 +5963,37 @@ export default function Presenze() {
                         </tbody>
                       </table>
 
-                      {/* DETTAGLIO DELLE TRASFERTE EFFETTUATE */}
+                      {/* DETTAGLIO DELLE TRASFERTE E RIMBORSI KM EFFETTUATI */}
                       <div className="space-y-1.5 text-left">
-                        <div className="text-[8px] font-extrabold uppercase border-b border-gray-300 pb-0.5">DETTAGLIO DELLE TRASFERTE EFFETTUATE</div>
+                        <div className="text-[8px] font-extrabold uppercase border-b border-gray-300 pb-0.5">DETTAGLIO SPOSTAMENTI, TRASFERTE E RIMBORSI KM</div>
                         {trasferte.length === 0 ? (
-                          <p className="text-[7px] text-gray-400 italic">Nessun giorno di trasferta segnato.</p>
+                          <p className="text-[7px] text-gray-400 italic">Nessun giorno di trasferta o rimborso km segnato.</p>
                         ) : (
                           <table className="w-full text-left border border-gray-900 border-collapse text-[7px]">
                             <thead>
                               <tr className="bg-gray-100 border-b border-gray-900 font-bold text-gray-900 uppercase">
-                                <th className="p-1 border-r border-gray-900 w-24">Data</th>
+                                <th className="p-1 border-r border-gray-900 w-16">Data</th>
+                                <th className="p-1 border-r border-gray-900 w-20">Tipo</th>
                                 <th className="p-1 border-r border-gray-900">Destinazione</th>
-                                <th className="p-1 border-r border-gray-900">Itinerario della trasferta TRATTA A/R</th>
-                                <th className="p-1 text-right w-24">Km Percorsi</th>
+                                <th className="p-1 border-r border-gray-900">Itinerario TRATTA A/R</th>
+                                <th className="p-1 border-r border-gray-900 w-28">Automezzo</th>
+                                <th className="p-1 text-right w-16">Km Percorsi</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-900 font-semibold">
                               {trasferte.map(tr => {
-                                const gPresenza = sheetToPrint.giorni[dayStr(tr.giorno)];
+                                const gPresenza = sheetToPrint.giorni[dayStr(tr.giorno)] || {};
+                                const autoStr = [gPresenza.marcaAutomezzo, gPresenza.modelloAutomezzo].filter(Boolean).join(' ') || '-';
                                 return (
                                   <tr key={tr.giorno}>
                                     <td className="p-1 border-r border-gray-900">{String(tr.giorno).padStart(2, '0')}/{String(selectedMonth).padStart(2, '0')}/{selectedYear}</td>
+                                    <td className="p-1 border-r border-gray-900 font-bold">
+                                      {tr.trasferta ? 'Trasferta (T)' : 'Rimborso Km (K)'}
+                                    </td>
                                     <td className="p-1 border-r border-gray-900">{tr.luogo || '-'}</td>
-                                    <td className="p-1 border-r border-gray-900">{gPresenza?.itinerarioTrasferta || '-'}</td>
-                                    <td className="p-1 text-right">{formatDec(gPresenza?.kmTrasferta || 0)} km</td>
+                                    <td className="p-1 border-r border-gray-900">{gPresenza.itinerarioTrasferta || '-'}</td>
+                                    <td className="p-1 border-r border-gray-900">{autoStr}</td>
+                                    <td className="p-1 text-right font-bold">{formatDec(gPresenza.kmTrasferta || 0)} km</td>
                                   </tr>
                                 );
                               })}

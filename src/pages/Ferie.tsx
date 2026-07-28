@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo, memo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, addDoc, doc, updateDoc, deleteDoc, query, where, getDocs } from 'firebase/firestore';
-import { Calendar, CheckCircle, XCircle, Clock, ChevronLeft, ChevronRight, RefreshCw, Pencil, Trash2, AlertTriangle, X } from 'lucide-react';
+import { collection, addDoc, doc, updateDoc, deleteDoc, query, where, getDocs, getDoc } from 'firebase/firestore';
+import { Calendar, CheckCircle, XCircle, Clock, ChevronLeft, ChevronRight, RefreshCw, Pencil, Trash2, AlertTriangle, X, Search } from 'lucide-react';
 import { queueMail } from '../utils/mailSender';
-import { isItalianHoliday, isWeekend } from '../utils/date';
+import { isItalianHoliday, isWeekend, getWeekNumber } from '../utils/date';
 import { getPrintFooterHtml } from '../config/version';
+import { isCollaboratore } from './Impostazioni';
 
 const formatDate = (dateStr: string) => {
   if (!dateStr) return '';
@@ -63,7 +64,7 @@ interface FerieContentProps {
 }
 
 const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: FerieContentProps) => {
-  const { userEmail } = useAuth();
+  const { userEmail, coordinatori = [], commesse = [] } = useAuth();
   const [viewMode, setViewMode] = useState<'calendario' | 'tabella'>('calendario');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' | 'info' } | null>(null);
   const [chiusureAziendali, setChiusureAziendali] = useState<Array<{ dataInizio: string; dataFine: string }>>([]);
@@ -100,14 +101,13 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
   }, [myAssociatedName]);
 
   const targetDipName = (isHR || isAdmin) ? (dipendenteSelezionato || myAssociatedName) : myAssociatedName;
-  const targetDipObj = (dipendenti || []).find(d => d.nome === targetDipName);
-  const isCollaboratore = targetDipObj?.tipo === 'collaboratore';
+  const isCollaboratoreUser = isCollaboratore(targetDipName, dipendenti);
 
   useEffect(() => {
-    if (isCollaboratore && (tipoRichiesta === 'ferie' || tipoRichiesta === 'permesso' || tipoRichiesta === 'studio' || tipoRichiesta === 'donazione' || tipoRichiesta === 'elettorale')) {
+    if (isCollaboratoreUser && (tipoRichiesta === 'ferie' || tipoRichiesta === 'permesso' || tipoRichiesta === 'studio' || tipoRichiesta === 'donazione' || tipoRichiesta === 'elettorale')) {
       setTipoRichiesta('assenza');
     }
-  }, [isCollaboratore, tipoRichiesta]);
+  }, [isCollaboratoreUser, tipoRichiesta]);
   
   // State per calendario
   const [currentMonth, setCurrentMonth] = useState(() => {
@@ -141,6 +141,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
 
   // States per il filtraggio della lista richieste
   const [requestTab, setRequestTab] = useState<'tutte' | 'in_attesa' | 'approvate' | 'storico'>('tutte');
+  const [searchResourceText, setSearchResourceText] = useState('');
 
   const loadFerieData = async () => {
     try {
@@ -156,15 +157,8 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       }
       setChiusureAziendali(listClosures);
 
-      const collaboratoriNames = new Set(
-        (dipendenti || [])
-          .filter(d => d.tipo === 'collaboratore')
-          .map(d => (d.nome || '').toLowerCase().trim())
-      );
-
       const mapRequestTipo = (dipName: string, docId: string, currentTipo: string) => {
-        const normName = (dipName || '').toLowerCase().trim();
-        if (collaboratoriNames.has(normName) && (currentTipo === 'ferie' || currentTipo === 'permesso')) {
+        if (isCollaboratore(dipName, dipendenti) && (currentTipo === 'ferie' || currentTipo === 'permesso' || currentTipo === 'mattina' || currentTipo === 'pomeriggio')) {
           updateDoc(doc(db, 'richieste_ferie', docId), { tipo: 'assenza' }).catch(() => {});
           return 'assenza';
         }
@@ -323,15 +317,24 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
     return list.filter(r => r.stato === 'In attesa' || r.stato === 'Richiesta Annullamento' || r.stato === 'Richiesta Modifica').length;
   }, [hrRichieste, myRichieste, isHR, isAdmin]);
 
-  const filteredRequestsList = useMemo(() => {
+  const searchedBaseRequests = useMemo(() => {
     let baseList = (isHR || isAdmin) ? hrRichieste : requestsList;
 
-    // Per utenti standard, mostra le proprie richieste per la lista registro
     if (!isHR && !isAdmin) {
       baseList = baseList.filter(r => r.dipendenteName === myAssociatedName && r.note !== 'Chiusure Aziendali');
     } else {
       baseList = baseList.filter(r => r.note !== 'Chiusure Aziendali');
     }
+
+    if ((isHR || isAdmin) && searchResourceText.trim()) {
+      const term = searchResourceText.trim().toLowerCase();
+      baseList = baseList.filter(r => r.dipendenteName?.toLowerCase().includes(term));
+    }
+    return baseList;
+  }, [isHR, isAdmin, hrRichieste, requestsList, myAssociatedName, searchResourceText]);
+
+  const filteredRequestsList = useMemo(() => {
+    let baseList = [...searchedBaseRequests];
 
     // Filtra per Tab
     if (requestTab === 'in_attesa') {
@@ -363,7 +366,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
       return timeB - timeA;
     });
-  }, [hrRichieste, requestsList, isHR, isAdmin, myAssociatedName, requestTab]);
+  }, [searchedBaseRequests, requestTab]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -505,12 +508,12 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         payload.dataFine = dataFine;
       }
 
-      if (tipoRichiesta === 'permesso' || tipoRichiesta === 'assenza') {
+      if (tipoRichiesta === 'permesso' || tipoRichiesta === 'assenza' || tipoRichiesta === 'smart') {
         payload.frazioneTipo = frazioneTipo;
         if (frazioneTipo === 'orario') {
           payload.oraInizio = oraInizio;
           payload.oraFine = oraFine;
-          if (pausaPranzo) {
+          if (pausaPranzo && tipoRichiesta !== 'smart') {
             payload.pausaPranzo = true;
             payload.pausaPranzoOre = Number(pausaPranzoOre);
           }
@@ -539,29 +542,81 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
   const cleanAssignmentsForApprovedFullWeekLeave = async (dipName: string, startDateStr: string, endDateStr: string) => {
     try {
       if (!startDateStr || !endDateStr) return;
-      const start = new Date(startDateStr);
-      const end = new Date(endDateStr);
+      const [sY, sM, sD] = startDateStr.split('-').map(Number);
+      const [eY, eM, eD] = endDateStr.split('-').map(Number);
+      const start = new Date(sY, sM - 1, sD);
+      const end = new Date(eY, eM - 1, eD);
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) return;
+
       const curr = new Date(start);
-      
       const weekIds = new Set<string>();
       while (curr <= end) {
-        const year = curr.getFullYear();
-        const simple = new Date(year, 0, 4);
-        const dayOfWeek = simple.getDay();
-        const dayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-        const firstMonday = new Date(simple.setDate(simple.getDate() + dayOffset));
-        const diffDays = Math.floor((curr.getTime() - firstMonday.getTime()) / (1000 * 60 * 60 * 24));
-        const weekNum = Math.floor(diffDays / 7) + 1;
-        weekIds.add(`${year}-W${weekNum}`);
+        const dayOfWeek = curr.getDay();
+        if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+          const wkNum = getWeekNumber(curr);
+          const year = curr.getFullYear();
+          weekIds.add(`${year}-W${wkNum}`);
+        }
         curr.setDate(curr.getDate() + 1);
       }
 
+      const dipObj = dipendenti.find(d => d.nome.trim().toLowerCase() === dipName.trim().toLowerCase());
+      const dipArea = dipObj?.macroArea || '';
+
+      const coordEmails = (coordinatori || [])
+        .filter(c => c.area && dipArea && c.area.trim().toLowerCase() === dipArea.trim().toLowerCase())
+        .map(c => c.email?.toLowerCase())
+        .filter(Boolean) as string[];
+
       for (const wkId of weekIds) {
         const docId = `${dipName}-${wkId}`;
+        const docRef = doc(db, 'assegnazioni', docId);
         try {
-          await deleteDoc(doc(db, 'assegnazioni', docId));
+          const docSnap = await getDoc(docRef);
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            const list = data.assegnazioni || data.commesse || [];
+            const removedCommesse: { name: string; pct: number }[] = [];
+
+            if (Array.isArray(list)) {
+              list.forEach((item: any) => {
+                const commObj = commesse.find(c => c.id === item.commessaId);
+                const cName = commObj ? commObj.nome : (item.commessaName || item.commessaId || 'Commessa');
+                removedCommesse.push({ name: cName, pct: item.percentuale || 100 });
+              });
+            }
+
+            await deleteDoc(docRef);
+
+            if (removedCommesse.length > 0 && coordEmails.length > 0) {
+              const subject = `[Pianificazione Aziendale] Ferie Approvate: ${dipName} - Settimana ${wkId}`;
+              const listHtml = removedCommesse.map(c => `<li><strong>${c.name}</strong> — Impegno preesistente: ${c.pct}%</li>`).join('');
+              const listText = removedCommesse.map(c => `- ${c.name}: ${c.pct}%`).join('\n');
+
+              const htmlBody = `
+                <div style="font-family: Arial, sans-serif; color: #1e293b; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                  <h2 style="color: #059669; margin-top: 0;">🏖️ Ferie Approvate — Avviso Ridistribuzione Commesse</h2>
+                  <p>Ciao <strong>Coordinatore/i dell'Area ${dipArea || 'Competente'}</strong>,</p>
+                  <p>Si informa che la risorsa <strong>${dipName}</strong> ha ottenuto l'approvazione delle ferie per l'intera settimana <strong>${wkId}</strong> (dal ${formatDate(startDateStr)} al ${formatDate(endDateStr)}).</p>
+                  <p>Tutte le commesse precedentemente assegnate a questa risorsa per la settimana interessata sono state <strong>automaticamente rimosse</strong> dal calendario per evitare sovrapposizioni.</p>
+                  <div style="background-color: #f8fafc; padding: 15px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #059669;">
+                    <h4 style="margin: 0 0 10px 0; color: #0f172a;">📋 Commesse rimosse da ridistribuire sulle altre risorse dell'area:</h4>
+                    <ul style="margin: 0; padding-left: 20px; font-size: 13px;">
+                      ${listHtml}
+                    </ul>
+                  </div>
+                  <p style="font-size: 12px; color: #64748b;">Si invita ad accedere alla <strong>Pianificazione Personale</strong> per riassegnare i task sopra elencati alle altre risorse disponibili dell'area.</p>
+                </div>
+              `;
+              const plainText = `Ferie Approvate per ${dipName} (Settimana ${wkId}).\nCommesse rimosse da riassegnare:\n${listText}`;
+
+              for (const email of coordEmails) {
+                await queueMail(email, subject, htmlBody, plainText);
+              }
+            }
+          }
         } catch (err) {
-          // Documento potrebbe non esistere
+          console.error("Errore pulizia e notifica per assegnazione ferie:", err);
         }
       }
     } catch (e) {
@@ -582,7 +637,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       if (approva) {
         const startStr = req.dataInizio || req.data;
         const endStr = req.dataFine || req.data;
-        if (startStr && endStr && (req.tipo === 'ferie' || req.tipo === 'malattia' || req.tipo === 'maternita')) {
+        if (startStr && endStr && ['ferie', 'assenza', 'malattia', 'maternita'].includes(req.tipo)) {
           await cleanAssignmentsForApprovedFullWeekLeave(req.dipendenteName, startStr, endStr);
         }
       }
@@ -723,62 +778,128 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
     }
     setModLoading(true);
     try {
-      const newStato = modTipoAzione === 'annullamento' ? 'Richiesta Annullamento' : 'Richiesta Modifica';
-      const payloadModifica: any = {
-        tipoAzione: modTipoAzione,
-        motivazione: modMotivazione.trim(),
-        dataRichiesta: new Date().toISOString()
-      };
-      if (modTipoAzione === 'modifica') {
-        payloadModifica.nuovaDataInizio = modDataInizio;
-        payloadModifica.nuovaDataFine = modDataFine;
-        payloadModifica.nuovoTipo = modTipo;
-        payloadModifica.nuovaFrazioneTipo = modFrazioneTipo;
-        if (modFrazioneTipo === 'orario') {
-          payloadModifica.nuovaOraInizio = modOraInizio;
-          payloadModifica.nuovaOraFine = modOraFine;
+      const isHROrAdminAction = isHR || isAdmin;
+
+      if (isHROrAdminAction) {
+        if (modTipoAzione === 'annullamento') {
+          await deleteDoc(doc(db, 'richieste_ferie', modifyingRequest.id));
+
+          const targetDip = dipendenti.find(d => d.nome === modifyingRequest.dipendenteName);
+          if (targetDip && targetDip.email) {
+            const subject = `[Notifica HR] Annullamento Ferie/Permesso`;
+            const dateDesc = modifyingRequest.dataInizio && modifyingRequest.dataFine && modifyingRequest.dataInizio !== modifyingRequest.dataFine 
+              ? `dal ${formatDate(modifyingRequest.dataInizio)} al ${formatDate(modifyingRequest.dataFine)}` 
+              : `il ${formatDate(modifyingRequest.dataInizio || modifyingRequest.data)}`;
+            const htmlBody = `
+              <p>Ciao <strong>${modifyingRequest.dipendenteName}</strong>,</p>
+              <p>Ti informiamo che l'amministrazione/HR ha <strong>annullato</strong> la tua richiesta di ferie/permessi del <strong>${dateDesc}</strong>.</p>
+              ${modMotivazione.trim() ? `<p><strong>Note dell'HR:</strong> ${modMotivazione.trim()}</p>` : ''}
+              <p>Il registro presenze ed il calendario sono stati aggiornati.</p>
+            `;
+            const plainText = `Ciao ${modifyingRequest.dipendenteName},\n\nL'amministrazione/HR ha annullato la tua richiesta di ferie/permessi del ${dateDesc}.\n${modMotivazione.trim() ? `Note: ${modMotivazione.trim()}\n` : ''}`;
+            const isSelfTarget = (targetDip.email.toLowerCase() === userEmail?.toLowerCase()) || (myAssociatedName && modifyingRequest.dipendenteName === myAssociatedName);
+            if (!isSelfTarget) {
+              await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+            }
+          }
+          showToast("Ferie/Permesso annullato direttamente con successo!", "success");
+        } else {
+          const payloadUpdate: any = {
+            stato: 'Approvato',
+            dataInizio: modDataInizio,
+            dataFine: modDataFine,
+            data: modDataInizio,
+            tipo: modTipo,
+            frazioneTipo: modFrazioneTipo,
+            richiestaModifica: null
+          };
+          if (modFrazioneTipo === 'orario') {
+            payloadUpdate.oraInizio = modOraInizio;
+            payloadUpdate.oraFine = modOraFine;
+          }
+
+          await updateDoc(doc(db, 'richieste_ferie', modifyingRequest.id), payloadUpdate);
+
+          if (modDataInizio && modDataFine && (modTipo === 'ferie' || modTipo === 'malattia' || modTipo === 'maternita')) {
+            await cleanAssignmentsForApprovedFullWeekLeave(modifyingRequest.dipendenteName, modDataInizio, modDataFine);
+          }
+
+          const targetDip = dipendenti.find(d => d.nome === modifyingRequest.dipendenteName);
+          if (targetDip && targetDip.email) {
+            const subject = `[Notifica HR] Modifica Ferie/Permessi Approvati`;
+            const htmlBody = `
+              <p>Ciao <strong>${modifyingRequest.dipendenteName}</strong>,</p>
+              <p>Ti informiamo che l'amministrazione/HR ha <strong>modificato</strong> le tue ferie/permessi già approvati.</p>
+              <p>Nuovo periodo/orario: <strong>dal ${formatDate(modDataInizio)} al ${formatDate(modDataFine)}</strong>.</p>
+              ${modMotivazione.trim() ? `<p><strong>Note dell'HR:</strong> ${modMotivazione.trim()}</p>` : ''}
+            `;
+            const plainText = `Ciao ${modifyingRequest.dipendenteName},\n\nL'amministrazione/HR ha modificato le tue ferie/permessi approvati.\nNuovo periodo: dal ${formatDate(modDataInizio)} al ${formatDate(modDataFine)}.\n${modMotivazione.trim() ? `Note: ${modMotivazione.trim()}\n` : ''}`;
+            const isSelfTarget = (targetDip.email.toLowerCase() === userEmail?.toLowerCase()) || (myAssociatedName && modifyingRequest.dipendenteName === myAssociatedName);
+            if (!isSelfTarget) {
+              await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+            }
+          }
+          showToast("Ferie/Permesso modificato direttamente con successo!", "success");
         }
-      }
-
-      await updateDoc(doc(db, 'richieste_ferie', modifyingRequest.id), {
-        stato: newStato,
-        richiestaModifica: payloadModifica
-      });
-
-      // Invia notifica email all'HR (Chiara)
-      const hrEmails = ['chiara@ingegno06.it', 'aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it'];
-      const subject = `[Notifica HR] ${newStato} da parte di ${modifyingRequest.dipendenteName}`;
-      const dateDesc = modifyingRequest.dataInizio && modifyingRequest.dataFine && modifyingRequest.dataInizio !== modifyingRequest.dataFine
-        ? `dal ${formatDate(modifyingRequest.dataInizio)} al ${formatDate(modifyingRequest.dataFine)}`
-        : `il ${formatDate(modifyingRequest.dataInizio || modifyingRequest.data)}`;
-
-      let modDetail = '';
-      if (modTipoAzione === 'annullamento') {
-        modDetail = `<p>Il dipendente richiede l'<strong>annullamento completo</strong> delle ferie/permessi approvati per il periodo <strong>${dateDesc}</strong>.</p>`;
       } else {
-        const newDateDesc = modDataInizio === modDataFine ? `il ${formatDate(modDataInizio)}` : `dal ${formatDate(modDataInizio)} al ${formatDate(modDataFine)}`;
-        modDetail = `<p>Il dipendente richiede di <strong>modificare</strong> le ferie/permessi approvati dal periodo <strong>${dateDesc}</strong> al nuovo periodo <strong>${newDateDesc}</strong>.</p>`;
+        const newStato = modTipoAzione === 'annullamento' ? 'Richiesta Annullamento' : 'Richiesta Modifica';
+        const payloadModifica: any = {
+          tipoAzione: modTipoAzione,
+          motivazione: modMotivazione.trim(),
+          dataRichiesta: new Date().toISOString()
+        };
+        if (modTipoAzione === 'modifica') {
+          payloadModifica.nuovaDataInizio = modDataInizio;
+          payloadModifica.nuovaDataFine = modDataFine;
+          payloadModifica.nuovoTipo = modTipo;
+          payloadModifica.nuovaFrazioneTipo = modFrazioneTipo;
+          if (modFrazioneTipo === 'orario') {
+            payloadModifica.nuovaOraInizio = modOraInizio;
+            payloadModifica.nuovaOraFine = modOraFine;
+          }
+        }
+
+        await updateDoc(doc(db, 'richieste_ferie', modifyingRequest.id), {
+          stato: newStato,
+          richiestaModifica: payloadModifica
+        });
+
+        // Invia notifica email all'HR (Chiara)
+        const hrEmails = ['chiara@ingegno06.it', 'aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it'];
+        const subject = `[Notifica HR] ${newStato} da parte di ${modifyingRequest.dipendenteName}`;
+        const dateDesc = modifyingRequest.dataInizio && modifyingRequest.dataFine && modifyingRequest.dataInizio !== modifyingRequest.dataFine
+          ? `dal ${formatDate(modifyingRequest.dataInizio)} al ${formatDate(modifyingRequest.dataFine)}`
+          : `il ${formatDate(modifyingRequest.dataInizio || modifyingRequest.data)}`;
+
+        let modDetail = '';
+        if (modTipoAzione === 'annullamento') {
+          modDetail = `<p>Il dipendente richiede l'<strong>annullamento completo</strong> delle ferie/permessi approvati per il periodo <strong>${dateDesc}</strong>.</p>`;
+        } else {
+          const newDateDesc = modDataInizio === modDataFine ? `il ${formatDate(modDataInizio)}` : `dal ${formatDate(modDataInizio)} al ${formatDate(modDataFine)}`;
+          modDetail = `<p>Il dipendente richiede di <strong>modificare</strong> le ferie/permessi approvati dal periodo <strong>${dateDesc}</strong> al nuovo periodo <strong>${newDateDesc}</strong>.</p>`;
+        }
+
+        const htmlBody = `
+          <p>Ciao Chiara / HR Team,</p>
+          <p>È stata inviata una <strong>${newStato}</strong> per le ferie/permessi già approvati di <strong>${modifyingRequest.dipendenteName}</strong>.</p>
+          ${modDetail}
+          ${modMotivazione.trim() ? `<p><strong>Motivazione del dipendente:</strong> ${modMotivazione.trim()}</p>` : ''}
+          <p>Accedi all'area <em>Permessi e Ferie</em> per approvare o gestire la richiesta.</p>
+        `;
+        const plainText = `Ciao HR Team,\n\nRichiesta ${newStato} da parte di ${modifyingRequest.dipendenteName}.\nMotivazione: ${modMotivazione.trim()}\n\nAccedi alla piattaforma per gestire la richiesta.`;
+
+        for (const email of hrEmails) {
+          await queueMail(email, subject, htmlBody, plainText);
+        }
+
+        showToast("Richiesta di modifica/annullamento inviata all'HR con successo!", "success");
       }
 
-      const htmlBody = `
-        <p>Ciao Chiara / HR Team,</p>
-        <p>È stata inviata una <strong>${newStato}</strong> per le ferie/permessi già approvati di <strong>${modifyingRequest.dipendenteName}</strong>.</p>
-        ${modDetail}
-        ${modMotivazione.trim() ? `<p><strong>Motivazione del dipendente:</strong> ${modMotivazione.trim()}</p>` : ''}
-        <p>Accedi all'area <em>Permessi e Ferie</em> per approvare o gestire la richiesta.</p>
-      `;
-      const plainText = `Ciao HR Team,\n\nRichiesta ${newStato} da parte di ${modifyingRequest.dipendenteName}.\nMotivazione: ${modMotivazione.trim()}\n\nAccedi alla piattaforma per gestire la richiesta.`;
-
-      for (const email of hrEmails) {
-        await queueMail(email, subject, htmlBody, plainText);
-      }
-
-      showToast("Richiesta di modifica/annullamento inviata all'HR con successo!", "success");
       setModifyingRequest(null);
       loadFerieData();
     } catch (err) {
       console.error("Errore invio richiesta modifica:", err);
-      showToast("Errore durante l'invio della richiesta.", "error");
+      showToast("Errore durante l'elaborazione della modifica.", "error");
     } finally {
       setModLoading(false);
     }
@@ -907,7 +1028,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
   };
 
   const getTipoData = (tipo: string, frazioneTipo?: string, dipName?: string) => {
-    const isCollab = dipName ? (dipendenti || []).some(d => d.nome && d.nome.toLowerCase().trim() === dipName.toLowerCase().trim() && d.tipo === 'collaboratore') : false;
+    const isCollab = isCollaboratore(dipName, dipendenti);
     const tipi: Record<string, {label: string, color: string}> = {
       ferie: {label: isCollab ? 'Assenza' : 'Ferie', color: 'bg-red-500'},
       malattia: {label: 'Malattia', color: 'bg-purple-600'},
@@ -922,9 +1043,9 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       elettorale: {label: 'Permesso Elettorale', color: 'bg-indigo-500'}
     };
     const base = tipi[tipo] || {label: isCollab ? 'Assenza' : tipo, color: 'bg-gray-500'};
-    if ((tipo === 'permesso' || tipo === 'assenza') && frazioneTipo) {
+    if ((tipo === 'permesso' || tipo === 'assenza' || tipo === 'smart') && frazioneTipo) {
       const copy = { ...base };
-      const prefix = (isCollab || tipo === 'assenza') ? 'Assenza' : 'Permesso';
+      const prefix = (isCollab || tipo === 'assenza') ? 'Assenza' : (tipo === 'smart' ? 'Lavora da Casa' : 'Permesso');
       if (frazioneTipo === 'mattina') copy.label = `${prefix} Mattina`;
       if (frazioneTipo === 'pomeriggio') copy.label = `${prefix} Pomeriggio`;
       if (frazioneTipo === 'giornata') copy.label = `${prefix} Giornata Intera`;
@@ -1023,7 +1144,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         } else if (isSpecialDay) {
           cellBg = '#f3f4f6';
         } else if (tipo) {
-          const isCollabDip = dip.tipo === 'collaboratore';
+          const isCollabDip = isCollaboratore(dip.nome, dipendenti);
           const isFractional = Boolean(reqObj.frazioneTipo || (reqObj.oraInizio && reqObj.oraFine) || tipo === 'mattina' || tipo === 'pomeriggio');
 
           if (tipo === 'ferie' || (isCollabDip && (tipo === 'assenza' || tipo === 'ferie') && !isFractional)) {
@@ -1056,7 +1177,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
               }
               cellText = `${hrs.toString().replace('.', ',')}h`;
             } else {
-              cellText = isCollabDip ? 'A' : 'P';
+              cellText = isCollabDip ? '' : 'P';
             }
           } else if (tipo === 'studio') {
             cellBg = '#c084fc'; // Purple
@@ -1574,7 +1695,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                       onChange={e => setTipoRichiesta(e.target.value)}
                       className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900"
                     >
-                      {isCollaboratore ? (
+                      {isCollaboratoreUser ? (
                         <>
                           <option value="assenza">Assenza</option>
                           <option value="malattia">Malattia</option>
@@ -1596,10 +1717,10 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                     </select>
                   </div>
 
-                  {(tipoRichiesta === 'permesso' || tipoRichiesta === 'assenza') && (
+                  {(tipoRichiesta === 'permesso' || tipoRichiesta === 'assenza' || tipoRichiesta === 'smart') && (
                     <div className="bg-white/40 p-4 rounded-2xl border border-green-150 space-y-4 animate-in fade-in duration-200">
                       <label className="block text-xs font-black text-green-950 uppercase tracking-wider">
-                        {tipoRichiesta === 'assenza' ? 'Frazionamento Assenza' : 'Frazionamento Permesso'}
+                        {tipoRichiesta === 'smart' ? 'Frazionamento Lavoro da Casa' : (tipoRichiesta === 'assenza' ? 'Frazionamento Assenza' : 'Frazionamento Permesso')}
                       </label>
                       <div className="grid grid-cols-2 gap-2.5">
                         {[
@@ -1654,31 +1775,35 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-3 bg-white/50 p-3 rounded-xl border border-green-100/50">
-                            <label className="flex items-center gap-2.5 cursor-pointer text-xs font-bold text-green-950 select-none">
-                              <input 
-                                type="checkbox" 
-                                checked={pausaPranzo}
-                                onChange={e => setPausaPranzo(e.target.checked)}
-                                className="w-4.5 h-4.5 rounded border-green-200 text-green-600 focus:ring-green-500 cursor-pointer"
-                              />
-                              <span>Pausa pranzo all'interno della fascia oraria</span>
-                            </label>
-                          </div>
+                          {tipoRichiesta !== 'smart' && (
+                            <>
+                              <div className="flex items-center gap-3 bg-white/50 p-3 rounded-xl border border-green-100/50">
+                                <label className="flex items-center gap-2.5 cursor-pointer text-xs font-bold text-green-950 select-none">
+                                  <input 
+                                    type="checkbox" 
+                                    checked={pausaPranzo}
+                                    onChange={e => setPausaPranzo(e.target.checked)}
+                                    className="w-4.5 h-4.5 rounded border-green-200 text-green-600 focus:ring-green-500 cursor-pointer"
+                                  />
+                                  <span>Pausa pranzo all'interno della fascia oraria</span>
+                                </label>
+                              </div>
 
-                          {pausaPranzo && (
-                            <div className="animate-in slide-in-from-top-2 duration-200">
-                              <label className="block text-xs font-bold text-green-900 mb-1 ml-1">Durata pausa pranzo da sottrarre</label>
-                              <select 
-                                value={pausaPranzoOre}
-                                onChange={e => setPausaPranzoOre(e.target.value)}
-                                className="w-full p-3 border-none rounded-xl bg-white/70 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-bold text-green-900 text-xs cursor-pointer"
-                              >
-                                {PAUSA_PRANZO_OPTIONS.map(opt => (
-                                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                ))}
-                              </select>
-                            </div>
+                              {pausaPranzo && (
+                                <div className="animate-in slide-in-from-top-2 duration-200">
+                                  <label className="block text-xs font-bold text-green-900 mb-1 ml-1">Durata pausa pranzo da sottrarre</label>
+                                  <select 
+                                    value={pausaPranzoOre}
+                                    onChange={e => setPausaPranzoOre(e.target.value)}
+                                    className="w-full p-3 border-none rounded-xl bg-white/70 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-bold text-green-900 text-xs cursor-pointer"
+                                  >
+                                    {PAUSA_PRANZO_OPTIONS.map(opt => (
+                                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              )}
+                            </>
                           )}
                         </div>
                       )}
@@ -1710,17 +1835,40 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                   )}
                 </h3>
                 <p className="text-xs text-gray-500 font-medium mt-0.5">
-                  {isHR ? "Consulta e gestisci le richieste pervenute ed i cambi approvati" : "Filtra le tue richieste ed invia modifiche per i permessi approvati"}
+                  {isHR ? "Consulta e gestisci le richieste pervenute ed i cambi approvati per qualsiasi risorsa" : "Filtra le tue richieste ed invia modifiche per i permessi approvati"}
                 </p>
+
+                {/* CAMPO DI RICERCA RISORSA PER HR */}
+                {(isHR || isAdmin) && (
+                  <div className="relative mt-3">
+                    <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      placeholder="Cerca per nome risorsa..."
+                      value={searchResourceText}
+                      onChange={e => setSearchResourceText(e.target.value)}
+                      className="w-full pl-9 pr-8 py-2 bg-slate-50 hover:bg-slate-100/80 focus:bg-white border border-slate-200 rounded-xl text-xs font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all placeholder:text-gray-400 placeholder:font-normal shadow-2xs"
+                    />
+                    {searchResourceText && (
+                      <button
+                        type="button"
+                        onClick={() => setSearchResourceText('')}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-0.5 rounded-full cursor-pointer"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* TAB DI FILTRAGGIO */}
             <div className="flex flex-wrap items-center gap-1.5 border-b border-gray-100 pb-2.5">
               {[
-                { id: 'tutte', label: 'Tutte', count: (isHR ? hrRichieste : requestsList.filter(r => r.dipendenteName === myAssociatedName)).length },
-                { id: 'in_attesa', label: 'In Attesa / Modifiche', count: (isHR ? hrRichieste : requestsList.filter(r => r.dipendenteName === myAssociatedName)).filter(r => r.stato === 'In attesa' || r.stato === 'Richiesta Annullamento' || r.stato === 'Richiesta Modifica').length },
-                { id: 'approvate', label: 'Approvate', count: (isHR ? hrRichieste : requestsList.filter(r => r.dipendenteName === myAssociatedName)).filter(r => r.stato === 'Approvato').length },
-                { id: 'storico', label: 'Rifiutate', count: (isHR ? hrRichieste : requestsList.filter(r => r.dipendenteName === myAssociatedName)).filter(r => r.stato === 'Rifiutato').length }
+                { id: 'tutte', label: 'Tutte', count: searchedBaseRequests.length },
+                { id: 'in_attesa', label: 'In Attesa / Modifiche', count: searchedBaseRequests.filter(r => r.stato === 'In attesa' || r.stato === 'Richiesta Annullamento' || r.stato === 'Richiesta Modifica').length },
+                { id: 'approvate', label: 'Approvate', count: searchedBaseRequests.filter(r => r.stato === 'Approvato').length },
+                { id: 'storico', label: 'Rifiutate', count: searchedBaseRequests.filter(r => r.stato === 'Rifiutato').length }
               ].map(tab => (
                 <button
                   key={tab.id}
@@ -1741,7 +1889,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
             </div>
 
             {/* LISTA CARD RICHIESTE */}
-            <div className="space-y-3 flex-1 overflow-y-auto pr-1 max-h-[460px] custom-scrollbar">
+            <div className="space-y-3 flex-1 overflow-y-auto pr-1 max-h-[500px] custom-scrollbar">
               {filteredRequestsList.length === 0 ? (
                 <div className="text-center text-gray-400 py-10 font-medium bg-slate-50/50 rounded-2xl border border-dashed border-slate-200 text-xs">
                   Nessuna richiesta presente per i filtri correnti.
@@ -1803,13 +1951,13 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                         </div>
 
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          {/* AZIONE DIPENDENTE SU RICHIESTA APPROVATA: MODIFICA / ANNULLA (MATITINA) */}
-                          {isMyReq && req.stato === 'Approvato' && (
+                          {/* AZIONE DIPENDENTE O HR SU RICHIESTA APPROVATA: MODIFICA / ANNULLA (MATITINA) */}
+                          {(isMyReq || isHR || isAdmin) && req.stato === 'Approvato' && (
                             <button
                               type="button"
                               onClick={() => openModificationModal(req)}
                               className="flex items-center gap-1 px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300/80 rounded-lg text-[11px] font-extrabold transition-all shadow-2xs hover:shadow-xs active:scale-95 cursor-pointer"
-                              title="Richiedi modifica o annullamento all'HR (Chiara)"
+                              title={isHR || isAdmin ? "Modifica o annulla direttamente le ferie/permesso approvati per questa risorsa" : "Richiedi modifica o annullamento all'HR"}
                             >
                               <Pencil className="w-3 h-3 text-amber-700" />
                               <span>Modifica / Annulla</span>
@@ -2039,7 +2187,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                               const isRejected = req.stato === 'Rifiutato';
 
                               titleStr += `\nStato: ${req.stato}\nTipo: ${getTipoData(req.tipo, req.frazioneTipo, dip.nome).label}`;
-                              if ((req.tipo === 'permesso' || req.tipo === 'assenza') && req.oraInizio && req.oraFine && req.frazioneTipo !== 'mattina' && req.frazioneTipo !== 'pomeriggio' && req.frazioneTipo !== 'giornata') {
+                              if ((req.tipo === 'permesso' || req.tipo === 'assenza' || req.tipo === 'smart') && req.oraInizio && req.oraFine && req.frazioneTipo !== 'mattina' && req.frazioneTipo !== 'pomeriggio' && req.frazioneTipo !== 'giornata') {
                                 titleStr += `\nOrario: dalle ${req.oraInizio} alle ${req.oraFine}${req.pausaPranzo && req.pausaPranzoOre ? ` (esclusa p. pranzo ${req.pausaPranzoOre.toString().replace('.', ',')}h)` : ''}`;
                               }
                               if (req.note) titleStr += `\nNote: ${req.note}`;
@@ -2060,6 +2208,20 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                                 cellBg = isApproved 
                                   ? 'bg-emerald-500 hover:bg-emerald-600 border-emerald-600 text-white font-extrabold shadow-sm' 
                                   : 'bg-yellow-50 border-yellow-250 text-yellow-750 opacity-60';
+                                if (req.frazioneTipo === 'mattina') {
+                                  cellText = 'AM';
+                                } else if (req.frazioneTipo === 'pomeriggio') {
+                                  cellText = 'PM';
+                                } else if (req.frazioneTipo === 'orario' && req.oraInizio && req.oraFine) {
+                                  const [hStart, mStart] = req.oraInizio.split(':').map(Number);
+                                  const [hEnd, mEnd] = req.oraFine.split(':').map(Number);
+                                  const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
+                                  let hrs = Math.round((diffMs / 3600000) * 100) / 100;
+                                  if (req.pausaPranzo && req.pausaPranzoOre) {
+                                    hrs = Math.max(0, hrs - req.pausaPranzoOre);
+                                  }
+                                  cellText = `${hrs.toString().replace('.', ',')}h`;
+                                }
                               } else if (['mattina', 'pomeriggio', 'permesso', 'assenza'].includes(req.tipo)) {
                                 cellBg = isApproved 
                                   ? 'bg-amber-400 hover:bg-amber-500 border-amber-500 text-amber-950 font-extrabold shadow-sm' 
@@ -2193,7 +2355,9 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
 
               {/* Selettore Tipo Azione: Annullamento vs Modifica */}
               <div className="space-y-2">
-                <label className="block text-xs font-black text-gray-800 uppercase tracking-wider">Cosa desideri richiedere all'HR (Chiara)?</label>
+                <label className="block text-xs font-black text-gray-800 uppercase tracking-wider">
+                  {(isHR || isAdmin) ? `Azione da applicare direttamente per ${modifyingRequest.dipendenteName}:` : "Cosa desideri richiedere all'HR?"}
+                </label>
                 <div className="grid grid-cols-2 gap-3">
                   <button
                     type="button"
@@ -2205,7 +2369,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                     }`}
                   >
                     <Trash2 className="w-4 h-4" />
-                    <span>Annulla Ferie Approvate</span>
+                    <span>{(isHR || isAdmin) ? "Annulla Permesso/Ferie" : "Annulla Ferie Approvate"}</span>
                   </button>
 
                   <button
@@ -2264,20 +2428,22 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                 </div>
               )}
 
-              {/* Nota / Motivazione per HR */}
-              <div>
-                <label className="block text-xs font-bold text-gray-800 mb-1 flex items-center justify-between">
-                  <span>Motivazione / Nota per l'HR (Chiara)</span>
-                  <span className="text-[10px] text-gray-400 font-normal italic">(Facoltativa)</span>
-                </label>
-                <textarea
-                  placeholder={modTipoAzione === 'annullamento' ? "Spiega all'HR il motivo dell'annullamento delle ferie..." : "Spiega all'HR il motivo della modifica del periodo..."}
-                  value={modMotivazione}
-                  onChange={e => setModMotivazione(e.target.value)}
-                  rows={3}
-                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 resize-none"
-                />
-              </div>
+              {/* Nota / Motivazione per HR (solo per dipendenti che inviano la richiesta) */}
+              {!(isHR || isAdmin) && (
+                <div>
+                  <label className="block text-xs font-bold text-gray-800 mb-1 flex items-center justify-between">
+                    <span>Motivazione / Nota per l'HR</span>
+                    <span className="text-[10px] text-gray-400 font-normal italic">(Facoltativa)</span>
+                  </label>
+                  <textarea
+                    placeholder={modTipoAzione === 'annullamento' ? "Spiega all'HR il motivo dell'annullamento delle ferie..." : "Spiega all'HR il motivo della modifica del periodo..."}
+                    value={modMotivazione}
+                    onChange={e => setModMotivazione(e.target.value)}
+                    rows={3}
+                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 resize-none"
+                  />
+                </div>
+              )}
             </div>
 
             {/* Footer Modale */}
@@ -2295,7 +2461,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                 disabled={modLoading}
                 className="flex-1 py-3 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-extrabold transition shadow-md disabled:opacity-50 cursor-pointer"
               >
-                {modLoading ? "Invio in corso..." : "Invia Richiesta all'HR"}
+                {modLoading ? "Elaborazione in corso..." : (isHR || isAdmin ? (modTipoAzione === 'annullamento' ? "Conferma Annullamento Diretto" : "Applica Modifica Diretta") : "Invia Richiesta all'HR")}
               </button>
             </div>
 
@@ -2313,7 +2479,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
 
             <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100/50 text-xs text-gray-700 space-y-2 font-medium">
               <div><strong>Dipendente:</strong> {cancellationRequest.dipendenteName}</div>
-              <div><strong>Tipo Assenza:</strong> <span className="capitalize">{getTipoData(cancellationRequest.tipo, cancellationRequest.frazioneTipo).label}</span></div>
+              <div><strong>Tipo Assenza:</strong> <span className="capitalize">{getTipoData(cancellationRequest.tipo, cancellationRequest.frazioneTipo, cancellationRequest.dipendenteName).label}</span></div>
               <div>
                 <strong>Periodo:</strong> {
                   (() => {

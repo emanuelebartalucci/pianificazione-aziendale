@@ -67,6 +67,7 @@ interface AuthContextType {
   seniorsEmails: string[];
   commercialiEmails: string[];
   isCommerciale: boolean;
+  prioritaCommesse: Record<string, 'Alta' | 'Standard' | 'Bassa'>;
   refreshData: () => Promise<void>;
 
   // Impersonificazione
@@ -102,6 +103,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [pmsEmails, setPmsEmails] = useState<string[]>([]);
   // seniorsEmails: rimosso il fetch Firestore, ora sempre array vuoto per retrocompatibilità
   const [dynamicCommerciali, setDynamicCommerciali] = useState<string[]>([]);
+  const [prioritaCommesse, setPrioritaCommesse] = useState<Record<string, 'Alta' | 'Standard' | 'Bassa'>>({});
 
 
   // Funzione mock retrocompatibile
@@ -133,6 +135,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setRichiesteDisegnatori([]);
         setPmsEmails([]);
         setDynamicCommerciali([]);
+        setPrioritaCommesse({});
         setLoading(false);
       } else {
         try {
@@ -266,6 +269,18 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             setApprovedLeaves(list);
           }));
 
+          // 14. Priorità commesse settimanali
+          unsubs.push(onSnapshot(collection(db, 'priorita_commesse'), (snap) => {
+            const map: Record<string, 'Alta' | 'Standard' | 'Bassa'> = {};
+            snap.forEach(docSnap => {
+              const data = docSnap.data();
+              if (data.priorita) {
+                map[docSnap.id] = data.priorita;
+              }
+            });
+            setPrioritaCommesse(map);
+          }));
+
           // Migrazione automatica HR
           const legacyHrSnap = await getDoc(doc(db, 'configurazione_sistema', 'hr'));
           if (legacyHrSnap.exists()) {
@@ -347,6 +362,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       seniorsEmails: [], // deprecato: raccolta Firestore 'seniors' rimossa
       commercialiEmails: dynamicCommerciali,
       isCommerciale,
+      prioritaCommesse,
       refreshData,
       impersonateUser,
       isRealDev,

@@ -27,7 +27,8 @@ import {
   ShieldAlert,
   ChevronLeft,
   ChevronRight,
-  Filter
+  Filter,
+  Pencil
 } from 'lucide-react';
 import ConfirmModal from '../components/ConfirmModal';
 
@@ -53,6 +54,7 @@ export interface Resource {
     dataInizioUso: string | null;
     revitInUso: boolean;
     autocadInUso: boolean;
+    altriSoftwareInUso?: string[];
   };
 }
 
@@ -102,7 +104,26 @@ export default function Prenotazioni() {
   const [selectedPC, setSelectedPC] = useState<Resource | null>(null);
   const [useRevit, setUseRevit] = useState(false);
   const [useAutoCAD, setUseAutoCAD] = useState(false);
+  const [selectedOtherSoftware, setSelectedOtherSoftware] = useState<string[]>([]);
+  const [customSoftwareInput, setCustomSoftwareInput] = useState('');
   const [isEditPCModalOpen, setIsEditPCModalOpen] = useState(false);
+
+  // Admin Edit Resource state
+  const [isAdminEditResourceOpen, setIsAdminEditResourceOpen] = useState(false);
+  const [editingResourceDocId, setEditingResourceDocId] = useState<string>('');
+  const [editResourceData, setEditResourceData] = useState({
+    id: '',
+    nome: '',
+    tipo: 'pc' as 'pc' | 'room' | 'car',
+    utenteIngegno: '',
+    pswUtente: '',
+    licenzaAutodesk: 'AEC Collection',
+    programmiInstallati: '',
+    ipAddress: '',
+    sede: 'Via Diaz',
+    modello: '',
+    targa: ''
+  });
 
   const [roomBookingData, setRoomBookingData] = useState({
     roomId: '',
@@ -515,11 +536,14 @@ export default function Prenotazioni() {
         'statoCorrente.utilizzatoreEmail': currentUserEmail,
         'statoCorrente.dataInizioUso': new Date().toISOString(),
         'statoCorrente.revitInUso': useRevit,
-        'statoCorrente.autocadInUso': useAutoCAD
+        'statoCorrente.autocadInUso': useAutoCAD,
+        'statoCorrente.altriSoftwareInUso': selectedOtherSoftware
       });
       showToast(`PC ${selectedPC.id} preso in carico!`);
       setIsClaimPCModalOpen(false);
       setSelectedPC(null);
+      setSelectedOtherSoftware([]);
+      setCustomSoftwareInput('');
     } catch (err: any) {
       console.error(err);
       showToast("Errore nella presa in carico: " + err.message, "error");
@@ -545,14 +569,17 @@ export default function Prenotazioni() {
     try {
       await updateDoc(doc(db, 'risorse', docId), {
         'statoCorrente.revitInUso': useRevit,
-        'statoCorrente.autocadInUso': useAutoCAD
+        'statoCorrente.autocadInUso': useAutoCAD,
+        'statoCorrente.altriSoftwareInUso': selectedOtherSoftware
       });
-      showToast(`Licenze per PC ${selectedPC.id} aggiornate!`);
+      showToast(`Licenze e software per PC ${selectedPC.id} aggiornati!`);
       setIsEditPCModalOpen(false);
       setSelectedPC(null);
+      setSelectedOtherSoftware([]);
+      setCustomSoftwareInput('');
     } catch (err: any) {
       console.error(err);
-      showToast("Errore nell'aggiornamento licenze: " + err.message, "error");
+      showToast("Errore nell'aggiornamento software: " + err.message, "error");
     }
   };
 
@@ -573,7 +600,8 @@ export default function Prenotazioni() {
               'statoCorrente.utilizzatoreEmail': null,
               'statoCorrente.dataInizioUso': null,
               'statoCorrente.revitInUso': false,
-              'statoCorrente.autocadInUso': false
+              'statoCorrente.autocadInUso': false,
+              'statoCorrente.altriSoftwareInUso': []
             });
             showToast(forced ? `Rilascio forzato per PC ${pc.id} completato.` : `PC ${pc.id} rilasciato.`);
           } catch (err: any) {
@@ -846,6 +874,72 @@ export default function Prenotazioni() {
     }
   };
 
+  // Admin: Open Edit resource modal
+  const handleOpenEditResource = (res: Resource) => {
+    const docId = res.docId || `${res.tipo}_${res.id.toLowerCase()}`;
+    setEditingResourceDocId(docId);
+    setEditResourceData({
+      id: res.id,
+      nome: res.nome,
+      tipo: res.tipo,
+      utenteIngegno: res.dettagli.utenteIngegno || '',
+      pswUtente: res.dettagli.pswUtente || '',
+      licenzaAutodesk: res.dettagli.licenzaAutodesk || 'AEC Collection',
+      programmiInstallati: res.dettagli.programmiInstallati || '',
+      ipAddress: res.dettagli.ipAddress || '',
+      sede: res.dettagli.sede || 'Via Diaz',
+      modello: res.dettagli.modello || '',
+      targa: res.dettagli.targa || ''
+    });
+    setIsAdminEditResourceOpen(true);
+  };
+
+  // Admin: Edit existing Resource Submit
+  const handleEditResourceSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingResourceDocId) return;
+    const { id, nome, tipo, utenteIngegno, pswUtente, licenzaAutodesk, programmiInstallati, ipAddress, sede, modello, targa } = editResourceData;
+    if (!id.trim() || !nome.trim()) {
+      showToast("Identificativo e Nome sono richiesti.", "warning");
+      return;
+    }
+
+    let details: any = {};
+    if (tipo === 'pc') {
+      details = {
+        utenteIngegno: utenteIngegno.trim(),
+        pswUtente: pswUtente.trim(),
+        licenzaAutodesk: licenzaAutodesk.trim(),
+        programmiInstallati: programmiInstallati.trim(),
+        ipAddress: ipAddress.trim()
+      };
+    } else if (tipo === 'room') {
+      details = {
+        sede: sede.trim()
+      };
+    } else if (tipo === 'car') {
+      details = {
+        modello: modello.trim(),
+        targa: targa.toUpperCase().trim(),
+        sede: sede.trim()
+      };
+    }
+
+    try {
+      await updateDoc(doc(db, 'risorse', editingResourceDocId), {
+        id: id.trim(),
+        nome: nome.trim(),
+        tipo,
+        dettagli: details
+      });
+      showToast(`Risorsa "${nome.trim()}" aggiornata con successo.`);
+      setIsAdminEditResourceOpen(false);
+    } catch (err: any) {
+      console.error(err);
+      showToast("Errore nel salvataggio della modifica: " + err.message, "error");
+    }
+  };
+
   // Admin: Delete resource
   const handleDeleteResource = (res: Resource) => {
     const docId = `${res.tipo}_${res.id.toLowerCase()}`;
@@ -1011,6 +1105,15 @@ export default function Prenotazioni() {
                     {pc.dettagli.licenzaAutodesk === 'Autocad LT' ? 'Licenza Autocad LT' : 'Licenza Autocad'}
                   </span>
                 )}
+                {pc.statoCorrente?.altriSoftwareInUso && pc.statoCorrente.altriSoftwareInUso.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-0.5">
+                    {pc.statoCorrente.altriSoftwareInUso.map(s => (
+                      <span key={s} className="bg-purple-100 text-purple-900 text-[10px] font-black px-2 py-0.5 rounded shadow-2xs border border-purple-200">
+                        💻 {s}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           ) : isDisabled ? (
@@ -1039,6 +1142,8 @@ export default function Prenotazioni() {
                 setSelectedPC(pc);
                 setUseRevit(false);
                 setUseAutoCAD(false);
+                setSelectedOtherSoftware([]);
+                setCustomSoftwareInput('');
                 setIsClaimPCModalOpen(true);
               }}
               disabled={isDisabled}
@@ -1058,6 +1163,8 @@ export default function Prenotazioni() {
                     setSelectedPC(pc);
                     setUseRevit(pc.statoCorrente?.revitInUso || false);
                     setUseAutoCAD(pc.statoCorrente?.autocadInUso || false);
+                    setSelectedOtherSoftware(pc.statoCorrente?.altriSoftwareInUso || []);
+                    setCustomSoftwareInput('');
                     setIsEditPCModalOpen(true);
                   }}
                   className="w-full sm:w-auto px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg transition text-xs shadow flex items-center gap-1 shrink-0 justify-center"
@@ -1953,13 +2060,22 @@ export default function Prenotazioni() {
                             <td className="py-3 px-4 font-bold text-gray-800">{res.nome}</td>
                             <td className="py-3 px-4 text-gray-500 font-medium">{detailsStr}</td>
                             <td className="py-3 px-4 text-center">
-                              <button
-                                onClick={() => handleDeleteResource(res)}
-                                className="text-gray-400 hover:text-red-600 p-1.5 rounded-xl hover:bg-red-50 transition"
-                                title="Elimina risorsa"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
+                              <div className="flex items-center justify-center gap-1">
+                                <button
+                                  onClick={() => handleOpenEditResource(res)}
+                                  className="text-gray-400 hover:text-indigo-600 p-1.5 rounded-xl hover:bg-indigo-50 transition cursor-pointer"
+                                  title="Modifica risorsa"
+                                >
+                                  <Pencil className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteResource(res)}
+                                  className="text-gray-400 hover:text-red-600 p-1.5 rounded-xl hover:bg-red-50 transition cursor-pointer"
+                                  title="Elimina risorsa"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         );
@@ -2065,6 +2181,91 @@ export default function Prenotazioni() {
                     </div>
                   </div>
                 </label>
+              </div>
+
+              {/* Altri Software Installati sul PC */}
+              <div className="space-y-2 border-t border-gray-100 pt-3">
+                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
+                  Altri Software in Uso (Senza Limiti Licenza)
+                </label>
+                <p className="text-[10px] text-gray-400 font-medium mb-2">
+                  Seleziona gli altri programmi installati su questa macchina che utilizzerai.
+                </p>
+
+                {/* Checkbox dai programmiInstallati del PC */}
+                {(() => {
+                  const installedList = selectedPC.dettagli.programmiInstallati
+                    ? selectedPC.dettagli.programmiInstallati.split(/[,;\n]+/).map(s => s.trim()).filter(s => s.length > 0)
+                    : [];
+                  if (installedList.length === 0) return null;
+                  return (
+                    <div className="space-y-1.5 mb-2 max-h-36 overflow-y-auto pr-1">
+                      <span className="text-[10px] font-bold text-gray-500 block mb-1">Programmi installati su {selectedPC.id}:</span>
+                      {installedList.map(prog => {
+                        const isChecked = selectedOtherSoftware.includes(prog);
+                        return (
+                          <label key={prog} className="flex items-center gap-2.5 p-2 rounded-lg bg-gray-50 hover:bg-gray-100 border border-gray-150 text-xs font-bold text-gray-800 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={e => {
+                                if (e.target.checked) {
+                                  setSelectedOtherSoftware(prev => [...prev, prog]);
+                                } else {
+                                  setSelectedOtherSoftware(prev => prev.filter(p => p !== prog));
+                                }
+                              }}
+                              className="w-4 h-4 text-teal-600 rounded border-gray-300 focus:ring-teal-500 cursor-pointer"
+                            />
+                            <span>{prog}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+
+                {/* Input per aggiungere un software personalizzato non in elenco */}
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="text"
+                    placeholder="Es. Edilclima, Photoshop, etc..."
+                    value={customSoftwareInput}
+                    onChange={e => setCustomSoftwareInput(e.target.value)}
+                    className="flex-1 p-2 text-xs border border-gray-200 rounded-xl bg-gray-50 font-bold text-gray-800 outline-none focus:ring-2 focus:ring-teal-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const trimmed = customSoftwareInput.trim();
+                      if (trimmed && !selectedOtherSoftware.includes(trimmed)) {
+                        setSelectedOtherSoftware(prev => [...prev, trimmed]);
+                        setCustomSoftwareInput('');
+                      }
+                    }}
+                    className="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold text-xs rounded-xl border border-indigo-200 transition cursor-pointer"
+                  >
+                    + Aggiungi
+                  </button>
+                </div>
+
+                {/* Badge software selezionati */}
+                {selectedOtherSoftware.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 pt-2">
+                    {selectedOtherSoftware.map(s => (
+                      <span key={s} className="bg-purple-100 text-purple-900 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 border border-purple-200">
+                        <span>{s}</span>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedOtherSoftware(prev => prev.filter(p => p !== s))}
+                          className="hover:text-red-600 font-black text-xs ml-0.5"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="flex gap-3 pt-2">
@@ -2176,6 +2377,91 @@ export default function Prenotazioni() {
                     </div>
                   </div>
                 </label>
+              </div>
+
+              {/* Altri Software Installati sul PC */}
+              <div className="space-y-2 border-t border-gray-100 pt-3">
+                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
+                  Altri Software in Uso (Senza Limiti Licenza)
+                </label>
+                <p className="text-[10px] text-gray-400 font-medium mb-2">
+                  Seleziona gli altri programmi installati su questa macchina che utilizzerai.
+                </p>
+
+                {/* Checkbox dai programmiInstallati del PC */}
+                {(() => {
+                  const installedList = selectedPC.dettagli.programmiInstallati
+                    ? selectedPC.dettagli.programmiInstallati.split(/[,;\n]+/).map(s => s.trim()).filter(s => s.length > 0)
+                    : [];
+                  if (installedList.length === 0) return null;
+                  return (
+                    <div className="space-y-1.5 mb-2 max-h-36 overflow-y-auto pr-1">
+                      <span className="text-[10px] font-bold text-gray-500 block mb-1">Programmi installati su {selectedPC.id}:</span>
+                      {installedList.map(prog => {
+                        const isChecked = selectedOtherSoftware.includes(prog);
+                        return (
+                          <label key={prog} className="flex items-center gap-2.5 p-2 rounded-lg bg-gray-50 hover:bg-gray-100 border border-gray-150 text-xs font-bold text-gray-800 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={e => {
+                                if (e.target.checked) {
+                                  setSelectedOtherSoftware(prev => [...prev, prog]);
+                                } else {
+                                  setSelectedOtherSoftware(prev => prev.filter(p => p !== prog));
+                                }
+                              }}
+                              className="w-4 h-4 text-teal-600 rounded border-gray-300 focus:ring-teal-500 cursor-pointer"
+                            />
+                            <span>{prog}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+
+                {/* Input per aggiungere un software personalizzato non in elenco */}
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="text"
+                    placeholder="Es. Edilclima, Photoshop, etc..."
+                    value={customSoftwareInput}
+                    onChange={e => setCustomSoftwareInput(e.target.value)}
+                    className="flex-1 p-2 text-xs border border-gray-200 rounded-xl bg-gray-50 font-bold text-gray-800 outline-none focus:ring-2 focus:ring-teal-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const trimmed = customSoftwareInput.trim();
+                      if (trimmed && !selectedOtherSoftware.includes(trimmed)) {
+                        setSelectedOtherSoftware(prev => [...prev, trimmed]);
+                        setCustomSoftwareInput('');
+                      }
+                    }}
+                    className="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold text-xs rounded-xl border border-indigo-200 transition cursor-pointer"
+                  >
+                    + Aggiungi
+                  </button>
+                </div>
+
+                {/* Badge software selezionati */}
+                {selectedOtherSoftware.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 pt-2">
+                    {selectedOtherSoftware.map(s => (
+                      <span key={s} className="bg-purple-100 text-purple-900 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 border border-purple-200">
+                        <span>{s}</span>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedOtherSoftware(prev => prev.filter(p => p !== s))}
+                          className="hover:text-red-600 font-black text-xs ml-0.5"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="flex gap-3 pt-2">
@@ -2489,6 +2775,198 @@ export default function Prenotazioni() {
                   className="flex-1 py-3.5 px-4 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition active:scale-95 shadow"
                 >
                   Salva Risorsa
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 5. Admin Edit Resource Modal */}
+      {isAdminEditResourceOpen && (
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2rem] shadow-2xl max-w-md w-full border border-gray-100 p-8 flex flex-col gap-6 animate-in fade-in zoom-in-95 duration-200 overflow-y-auto max-h-[90vh]">
+            <div className="flex justify-between items-center">
+              <h3 className="text-xl font-black text-gray-900 flex items-center gap-2">
+                <Pencil className="w-5 h-5 text-indigo-600" />
+                <span>Modifica Risorsa ({editResourceData.id})</span>
+              </h3>
+              <button onClick={() => setIsAdminEditResourceOpen(false)} className="text-gray-400 hover:text-gray-600 p-1">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleEditResourceSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Tipo Risorsa</label>
+                <select
+                  disabled
+                  value={editResourceData.tipo}
+                  className="w-full p-3 text-sm border-none rounded-xl bg-gray-100 font-bold text-gray-700 outline-none cursor-not-allowed"
+                >
+                  <option value="pc">Postazione CAD (PC Remoto)</option>
+                  <option value="room">Sala Riunioni</option>
+                  <option value="car">Autovettura Aziendale</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Identificativo Risorsa (ID)</label>
+                <input
+                  required
+                  type="text"
+                  value={editResourceData.id}
+                  onChange={e => setEditResourceData(prev => ({ ...prev, id: e.target.value }))}
+                  className="w-full p-3 text-sm border-none rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 shadow-inner font-bold text-gray-700 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Nome Display</label>
+                <input
+                  required
+                  type="text"
+                  value={editResourceData.nome}
+                  onChange={e => setEditResourceData(prev => ({ ...prev, nome: e.target.value }))}
+                  className="w-full p-3 text-sm border-none rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 shadow-inner font-bold text-gray-700 outline-none"
+                />
+              </div>
+
+              {/* PC Specific Details */}
+              {editResourceData.tipo === 'pc' && (
+                <div className="space-y-4 border-t border-gray-100 pt-3">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Utente Windows RDP</label>
+                    <input
+                      required
+                      type="text"
+                      placeholder="Es. disegnatore01"
+                      value={editResourceData.utenteIngegno}
+                      onChange={e => setEditResourceData(prev => ({ ...prev, utenteIngegno: e.target.value }))}
+                      className="w-full p-3 text-sm border-none rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 shadow-inner font-bold text-gray-700 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Password Windows RDP</label>
+                    <input
+                      required
+                      type="text"
+                      placeholder="Es. Ingegnocad*01"
+                      value={editResourceData.pswUtente}
+                      onChange={e => setEditResourceData(prev => ({ ...prev, pswUtente: e.target.value }))}
+                      className="w-full p-3 text-sm border-none rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 shadow-inner font-bold text-gray-700 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Tipo Licenza Autodesk Base</label>
+                    <select
+                      value={editResourceData.licenzaAutodesk}
+                      onChange={e => setEditResourceData(prev => ({ ...prev, licenzaAutodesk: e.target.value }))}
+                      className="w-full p-3 text-sm border-none rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 shadow-inner font-bold text-gray-700 outline-none"
+                    >
+                      <option value="AEC Collection">AEC Collection (Completa)</option>
+                      <option value="Autocad LT">Autocad LT (Base)</option>
+                      <option value="Nessuna">Nessuna</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Indirizzo IP Postazione</label>
+                    <input
+                      required
+                      type="text"
+                      placeholder="Es. 192.168.10.220"
+                      value={editResourceData.ipAddress}
+                      onChange={e => setEditResourceData(prev => ({ ...prev, ipAddress: e.target.value }))}
+                      className="w-full p-3 text-sm border-none rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 shadow-inner font-bold text-gray-700 outline-none font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-600 mb-1 ml-1">
+                      Programmi Installati su questo PC
+                    </label>
+                    <span className="block text-[10px] text-gray-400 font-medium mb-1.5 ml-1">
+                      Separati da virgola (es. Revit 2025, AutoCAD 2026, Edilclima, Photoshop, Primus, SAP2000)
+                    </span>
+                    <textarea
+                      rows={3}
+                      placeholder="Es. Revit 2025, AutoCAD 2026, Edilclima, Photoshop"
+                      value={editResourceData.programmiInstallati}
+                      onChange={e => setEditResourceData(prev => ({ ...prev, programmiInstallati: e.target.value }))}
+                      className="w-full p-3 text-sm border-none rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 shadow-inner font-bold text-gray-700 outline-none resize-none"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Room Specific Details */}
+              {editResourceData.tipo === 'room' && (
+                <div className="space-y-4 border-t border-gray-100 pt-3">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Sede della Sala</label>
+                    <input
+                      required
+                      type="text"
+                      placeholder="Es. Via Diaz o Via Gramsci"
+                      value={editResourceData.sede}
+                      onChange={e => setEditResourceData(prev => ({ ...prev, sede: e.target.value }))}
+                      className="w-full p-3 text-sm border-none rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 shadow-inner font-bold text-gray-700 outline-none"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Car Specific Details */}
+              {editResourceData.tipo === 'car' && (
+                <div className="space-y-4 border-t border-gray-100 pt-3">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Modello Auto</label>
+                    <input
+                      required
+                      type="text"
+                      placeholder="Es. Citroen C3"
+                      value={editResourceData.modello}
+                      onChange={e => setEditResourceData(prev => ({ ...prev, modello: e.target.value }))}
+                      className="w-full p-3 text-sm border-none rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 shadow-inner font-bold text-gray-700 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Targa Autoveicolo</label>
+                    <input
+                      required
+                      type="text"
+                      placeholder="Es. AB123CD"
+                      value={editResourceData.targa}
+                      onChange={e => setEditResourceData(prev => ({ ...prev, targa: e.target.value }))}
+                      className="w-full p-3 text-sm border-none rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 shadow-inner font-bold text-gray-700 outline-none uppercase"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Sede di Parcheggio Auto</label>
+                    <input
+                      required
+                      type="text"
+                      placeholder="Es. Via Diaz"
+                      value={editResourceData.sede}
+                      onChange={e => setEditResourceData(prev => ({ ...prev, sede: e.target.value }))}
+                      className="w-full p-3 text-sm border-none rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 shadow-inner font-bold text-gray-700 outline-none"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAdminEditResourceOpen(false)}
+                  className="flex-1 py-3.5 px-4 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 hover:bg-gray-50 transition"
+                >
+                  Annulla
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-3.5 px-4 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition active:scale-95 shadow"
+                >
+                  Aggiorna Risorsa
                 </button>
               </div>
             </form>

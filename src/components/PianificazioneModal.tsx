@@ -71,7 +71,10 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     isAdmin = false,
     userEmail = '', 
     myAssociatedName = '', 
-    assegnazioni = {}
+    assegnazioni = {},
+    pmsEmails = [],
+    prioritaCommesse = {},
+    approvedLeaves = []
   } = useAuth();
 
   const [activeTab, setActiveTab] = useState<'commessa' | 'risorsa' | 'sostituisci'>(initialTab);
@@ -89,9 +92,26 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
   const [addCommessaId, setAddCommessaId] = useState('');
   const [addCommessaPercentage, setAddCommessaPercentage] = useState('100');
 
+  // Priorità commessa per la settimana selezionata
+  const [selectedPriority, setSelectedPriority] = useState<'Alta' | 'Standard' | 'Bassa'>('Standard');
+  const [initialPriority, setInitialPriority] = useState<'Alta' | 'Standard' | 'Bassa'>('Standard');
+
   // Bozza locale per modifiche non ancora salvate su Firestore
   const [draftAssignments, setDraftAssignments] = useState<Record<string, any[]>>({});
   const [hasChanges, setHasChanges] = useState(false);
+
+  // Stato per tracciare quali risorse sono espanse nel pannello Gestione per Commessa
+  const [expandedResources, setExpandedResources] = useState<Set<string>>(new Set());
+
+  const toggleResourceExpanded = (resName: string) => {
+    setExpandedResources(prev => {
+      const next = new Set(prev);
+      if (next.has(resName)) next.delete(resName);
+      else next.add(resName);
+      return next;
+    });
+  };
+
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
 
@@ -164,18 +184,27 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
       setAddCommessaId('');
       setAddCommessaPercentage('100');
 
-      if (initialWeekId) {
-        const matched = selectableWeekOptions.find(o => o.id === initialWeekId);
-        if (matched) {
-          setSelectedStartWeekId(matched.id);
-          setSelectedEndWeekId(matched.id);
-        }
+      const targetWk = initialWeekId || currentWeekOpt.id;
+      const matched = selectableWeekOptions.find(o => o.id === targetWk);
+      if (matched) {
+        setSelectedStartWeekId(matched.id);
+        setSelectedEndWeekId(matched.id);
       } else {
         setSelectedStartWeekId(currentWeekOpt.id);
         setSelectedEndWeekId(currentWeekOpt.id);
       }
+
+      if (initialCommessaId && targetWk) {
+        const pKey = `${initialCommessaId}_${targetWk}`;
+        const pVal = prioritaCommesse[pKey] || 'Standard';
+        setSelectedPriority(pVal);
+        setInitialPriority(pVal);
+      } else {
+        setSelectedPriority('Standard');
+        setInitialPriority('Standard');
+      }
     }
-  }, [isOpen, initialTab, initialCommessaId, initialResourceName, initialWeekId, selectableWeekOptions, currentWeekOpt, assegnazioni]);
+  }, [isOpen, initialTab, initialCommessaId, initialResourceName, initialWeekId, selectableWeekOptions, currentWeekOpt, assegnazioni, prioritaCommesse]);
 
   // Sincronizza allocDataInizio e allocDataFine con le settimane selezionate
   useEffect(() => {
@@ -198,6 +227,20 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     return dipendenti.filter(d => !d.dataCessazione || d.dataCessazione > new Date().toISOString().split('T')[0]);
   }, [dipendenti]);
 
+  const myDip = useMemo(() => {
+    return dipendenti.find(d => d.email?.toLowerCase() === userEmail?.toLowerCase());
+  }, [dipendenti, userEmail]);
+
+  const isPM = useMemo(() => {
+    if (!userEmail) return false;
+    if (pmsEmails.includes(userEmail.toLowerCase())) return true;
+    if (!myDip) return false;
+    return commesse.some(c => {
+      const pms = Array.isArray(c.pm) ? c.pm : [c.pm];
+      return pms.some(p => p?.toLowerCase().trim() === myDip.nome.toLowerCase().trim());
+    });
+  }, [userEmail, pmsEmails, myDip, commesse]);
+
   // Macroaree coordinate dall'utente corrente (Coordinatori)
   const myCoordinatedAreas = useMemo(() => {
     if (!userEmail) return [];
@@ -207,9 +250,15 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
 
   // Dipendenti direttamente assegnabili (Admin vedono tutti; Coordinatori/PM vedono solo la propria area)
   const selectableDipendentiForUser = useMemo(() => {
-    if (isAdmin || myCoordinatedAreas.length === 0) return filteredDipendenti;
-    return filteredDipendenti.filter(d => d.macroArea && myCoordinatedAreas.includes(d.macroArea));
-  }, [filteredDipendenti, isAdmin, myCoordinatedAreas]);
+    if (isAdmin) return filteredDipendenti;
+    if (myCoordinatedAreas.length > 0) {
+      return filteredDipendenti.filter(d => d.macroArea && myCoordinatedAreas.includes(d.macroArea));
+    }
+    if (isPM && myDip?.macroArea) {
+      return filteredDipendenti.filter(d => d.macroArea === myDip.macroArea);
+    }
+    return filteredDipendenti;
+  }, [filteredDipendenti, isAdmin, myCoordinatedAreas, isPM, myDip]);
 
   // Helper date e settimane
   const getWeeksSpannedByDates = (startStr: string, endStr: string): string[] => {
@@ -261,6 +310,43 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   };
 
+  const isResourceOnFullWeekLeave = (resName: string, weekId: string): boolean => {
+    if (!resName || !weekId || !approvedLeaves || approvedLeaves.length === 0) return false;
+    const weekOpt = selectableWeekOptions.find(o => o.id === weekId);
+    if (!weekOpt) return false;
+
+    const monday = new Date(weekOpt.mondayStr);
+    const workDates: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const d = addDays(monday, i);
+      workDates.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`);
+    }
+
+    const resLeaves = approvedLeaves.filter((r: any) => {
+      if (!r.dipendenteName) return false;
+      if (r.dipendenteName.trim().toLowerCase() !== resName.trim().toLowerCase()) return false;
+      if (r.stato !== 'Approvato') return false;
+      const t = r.tipo || 'ferie';
+      return ['ferie', 'assenza', 'malattia', 'maternita'].includes(t);
+    });
+
+    if (resLeaves.length === 0) return false;
+
+    let coveredCount = 0;
+    workDates.forEach(dateStr => {
+      const isCovered = resLeaves.some((r: any) => {
+        const dStart = r.dataInizio || r.data;
+        const dEnd = r.dataFine || r.data;
+        if (!dStart || !dEnd) return false;
+        if (r.frazioneTipo && r.frazioneTipo !== 'giornata') return false;
+        return dateStr >= dStart && dateStr <= dEnd;
+      });
+      if (isCovered) coveredCount++;
+    });
+
+    return coveredCount >= 5;
+  };
+
   // Risorse Assegnate e Non Assegnate alla Commessa nel periodo (usa la bozza locale draftAssignments)
   const { risorseAssegnateAllaCommessa, risorseNonAssegnateAllaCommessa } = useMemo(() => {
     if (!selectedCommessaId || !allocDataInizio || !allocDataFine) {
@@ -285,14 +371,22 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     });
 
     const assignedNames = new Set(Object.keys(assignedMap));
-    const assignedList = Object.values(assignedMap);
+    let assignedList = Object.values(assignedMap);
+
+    if (!isAdmin && isPM && myDip?.macroArea && myCoordinatedAreas.length === 0) {
+      assignedList = assignedList.filter(r => {
+        const dipObj = filteredDipendenti.find(d => d.nome === r.nome);
+        return dipObj?.macroArea === myDip.macroArea;
+      });
+    }
+
     const nonAssignedList = selectableDipendentiForUser.filter(d => !assignedNames.has(d.nome));
 
     return {
       risorseAssegnateAllaCommessa: assignedList,
       risorseNonAssegnateAllaCommessa: nonAssignedList
     };
-  }, [selectedCommessaId, allocDataInizio, allocDataFine, draftAssignments, filteredDipendenti, selectableDipendentiForUser]);
+  }, [selectedCommessaId, allocDataInizio, allocDataFine, draftAssignments, filteredDipendenti, selectableDipendentiForUser, isAdmin, isPM, myDip, myCoordinatedAreas]);
 
   // Commesse Assegnate alla Risorsa nel periodo (usa la bozza locale draftAssignments)
   const commesseAssegnateAllaRisorsa = useMemo(() => {
@@ -325,6 +419,168 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     return selectableCommesse.filter(c => !assignedIds.has(c.id));
   }, [commesseAssegnateAllaRisorsa, selectableCommesse]);
 
+  // ===========================================================
+  // UTILITY: Calcola i sotto-periodi consecutivi per una risorsa
+  // ===========================================================
+  //
+  // Raggruppa le settimane del range in blocchi contigui con la stessa percentuale.
+  // Input: percentuali = { 'YYYY-Wnn': pct, ... } (solo le settimane che hanno un'assegnazione)
+  //        allWeekIds  = tutte le settimane del range selezionato in ordine
+  // Output: array di { weekIds, pct, label }
+  interface SubPeriod {
+    weekIds: string[];
+    pct: number;
+    label: string; // es. "Sett. 30 → 35  ·  28 Lug – 1 Set"
+  }
+
+  // Helper: lunedì di una weekId come Date
+  const getWkMonday = (wkId: string): Date | null => {
+    const parts = wkId.split('-W');
+    if (parts.length !== 2) return null;
+    const year = parseInt(parts[0]);
+    const week = parseInt(parts[1]);
+    const simple = new Date(year, 0, 4);
+    const dow = simple.getDay();
+    const offs = dow === 0 ? -6 : 1 - dow;
+    const fm = new Date(simple); fm.setDate(simple.getDate() + offs);
+    const mon = new Date(fm); mon.setDate(fm.getDate() + (week - 1) * 7);
+    return mon;
+  };
+  const fmtShort = (d: Date | null): string => {
+    if (!d) return '';
+    const M = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
+    return `${d.getDate()} ${M[d.getMonth()]}`;
+  };
+
+  const buildSubLabel = (g: string[]): string => {
+    const sWk = g[0].split('-W')[1];
+    const eWk = g[g.length - 1].split('-W')[1];
+    const mon = getWkMonday(g[0]);
+    const fri = getWkMonday(g[g.length - 1]);
+    if (fri) fri.setDate(fri.getDate() + 4);
+    const dateRange = `${fmtShort(mon)} – ${fmtShort(fri)}`;
+    if (g.length === 1) return `Sett. ${sWk}  ·  ${dateRange}`;
+    return `Sett. ${sWk} → ${eWk}  ·  ${dateRange}`;
+  };
+
+  const computeSubperiods = (
+    percentuali: Record<string, number>,
+    allWeekIds: string[]
+  ): SubPeriod[] => {
+    // Filtriamo solo le settimane che hanno effettivamente un'assegnazione
+    const relevantWeeks = allWeekIds.filter(wkId => wkId in percentuali);
+    if (relevantWeeks.length === 0) return [];
+
+    const periods: SubPeriod[] = [];
+    let currentGroup: string[] = [relevantWeeks[0]];
+    let currentPct = percentuali[relevantWeeks[0]];
+
+    for (let i = 1; i < relevantWeeks.length; i++) {
+      const wkId = relevantWeeks[i];
+      const pct = percentuali[wkId];
+
+      // Verifica se questa settimana è consecutiva alla precedente nel range globale
+      const prevWkId = relevantWeeks[i - 1];
+      const prevIdxInAll = allWeekIds.indexOf(prevWkId);
+      const currIdxInAll = allWeekIds.indexOf(wkId);
+      const isConsecutive = currIdxInAll === prevIdxInAll + 1;
+
+      if (pct === currentPct && isConsecutive) {
+        // Stesso blocco
+        currentGroup.push(wkId);
+      } else {
+        // Nuovo blocco: salva il precedente
+        periods.push({ weekIds: [...currentGroup], pct: currentPct, label: buildSubLabel(currentGroup) });
+        currentGroup = [wkId];
+        currentPct = pct;
+      }
+    }
+
+    // Salva l'ultimo gruppo
+    periods.push({ weekIds: [...currentGroup], pct: currentPct, label: buildSubLabel(currentGroup) });
+
+    return periods;
+  };
+
+  // ===========================================================
+  // Handler: Modifica la percentuale di un SINGOLO sotto-periodo
+  // (non tocca le settimane fuori dal blocco)
+  // ===========================================================
+  const handleLocalAssignSubperiod = (
+    resName: string,
+    commessaId: string,
+    weekIds: string[], // solo le settimane di questo blocco
+    newPercentage: number
+  ) => {
+    const commObj = commesse.find(c => c.id === commessaId);
+    if (!commObj) return;
+
+    const baseDays = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
+    const newDraft = { ...draftAssignments };
+
+    for (const wkId of weekIds) {
+      if (isResourceOnFullWeekLeave(resName, wkId)) {
+        showToast(`${resName} è in ferie/assenza per la settimana ${wkId.split('-W')[1]}.`, 'warning');
+        continue;
+      }
+      const docId = `${resName}-${wkId}`;
+      const currentList = newDraft[docId] || [];
+      const filteredList = currentList.filter((a: any) => a.commessaId !== commessaId);
+
+      // Calcola i giorni lavorativi coperti da questo weekId nel range selezionato
+      const coveredDays = getCoveredDaysInWeek(wkId, allocDataInizio, allocDataFine);
+      if (coveredDays === 0) continue;
+
+      const allowedDays: string[] = [];
+      for (const day of baseDays) {
+        const dayDate = getWeekdayDate(wkId, day);
+        if (dayDate >= allocDataInizio && dayDate <= allocDataFine) {
+          allowedDays.push(day);
+        }
+      }
+
+      const newAllocation = {
+        commessaId: commessaId,
+        commessaName: commObj.nome,
+        percentuale: newPercentage,
+        colore: TIPOLOGIA_COLORS[commObj.tipologia || ''] || commObj.colore || '#3b82f6',
+        giorni: allowedDays.length > 0 ? allowedDays : baseDays
+      };
+
+      newDraft[docId] = [...filteredList, newAllocation];
+    }
+
+    setDraftAssignments(newDraft);
+    setHasChanges(true);
+  };
+
+  // ===========================================================
+  // Handler: Rimuove un SINGOLO sotto-periodo dalla commessa
+  // (non tocca le settimane fuori dal blocco)
+  // ===========================================================
+  const handleLocalRemoveSubperiod = (
+    resName: string,
+    commessaId: string,
+    weekIds: string[]
+  ) => {
+    const newDraft = { ...draftAssignments };
+
+    for (const wkId of weekIds) {
+      const docId = `${resName}-${wkId}`;
+      const currentList = newDraft[docId] || [];
+      const filteredList = currentList.filter((a: any) => a.commessaId !== commessaId);
+
+      if (filteredList.length === 0) {
+        delete newDraft[docId];
+      } else {
+        newDraft[docId] = filteredList;
+      }
+    }
+
+    setDraftAssignments(newDraft);
+    setHasChanges(true);
+  };
+
   // Aggiorna Bozza Locale per Assegnazione Risorsa -> Commessa
   const handleLocalAssignResourceToCommessa = (resName: string, commessaId: string, percentage: number) => {
     if (!allocDataInizio || !allocDataFine || !resName || !commessaId) return;
@@ -332,6 +588,14 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     if (!commObj) return;
 
     const targetWeekIds = getWeeksSpannedByDates(allocDataInizio, allocDataFine);
+    
+    for (const wkId of targetWeekIds) {
+      if (isResourceOnFullWeekLeave(resName, wkId)) {
+        showToast(`Impossibile assegnare commessa: ${resName} è in ferie/assenza per l'intera settimana (${wkId}).`, 'warning');
+        return;
+      }
+    }
+
     const baseDays = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
     const newDraft = { ...draftAssignments };
 
@@ -464,6 +728,23 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
           }
         }
       });
+
+      // Salva Priorità Commessa se modificata
+      if (selectedCommessaId && selectedStartWeekId && selectedPriority !== initialPriority) {
+        const prioDocRef = doc(db, 'priorita_commesse', `${selectedCommessaId}_${selectedStartWeekId}`);
+        if (selectedPriority === 'Standard') {
+          batch.delete(prioDocRef);
+        } else {
+          batch.set(prioDocRef, {
+            commessaId: selectedCommessaId,
+            weekId: selectedStartWeekId,
+            priorita: selectedPriority,
+            updatedAt: new Date().toISOString(),
+            updatedBy: userEmail
+          });
+        }
+        writeCount++;
+      }
 
       if (writeCount > 0) {
         await batch.commit();
@@ -599,15 +880,39 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                   </div>
                 </div>
 
-                {/* Badge Settimana/Data Bloccata */}
-                <div className="bg-indigo-50/80 border border-indigo-100 px-3.5 py-2 rounded-xl flex items-center gap-2 shrink-0">
-                  <CalendarDays className="w-4 h-4 text-indigo-600" />
-                  <div className="flex flex-col">
-                    <span className="text-[9.5px] uppercase font-black text-indigo-800 tracking-wider">Settimana Pianificata</span>
-                    <span className="text-xs font-black text-indigo-950">
-                      {selectedWeekOptObj ? selectedWeekOptObj.label : `Settimana ${initialWeekId}`}
-                    </span>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  {/* Badge Settimana/Data Bloccata */}
+                  <div className="bg-indigo-50/80 border border-indigo-100 px-3.5 py-2 rounded-xl flex items-center gap-2 shrink-0">
+                    <CalendarDays className="w-4 h-4 text-indigo-600" />
+                    <div className="flex flex-col">
+                      <span className="text-[9.5px] uppercase font-black text-indigo-800 tracking-wider">Settimana Pianificata</span>
+                      <span className="text-xs font-black text-indigo-950">
+                        {selectedWeekOptObj ? selectedWeekOptObj.label : `Settimana ${initialWeekId}`}
+                      </span>
+                    </div>
                   </div>
+
+                  {/* Selettore Priorità Commessa per la Settimana */}
+                  {selectedCommessaId && selectedStartWeekId === selectedEndWeekId && (
+                    <div className="bg-amber-50/90 border border-amber-200 px-3 py-1.5 rounded-xl flex items-center gap-2 shrink-0 shadow-2xs">
+                      <div className="flex flex-col">
+                        <span className="text-[9.5px] uppercase font-black text-amber-900 tracking-wider">Priorità Commessa</span>
+                        <select
+                          value={selectedPriority}
+                          onChange={(e) => {
+                            const val = e.target.value as 'Alta' | 'Standard' | 'Bassa';
+                            setSelectedPriority(val);
+                            setHasChanges(true);
+                          }}
+                          className="mt-0.5 p-1 bg-white border border-amber-300 rounded-lg text-xs font-black text-amber-950 outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
+                        >
+                          <option value="Standard">Standard</option>
+                          <option value="Alta">🔴 Alta</option>
+                          <option value="Bassa">🔵 Bassa</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -624,9 +929,14 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                       className="w-full p-2 border border-indigo-150 bg-white rounded-lg text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-500"
                     >
                       <option value="">-- Seleziona Risorsa da assegnare --</option>
-                      {risorseNonAssegnateAllaCommessa.map(d => (
-                        <option key={d.id} value={d.nome}>{d.nome} {d.macroArea ? `(${d.macroArea})` : ''}</option>
-                      ))}
+                      {risorseNonAssegnateAllaCommessa.map(d => {
+                        const isFullLeave = isResourceOnFullWeekLeave(d.nome, selectedStartWeekId);
+                        return (
+                          <option key={d.id} value={d.nome} disabled={isFullLeave} className={isFullLeave ? 'text-gray-400 font-normal italic' : ''}>
+                            {d.nome} {d.macroArea ? `(${d.macroArea})` : ''} {isFullLeave ? '🏖️ (In ferie tutta la settimana)' : ''}
+                          </option>
+                        );
+                      })}
                     </select>
                   </div>
 
@@ -666,76 +976,232 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                     </span>
                   </h4>
 
-                  <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
-                    {risorseAssegnateAllaCommessa.length === 0 ? (
-                      <p className="text-xs text-gray-400 italic p-4 text-center border border-dashed border-gray-200 rounded-xl">
-                        Nessuna risorsa assegnata a questa commessa per la settimana selezionata.
-                      </p>
-                    ) : (
-                      risorseAssegnateAllaCommessa.map(r => {
-                        const dipObj = filteredDipendenti.find(d => d.nome === r.nome);
-                        const isOwnArea = isAdmin || !dipObj?.macroArea || myCoordinatedAreas.includes(dipObj.macroArea);
-                        const pcts = Object.values(r.percentuali);
-                        const minPct = Math.min(...pcts);
-                        const maxPct = Math.max(...pcts);
-                        const displayPct = minPct === maxPct ? `${minPct}%` : `${minPct}% - ${maxPct}%`;
+                  {/* Calcola le settimane del range selezionato in ordine, necessario per computeSubperiods */}
+                  {(() => {
+                    const allWeekIds = getWeeksSpannedByDates(allocDataInizio, allocDataFine);
+                    return (
+                      <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
+                        {risorseAssegnateAllaCommessa.length === 0 ? (
+                          <p className="text-xs text-gray-400 italic p-4 text-center border border-dashed border-gray-200 rounded-xl">
+                            Nessuna risorsa assegnata a questa commessa per il periodo selezionato.
+                          </p>
+                        ) : (
+                          risorseAssegnateAllaCommessa.map(r => {
+                            const dipObj = filteredDipendenti.find(d => d.nome === r.nome);
+                            const isOwnArea = isAdmin || !dipObj?.macroArea || myCoordinatedAreas.includes(dipObj.macroArea);
 
-                        return (
-                          <div key={r.nome} className="flex justify-between items-center p-3 bg-white rounded-xl border border-indigo-100 shadow-2xs hover:border-indigo-200 transition">
-                            <div className="flex items-center gap-2 truncate pr-2">
-                              <User className="w-4 h-4 text-indigo-600 shrink-0" />
-                              <span className="font-bold text-xs text-gray-850 truncate">{r.nome}</span>
-                              {dipObj?.macroArea && (
-                                <span className="text-[9.5px] font-extrabold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-100 shrink-0">
-                                  {dipObj.macroArea}
-                                </span>
-                              )}
-                              <span className="text-[10px] font-black text-indigo-650 ml-1">Impegno: {displayPct}</span>
-                            </div>
+                            // Calcola i sotto-periodi per questa risorsa
+                            const subperiods = computeSubperiods(r.percentuali, allWeekIds);
 
-                            <div className="flex items-center gap-2 shrink-0">
-                              {isOwnArea ? (
-                                <>
-                                  <select
-                                    value={pcts[0] || 100}
-                                    onChange={(e) => handleLocalAssignResourceToCommessa(r.nome, selectedCommessaId, parseInt(e.target.value))}
-                                    className="p-1.5 border border-gray-200 rounded-lg bg-white font-bold text-xs text-gray-700 outline-none focus:border-indigo-400"
-                                  >
-                                    {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
-                                      <option key={pct} value={pct}>{pct}%</option>
-                                    ))}
-                                  </select>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleLocalRemoveResourceFromCommessa(r.nome, selectedCommessaId)}
-                                    className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1.5 rounded-lg transition-colors cursor-pointer"
-                                    title="Rimuovi risorsa da questa commessa"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                </>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (onRequestAreaResource) {
-                                      onRequestAreaResource(dipObj?.macroArea || 'Generica', selectedCommessaId, selectedStartWeekId, r.nome);
-                                    } else {
-                                      showToast(`Richiesta inviata per la risorsa ${r.nome}`, 'warning');
-                                    }
-                                  }}
-                                  className="flex items-center gap-1 text-[11px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 px-2.5 py-1.5 rounded-xl transition cursor-pointer shadow-xs active:scale-95"
-                                  title="Questa risorsa appartiene a un'altra area. Clicca per inviare una richiesta di modifica al suo Coordinatore"
+                            // Riepilogo impegno per header card
+                            const pcts = Object.values(r.percentuali);
+                            const minPct = pcts.length > 0 ? Math.min(...pcts) : 0;
+                            const maxPct = pcts.length > 0 ? Math.max(...pcts) : 0;
+                            const displayPct = minPct === maxPct ? `${minPct}%` : `${minPct}% – ${maxPct}%`;
+
+                            const isExpanded = expandedResources.has(r.nome);
+                            const totalWeeks = Object.keys(r.percentuali).length;
+
+                            // Badge colore area
+                            const areaBadgeColors: Record<string, string> = {
+                              'Disegnatori': 'bg-teal-50 text-teal-700 border-teal-100',
+                              'Ingegneria': 'bg-indigo-50 text-indigo-700 border-indigo-100',
+                              'Sicurezza Cantieri': 'bg-emerald-50 text-emerald-700 border-emerald-100',
+                              'Consulenza Sicurezza': 'bg-amber-50 text-amber-700 border-amber-100',
+                              'Amministrazione': 'bg-blue-50 text-blue-700 border-blue-100',
+                            };
+                            const areaBadge = dipObj?.macroArea
+                              ? (areaBadgeColors[dipObj.macroArea] || 'bg-slate-50 text-slate-700 border-slate-100')
+                              : '';
+
+                            return (
+                              <div
+                                key={r.nome}
+                                className="rounded-xl border border-indigo-100 shadow-xs overflow-hidden"
+                              >
+                                {/* ---- HEADER RISORSA (cliccabile per espandere) ---- */}
+                                <div
+                                  className={`flex items-center justify-between p-3 cursor-pointer transition-colors ${
+                                    isExpanded ? 'bg-indigo-50/70' : 'bg-white hover:bg-indigo-50/40'
+                                  }`}
+                                  onClick={() => toggleResourceExpanded(r.nome)}
                                 >
-                                  <span>✉️ Richiedi Modifica</span>
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
+                                  <div className="flex items-center gap-2 truncate pr-2 min-w-0">
+                                    {/* Chevron expand/collapse */}
+                                    <span className={`text-indigo-500 transition-transform duration-200 shrink-0 text-[10px] ${isExpanded ? 'rotate-90' : ''}`}>
+                                      ▶
+                                    </span>
+                                    <User className="w-4 h-4 text-indigo-600 shrink-0" />
+                                    <span className="font-bold text-xs text-gray-800 truncate">{r.nome}</span>
+                                    {dipObj?.macroArea && (
+                                      <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded border shrink-0 ${areaBadge}`}>
+                                        {dipObj.macroArea}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    {/* Riepilogo impegno */}
+                                    <span className="text-[10px] font-black text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded-full">
+                                      {displayPct} · {totalWeeks} sett.
+                                    </span>
+                                    {/* Pulsante rimuovi TUTTO il periodo (tutta la durata selezionata) */}
+                                    {isOwnArea ? (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleLocalRemoveResourceFromCommessa(r.nome, selectedCommessaId);
+                                        }}
+                                        className="text-red-400 hover:text-red-600 hover:bg-red-50 p-1.5 rounded-lg transition-colors cursor-pointer"
+                                        title="Rimuovi questa risorsa da tutti i periodi selezionati"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          if (onRequestAreaResource) {
+                                            onRequestAreaResource(dipObj?.macroArea || 'Generica', selectedCommessaId, selectedStartWeekId, r.nome);
+                                          }
+                                        }}
+                                        className="flex items-center gap-1 text-[10px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 px-2 py-1 rounded-lg transition cursor-pointer"
+                                        title="Richiedi modifica al coordinatore di area"
+                                      >
+                                        ✉️ Richiedi
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* ---- SOTTO-PERIODI (visibili solo se espanso) ---- */}
+                                {isExpanded && (
+                                  <div className="border-t border-indigo-100/70 bg-white divide-y divide-slate-50">
+                                    {subperiods.length === 0 ? (
+                                      <p className="text-[11px] text-gray-400 italic p-3 text-center">
+                                        Nessun sotto-periodo rilevato.
+                                      </p>
+                                    ) : (
+                                      subperiods.map((sp, spIdx) => {
+                                        // Colore background della riga in base alla percentuale
+                                        const bgRow = sp.pct === 0
+                                          ? 'bg-slate-50'
+                                          : sp.pct <= 60
+                                            ? 'bg-sky-50/60'
+                                            : sp.pct <= 110
+                                              ? 'bg-emerald-50/60'
+                                              : 'bg-rose-50/60';
+
+                                        const pctBadge = sp.pct === 0
+                                          ? 'bg-slate-100 text-slate-600'
+                                          : sp.pct <= 60
+                                            ? 'bg-sky-100 text-sky-800'
+                                            : sp.pct <= 110
+                                              ? 'bg-emerald-100 text-emerald-800'
+                                              : 'bg-rose-100 text-rose-800';
+
+                                        return (
+                                          <div
+                                            key={spIdx}
+                                            className={`flex items-center justify-between px-4 py-2.5 gap-3 ${bgRow}`}
+                                          >
+                                            {/* Label periodo */}
+                                            <div className="flex items-center gap-2 min-w-0 flex-1">
+                                              <span className="text-slate-400 text-[10px] shrink-0">↳</span>
+                                              <span className="text-[11px] font-semibold text-gray-700 truncate">
+                                                {sp.label}
+                                              </span>
+                                              {/* Badge percentuale attuale */}
+                                              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full shrink-0 ${pctBadge}`}>
+                                                {sp.pct}%
+                                              </span>
+                                            </div>
+
+                                            {/* Controlli */}
+                                            <div className="flex items-center gap-2 shrink-0">
+                                              {isOwnArea ? (
+                                                <>
+                                                  {/* Select per modificare solo questo sotto-periodo */}
+                                                  <select
+                                                    value={sp.pct}
+                                                    onChange={(e) => {
+                                                      e.stopPropagation();
+                                                      handleLocalAssignSubperiod(
+                                                        r.nome,
+                                                        selectedCommessaId,
+                                                        sp.weekIds,
+                                                        parseInt(e.target.value)
+                                                      );
+                                                    }}
+                                                    className="p-1 border border-gray-200 rounded-lg bg-white font-bold text-xs text-gray-700 outline-none focus:border-indigo-400 cursor-pointer"
+                                                    title="Modifica % per questo sotto-periodo"
+                                                  >
+                                                    {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
+                                                      <option key={pct} value={pct}>{pct}%</option>
+                                                    ))}
+                                                  </select>
+                                                  {/* Elimina solo questo sotto-periodo */}
+                                                  <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      handleLocalRemoveSubperiod(r.nome, selectedCommessaId, sp.weekIds);
+                                                    }}
+                                                    className="text-red-400 hover:text-red-600 hover:bg-red-50 p-1 rounded-lg transition-colors cursor-pointer"
+                                                    title={`Rimuovi questo sotto-periodo (${sp.label}) dalla commessa`}
+                                                  >
+                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                  </button>
+                                                </>
+                                              ) : (
+                                                <span className="text-[10px] text-gray-400 italic">Sola lettura</span>
+                                              )}
+                                            </div>
+                                          </div>
+                                        );
+                                      })
+                                    )}
+
+                                    {/* Azione rapida: applica % uniforme all'intero periodo di questa risorsa */}
+                                    {isOwnArea && subperiods.length > 1 && (
+                                      <div className="flex items-center justify-between px-4 py-2 bg-indigo-50/40 gap-3">
+                                        <span className="text-[10px] font-semibold text-indigo-700">
+                                          📐 Applica % uniforme all'intero periodo:
+                                        </span>
+                                        <div className="flex items-center gap-2 shrink-0">
+                                          <select
+                                            defaultValue={subperiods[0]?.pct || 100}
+                                            id={`uniform-pct-${r.nome}`}
+                                            className="p-1 border border-indigo-200 rounded-lg bg-white font-bold text-xs text-gray-700 outline-none focus:border-indigo-400 cursor-pointer"
+                                          >
+                                            {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
+                                              <option key={pct} value={pct}>{pct}%</option>
+                                            ))}
+                                          </select>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              const sel = document.getElementById(`uniform-pct-${r.nome}`) as HTMLSelectElement;
+                                              if (!sel) return;
+                                              handleLocalAssignResourceToCommessa(r.nome, selectedCommessaId, parseInt(sel.value));
+                                            }}
+                                            className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] px-2.5 py-1.5 rounded-lg transition cursor-pointer active:scale-95 shadow-xs"
+                                          >
+                                            ✓ Applica
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* RICHIEDI PERSONALE DA ALTRA AREA (INTEGRAZIONE INTERSETTORIALE DA POP-UP) */}

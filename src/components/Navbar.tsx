@@ -146,14 +146,14 @@ export default function Navbar() {
           )}
         </div>
         <div className="flex items-center gap-4">
-          <button 
-            onClick={() => navigate('/')}
-            className={`text-sm font-medium flex items-center gap-1 transition-colors animate-in fade-in duration-300 ${
-              location.pathname === '/' ? 'text-blue-600 font-bold' : 'text-gray-600 hover:text-blue-600'
-            }`}
-          >
-            <Home className="w-4 h-4" /> <span className="hidden sm:inline">Dashboard</span>
-          </button>
+          {location.pathname !== '/' && (
+            <button 
+              onClick={() => navigate('/')}
+              className="text-sm font-medium flex items-center gap-1 transition-colors animate-in fade-in duration-300 text-gray-600 hover:text-blue-600 cursor-pointer"
+            >
+              <Home className="w-4 h-4" /> <span className="hidden sm:inline">Dashboard</span>
+            </button>
+          )}
 
           <button 
             onClick={() => navigate('/organigramma')}

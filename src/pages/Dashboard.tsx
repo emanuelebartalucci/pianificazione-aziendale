@@ -9,6 +9,7 @@ import ClimaModal from '../components/ClimaModal';
 import QuestionnaireModal from '../components/QuestionnaireModal';
 import { isSoci, isCollaboratore } from './Impostazioni';
 import { isItalianHoliday } from './Presenze';
+import { getWeekNumber } from '../utils/date';
 
 interface Announcement {
   id: string;
@@ -23,7 +24,7 @@ interface Announcement {
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { isAdmin, isHR, myAssociatedName, user, dipendenti, userEmail } = useAuth();
+  const { isAdmin, isHR, myAssociatedName, user, dipendenti, userEmail, assegnazioni, commesse, prioritaCommesse, coordinatori = [], richiesteDisegnatori = [] } = useAuth();
 
   // States per le comunicazioni
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
@@ -623,6 +624,69 @@ export default function Dashboard() {
     return `${dayName} ${dayNum} ${monthName} ${year}`;
   }, []);
 
+  const currentWeekId = useMemo(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-W${getWeekNumber(now)}`;
+  }, []);
+
+  const highPriorityCommesseThisWeek = useMemo(() => {
+    if (!myAssociatedName || !assegnazioni || !commesse || !prioritaCommesse) return [];
+
+    const key = `${myAssociatedName}-${currentWeekId}`;
+    const userAssignments = assegnazioni[key] || [];
+    if (userAssignments.length === 0) return [];
+
+    const highPrioList: { id: string; nome: string }[] = [];
+    userAssignments.forEach((a: any) => {
+      const pKey = `${a.commessaId}_${currentWeekId}`;
+      if (prioritaCommesse[pKey] === 'Alta') {
+        const commObj = commesse.find(c => c.id === a.commessaId);
+        const name = commObj ? commObj.nome : (a.commessaName || 'Commessa');
+        if (!highPrioList.some(item => item.id === a.commessaId)) {
+          highPrioList.push({ id: a.commessaId, nome: name });
+        }
+      }
+    });
+    return highPrioList;
+  }, [myAssociatedName, assegnazioni, commesse, prioritaCommesse, currentWeekId]);
+
+  const myCoordinatedAreas = useMemo(() => {
+    if (!userEmail) return [];
+    const myCoords = (coordinatori || []).filter(c => c.email?.toLowerCase() === userEmail.toLowerCase());
+    return myCoords.map(c => c.area);
+  }, [userEmail, coordinatori]);
+
+  const pendingCoordinatorRequestsCount = useMemo(() => {
+    if (!userEmail || myCoordinatedAreas.length === 0) return 0;
+    return (richiesteDisegnatori || []).filter((r: any) => {
+      if (r.stato !== 'in_attesa') return false;
+      const rArea = r.area || 'Disegnatori';
+      return myCoordinatedAreas.includes(rArea);
+    }).length;
+  }, [userEmail, myCoordinatedAreas, richiesteDisegnatori]);
+
+  const [pendingAvailabilityCount, setPendingAvailabilityCount] = useState(0);
+
+  useEffect(() => {
+    if (!userEmail || (myCoordinatedAreas.length === 0 && !isAdmin && !isSoci(myAssociatedName))) {
+      setPendingAvailabilityCount(0);
+      return;
+    }
+    const unsub = onSnapshot(collection(db, 'segnalazioni_disponibilita'), (snap) => {
+      let count = 0;
+      snap.forEach(docSnap => {
+        const data = docSnap.data();
+        if (data.stato === 'in_attesa') {
+          if (isAdmin || isSoci(myAssociatedName) || myCoordinatedAreas.includes(data.macroArea)) {
+            count++;
+          }
+        }
+      });
+      setPendingAvailabilityCount(count);
+    });
+    return () => unsub();
+  }, [userEmail, isAdmin, myAssociatedName, myCoordinatedAreas]);
+
   const showAdminSettings = isAdmin || isHR;
   const canPublish = isAdmin || isHR;
 
@@ -652,38 +716,66 @@ export default function Dashboard() {
             {/* Pianificazione Commesse */}
             <div 
               onClick={() => navigate('/commesse')} 
-              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 xl:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between aspect-square w-full"
+              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
             >
-              <div className="w-12 h-12 sm:w-14 sm:h-14 xl:w-16 xl:h-16 shrink-0 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-colors">
-                <Briefcase className="w-6 h-6 sm:w-7 sm:h-7 xl:w-8 xl:h-8" />
+              <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-colors relative mb-3">
+                <Briefcase className="w-6 h-6 sm:w-7 sm:h-7" />
+                {highPriorityCommesseThisWeek.length > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 flex h-6 w-6">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-6 w-6 bg-red-500 text-[11px] font-black text-white items-center justify-center border-2 border-white shadow-md">
+                      {highPriorityCommesseThisWeek.length}
+                    </span>
+                  </span>
+                )}
               </div>
-              <div>
-                <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-800 mt-2">Pianificazione Commesse</h2>
-                <p className="hidden xl:block text-xs font-semibold text-gray-500 mt-1.5 leading-tight">Gestisci e visualizza i tuoi impegni settimanali e i progetti.</p>
+              <div className="h-11 xl:h-12 shrink-0 flex items-start overflow-hidden">
+                <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-900 leading-snug">Pianificazione Commesse</h2>
+              </div>
+              <div className="hidden xl:block h-12 shrink-0 overflow-hidden mt-1">
+                <p className="text-xs font-semibold text-gray-500 leading-snug">Gestisci e visualizza i tuoi impegni settimanali e i progetti.</p>
               </div>
             </div>
             
             {/* Pianificazione Personale */}
             <div 
               onClick={() => navigate('/pianificazione-personale')} 
-              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 xl:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between aspect-square w-full"
+              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
             >
-              <div className="w-12 h-12 sm:w-14 sm:h-14 xl:w-16 xl:h-16 shrink-0 bg-orange-100 text-orange-600 rounded-2xl flex items-center justify-center group-hover:bg-orange-600 group-hover:text-white transition-colors">
-                <Users className="w-6 h-6 sm:w-7 sm:h-7 xl:w-8 xl:h-8" />
+              <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-orange-100 text-orange-600 rounded-2xl flex items-center justify-center group-hover:bg-orange-600 group-hover:text-white transition-colors relative mb-3">
+                <Users className="w-6 h-6 sm:w-7 sm:h-7" />
+                {pendingCoordinatorRequestsCount > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 flex h-6 w-6" title={`${pendingCoordinatorRequestsCount} richieste in attesa`}>
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-6 w-6 bg-red-500 text-[11px] font-black text-white items-center justify-center border-2 border-white shadow-md">
+                      {pendingCoordinatorRequestsCount}
+                    </span>
+                  </span>
+                )}
+                {pendingAvailabilityCount > 0 && (
+                  <span className="absolute -top-1.5 -left-1.5 flex h-6 w-6" title={`${pendingAvailabilityCount} risorse scariche disponibili`}>
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-6 w-6 bg-emerald-600 text-[11px] font-black text-white items-center justify-center border-2 border-white shadow-md">
+                      {pendingAvailabilityCount}
+                    </span>
+                  </span>
+                )}
               </div>
-              <div>
-                <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-800 mt-2">Pianificazione Personale</h2>
-                <p className="hidden xl:block text-xs font-semibold text-gray-500 mt-1.5 leading-tight">Pianifica il personale sulle commesse e controlla i carichi di lavoro.</p>
+              <div className="h-11 xl:h-12 shrink-0 flex items-start overflow-hidden">
+                <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-900 leading-snug">Pianificazione Personale</h2>
+              </div>
+              <div className="hidden xl:block h-12 shrink-0 overflow-hidden mt-1">
+                <p className="text-xs font-semibold text-gray-500 leading-snug">Pianifica il personale sulle commesse e controlla i carichi di lavoro.</p>
               </div>
             </div>
             
             {/* Piano Ferie */}
             <div 
               onClick={() => navigate('/ferie')} 
-              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 xl:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between aspect-square w-full"
+              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
             >
-              <div className="w-12 h-12 sm:w-14 sm:h-14 xl:w-16 xl:h-16 shrink-0 bg-green-100 text-green-600 rounded-2xl flex items-center justify-center group-hover:bg-green-600 group-hover:text-white transition-colors relative">
-                <Calendar className="w-6 h-6 sm:w-7 sm:h-7 xl:w-8 xl:h-8" />
+              <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-green-100 text-green-600 rounded-2xl flex items-center justify-center group-hover:bg-green-600 group-hover:text-white transition-colors relative mb-3">
+                <Calendar className="w-6 h-6 sm:w-7 sm:h-7" />
                 {isHR && pendingFerieCount > 0 && (
                   <span className="absolute -top-1 -right-1 flex h-5 w-5">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
@@ -693,19 +785,21 @@ export default function Dashboard() {
                   </span>
                 )}
               </div>
-              <div>
-                <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-800 mt-2">Piano Ferie</h2>
-                <p className="hidden xl:block text-xs font-semibold text-gray-500 mt-1.5 leading-tight">Richiedi giorni di ferie o assenze e controlla il calendario.</p>
+              <div className="h-11 xl:h-12 shrink-0 flex items-start overflow-hidden">
+                <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-900 leading-snug">Piano Ferie</h2>
+              </div>
+              <div className="hidden xl:block h-12 shrink-0 overflow-hidden mt-1">
+                <p className="text-xs font-semibold text-gray-500 leading-snug">Richiedi giorni di ferie o assenze e controlla il calendario.</p>
               </div>
             </div>
 
             {/* Registro Presenze */}
             <div 
               onClick={() => navigate('/presenze')} 
-              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 xl:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between aspect-square w-full"
+              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
             >
-              <div className="w-12 h-12 sm:w-14 sm:h-14 xl:w-16 xl:h-16 shrink-0 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center group-hover:bg-indigo-600 group-hover:text-white transition-colors relative">
-                <FileText className="w-6 h-6 sm:w-7 sm:h-7 xl:w-8 xl:h-8" />
+              <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center group-hover:bg-indigo-600 group-hover:text-white transition-colors relative mb-3">
+                <FileText className="w-6 h-6 sm:w-7 sm:h-7" />
                 {isHR && pendingPresenzeCount > 0 && (
                   <span className="absolute -top-1 -right-1 flex h-5 w-5">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
@@ -715,47 +809,53 @@ export default function Dashboard() {
                   </span>
                 )}
               </div>
-              <div>
-                <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-800 mt-2">Registro Presenze</h2>
-                <p className="hidden xl:block text-xs font-semibold text-gray-500 mt-1.5 leading-tight">Compila il rapportino mensile delle ore e dei rimborsi trasferte.</p>
+              <div className="h-11 xl:h-12 shrink-0 flex items-start overflow-hidden">
+                <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-900 leading-snug">Registro Presenze</h2>
+              </div>
+              <div className="hidden xl:block h-12 shrink-0 overflow-hidden mt-1">
+                <p className="text-xs font-semibold text-gray-500 leading-snug">Compila il rapportino mensile delle ore e dei rimborsi trasferte.</p>
               </div>
             </div>
 
             {/* Prenotazione Risorse */}
             <div 
               onClick={() => navigate('/prenotazioni')} 
-              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 xl:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between aspect-square w-full"
+              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
             >
-              <div className="w-12 h-12 sm:w-14 sm:h-14 xl:w-16 xl:h-16 shrink-0 bg-teal-100 text-teal-600 rounded-2xl flex items-center justify-center group-hover:bg-teal-600 group-hover:text-white transition-colors">
-                <CalendarDays className="w-6 h-6 sm:w-7 sm:h-7 xl:w-8 xl:h-8" />
+              <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-teal-100 text-teal-600 rounded-2xl flex items-center justify-center group-hover:bg-teal-600 group-hover:text-white transition-colors mb-3">
+                <CalendarDays className="w-6 h-6 sm:w-7 sm:h-7" />
               </div>
-              <div>
-                <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-800 mt-2">Prenotazioni</h2>
-                <p className="hidden xl:block text-xs font-semibold text-gray-500 mt-1.5 leading-tight">Prenota sale riunioni, auto aziendali o gestisci i PC CAD condivisi.</p>
+              <div className="h-11 xl:h-12 shrink-0 flex items-start overflow-hidden">
+                <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-900 leading-snug">Prenotazioni</h2>
+              </div>
+              <div className="hidden xl:block h-12 shrink-0 overflow-hidden mt-1">
+                <p className="text-xs font-semibold text-gray-500 leading-snug">Prenota sale riunioni, auto aziendali o gestisci i PC CAD condivisi.</p>
               </div>
             </div>
 
             {/* Organigramma Aziendale */}
             <div 
               onClick={() => navigate('/organigramma')} 
-              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 xl:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between aspect-square w-full"
+              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
             >
-              <div className="w-12 h-12 sm:w-14 sm:h-14 xl:w-16 xl:h-16 shrink-0 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center group-hover:bg-amber-600 group-hover:text-white transition-colors">
-                <Network className="w-6 h-6 sm:w-7 sm:h-7 xl:w-8 xl:h-8" />
+              <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center group-hover:bg-amber-600 group-hover:text-white transition-colors mb-3">
+                <Network className="w-6 h-6 sm:w-7 sm:h-7" />
               </div>
-              <div>
-                <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-800 mt-2">Organigramma</h2>
-                <p className="hidden xl:block text-xs font-semibold text-gray-500 mt-1.5 leading-tight">Consulta la suddivisione delle macroaree ed i coordinatori di riferimento.</p>
+              <div className="h-11 xl:h-12 shrink-0 flex items-start overflow-hidden">
+                <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-900 leading-snug">Organigramma</h2>
+              </div>
+              <div className="hidden xl:block h-12 shrink-0 overflow-hidden mt-1">
+                <p className="text-xs font-semibold text-gray-500 leading-snug">Consulta la suddivisione delle macroaree ed i coordinatori di riferimento.</p>
               </div>
             </div>
 
             {/* Cassetta delle Idee */}
             <div 
               onClick={() => navigate('/suggerimenti')} 
-              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 xl:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between aspect-square w-full"
+              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
             >
-              <div className="w-12 h-12 sm:w-14 sm:h-14 xl:w-16 xl:h-16 shrink-0 bg-purple-100 text-purple-600 rounded-2xl flex items-center justify-center group-hover:bg-purple-600 group-hover:text-white transition-colors relative">
-                <MessageSquare className="w-6 h-6 sm:w-7 sm:h-7 xl:w-8 xl:h-8" />
+              <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-purple-100 text-purple-600 rounded-2xl flex items-center justify-center group-hover:bg-purple-600 group-hover:text-white transition-colors relative mb-3">
+                <MessageSquare className="w-6 h-6 sm:w-7 sm:h-7" />
                 {isHR ? (
                   pendingSuggerimentiCount > 0 && (
                     <span className="absolute -top-1 -right-1 flex h-5 w-5">
@@ -776,9 +876,11 @@ export default function Dashboard() {
                   )
                 )}
               </div>
-              <div>
-                <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-800 mt-2">Cassetta delle Idee</h2>
-                <p className="hidden xl:block text-xs font-semibold text-gray-500 mt-1.5 leading-tight">Invia suggerimenti e partecipa in forma anonima alla valutazione clima.</p>
+              <div className="h-11 xl:h-12 shrink-0 flex items-start overflow-hidden">
+                <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-900 leading-snug">Cassetta delle Idee</h2>
+              </div>
+              <div className="hidden xl:block h-12 shrink-0 overflow-hidden mt-1">
+                <p className="text-xs font-semibold text-gray-500 leading-snug">Invia suggerimenti e partecipa alla valutazione del clima.</p>
               </div>
             </div>
 
@@ -786,18 +888,19 @@ export default function Dashboard() {
             {showAdminSettings && (
               <div 
                 onClick={() => navigate('/impostazioni')} 
-                className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 xl:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col justify-between aspect-square w-full"
+                className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
               >
-                <div className="w-12 h-12 sm:w-14 sm:h-14 xl:w-16 xl:h-16 shrink-0 bg-gray-100 text-gray-600 rounded-2xl flex items-center justify-center group-hover:bg-gray-800 group-hover:text-white transition-colors">
-                  <Settings className="w-6 h-6 sm:w-7 sm:h-7 xl:w-8 xl:h-8" />
+                <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-gray-100 text-gray-600 rounded-2xl flex items-center justify-center group-hover:bg-gray-800 group-hover:text-white transition-colors mb-3">
+                  <Settings className="w-6 h-6 sm:w-7 sm:h-7" />
                 </div>
-                <div>
-                  <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-800 mt-2">Impostazioni</h2>
-                  <p className="hidden xl:block text-xs font-semibold text-gray-500 mt-1.5 leading-tight">Gestisci anagrafica risorse, clienti, ruoli e sistema.</p>
+                <div className="h-11 xl:h-12 shrink-0 flex items-start overflow-hidden">
+                  <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-900 leading-snug">Impostazioni</h2>
+                </div>
+                <div className="hidden xl:block h-12 shrink-0 overflow-hidden mt-1">
+                  <p className="text-xs font-semibold text-gray-500 leading-snug">Gestisci anagrafica risorse, clienti, ruoli e sistema.</p>
                 </div>
               </div>
             )}
-            
           </div>
         </div>
 
