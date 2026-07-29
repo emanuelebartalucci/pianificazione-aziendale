@@ -42,7 +42,7 @@ export const OrganigrammaView: React.FC = () => {
   // Dipendenti attivi (non cessati)
   const activeDipendenti = useMemo(() => {
     const todayStr = new Date().toISOString().split('T')[0];
-    return dipendenti.filter(d => !d.dataCessazione || d.dataCessazione >= todayStr);
+    return dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= todayStr) && (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it');
   }, [dipendenti]);
 
   // Membri della Direzione (Soci / Direzione Generali)

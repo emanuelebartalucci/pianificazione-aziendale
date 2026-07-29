@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, addDoc, doc, setDoc, deleteDoc, onSnapshot, updateDoc } from 'firebase/firestore';
@@ -171,9 +172,9 @@ export const EMAIL_TEST_TEMPLATES = [
 ];
 
 export default function Impostazioni() {
-  const { isAdmin, isHR, dipendenti, coordinatori, refreshData, userEmail, myAssociatedName } = useAuth();
-  const isAuthorized = isAdmin || isHR;
-  const isDev = userEmail?.toLowerCase() === 'ebartalucci@ingegno06.it';
+  const navigate = useNavigate();
+  const { isDev, isRealDev, dipendenti, coordinatori, refreshData, userEmail, myAssociatedName } = useAuth();
+  const canAccessSettings = isRealDev || isDev;
   
   // Stato per il simulatore di e-mail sviluppatore
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('planning_update');
@@ -217,10 +218,24 @@ export default function Impostazioni() {
 
 
   // States per i form
-  const [activeTab, setActiveTab] = useState<'clienti' | 'risorse' | 'ruoli' | 'sistema'>(isAdmin ? 'clienti' : 'risorse');
+  const [activeTab, setActiveTab] = useState<'clienti' | 'risorse' | 'ruoli' | 'sistema'>('risorse');
   const [newAdminEmail, setNewAdminEmail] = useState('');
   const [newHrEmail, setNewHrEmail] = useState('');
   const [hrList, setHrList] = useState<{id: string, email: string}[]>([]);
+  const [newDevEmail, setNewDevEmail] = useState('');
+  const [devsList, setDevsList] = useState<{id: string, email: string}[]>([]);
+
+  // Nuovi stati per Clienti e Project Manager
+  const [newClientNome, setNewClientNome] = useState('');
+  const [searchClientQuery, setSearchClientQuery] = useState('');
+  const [clientiList, setClientiList] = useState<{id: string, codice: string, nome: string}[]>([]);
+  const [editingClient, setEditingClient] = useState<{ id: string; codice: string; nome: string } | null>(null);
+  const [editClientNome, setEditClientNome] = useState('');
+
+  // Liste dinamiche da visualizzare
+  const [adminsList, setAdminsList] = useState<{id: string, email: string}[]>([]);
+  const [newPmEmail, setNewPmEmail] = useState('');
+  const [pmsList, setPmsList] = useState<{id: string, email: string}[]>([]);
 
   const [editingEmployeeAreaId, setEditingEmployeeAreaId] = useState<string | null>(null);
   
@@ -256,34 +271,13 @@ export default function Impostazioni() {
   const [editingGreetingText, setEditingGreetingText] = useState('');
 
   useEffect(() => {
-    if (!isAdmin) return;
-    const unsub = onSnapshot(collection(db, 'dashboard_greetings'), (snap) => {
-      const list: { id: string; testo: string }[] = [];
-      snap.forEach(docSnap => {
-        list.push({ id: docSnap.id, testo: docSnap.data().testo });
-      });
-      setGreetingsList(list);
-    });
-    return () => unsub();
-  }, [isAdmin]);
-
-  // Nuovi stati per Clienti e Project Manager
-  const [newClientNome, setNewClientNome] = useState('');
-  const [searchClientQuery, setSearchClientQuery] = useState('');
-  const [clientiList, setClientiList] = useState<{id: string, codice: string, nome: string}[]>([]);
-  const [editingClient, setEditingClient] = useState<{ id: string; codice: string; nome: string } | null>(null);
-  const [editClientNome, setEditClientNome] = useState('');
-
-  // Liste dinamiche da visualizzare (caricate da context o listener locali per eliminazione)
-  const [adminsList, setAdminsList] = useState<{id: string, email: string}[]>([]);
-  const [newPmEmail, setNewPmEmail] = useState('');
-  const [pmsList, setPmsList] = useState<{id: string, email: string}[]>([]);
-
-  useEffect(() => {
-    if (!isAdmin) return;
+    if (!isDev) return;
     const unsubA = onSnapshot(collection(db, 'admins'), (snap) => setAdminsList(snap.docs.map(d => ({id: d.id, email: d.data().email}))));
     const unsubH = onSnapshot(collection(db, 'hr'), (snap) => {
       setHrList(snap.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
+    });
+    const unsubD = onSnapshot(collection(db, 'sviluppatori'), (snap) => {
+      setDevsList(snap.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
     });
     const unsubC = onSnapshot(collection(db, 'clienti'), (snap) => {
       setClientiList(snap.docs.map(d => ({
@@ -295,12 +289,20 @@ export default function Impostazioni() {
     const unsubPM = onSnapshot(collection(db, 'project_managers'), (snap) => {
       setPmsList(snap.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
     });
-    return () => { unsubA(); unsubH(); unsubC(); unsubPM(); };
-  }, [isAdmin]);
+    return () => { unsubA(); unsubH(); unsubD(); unsubC(); unsubPM(); };
+  }, [isDev]);
 
-  if (!isAuthorized) {
-    return <div className="p-8 text-center text-gray-500">Accesso negato. Solo gli amministratori o gli HR possono vedere questa pagina.</div>;
-  }
+  useEffect(() => {
+    if (!isDev) return;
+    const unsub = onSnapshot(collection(db, 'dashboard_greetings'), (snap) => {
+      const list: { id: string; testo: string }[] = [];
+      snap.forEach(docSnap => {
+        list.push({ id: docSnap.id, testo: docSnap.data().testo });
+      });
+      setGreetingsList(list);
+    });
+    return () => unsub();
+  }, [isDev]);
 
   // Handlers
   const handleAddAdmin = async (e: React.FormEvent) => {
@@ -333,6 +335,31 @@ export default function Impostazioni() {
   const handleRemoveHR = async (id: string) => {
     await deleteDoc(doc(db, 'hr', id));
     await refreshData();
+  };
+
+  const handleAddDev = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newDevEmail) {
+      if (devsList.some(d => d.email.toLowerCase().trim() === newDevEmail.toLowerCase().trim())) {
+        showToast("Questo utente è già uno Sviluppatore.", "warning");
+        return;
+      }
+      await addDoc(collection(db, 'sviluppatori'), { email: newDevEmail.toLowerCase().trim() });
+      await refreshData();
+      setNewDevEmail('');
+      showToast("Sviluppatore nominato con successo!", "success");
+    }
+  };
+
+  const handleRemoveDev = async (id: string, email: string) => {
+    const clean = email.toLowerCase().trim();
+    if (clean === 'ebartalucci@ingegno06.it' || clean.includes('bartalucci')) {
+      showToast("Lo Sviluppatore Principale non può essere rimosso.", "warning");
+      return;
+    }
+    await deleteDoc(doc(db, 'sviluppatori', id));
+    await refreshData();
+    showToast("Sviluppatore rimosso con successo!", "success");
   };
 
 
@@ -889,16 +916,34 @@ export default function Impostazioni() {
 
 
 
-  const getDipNomeFromEmail = (email: string) => {
-    const dip = dipendenti.find(d => d.email?.toLowerCase() === email.toLowerCase());
+  const getDipNomeFromEmail = (email?: string | null) => {
+    if (!email) return 'N/D';
+    const clean = email.toLowerCase().trim();
+    const dip = dipendenti.find(d => (d.email || '').toLowerCase().trim() === clean);
     return dip ? dip.nome : email;
   };
 
   const sortedDipendentiWithEmail = useMemo(() => {
     return [...(dipendenti || [])]
-      .filter(d => d && d.email)
+      .filter(d => d && d.email && (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it')
       .sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'it'));
   }, [dipendenti]);
+
+  const sortedDevsList = useMemo(() => {
+    const mainDev = {
+      id: 'ebartalucci-main',
+      email: 'ebartalucci@ingegno06.it',
+      name: getDipNomeFromEmail('ebartalucci@ingegno06.it')
+    };
+    const dynamicDevsFormatted = devsList
+      .filter(d => d.email.toLowerCase().trim() !== 'ebartalucci@ingegno06.it')
+      .map(d => ({
+        id: d.id,
+        email: d.email,
+        name: getDipNomeFromEmail(d.email)
+      }));
+    return [mainDev, ...dynamicDevsFormatted].sort((a, b) => a.name.localeCompare(b.name, 'it'));
+  }, [devsList, dipendenti]);
 
   const sortedAdminsList = useMemo(() => {
     const superAdmins = ['aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it'].map(email => ({
@@ -908,8 +953,10 @@ export default function Impostazioni() {
       isSuperAdmin: true
     }));
 
+    const devEmails = sortedDevsList.map(d => d.email.toLowerCase().trim());
+
     const dynamicAdmins = adminsList
-      .filter(a => a.email.toLowerCase() !== 'aprofeti@ingegno06.it' && a.email.toLowerCase() !== 'mcorbellini@ingegno06.it')
+      .filter(a => a.email.toLowerCase().trim() !== 'aprofeti@ingegno06.it' && a.email.toLowerCase().trim() !== 'mcorbellini@ingegno06.it' && !devEmails.includes(a.email.toLowerCase().trim()))
       .map(a => ({
         id: a.id,
         email: a.email,
@@ -918,7 +965,7 @@ export default function Impostazioni() {
       }));
 
     return [...superAdmins, ...dynamicAdmins].sort((a, b) => a.name.localeCompare(b.name, 'it'));
-  }, [adminsList, dipendenti]);
+  }, [adminsList, dipendenti, sortedDevsList]);
 
   const sortedHRList = useMemo(() => {
     return hrList
@@ -932,12 +979,12 @@ export default function Impostazioni() {
 
   const sortedPMsList = useMemo(() => {
     return pmsList
-      .map((p: any) => ({
+      .map(p => ({
         id: p.id,
         email: p.email,
         name: getDipNomeFromEmail(p.email)
       }))
-      .sort((a: any, b: any) => a.name.localeCompare(b.name, 'it'));
+      .sort((a, b) => a.name.localeCompare(b.name, 'it'));
   }, [pmsList, dipendenti]);
 
   const maxCoordinatorsCount = useMemo(() => {
@@ -946,6 +993,27 @@ export default function Impostazioni() {
     );
     return Math.max(1, ...counts);
   }, [coordinatori]);
+
+  if (!isDev) {
+    return (
+      <div className="p-8 text-center bg-white rounded-3xl border border-gray-200 shadow-sm max-w-lg mx-auto my-12 animate-in fade-in zoom-in-95">
+        <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4 font-black text-2xl">
+          🔒
+        </div>
+        <h3 className="text-xl font-extrabold text-gray-900 mb-2">Accesso Riservato agli Sviluppatori</h3>
+        <p className="text-xs text-gray-500 font-semibold leading-relaxed mb-6">
+          La gestione delle Impostazioni di sistema è riservata esclusivamente agli Sviluppatori della piattaforma.
+        </p>
+        <button 
+          type="button"
+          onClick={() => navigate('/')} 
+          className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-5 py-2.5 rounded-xl shadow-md transition cursor-pointer"
+        >
+          Torna alla Dashboard
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl p-6 sm:p-10 border border-white/50 no-print">
@@ -956,7 +1024,7 @@ export default function Impostazioni() {
       
       {/* Menu a schede (Tabs) */}
       <div className="flex flex-wrap gap-2 mb-8 border-b border-gray-150 pb-4">
-        {isAdmin && (
+        {isDev && (
           <button
             onClick={() => setActiveTab('clienti')}
             className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm transition-all active:scale-95 cursor-pointer ${
@@ -982,7 +1050,7 @@ export default function Impostazioni() {
           <span>Anagrafica Risorse</span>
         </button>
 
-        {isAdmin && (
+        {isDev && (
           <>
             <button
               onClick={() => setActiveTab('ruoli')}
@@ -1029,7 +1097,7 @@ export default function Impostazioni() {
       <div>
         
         {/* TAB 2: CLIENTI */}
-        {activeTab === 'clienti' && isAdmin && (
+        {activeTab === 'clienti' && isDev && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             
             {/* Form Aggiunta */}
@@ -1184,7 +1252,7 @@ export default function Impostazioni() {
                 </div>
               </form>
               <div className="max-h-[350px] overflow-y-auto bg-white/50 rounded-xl divide-y border border-indigo-100">
-                {dipendenti.filter(d => !isCollaboratore(d.nome, d.tipo) && !isSoci(d.nome)).map(d => (
+                {dipendenti.filter(d => !isCollaboratore(d.nome, d.tipo) && !isSoci(d.nome) && (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it').map(d => (
                   <div key={d.id} className="p-4 flex justify-between items-center text-sm gap-2">
                     <div className="flex-1 min-w-0">
                       <div className="font-bold text-indigo-900 truncate">{d.nome}</div>
@@ -1237,7 +1305,7 @@ export default function Impostazioni() {
                 </div>
               </form>
               <div className="max-h-[350px] overflow-y-auto bg-white/50 rounded-xl divide-y border border-amber-100">
-                {dipendenti.filter(d => isCollaboratore(d.nome, d.tipo) && !isSoci(d.nome)).map(d => (
+                {dipendenti.filter(d => isCollaboratore(d.nome, d.tipo) && !isSoci(d.nome) && (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it').map(d => (
                   <div key={d.id} className="p-4 flex justify-between items-center text-sm gap-2">
                     <div className="flex-1 min-w-0">
                       <div className="font-bold text-amber-900 truncate">{d.nome}</div>
@@ -1279,9 +1347,43 @@ export default function Impostazioni() {
         )}
 
         {/* TAB 4: RUOLI & PERMESSI */}
-        {activeTab === 'ruoli' && isAdmin && (
+        {activeTab === 'ruoli' && isDev && (
           <div className="space-y-8">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 items-stretch">
+              
+              {/* Sviluppatori (Dev) */}
+              <section className="bg-gradient-to-br from-cyan-50 to-slate-100 p-6 rounded-3xl border border-cyan-200 shadow-sm h-full flex flex-col justify-between">
+                <div>
+                  <h3 className="text-xl font-bold text-cyan-950 mb-1 flex items-center gap-2">
+                    <Code className="w-6 h-6 text-cyan-600" /> Sviluppatori (Dev)
+                  </h3>
+                  <p className="text-xs text-cyan-800/80 mb-4">Hanno accesso esclusivo alla gestione e manutenzione tecnica della piattaforma.</p>
+                  <form onSubmit={handleAddDev} className="flex gap-2 mb-4">
+                    <select required value={newDevEmail} onChange={e => setNewDevEmail(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-cyan-400 transition shadow-inner font-medium text-cyan-950 text-xs">
+                      <option value="">Seleziona dipendente</option>
+                      {sortedDipendentiWithEmail.map((d: any) => <option key={d.id} value={d.email}>{d.nome}</option>)}
+                    </select>
+                    <button type="submit" className="bg-cyan-700 text-white px-4 py-3 rounded-xl hover:bg-cyan-800 transition font-bold shadow-md active:scale-95 text-xs cursor-pointer">Nomina</button>
+                  </form>
+                </div>
+                <div className="h-48 overflow-y-auto bg-white/50 rounded-xl divide-y border border-cyan-100">
+                  {sortedDevsList.map((d: any) => (
+                    <div key={d.id} className="p-3 flex justify-between items-center text-sm">
+                      <div>
+                        <div className="font-bold text-cyan-950">{d.name}</div>
+                        <div className="text-xs text-cyan-700/70">{d.email}</div>
+                      </div>
+                      {d.email.toLowerCase().trim() === 'ebartalucci@ingegno06.it' ? (
+                        <span className="p-1" title="Sviluppatore Principale non eliminabile">
+                          <Trash2 className="w-4 h-4 text-gray-300 cursor-not-allowed"/>
+                        </span>
+                      ) : (
+                        <button onClick={() => handleRemoveDev(d.id, d.email)} className="text-cyan-600 hover:text-red-600 p-1 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
               
               {/* Amministratori */}
               <section className="bg-gradient-to-br from-red-50 to-orange-50 p-6 rounded-3xl border border-red-100 shadow-sm h-full flex flex-col justify-between">
@@ -1387,11 +1489,11 @@ export default function Impostazioni() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 items-stretch">
                 {(['Disegnatori', 'Ingegneria', 'Sicurezza Cantieri', 'Consulenza Sicurezza', 'Amministrazione'] as const).map(areaName => {
                   const areaMembers = dipendenti
-                    .filter(d => d.macroArea === areaName && !isSoci(d.nome) && !coordinatori.some(c => c.email.toLowerCase() === d.email.toLowerCase() && c.area === areaName))
+                    .filter(d => d && d.macroArea === areaName && !isSoci(d.nome) && (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it' && !coordinatori.some(c => (c.email || '').toLowerCase() === (d.email || '').toLowerCase() && c.area === areaName))
                     .sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'it'));
                   const areaCoordinators = coordinatori
-                    .filter(c => c.area === areaName)
-                    .sort((a, b) => getDipNomeFromEmail(a.email).localeCompare(getDipNomeFromEmail(b.email), 'it'));
+                    .filter(c => c && c.area === areaName)
+                    .sort((a, b) => (getDipNomeFromEmail(a.email) || '').localeCompare(getDipNomeFromEmail(b.email) || '', 'it'));
                   
                   return (
                     <div key={areaName} className="bg-white p-4 rounded-2xl border border-indigo-100 shadow-sm flex flex-col h-full overflow-hidden">
@@ -1500,7 +1602,7 @@ export default function Impostazioni() {
                           ) : (
                             areaMembers.map(m => {
                               const isEditing = editingEmployeeAreaId === m.id;
-                              const isCoord = coordinatori.some(c => c.email.toLowerCase() === m.email.toLowerCase() && c.area === areaName);
+                              const isCoord = (coordinatori || []).some(c => (c.email || '').toLowerCase() === (m.email || '').toLowerCase() && c.area === areaName);
                               
                               return (
                                 <div key={m.id} className="p-2 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-150 flex items-center justify-between text-xs transition-colors gap-2 min-h-[38px]">
@@ -1543,14 +1645,15 @@ export default function Impostazioni() {
                                               const currentArea = m.macroArea;
                                               if (!currentArea) return;
                                               const shouldBeCoord = e.target.checked;
+                                              const mEmailClean = (m.email || m.id).toLowerCase();
                                               if (shouldBeCoord) {
-                                                const docId = `${m.email.toLowerCase()}_${currentArea.replace(/ \/ /g, '_')}`;
+                                                const docId = `${mEmailClean}_${currentArea.replace(/ \/ /g, '_')}`;
                                                 await setDoc(doc(db, 'coordinatori', docId), {
-                                                  email: m.email.toLowerCase(),
+                                                  email: mEmailClean,
                                                   area: currentArea
                                                 });
                                               } else {
-                                                const coordObj = coordinatori.find(c => c.email.toLowerCase() === m.email.toLowerCase() && c.area === currentArea);
+                                                const coordObj = (coordinatori || []).find(c => (c.email || '').toLowerCase() === mEmailClean && c.area === currentArea);
                                                 if (coordObj) {
                                                   await deleteDoc(doc(db, 'coordinatori', coordObj.id));
                                                 }
@@ -1654,7 +1757,7 @@ export default function Impostazioni() {
         )}
 
         {/* TAB 5: SISTEMA */}
-        {activeTab === 'sistema' && isAdmin && (
+        {activeTab === 'sistema' && isDev && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch w-full">
             {/* Configurazione Email */}
             <section className="bg-gradient-to-br from-slate-50 to-zinc-100 p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col justify-between h-full gap-4">

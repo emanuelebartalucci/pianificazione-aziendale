@@ -4,6 +4,7 @@ import { db } from '../services/firebase';
 import { doc, writeBatch } from 'firebase/firestore';
 import { getStartOfWeek, addDays, getWeekNumber } from '../utils/date';
 import { addPendingNotification } from '../utils/pendingNotifications';
+import { isSoci } from '../pages/Impostazioni';
 import { 
   X, 
   CalendarDays, 
@@ -51,7 +52,12 @@ const TIPOLOGIA_COLORS: Record<string, string> = {
 
 const areNamesEqual = (name1?: string, name2?: string): boolean => {
   if (!name1 || !name2) return false;
-  return name1.toLowerCase().trim() === name2.toLowerCase().trim();
+  const n1 = name1.toLowerCase().trim();
+  const n2 = name2.toLowerCase().trim();
+  if (n1 === n2) return true;
+  const parts1 = n1.split(/\s+/).sort().join(' ');
+  const parts2 = n2.split(/\s+/).sort().join(' ');
+  return parts1 === parts2;
 };
 
 export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
@@ -69,6 +75,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     dipendenti = [], 
     coordinatori = [],
     isAdmin = false,
+    isDev = false,
     userEmail = '', 
     myAssociatedName = '', 
     assegnazioni = {},
@@ -217,19 +224,21 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     }
   }, [selectedStartWeekId, selectedEndWeekId, selectableWeekOptions]);
 
-  // Commesse selezionabili
-  const selectableCommesse = useMemo(() => {
-    return commesse.filter(c => !c.stato || c.stato !== 'Chiusa');
-  }, [commesse]);
-
   // Dipendenti attivi
   const filteredDipendenti = useMemo(() => {
-    return dipendenti.filter(d => !d.dataCessazione || d.dataCessazione > new Date().toISOString().split('T')[0]);
+    return dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione > new Date().toISOString().split('T')[0]) && (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it');
   }, [dipendenti]);
 
   const myDip = useMemo(() => {
     return dipendenti.find(d => d.email?.toLowerCase() === userEmail?.toLowerCase());
   }, [dipendenti, userEmail]);
+
+  // Macroaree coordinate dall'utente corrente (Coordinatori)
+  const myCoordinatedAreas = useMemo(() => {
+    if (!userEmail) return [];
+    const myCoords = (coordinatori || []).filter(c => c.email?.toLowerCase() === userEmail.toLowerCase());
+    return myCoords.map(c => c.area);
+  }, [userEmail, coordinatori]);
 
   const isPM = useMemo(() => {
     if (!userEmail) return false;
@@ -241,24 +250,61 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     });
   }, [userEmail, pmsEmails, myDip, commesse]);
 
-  // Macroaree coordinate dall'utente corrente (Coordinatori)
-  const myCoordinatedAreas = useMemo(() => {
-    if (!userEmail) return [];
-    const myCoords = (coordinatori || []).filter(c => c.email?.toLowerCase() === userEmail.toLowerCase());
-    return myCoords.map(c => c.area);
-  }, [userEmail, coordinatori]);
+  // Helper per verificare se l'utente corrente è PM o Responsabile di una commessa (matching deterministico su Nome e Cognome)
+  const isUserPmOrResp = (comm: any): boolean => {
+    if (!comm) return false;
 
-  // Dipendenti direttamente assegnabili (Admin vedono tutti; Coordinatori/PM vedono solo la propria area)
+    const respStr = String(comm.responsabile || '').trim();
+    const pmList: any[] = Array.isArray(comm.pm) ? comm.pm : (comm.pm ? [comm.pm] : []);
+    const targets = [respStr, ...pmList.map(p => String(p || '').trim())].filter(Boolean);
+
+    if (targets.length === 0) return false;
+
+    // 1. Corrispondenza esatta di nome e cognome tramite areNamesEqual (gestisce sia "Nome Cognome" che "Cognome Nome")
+    if (myAssociatedName && targets.some(t => areNamesEqual(t, myAssociatedName))) return true;
+    if (myDip?.nome && targets.some(t => areNamesEqual(t, myDip.nome))) return true;
+
+    // 2. Corrispondenza email ed username email (es. "aromanello")
+    if (userEmail) {
+      const emailClean = userEmail.toLowerCase().trim();
+      const username = emailClean.split('@')[0];
+      if (targets.some(t => {
+        const tLower = t.toLowerCase().trim();
+        return tLower.includes(emailClean) || (username.length >= 4 && tLower.includes(username));
+      })) return true;
+    }
+
+    return false;
+  };
+
+  // Commesse selezionabili nei menu a tendina: Solo Admin, Dev e Soci vedono tutte le commesse aperte.
+  // Tutti gli altri utenti (compresi Coordinatori d'area e PM) vedono SOLO ED ESCLUSIVAMENTE le commesse di cui sono nominati PM o Responsabile.
+  const selectableCommesse = useMemo(() => {
+    const openCommesse = commesse.filter(c => !c.stato || c.stato !== 'Chiusa');
+    if (isAdmin || isDev || isSoci(myAssociatedName)) {
+      return openCommesse;
+    }
+    return openCommesse.filter(c => isUserPmOrResp(c));
+  }, [commesse, isAdmin, isDev, myAssociatedName, userEmail, myDip]);
+
+  // Verifica se l'utente collegato è PM o Responsabile della commessa attualmente selezionata
+  const isPmOfSelectedCommessa = useMemo(() => {
+    if (!selectedCommessaId) return false;
+    const comm = commesse.find(c => c.id === selectedCommessaId);
+    return isUserPmOrResp(comm);
+  }, [selectedCommessaId, commesse, userEmail, myAssociatedName, myDip]);
+
+  // Dipendenti direttamente assegnabili (Admin vedono tutti; Coordinatori/PM vedono solo la propria area di appartenenza)
   const selectableDipendentiForUser = useMemo(() => {
     if (isAdmin) return filteredDipendenti;
     if (myCoordinatedAreas.length > 0) {
       return filteredDipendenti.filter(d => d.macroArea && myCoordinatedAreas.includes(d.macroArea));
     }
-    if (isPM && myDip?.macroArea) {
+    if (myDip?.macroArea) {
       return filteredDipendenti.filter(d => d.macroArea === myDip.macroArea);
     }
     return filteredDipendenti;
-  }, [filteredDipendenti, isAdmin, myCoordinatedAreas, isPM, myDip]);
+  }, [filteredDipendenti, isAdmin, myCoordinatedAreas, myDip]);
 
   // Helper date e settimane
   const getWeeksSpannedByDates = (startStr: string, endStr: string): string[] => {
@@ -920,13 +966,13 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
               <div className="bg-white/90 p-5 rounded-2xl border border-indigo-100 shadow-xs flex flex-col gap-4">
                 
                 {/* RIGA AGGIUNTA RAPIDA RISORSA (Sempre attiva in Gestione per Commessa) */}
-                <div className="bg-indigo-50/50 p-3.5 rounded-xl border border-indigo-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                <div className="bg-indigo-50/50 p-3.5 rounded-xl border border-indigo-100 flex flex-col sm:flex-row items-stretch sm:items-end justify-between gap-3">
                   <div className="flex-1 min-w-[200px]">
                     <label className="block text-[10px] uppercase font-extrabold text-indigo-900 mb-1">Aggiungi Risorsa a questa Commessa</label>
                     <select
                       value={addResourceName}
                       onChange={e => setAddResourceName(e.target.value)}
-                      className="w-full p-2 border border-indigo-150 bg-white rounded-lg text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-500"
+                      className="w-full h-[38px] p-2 border border-indigo-150 bg-white rounded-lg text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs"
                     >
                       <option value="">-- Seleziona Risorsa da assegnare --</option>
                       {risorseNonAssegnateAllaCommessa.map(d => {
@@ -940,12 +986,12 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                     </select>
                   </div>
 
-                  <div className="w-24 shrink-0">
+                  <div className="w-28 shrink-0">
                     <label className="block text-[10px] uppercase font-extrabold text-indigo-900 mb-1">Impegno</label>
                     <select
                       value={addResourcePercentage}
                       onChange={e => setAddResourcePercentage(e.target.value)}
-                      className="w-full p-2 border border-indigo-150 bg-white rounded-lg text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-500"
+                      className="w-full h-[38px] p-2 border border-indigo-150 bg-white rounded-lg text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs"
                     >
                       {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
                         <option key={pct} value={pct}>{pct}%</option>
@@ -960,7 +1006,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                       handleLocalAssignResourceToCommessa(addResourceName, selectedCommessaId, parseInt(addResourcePercentage));
                       setAddResourceName('');
                     }}
-                    className="self-end sm:self-auto flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs px-4 py-2 rounded-lg transition shadow-xs active:scale-95 disabled:opacity-50 cursor-pointer"
+                    className="h-[38px] flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs px-4 rounded-lg transition shadow-xs active:scale-95 disabled:opacity-50 cursor-pointer shrink-0"
                   >
                     <Plus className="w-4 h-4" />
                     <span>Aggiungi Risorsa</span>
@@ -988,7 +1034,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                         ) : (
                           risorseAssegnateAllaCommessa.map(r => {
                             const dipObj = filteredDipendenti.find(d => d.nome === r.nome);
-                            const isOwnArea = isAdmin || !dipObj?.macroArea || myCoordinatedAreas.includes(dipObj.macroArea);
+                            const isOwnArea = isAdmin || isDev || isSoci(myAssociatedName) || isPmOfSelectedCommessa;
 
                             // Calcola i sotto-periodi per questa risorsa
                             const subperiods = computeSubperiods(r.percentuali, allWeekIds);
@@ -1013,6 +1059,75 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                             const areaBadge = dipObj?.macroArea
                               ? (areaBadgeColors[dipObj.macroArea] || 'bg-slate-50 text-slate-700 border-slate-100')
                               : '';
+
+                            // Se vi è un solo periodo / singola settimana, mostra la riga diretta senza fisarmonica espandibile o etichetta "1 sett."
+                            if (subperiods.length <= 1) {
+                              const singleSp = subperiods[0];
+                              const currentPct = singleSp ? singleSp.pct : minPct;
+
+                              return (
+                                <div
+                                  key={r.nome}
+                                  className="flex items-center justify-between p-3.5 bg-white rounded-xl border border-indigo-100 shadow-2xs hover:border-indigo-200 transition"
+                                >
+                                  <div className="flex items-center gap-2.5 min-w-0 truncate">
+                                    <User className="w-4 h-4 text-indigo-600 shrink-0" />
+                                    <span className="font-bold text-xs text-gray-900 truncate">{r.nome}</span>
+                                    {dipObj?.macroArea && (
+                                      <span className={`text-[9.5px] font-black px-2 py-0.5 rounded border shrink-0 ${areaBadge}`}>
+                                        {dipObj.macroArea}
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <div className="flex items-center gap-2.5 shrink-0">
+                                    {isOwnArea ? (
+                                      <>
+                                        <select
+                                          value={currentPct}
+                                          onChange={(e) => {
+                                            const newPct = parseInt(e.target.value);
+                                            if (singleSp) {
+                                              handleLocalAssignSubperiod(r.nome, selectedCommessaId, singleSp.weekIds, newPct);
+                                            } else {
+                                              handleLocalAssignResourceToCommessa(r.nome, selectedCommessaId, newPct);
+                                            }
+                                          }}
+                                          className="p-1.5 border border-indigo-200 rounded-lg bg-indigo-50/50 hover:bg-white font-black text-xs text-indigo-900 outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer shadow-2xs"
+                                          title="Modifica percentuale di carico"
+                                        >
+                                          {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
+                                            <option key={pct} value={pct}>{pct}%</option>
+                                          ))}
+                                        </select>
+
+                                        <button
+                                          type="button"
+                                          onClick={() => handleLocalRemoveResourceFromCommessa(r.nome, selectedCommessaId)}
+                                          className="text-rose-400 hover:text-rose-600 hover:bg-rose-50 p-1.5 rounded-lg transition-colors cursor-pointer"
+                                          title="Rimuovi questa risorsa dalla commessa"
+                                        >
+                                          <Trash2 className="w-4 h-4" />
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          if (onRequestAreaResource) {
+                                            onRequestAreaResource(dipObj?.macroArea || 'Generica', selectedCommessaId, selectedStartWeekId, r.nome);
+                                          }
+                                        }}
+                                        className="flex items-center gap-1 text-[10px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 px-2.5 py-1 rounded-lg transition cursor-pointer"
+                                        title="Richiedi modifica al coordinatore di area"
+                                      >
+                                        ✉️ Richiedi
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            }
 
                             return (
                               <div
@@ -1218,29 +1333,35 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                   if (areasToShow.length === 0) return null;
 
                   return (
-                    <div className="flex flex-wrap justify-center gap-2 pt-3.5 border-t border-indigo-100/90">
-                      <span className="w-full text-center text-[10px] font-black text-gray-400 uppercase tracking-wider mb-1">
+                    <div className="pt-3.5 border-t border-indigo-100/90 flex flex-col items-center gap-2">
+                      <span className="w-full text-center text-[10px] font-black text-gray-400 uppercase tracking-wider mb-0.5">
                         Richiedi personale da altra area
                       </span>
-                      {areasToShow.map(area => {
-                        const cfg = areaButtonConfigs[area] || { color: 'bg-indigo-600 hover:bg-indigo-700', label: `✉️ Richiedi ${area}` };
-                        return (
-                          <button
-                            key={area}
-                            type="button"
-                            onClick={() => {
-                              if (onRequestAreaResource) {
-                                onRequestAreaResource(area, selectedCommessaId, selectedStartWeekId);
-                              } else {
-                                showToast(`Richiesta aperta per ${area}`, 'warning');
-                              }
-                            }}
-                            className={`flex items-center gap-1.5 ${cfg.color} text-white px-3.5 py-2 rounded-2xl font-black text-xs shadow-md active:scale-95 transition-all cursor-pointer`}
-                          >
-                            <span>{cfg.label}</span>
-                          </button>
-                        );
-                      })}
+                      <div className={
+                        areasToShow.length >= 5 
+                          ? "grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 w-full max-w-4xl mx-auto"
+                          : "grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full max-w-xl mx-auto"
+                      }>
+                        {areasToShow.map(area => {
+                          const cfg = areaButtonConfigs[area] || { color: 'bg-indigo-600 hover:bg-indigo-700', label: `✉️ Richiedi ${area}` };
+                          return (
+                            <button
+                              key={area}
+                              type="button"
+                              onClick={() => {
+                                if (onRequestAreaResource) {
+                                  onRequestAreaResource(area, selectedCommessaId, selectedStartWeekId);
+                                } else {
+                                  showToast(`Richiesta aperta per ${area}`, 'warning');
+                                }
+                              }}
+                              className={`flex items-center justify-center text-center gap-1.5 ${cfg.color} text-white px-3.5 py-2.5 rounded-xl font-extrabold text-xs shadow-xs hover:shadow-md active:scale-95 transition-all cursor-pointer w-full`}
+                            >
+                              <span>{cfg.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                   );
                 })()}
@@ -1289,13 +1410,13 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
               <div className="bg-white/90 p-5 rounded-2xl border border-indigo-100 shadow-xs flex flex-col gap-4">
                 
                 {/* RIGA AGGIUNTA RAPIDA COMMESSA (Sempre attiva per Carichi di Lavoro) */}
-                <div className="bg-indigo-50/50 p-3.5 rounded-xl border border-indigo-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                <div className="bg-indigo-50/50 p-3.5 rounded-xl border border-indigo-100 flex flex-col sm:flex-row items-stretch sm:items-end justify-between gap-3">
                   <div className="flex-1 min-w-[200px]">
                     <label className="block text-[10px] uppercase font-extrabold text-indigo-900 mb-1">Aggiungi Commessa a {selectedResourceForTab}</label>
                     <select
                       value={addCommessaId}
                       onChange={e => setAddCommessaId(e.target.value)}
-                      className="w-full p-2 border border-indigo-150 bg-white rounded-lg text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-500"
+                      className="w-full h-[38px] p-2 border border-indigo-150 bg-white rounded-lg text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs"
                     >
                       <option value="">-- Seleziona Commessa da assegnare --</option>
                       {commesseNonAssegnateAllaRisorsa.map(c => (
@@ -1304,12 +1425,12 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                     </select>
                   </div>
 
-                  <div className="w-24 shrink-0">
+                  <div className="w-28 shrink-0">
                     <label className="block text-[10px] uppercase font-extrabold text-indigo-900 mb-1">Impegno</label>
                     <select
                       value={addCommessaPercentage}
                       onChange={e => setAddCommessaPercentage(e.target.value)}
-                      className="w-full p-2 border border-indigo-150 bg-white rounded-lg text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-500"
+                      className="w-full h-[38px] p-2 border border-indigo-150 bg-white rounded-lg text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs"
                     >
                       {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
                         <option key={pct} value={pct}>{pct}%</option>
@@ -1324,7 +1445,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                       handleLocalAssignResourceToCommessa(selectedResourceForTab, addCommessaId, parseInt(addCommessaPercentage));
                       setAddCommessaId('');
                     }}
-                    className="self-end sm:self-auto flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs px-4 py-2 rounded-lg transition shadow-xs active:scale-95 disabled:opacity-50 cursor-pointer"
+                    className="h-[38px] flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs px-4 rounded-lg transition shadow-xs active:scale-95 disabled:opacity-50 cursor-pointer shrink-0"
                   >
                     <Plus className="w-4 h-4" />
                     <span>Aggiungi Commessa</span>

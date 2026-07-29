@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Briefcase, Calendar, Settings, FileText, MessageSquare, Plus, Trash2, Megaphone, X, Users, CalendarDays, Edit, Network } from 'lucide-react';
+import { Briefcase, Calendar, Settings, FileText, MessageSquare, Plus, Trash2, Megaphone, X, Users, CalendarDays, Edit, Network, AlertCircle, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
@@ -24,7 +24,18 @@ interface Announcement {
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { isAdmin, isHR, myAssociatedName, user, dipendenti, userEmail, assegnazioni, commesse, prioritaCommesse, coordinatori = [], richiesteDisegnatori = [] } = useAuth();
+
+  const handleNav = (e: React.MouseEvent, path: string) => {
+    if (e.button === 1 || e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      window.open(path, '_blank', 'noopener,noreferrer');
+    } else if (e.button === 0) {
+      navigate(path);
+    }
+  };
+
+  const { isAdmin, isHR, isDev, isRealDev, myAssociatedName, user, dipendenti, userEmail, assegnazioni, commesse, prioritaCommesse, coordinatori = [], richiesteDisegnatori = [] } = useAuth();
+  const canAccessSettings = isRealDev || isDev;
 
   // States per le comunicazioni
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
@@ -144,8 +155,8 @@ export default function Dashboard() {
     const todayStr = new Date().toDateString();
     
     if (lastAnswered !== todayStr) {
-      // 15% di probabilità di mostrare il pop-up all'accesso (in media ~1 volta ogni 7-8 giorni lavorativi per risorsa)
-      const show = Math.random() < 0.15;
+      // 5% di probabilità di mostrare il pop-up all'accesso (in media ~1 volta al mese per risorsa)
+      const show = Math.random() < 0.05;
       if (show) {
         setIsClimaModalOpen(true);
       }
@@ -668,7 +679,7 @@ export default function Dashboard() {
   const [pendingAvailabilityCount, setPendingAvailabilityCount] = useState(0);
 
   useEffect(() => {
-    if (!userEmail || (myCoordinatedAreas.length === 0 && !isAdmin && !isSoci(myAssociatedName))) {
+    if (!userEmail || myCoordinatedAreas.length === 0) {
       setPendingAvailabilityCount(0);
       return;
     }
@@ -677,7 +688,7 @@ export default function Dashboard() {
       snap.forEach(docSnap => {
         const data = docSnap.data();
         if (data.stato === 'in_attesa') {
-          if (isAdmin || isSoci(myAssociatedName) || myCoordinatedAreas.includes(data.macroArea)) {
+          if (myCoordinatedAreas.includes(data.macroArea)) {
             count++;
           }
         }
@@ -685,7 +696,7 @@ export default function Dashboard() {
       setPendingAvailabilityCount(count);
     });
     return () => unsub();
-  }, [userEmail, isAdmin, myAssociatedName, myCoordinatedAreas]);
+  }, [userEmail, myCoordinatedAreas]);
 
   const showAdminSettings = isAdmin || isHR;
   const canPublish = isAdmin || isHR;
@@ -706,6 +717,44 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* Banner Commesse ad Alta Priorità (visibile solo alle risorse interessate) */}
+      {highPriorityCommesseThisWeek.length > 0 && (
+        <div className="bg-gradient-to-r from-red-500/10 via-rose-500/10 to-amber-500/10 backdrop-blur-xl border border-red-200/80 rounded-[1.8rem] p-4 sm:p-5 shadow-sm animate-in fade-in zoom-in-95 duration-200 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="flex items-start sm:items-center gap-3.5">
+            <div className="p-2.5 bg-red-500 text-white rounded-2xl shadow-md shrink-0">
+              <AlertCircle className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-black uppercase text-red-700 tracking-wider bg-red-100/80 px-2.5 py-0.5 rounded-full border border-red-200">
+                  Priorità Alta Questa Settimana
+                </span>
+                <span className="text-xs text-gray-500 font-semibold">
+                  ({highPriorityCommesseThisWeek.length} {highPriorityCommesseThisWeek.length === 1 ? 'commessa' : 'commesse'})
+                </span>
+              </div>
+              <p className="text-xs font-bold text-gray-800 mt-1">
+                Sei pianificato/a su: {' '}
+                {highPriorityCommesseThisWeek.map((c, idx) => (
+                  <span key={c.id} className="text-red-600 font-extrabold">
+                    {c.nome}
+                    {idx < highPriorityCommesseThisWeek.length - 1 ? ', ' : ''}
+                  </span>
+                ))}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={(e) => handleNav(e, '/commesse')}
+            className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-xl text-xs font-black transition shadow-md active:scale-95 shrink-0 cursor-pointer flex items-center gap-1.5 self-end md:self-auto"
+          >
+            <span>Vai a Pianificazione</span>
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Griglia a due colonne: Operational links a sinistra, News a destra */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         
@@ -715,19 +764,13 @@ export default function Dashboard() {
             
             {/* Pianificazione Commesse */}
             <div 
-              onClick={() => navigate('/commesse')} 
+              onClick={(e) => handleNav(e, '/commesse')} 
+              onAuxClick={(e) => handleNav(e, '/commesse')} 
+              onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
               className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
             >
               <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-colors relative mb-3">
                 <Briefcase className="w-6 h-6 sm:w-7 sm:h-7" />
-                {highPriorityCommesseThisWeek.length > 0 && (
-                  <span className="absolute -top-1.5 -right-1.5 flex h-6 w-6">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-6 w-6 bg-red-500 text-[11px] font-black text-white items-center justify-center border-2 border-white shadow-md">
-                      {highPriorityCommesseThisWeek.length}
-                    </span>
-                  </span>
-                )}
               </div>
               <div className="h-11 xl:h-12 shrink-0 flex items-start overflow-hidden">
                 <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-900 leading-snug">Pianificazione Commesse</h2>
@@ -739,7 +782,9 @@ export default function Dashboard() {
             
             {/* Pianificazione Personale */}
             <div 
-              onClick={() => navigate('/pianificazione-personale')} 
+              onClick={(e) => handleNav(e, '/pianificazione-personale')} 
+              onAuxClick={(e) => handleNav(e, '/pianificazione-personale')} 
+              onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
               className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
             >
               <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-orange-100 text-orange-600 rounded-2xl flex items-center justify-center group-hover:bg-orange-600 group-hover:text-white transition-colors relative mb-3">
@@ -771,7 +816,9 @@ export default function Dashboard() {
             
             {/* Piano Ferie */}
             <div 
-              onClick={() => navigate('/ferie')} 
+              onClick={(e) => handleNav(e, '/ferie')} 
+              onAuxClick={(e) => handleNav(e, '/ferie')} 
+              onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
               className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
             >
               <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-green-100 text-green-600 rounded-2xl flex items-center justify-center group-hover:bg-green-600 group-hover:text-white transition-colors relative mb-3">
@@ -795,7 +842,9 @@ export default function Dashboard() {
 
             {/* Registro Presenze */}
             <div 
-              onClick={() => navigate('/presenze')} 
+              onClick={(e) => handleNav(e, '/presenze')} 
+              onAuxClick={(e) => handleNav(e, '/presenze')} 
+              onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
               className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
             >
               <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center group-hover:bg-indigo-600 group-hover:text-white transition-colors relative mb-3">
@@ -819,7 +868,9 @@ export default function Dashboard() {
 
             {/* Prenotazione Risorse */}
             <div 
-              onClick={() => navigate('/prenotazioni')} 
+              onClick={(e) => handleNav(e, '/prenotazioni')} 
+              onAuxClick={(e) => handleNav(e, '/prenotazioni')} 
+              onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
               className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
             >
               <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-teal-100 text-teal-600 rounded-2xl flex items-center justify-center group-hover:bg-teal-600 group-hover:text-white transition-colors mb-3">
@@ -835,7 +886,9 @@ export default function Dashboard() {
 
             {/* Organigramma Aziendale */}
             <div 
-              onClick={() => navigate('/organigramma')} 
+              onClick={(e) => handleNav(e, '/organigramma')} 
+              onAuxClick={(e) => handleNav(e, '/organigramma')} 
+              onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
               className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
             >
               <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center group-hover:bg-amber-600 group-hover:text-white transition-colors mb-3">
@@ -851,7 +904,9 @@ export default function Dashboard() {
 
             {/* Cassetta delle Idee */}
             <div 
-              onClick={() => navigate('/suggerimenti')} 
+              onClick={(e) => handleNav(e, '/suggerimenti')} 
+              onAuxClick={(e) => handleNav(e, '/suggerimenti')} 
+              onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
               className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
             >
               <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-purple-100 text-purple-600 rounded-2xl flex items-center justify-center group-hover:bg-purple-600 group-hover:text-white transition-colors relative mb-3">
@@ -884,10 +939,12 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Impostazioni Admin */}
-            {showAdminSettings && (
+            {/* Impostazioni Sviluppatore */}
+            {isDev && (
               <div 
-                onClick={() => navigate('/impostazioni')} 
+                onClick={(e) => handleNav(e, '/impostazioni')} 
+                onAuxClick={(e) => handleNav(e, '/impostazioni')} 
+                onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
                 className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
               >
                 <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-gray-100 text-gray-600 rounded-2xl flex items-center justify-center group-hover:bg-gray-800 group-hover:text-white transition-colors mb-3">

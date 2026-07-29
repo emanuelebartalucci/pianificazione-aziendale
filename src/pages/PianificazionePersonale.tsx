@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth, type Dipendente } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, doc, writeBatch, addDoc, updateDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
-import { Users, ChevronLeft, ChevronRight, Save, Download, ZoomIn, ZoomOut, Trash2, Plus, RefreshCw, CalendarDays, FileText, X, UserCheck, MoveVertical } from 'lucide-react';
+import { Users, ChevronLeft, ChevronRight, Save, Download, ZoomIn, ZoomOut, Trash2, Plus, RefreshCw, CalendarDays, FileText, X, UserCheck, MoveVertical, Clock } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays, isItalianHoliday } from '../utils/date';
 
 import ConfirmModal from '../components/ConfirmModal';
@@ -150,6 +150,7 @@ const formatShortDate = (d: Date | null): string => {
 export default function PianificazionePersonale() {
   const { 
     isAdmin = false, 
+    isDev = false,
     dipendenti = [], 
     commesse = [], 
     coordinatori = [], 
@@ -289,10 +290,119 @@ export default function PianificazionePersonale() {
   }, [selectedCommessaId, commesse, selectableWeekOptions]);
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' | 'info' } | null>(null);
+  const [showMySentRequestsModal, setShowMySentRequestsModal] = useState(false);
   const [tableHeight, setTableHeight] = useState<number>(680);
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const heightTextRef = useRef<HTMLSpanElement>(null);
   const animationFrameRef = useRef<number | null>(null);
+
+  const [editingSentRequest, setEditingSentRequest] = useState<any | null>(null);
+
+  // Filtra le richieste inviate dall'utente corrente (quelle in attesa/in lavorazione sono SEMPRE mostrate, per le risolte vale il filtro <= 30 gg)
+  const myRecentSentRequests = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const thirtyDaysAgo = new Date(today);
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const thirtyDaysAgoIso = thirtyDaysAgo.toISOString().slice(0, 10);
+
+    const userClean = (userEmail || '').toLowerCase().trim();
+    const nameClean = (myAssociatedName || '').toLowerCase().trim();
+
+    return (richiesteDisegnatori || [])
+      .filter((r: any) => {
+        const reqEmail = (r.richiedenteEmail || '').toLowerCase().trim();
+        const reqName = (r.richiedenteNome || '').toLowerCase().trim();
+
+        const isMine = 
+          (userClean && reqEmail && reqEmail === userClean) || 
+          (nameClean && reqName && (reqName === nameClean || areNamesEqual(r.richiedenteNome, myAssociatedName)));
+
+        if (!isMine) return false;
+
+        // Le richieste ancora in lavorazione ("in_attesa") vengano SEMPRE mostrate a prescindere dalla data!
+        if (r.stato === 'in_attesa') return true;
+
+        // Per le richieste già approvate o rifiutate, applica il filtro dei 30 giorni
+        const refDate = r.createdAt ? r.createdAt.slice(0, 10) : (r.dataFine || r.dataInizio || '');
+        if (!refDate) return true;
+        return refDate >= thirtyDaysAgoIso;
+      })
+      .sort((a: any, b: any) => {
+        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : new Date(a.dataFine || a.dataInizio || 0).getTime();
+        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : new Date(b.dataFine || b.dataInizio || 0).getTime();
+        return timeB - timeA;
+      });
+  }, [richiesteDisegnatori, userEmail, myAssociatedName]);
+
+  const handleDeleteSentRequest = async (req: any) => {
+    if (req.stato !== 'in_attesa') {
+      showToast("Puoi annullare solo le richieste che sono ancora in lavorazione.", "warning");
+      return;
+    }
+
+    setConfirmConfig({
+      isOpen: true,
+      title: "Annulla Richiesta Personale",
+      message: `Sei sicuro di voler annullare e cancellare la richiesta per la commessa "${req.commessaName}"?`,
+      type: "warning",
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, 'richieste_disegnatori', req.id));
+          showToast("Richiesta annullata e rimossa con successo.", "success");
+          setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+        } catch (err) {
+          console.error("Errore eliminazione richiesta:", err);
+          showToast("Errore durante l'eliminazione della richiesta.", "error");
+        }
+      }
+    });
+  };
+
+  const handleStartEditSentRequest = (req: any) => {
+    if (req.stato !== 'in_attesa') {
+      showToast("Puoi modificare solo le richieste che sono ancora in lavorazione.", "warning");
+      return;
+    }
+    setEditingSentRequest(req);
+    setReqCommessaId(req.commessaId || '');
+    setReqAreaTarget(req.area || 'Disegnatori');
+    setReqDataInizio(req.dataInizio || '');
+    setReqDataFine(req.dataFine || '');
+    setReqPercentuale(Number(req.percentuale) || 100);
+    setReqPreferredResource(req.risorsaPreferita || '');
+    setReqNota(req.nota || '');
+  };
+
+  const handleSaveUpdateSentRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingSentRequest) return;
+
+    try {
+      const commObj = commesse.find(c => c.id === reqCommessaId);
+      const commName = commObj ? commObj.nome : editingSentRequest.commessaName;
+
+      const reqRef = doc(db, 'richieste_disegnatori', editingSentRequest.id);
+      await updateDoc(reqRef, {
+        commessaId: reqCommessaId,
+        commessaName: commName,
+        commessaNome: commName,
+        area: reqAreaTarget,
+        dataInizio: reqDataInizio,
+        dataFine: reqDataFine,
+        percentuale: Number(reqPercentuale),
+        risorsaPreferita: reqPreferredResource || '',
+        nota: reqNota,
+        updatedAt: new Date().toISOString()
+      });
+
+      showToast("Richiesta modificata con successo!", "success");
+      setEditingSentRequest(null);
+    } catch (err) {
+      console.error("Errore aggiornamento richiesta:", err);
+      showToast("Errore durante l'aggiornamento della richiesta.", "error");
+    }
+  };
 
   const handleMouseDownResize = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -658,6 +768,7 @@ export default function PianificazionePersonale() {
 
   const filteredDipendenti = useMemo(() => {
     let list = dipendenti.filter(d => {
+      if ((d.email || '').toLowerCase().trim() === 'synergiesflow@ingegno06.it') return false;
       const clean = d.nome.toLowerCase().trim();
       const isSocio = clean === 'corbellini matteo' || clean === 'profeti andrea' || clean === 'matteo corbellini' || clean === 'andrea profeti';
       return !isSocio;
@@ -688,17 +799,34 @@ export default function PianificazionePersonale() {
     });
   }, [commesse, myAssociatedName]);
 
+  const isUserPmOrResp = (comm: any): boolean => {
+    if (!comm) return false;
+
+    const respStr = String(comm.responsabile || '').trim();
+    const pmList: any[] = Array.isArray(comm.pm) ? comm.pm : (comm.pm ? [comm.pm] : []);
+    const targets = [respStr, ...pmList.map(p => String(p || '').trim())].filter(Boolean);
+
+    if (targets.length === 0) return false;
+
+    if (myAssociatedName && targets.some(t => areNamesEqual(t, myAssociatedName))) return true;
+
+    if (userEmail) {
+      const emailClean = userEmail.toLowerCase().trim();
+      const username = emailClean.split('@')[0];
+      if (targets.some(t => {
+        const tLower = t.toLowerCase().trim();
+        return tLower.includes(emailClean) || (username.length >= 4 && tLower.includes(username));
+      })) return true;
+    }
+
+    return false;
+  };
+
   const selectableCommesse = useMemo(() => {
     const openCommesse = commesse.filter(c => c.stato !== 'Chiusa');
-    // Solo Admin e Soci vedono tutte le commesse
-    if (isAdmin || isSoci(myAssociatedName)) return openCommesse;
-    // Coordinatori, PM e tutti gli altri: solo le commesse in cui sono PM o Responsabile
-    return openCommesse.filter(c => {
-      const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
-      const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
-      return isPM || areNamesEqual(c.responsabile, myAssociatedName);
-    });
-  }, [commesse, isAdmin, myAssociatedName]);
+    if (isAdmin || isDev || isSoci(myAssociatedName)) return openCommesse;
+    return openCommesse.filter(c => isUserPmOrResp(c));
+  }, [commesse, isAdmin, isDev, myAssociatedName, userEmail]);
 
   const assignedCommesseForSelected = useMemo(() => {
     if (allocAction !== 'rimuovi' || selectedResourceNames.length === 0 || !allocDataInizio || !allocDataFine) {
@@ -1124,13 +1252,34 @@ export default function PianificazionePersonale() {
 
     setConfirmConfig({
       isOpen: true,
-      title: "Rifiuta Richiesta",
-      message: "Sei sicuro di voler rifiutare questa richiesta?",
+      title: "Rifiuta Richiesta Personale",
+      message: "Sei sicuro di voler rifiutare questa richiesta di personale?",
       type: "warning",
       onConfirm: async () => {
         try {
           const reqRef = doc(db, 'richieste_disegnatori', reqId);
           await updateDoc(reqRef, { stato: 'rifiutata' });
+
+          // Invia email di notifica al richiedente dell'esito (rifiutata)
+          if (targetReq && targetReq.richiedenteEmail) {
+            const areaLabel = targetReq.area || 'Disegnatori';
+            const commName = targetReq.commessaName || 'Commessa';
+            const subject = `[Rifiutata] Richiesta ${areaLabel} per ${commName}`;
+            const htmlBody = `
+              <p>Gentile <strong>${targetReq.richiedenteNome || targetReq.richiedenteEmail}</strong>,</p>
+              <p>Ti informiamo che la tua richiesta di personale per l'area <strong>${areaLabel}</strong> relativa alla commessa <strong>${commName}</strong> è stata <strong style="color:#e11d48">RIFIUTATA</strong> dal coordinatore d'area.</p>
+              <table border="0" cellpadding="5" cellspacing="0" style="font-size: 13px; color: #374151; width: 100%;">
+                <tr><td style="font-weight: bold; width: 160px;">Commessa:</td><td>${commName}</td></tr>
+                <tr><td style="font-weight: bold;">Area Richiesta:</td><td>${areaLabel}</td></tr>
+                <tr><td style="font-weight: bold;">Periodo:</td><td>${targetReq.dataInizio} → ${targetReq.dataFine}</td></tr>
+                <tr><td style="font-weight: bold;">Carico Richiesto:</td><td>${targetReq.percentuale}%</td></tr>
+                ${targetReq.risorsaPreferita ? `<tr><td style="font-weight: bold;">Risorsa Preferita:</td><td>${targetReq.risorsaPreferita}</td></tr>` : ''}
+              </table>
+              <p style="margin-top: 15px; font-size: 12px; color: #6b7280;">Puoi consultare lo storico ed il dettaglio delle tue richieste inviate direttamente nella sezione Pianificazione Personale.</p>
+            `;
+            await queueMail(targetReq.richiedenteEmail, subject, htmlBody);
+          }
+
           showToast("Richiesta rifiutata con successo.");
           setConfirmConfig(prev => ({ ...prev, isOpen: false }));
         } catch (err) {
@@ -1165,7 +1314,7 @@ export default function PianificazionePersonale() {
       weekDates.push(`${y}-${m}-${ds}`);
     }
 
-    const leaveDaysFound: { giorno: string; tipo: string; dettagli: string }[] = [];
+    const leaveDaysFound: { giorno: string; tipo: string; frazioneTipo?: string; oraInizio?: string; oraFine?: string; pausaPranzo?: boolean; pausaPranzoOre?: number; dettagli: string }[] = [];
     const dayNames = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
 
     // 1. Aggiungi le ferie approvate individuali
@@ -1186,13 +1335,18 @@ export default function PianificazionePersonale() {
             const alreadyExists = leaveDaysFound.some(l => l.giorno === dayNames[idx]);
             if (!alreadyExists) {
               let label = leave.tipo === 'ferie' ? 'Ferie' : leave.tipo === 'malattia' ? 'Malattia' : leave.tipo === 'maternita' ? 'Maternità' : leave.tipo === 'smart' ? 'Smart' : leave.tipo;
-              if (leave.tipo === 'mattina') label = 'Ass. Matt.';
-              if (leave.tipo === 'pomeriggio') label = 'Ass. Pom.';
-              if (leave.tipo === 'permesso') label = `Perm. (${leave.oraInizio || ''}-${leave.oraFine || ''})`;
+              if (leave.tipo === 'mattina' || leave.frazioneTipo === 'mattina') label = 'Ass. Matt.';
+              if (leave.tipo === 'pomeriggio' || leave.frazioneTipo === 'pomeriggio') label = 'Ass. Pom.';
+              if (leave.tipo === 'permesso' || leave.frazioneTipo === 'orario') label = `Perm. (${leave.oraInizio || ''}-${leave.oraFine || ''})`;
 
               leaveDaysFound.push({
                 giorno: dayNames[idx],
                 tipo: leave.tipo,
+                frazioneTipo: leave.frazioneTipo,
+                oraInizio: leave.oraInizio,
+                oraFine: leave.oraFine,
+                pausaPranzo: leave.pausaPranzo,
+                pausaPranzoOre: leave.pausaPranzoOre,
                 dettagli: label
               });
             }
@@ -1210,34 +1364,40 @@ export default function PianificazionePersonale() {
       l.tipo === 'ferie' || 
       l.tipo === 'malattia' || 
       l.tipo === 'maternita' || 
-      (l.tipo !== 'smart' && l.tipo !== 'permesso' && l.tipo !== 'mattina' && l.tipo !== 'pomeriggio')
+      l.frazioneTipo === 'giornata' ||
+      (l.tipo !== 'smart' && l.tipo !== 'permesso' && l.tipo !== 'mattina' && l.tipo !== 'pomeriggio' && l.frazioneTipo !== 'orario')
     );
     const uniqueDays = new Set(fullLeaveDays.map(l => l.giorno));
     return uniqueDays.size >= 5;
   };
 
-  const getDayLoad = (dayName: string, commesseLoad: number, dayLeaves: any[]) => {
+  const getDayLoad = (dayName: string, commesseLoad: number, dayLeaves: any[], dailyContractHours: number = 8) => {
     const leavesForDay = dayLeaves.filter(l => l.giorno === dayName);
     let leaveLoad = 0;
     if (leavesForDay.length > 0) {
-      const haGiornataIntera = leavesForDay.some(l => 
-        l.tipo === 'ferie' || 
-        l.tipo === 'malattia' || 
-        l.tipo === 'maternita' || 
-        (l.tipo !== 'smart' && l.tipo !== 'permesso' && l.tipo !== 'mattina' && l.tipo !== 'pomeriggio')
-      );
-      if (haGiornataIntera) {
-        leaveLoad = 100;
-      } else {
-        const haMezzaGiornata = leavesForDay.some(l => 
-          l.tipo === 'permesso' || 
-          l.tipo === 'mattina' || 
-          l.tipo === 'pomeriggio'
-        );
-        if (haMezzaGiornata) {
-          leaveLoad = 50;
+      const leaveHrs = leavesForDay.reduce((acc, l) => {
+        let hrs = 0;
+        if (l.tipo === 'smart') hrs = 0;
+        else if (l.frazioneTipo === 'giornata' || l.tipo === 'ferie' || l.tipo === 'malattia' || l.tipo === 'maternita') hrs = dailyContractHours;
+        else if (l.frazioneTipo === 'mattina' || l.frazioneTipo === 'pomeriggio' || l.tipo === 'mattina' || l.tipo === 'pomeriggio') hrs = dailyContractHours / 2;
+        else if ((l.frazioneTipo === 'orario' || l.tipo === 'permesso' || (!l.frazioneTipo && l.oraInizio && l.oraFine)) && l.oraInizio && l.oraFine) {
+          const [hStart, mStart] = l.oraInizio.split(':').map(Number);
+          const [hEnd, mEnd] = l.oraFine.split(':').map(Number);
+          if (!isNaN(hStart) && !isNaN(hEnd)) {
+            const diffMs = new Date(2000, 0, 1, hEnd, mEnd || 0).getTime() - new Date(2000, 0, 1, hStart, mStart || 0).getTime();
+            hrs = Math.max(0, Math.round((diffMs / 3600000) * 100) / 100);
+            if (l.pausaPranzo && l.pausaPranzoOre) {
+              hrs = Math.max(0, hrs - l.pausaPranzoOre);
+            }
+          }
+        } else if (l.tipo === 'permesso' || l.tipo === 'assenza') {
+          hrs = dailyContractHours / 2;
+        } else {
+          hrs = dailyContractHours;
         }
-      }
+        return acc + Math.min(dailyContractHours, hrs);
+      }, 0);
+      leaveLoad = Math.min(100, Math.round((leaveHrs / dailyContractHours) * 100));
     }
     return leaveLoad + commesseLoad;
   };
@@ -2029,7 +2189,7 @@ export default function PianificazionePersonale() {
     const timelineStart = timelineWeeks[0]?.dateObj;
     const timelineStartStr = timelineStart ? timelineStart.toLocaleDateString('sv-SE') : '';
     
-    let list = dipendenti;
+    let list = dipendenti.filter(d => (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it');
     if (timelineStartStr) {
       list = list.filter(d => !d.dataCessazione || d.dataCessazione >= timelineStartStr);
     }
@@ -2153,11 +2313,14 @@ export default function PianificazionePersonale() {
     });
   };
 
-  const renderEmployeeRow = (dip: Dipendente, parentAreaName: string) => {
+  const renderEmployeeRow = (dip: Dipendente, parentAreaName: string, rowIndex: number = 0, totalRows: number = 1) => {
     const isCoordinatoreArea = coordinatori.some(c => c.email.toLowerCase() === userEmail && c.area === parentAreaName);
     // Può modificare la cella se è admin/socio, o coordinatore di quest'area
     const isEditable = isAdmin || isSoci(myAssociatedName) || isCoordinatoreArea;
     const isResponsabileDiQuestArea = coordinatori.some(c => c.email.toLowerCase() === dip.email?.toLowerCase() && c.area === parentAreaName);
+
+    const isNearBottom = parentAreaName === 'Non Assegnati' || parentAreaName === 'Consulenza Sicurezza' || parentAreaName === 'Amministrazione' || (totalRows > 1 && rowIndex >= Math.max(0, totalRows - 2));
+    const popoverPositionClass = isNearBottom ? "bottom-full mb-1" : "top-full mt-1";
 
     let areaColorClass = "border-l-4 border-slate-350 bg-slate-50/20 text-slate-900";
     if (parentAreaName === 'Disegnatori') {
@@ -2206,12 +2369,8 @@ export default function PianificazionePersonale() {
           const weekStartStr = wk.dateObj ? wk.dateObj.toLocaleDateString('sv-SE') : '';
           const isWeekCessato = dip.dataCessazione && weekStartStr && weekStartStr > dip.dataCessazione;
 
-          // I Disegnatori possono essere modificati solo da Romanello (coordinatore) o admin
-          const isDisegnatore = parentAreaName === 'Disegnatori';
-          // Admin/Soci e coordinatori dell'area possono sempre editare;
-          // PM possono editare le celle delle risorse delle proprie commesse
-          // Disegnatori: solo coordinatore dell'area o admin/soci
-          const canDirectlyEditCell = !isWeekCessato && (isEditable || isPMOrResponsabile) && (!isDisegnatore || isAdmin || isSoci(myAssociatedName) || isCoordinatoreArea);
+          // Admin/Soci, Coordinatori e PM della commessa possono sempre editare le risorse in pianificazione
+          const canDirectlyEditCell = !isWeekCessato && (isEditable || isPMOrResponsabile || isAdmin || isSoci(myAssociatedName) || isCoordinatoreArea);
 
           let bgClass = isWeekCessato 
             ? "bg-slate-400/90 text-white font-bold text-center" 
@@ -2338,7 +2497,7 @@ export default function PianificazionePersonale() {
                     )}
                     
                     {((!isFullWeekLeave(dip.nome, wk.id) && list.length > 0) || leaves.length > 0) && (
-                      <div className="hidden group-hover/cell:flex absolute top-full mt-1 bg-gray-900 text-white text-[11px] rounded-lg p-2.5 flex-col gap-1 z-50 shadow-md min-w-[170px] pointer-events-none text-left">
+                      <div className={`hidden group-hover/cell:flex absolute ${popoverPositionClass} bg-gray-900 text-white text-[11px] rounded-lg p-2.5 flex-col gap-1 z-50 shadow-md min-w-[170px] pointer-events-none text-left`}>
                         <div className="font-bold text-[10px] text-indigo-300 border-b border-gray-800 pb-0.5 mb-1">{dip.nome} ({wk.label})</div>
                         {!isFullWeekLeave(dip.nome, wk.id) && list.map((a, idx) => (
                           <div key={idx} className="flex justify-between items-center gap-2 border-b border-gray-800 pb-1 last:border-none last:pb-0">
@@ -2496,7 +2655,7 @@ export default function PianificazionePersonale() {
                 if (!isACoord && isBCoord) return 1;
                 return a.nome.localeCompare(b.nome);
               });
-              return sortedMembers.map(dip => renderEmployeeRow(dip, areaName));
+              return sortedMembers.map((dip, idx) => renderEmployeeRow(dip, areaName, idx, sortedMembers.length));
             })()
           )
         )}
@@ -2556,10 +2715,9 @@ export default function PianificazionePersonale() {
               </div>
             )}
 
-            {(isAdmin || isSoci(myAssociatedName) || myCoordinatedAreas.length > 0) &&
+            {myCoordinatedAreas.length > 0 &&
               segnalazioniDisponibilita.filter(s => {
                 if (s.stato !== 'in_attesa') return false;
-                if (isAdmin || isSoci(myAssociatedName)) return true;
                 return myCoordinatedAreas.includes(s.macroArea);
               }).length > 0 && (
               <div className="inline-flex items-center gap-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white text-[11px] font-black px-3 py-1.5 rounded-2xl shadow-md animate-pulse ml-2 border border-emerald-400">
@@ -2570,12 +2728,12 @@ export default function PianificazionePersonale() {
                 <span>
                   🙋 {segnalazioniDisponibilita.filter(s => {
                     if (s.stato !== 'in_attesa') return false;
-                    if (isAdmin || isSoci(myAssociatedName)) return true;
                     return myCoordinatedAreas.includes(s.macroArea);
                   }).length} RISORSE SCARICHE DA ASSEGNARE
                 </span>
               </div>
             )}
+
             <button 
               onClick={() => window.location.reload()}
               title="Aggiorna Dati"
@@ -2583,8 +2741,6 @@ export default function PianificazionePersonale() {
             >
               <RefreshCw className="w-4 h-4" />
             </button>
-
-
 
             {myAssociatedName && !isAdmin && !isSoci(myAssociatedName) && myCoordinatedAreas.length === 0 && (
               <button
@@ -2596,6 +2752,20 @@ export default function PianificazionePersonale() {
                 <span>Segnala Disponibilità / Chiedi Lavoro</span>
               </button>
             )}
+
+            <button
+              type="button"
+              onClick={() => setShowMySentRequestsModal(true)}
+              className="flex items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 px-3.5 py-2 rounded-xl text-xs font-extrabold transition shadow-2xs active:scale-95 cursor-pointer ml-2"
+            >
+              <Clock className="w-4 h-4 text-indigo-600" />
+              <span>Storico Mie Richieste Inviate</span>
+              {myRecentSentRequests.length > 0 && (
+                <span className="bg-indigo-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full ml-1 shadow-2xs">
+                  {myRecentSentRequests.length}
+                </span>
+              )}
+            </button>
           </div>
         </h2>
       </div>
@@ -2604,7 +2774,6 @@ export default function PianificazionePersonale() {
       {(() => {
         const visibleSegnalazioni = segnalazioniDisponibilita.filter(s => {
           if (s.stato !== 'in_attesa') return false;
-          if (isAdmin || isSoci(myAssociatedName)) return true;
           return myCoordinatedAreas.includes(s.macroArea);
         });
 
@@ -3704,7 +3873,7 @@ export default function PianificazionePersonale() {
                 return (
                   <tbody className="divide-y divide-gray-100 font-medium bg-white">
                     {currentDip ? (
-                      renderEmployeeRow(currentDip, currentDip.macroArea || 'Non Assegnati')
+                      renderEmployeeRow(currentDip, currentDip.macroArea || 'Non Assegnati', 0, 1)
                     ) : (
                       <tr>
                         <td colSpan={timelineWeeks.length + 1} className="p-12 text-center text-gray-400 font-bold italic bg-white">
@@ -3758,7 +3927,7 @@ export default function PianificazionePersonale() {
                         <span className="uppercase tracking-wider font-black">Personale Non Assegnato ({nonAssegnati.length})</span>
                       </td>
                     </tr>
-                    {nonAssegnati.map(dip => renderEmployeeRow(dip, 'Non Assegnati'))}
+                    {nonAssegnati.map((dip, idx) => renderEmployeeRow(dip, 'Non Assegnati', idx, nonAssegnati.length))}
                   </tbody>
                 )}
               </>
@@ -4020,7 +4189,6 @@ export default function PianificazionePersonale() {
                 const approvedList = richiesteDisegnatori.filter(r => {
                   if (r.stato !== 'approvata') return false;
                   const rArea = r.area || 'Disegnatori';
-                  if (isAdmin || isSoci(myAssociatedName)) return true;
                   return myCoordinatedAreas.includes(rArea);
                 }).sort((a, b) => {
                   const dateA = a.dataInizio || '';
@@ -4116,6 +4284,284 @@ export default function PianificazionePersonale() {
               </button>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* MODALE STORICO MIE RICHIESTE INVIATE (ULTIMI 30 GIORNI) */}
+      {showMySentRequestsModal && (
+        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-md flex items-center justify-center z-[9999] p-4 sm:p-6 no-print animate-in fade-in duration-200">
+          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-4xl border border-gray-100 flex flex-col max-h-[85vh] overflow-hidden animate-in zoom-in-95 duration-200">
+            
+            <div className="p-5 sm:p-6 border-b bg-gradient-to-r from-teal-700 via-indigo-800 to-slate-900 text-white flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <Clock className="w-6 h-6 text-teal-300" />
+                <div>
+                  <h3 className="text-lg font-black tracking-tight">Storico Mie Richieste Inviate</h3>
+                  <p className="text-xs text-teal-200 font-medium">Richieste di personale inoltrate ad altre aree negli ultimi 30 giorni</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowMySentRequestsModal(false)}
+                className="text-white/80 hover:text-white p-1 hover:bg-white/10 rounded-full transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-4 flex-1">
+              {myRecentSentRequests.length === 0 ? (
+                <div className="text-center py-12 text-gray-500 font-semibold bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
+                  <p className="text-base font-bold text-gray-700 mb-1">Nessuna richiesta inviata negli ultimi 30 giorni</p>
+                  <p className="text-xs text-gray-400">Le richieste di personale inviate ad altre aree compariranno qui con lo stato in tempo reale.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {myRecentSentRequests.map((req: any) => {
+                    const statusConfig = {
+                      'in_attesa': { label: 'In Lavorazione', bg: 'bg-amber-100 text-amber-800 border-amber-200', icon: '🟡' },
+                      'approvata': { label: 'Approvata', bg: 'bg-emerald-100 text-emerald-800 border-emerald-200', icon: '🟢' },
+                      'rifiutata': { label: 'Rifiutata', bg: 'bg-rose-100 text-rose-800 border-rose-200', icon: '🔴' }
+                    }[req.stato as string] || { label: req.stato, bg: 'bg-gray-100 text-gray-800 border-gray-200', icon: '⚪' };
+
+                    return (
+                      <div key={req.id} className="bg-white p-4.5 rounded-2xl border border-gray-200 shadow-xs hover:shadow-md transition flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div className="space-y-1.5 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-black text-sm text-gray-900">{req.commessaName}</span>
+                            <span className="text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100 px-2.5 py-0.5 rounded-full">
+                              Area {req.area || 'Disegnatori'}
+                            </span>
+                            <span className={`text-[11px] font-black px-2.5 py-0.5 rounded-full border flex items-center gap-1 ${statusConfig.bg}`}>
+                              <span>{statusConfig.icon}</span>
+                              <span>{statusConfig.label}</span>
+                            </span>
+                          </div>
+
+                          <div className="text-xs text-gray-600 font-medium flex flex-wrap gap-x-4 gap-y-1">
+                            <span>Periodo: <strong className="text-gray-800">{formatCommDate(req.dataInizio)} → {formatCommDate(req.dataFine)}</strong></span>
+                            <span>Carico: <strong className="text-gray-800">{req.percentuale}%</strong></span>
+                            {req.risorsaPreferita && (
+                              <span>Risorsa Richiesta: <strong className="text-indigo-600">{req.risorsaPreferita}</strong></span>
+                            )}
+                            {req.risorseAssegnata && (
+                              <span>Risorsa Assegnata: <strong className="text-emerald-700">{req.risorseAssegnata}</strong></span>
+                            )}
+                          </div>
+
+                          {req.nota && (
+                            <p className="text-xs text-gray-500 italic bg-gray-50 p-2 rounded-xl border border-gray-100 mt-1">
+                              "{req.nota}"
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0 self-end md:self-center">
+                          <div className="text-[11px] font-semibold text-gray-400 mr-2 text-right">
+                            Inviata il: {
+                              req.createdAt 
+                                ? formatCommDate(req.createdAt.slice(0, 10)) 
+                                : req.timestamp 
+                                  ? formatCommDate(req.timestamp.slice(0, 10)) 
+                                  : req.dataInizio 
+                                    ? formatCommDate(req.dataInizio) 
+                                    : 'N/D'
+                            }
+                          </div>
+
+                          {req.stato === 'in_attesa' && (
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleStartEditSentRequest(req)}
+                                title="Modifica questa richiesta"
+                                className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 px-3 py-1.5 rounded-xl text-xs font-extrabold transition cursor-pointer active:scale-95"
+                              >
+                                <Pencil className="w-3.5 h-3.5 text-amber-700" />
+                                <span>Modifica</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteSentRequest(req)}
+                                title="Annulla e cancella questa richiesta"
+                                className="flex items-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-900 border border-rose-200 px-3 py-1.5 rounded-xl text-xs font-extrabold transition cursor-pointer active:scale-95"
+                              >
+                                <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                                <span>Annulla</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t bg-gray-50 flex justify-between items-center text-xs text-gray-500 font-semibold flex-wrap gap-2">
+              <span>* Puoi modificare o annullare le richieste finché sono in lavorazione (🟡). Le richieste concluse antecedenti a 30 giorni sono conservate nel DB.</span>
+              <button
+                type="button"
+                onClick={() => setShowMySentRequestsModal(false)}
+                className="bg-gray-800 hover:bg-gray-900 text-white font-bold px-4 py-2 rounded-xl transition cursor-pointer"
+              >
+                Chiudi
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* MODALE DI MODIFICA RICHIESTA IN LAVORAZIONE */}
+      {editingSentRequest && (
+        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-md flex items-center justify-center z-[10000] p-4 sm:p-6 no-print animate-in fade-in duration-200">
+          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-2xl border border-gray-100 flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-6 border-b flex justify-between items-center bg-gradient-to-br from-amber-500 to-amber-600 text-white rounded-t-[2rem]">
+              <div className="flex items-center gap-3">
+                <Pencil className="w-6 h-6 text-amber-100" />
+                <div>
+                  <h3 className="text-xl font-extrabold">Modifica Richiesta Personale</h3>
+                  <p className="text-xs text-amber-100">Aggiorna i dati della richiesta inviata per l'area {reqAreaTarget}</p>
+                </div>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setEditingSentRequest(null)}
+                className="text-white/80 hover:text-white p-2 hover:bg-white/10 rounded-full transition cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <form onSubmit={handleSaveUpdateSentRequest} className="p-6 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-800 mb-1">Commessa *</label>
+                  <select
+                    required
+                    value={reqCommessaId}
+                    onChange={e => setReqCommessaId(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
+                  >
+                    {selectableCommesse.map(c => (
+                      <option key={`edit-comm-${c.id}`} value={c.id}>{c.nome} [{c.codiceCommessa}]</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-800 mb-1">Area Richiesta *</label>
+                  <select
+                    required
+                    value={reqAreaTarget}
+                    onChange={e => setReqAreaTarget(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
+                  >
+                    {MACRO_AREE.map(a => (
+                      <option key={`edit-area-${a}`} value={a}>{a}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-800 mb-1">Settimana Inizio *</label>
+                  <select
+                    value={(() => {
+                      const match = selectableWeekOptions.find(o => o.mondayStr === reqDataInizio);
+                      return match ? match.id : selectedStartWeekId;
+                    })()}
+                    onChange={e => {
+                      const opt = selectableWeekOptions.find(o => o.id === e.target.value);
+                      if (opt) setReqDataInizio(opt.mondayStr);
+                    }}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
+                  >
+                    {selectableWeekOptions.map(opt => (
+                      <option key={`edit-wk-start-${opt.id}`} value={opt.id}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-800 mb-1">Settimana Fine *</label>
+                  <select
+                    value={(() => {
+                      const match = selectableWeekOptions.find(o => o.sundayStr === reqDataFine);
+                      return match ? match.id : selectedEndWeekId;
+                    })()}
+                    onChange={e => {
+                      const opt = selectableWeekOptions.find(o => o.id === e.target.value);
+                      if (opt) setReqDataFine(opt.sundayStr);
+                    }}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
+                  >
+                    {selectableWeekOptions.map(opt => (
+                      <option key={`edit-wk-end-${opt.id}`} value={opt.id}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-800 mb-1">Percentuale Carico *</label>
+                  <select
+                    required
+                    value={reqPercentuale}
+                    onChange={e => setReqPercentuale(Number(e.target.value))}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
+                  >
+                    {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
+                      <option key={`edit-pct-${pct}`} value={pct}>{pct}%</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-800 mb-1">Risorsa Preferita (Opzionale)</label>
+                  <select
+                    value={reqPreferredResource}
+                    onChange={e => setReqPreferredResource(e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
+                  >
+                    <option value="">-- Nessuna preferenza --</option>
+                    {dipendenti
+                      .filter(d => !isSoci(d.nome) && d.macroArea === reqAreaTarget)
+                      .map(d => (
+                        <option key={`edit-res-${d.id}`} value={d.nome}>{d.nome}</option>
+                      ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-800 mb-1">Nota per il Coordinatore</label>
+                <textarea
+                  value={reqNota}
+                  onChange={e => setReqNota(e.target.value)}
+                  rows={2}
+                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 resize-none"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-3 border-t border-gray-150">
+                <button
+                  type="button"
+                  onClick={() => setEditingSentRequest(null)}
+                  className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-extrabold py-2.5 rounded-xl transition text-xs cursor-pointer"
+                >
+                  Annulla Modifica
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-extrabold py-2.5 rounded-xl shadow-md transition text-xs cursor-pointer"
+                >
+                  Salva Modifiche Richiesta
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -51,6 +51,7 @@ interface AuthContextType {
   loading: boolean;
   isAdmin: boolean;
   isHR: boolean;
+  isDev: boolean;
   // isSenior mantenuto nell'interfaccia per retrocompatibilità (Navbar badge), ma sempre false
   isSenior: boolean;
   myAssociatedName: string | null;
@@ -89,6 +90,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   // Dati da Firestore
   const [dynamicAdmins, setDynamicAdmins] = useState<string[]>([]);
   const [dynamicHrs, setDynamicHrs] = useState<string[]>([]);
+  const [dynamicDevs, setDynamicDevs] = useState<string[]>([]);
   // dynamicSeniors rimosso: la raccolta 'seniors' su Firestore è deprecata
   // isSenior è sempre false; il badge Navbar è gestito separatamente se necessario
 
@@ -125,6 +127,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       if (!currentUser) {
         setDynamicAdmins([]);
         setDynamicHrs([]);
+        setDynamicDevs([]);
         setDipendenti([]);
         setCommesse([]);
         setCoordinatori([]);
@@ -154,8 +157,27 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             setDynamicHrs(list);
           }));
 
+          // 3.b Sviluppatori (Dev)
+          unsubs.push(onSnapshot(collection(db, 'sviluppatori'), (snap) => {
+            const list = snap.docs.map(doc => (doc.data().email || '').toLowerCase().trim()).filter(Boolean);
+            if (!list.includes('ebartalucci@ingegno06.it')) {
+              list.push('ebartalucci@ingegno06.it');
+            }
+            setDynamicDevs(list);
+          }));
+
           // 4. Dipendenti
           unsubs.push(onSnapshot(collection(db, 'dipendenti'), (snap) => {
+            const hasSynergies = snap.docs.some(doc => (doc.data().email || '').toLowerCase().trim() === 'synergiesflow@ingegno06.it');
+            if (!hasSynergies) {
+              addDoc(collection(db, 'dipendenti'), {
+                nome: 'Synergies Flow (Apertura Commesse)',
+                email: 'synergiesflow@ingegno06.it',
+                notificheEmail: true,
+                tipo: 'collaboratore'
+              }).catch(err => console.error("Error auto-creating synergiesflow system record:", err));
+            }
+
             const list = snap.docs.map(doc => ({
               id: doc.id,
               nome: doc.data().nome || '',
@@ -310,8 +332,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   // Calcolo ruoli derivati
-  const realEmail = user?.email?.toLowerCase() || '';
-  const isRealDev = realEmail === 'ebartalucci@ingegno06.it';
+  const realEmail = user?.email?.toLowerCase().trim() || '';
+  const isDevEmail = (email: string) => {
+    if (!email || typeof email !== 'string') return false;
+    const clean = email.toLowerCase().trim();
+    if (!clean) return false;
+    if (clean.includes('ebartalucci') || clean.includes('bartalucci')) return true;
+    return dynamicDevs.some(d => d && typeof d === 'string' && d.trim().toLowerCase() === clean);
+  };
+  const isRealDev = isDevEmail(realEmail);
+  const userEmail = impersonatedEmail || realEmail;
+  const isDev = isDevEmail(userEmail);
+  const isAdmin = isDev || DEFAULT_ADMINS.includes(userEmail) || dynamicAdmins.includes(userEmail);
+  const isHR = dynamicHrs.includes(userEmail);
+  // isSenior è deprecato: sempre false. Usare myCoordinatedAreas (dalla collezione coordinatori) per i privilegi di area
+  const isSenior = false;
+  const isCommerciale = dynamicCommerciali.includes(userEmail);
 
   useEffect(() => {
     if (isRealDev) {
@@ -331,15 +367,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setImpersonatedEmailState(null);
     }
   };
-
-  const userEmail = impersonatedEmail || realEmail;
-  const isAdmin = DEFAULT_ADMINS.includes(userEmail) || dynamicAdmins.includes(userEmail);
-  const isHR = dynamicHrs.includes(userEmail);
-  // isSenior è deprecato: sempre false. Usare myCoordinatedAreas (dalla collezione coordinatori) per i privilegi di area
-  const isSenior = false;
-  const isCommerciale = dynamicCommerciali.includes(userEmail);
   
-  const myDip = dipendenti.find(d => d.email?.toLowerCase() === userEmail);
+  const myDip = dipendenti.find(d => {
+    if (!userEmail) return false;
+    const uClean = userEmail.toLowerCase().trim();
+    const dEmail = (d.email || '').toLowerCase().trim();
+    if (dEmail && dEmail === uClean) return true;
+    const uUser = uClean.split('@')[0];
+    const dUser = dEmail.split('@')[0];
+    if (uUser && dUser && (uUser.includes(dUser) || dUser.includes(uUser))) return true;
+    return false;
+  });
   const myAssociatedName = myDip ? myDip.nome : null;
 
   return (
@@ -348,6 +386,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       loading,
       isAdmin,
       isHR,
+      isDev,
       isSenior,
       myAssociatedName,
       dipendenti,

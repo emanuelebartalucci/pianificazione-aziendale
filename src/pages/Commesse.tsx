@@ -1,8 +1,8 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, doc, setDoc, addDoc, deleteDoc, getDocs } from 'firebase/firestore';
-import { Briefcase, ChevronLeft, ChevronRight, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw, Printer, Plus, UserCheck, MoveVertical } from 'lucide-react';
+import { collection, doc, setDoc, addDoc, deleteDoc, getDocs, runTransaction } from 'firebase/firestore';
+import { Briefcase, ChevronLeft, ChevronRight, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw, Printer, Plus, UserCheck, MoveVertical, Building2 } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays } from '../utils/date';
 import { queueMail } from '../utils/mailSender';
 import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
@@ -40,6 +40,61 @@ const hexToRgba = (hex: string, alpha: number): string => {
   const g = (num >> 8) & 255;
   const b = num & 255;
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
+export const getLeaveHoursForDay = (
+  l: {
+    tipo?: string;
+    frazioneTipo?: string;
+    oraInizio?: string;
+    oraFine?: string;
+    pausaPranzo?: boolean;
+    pausaPranzoOre?: number;
+  },
+  dailyContractHours: number = 8
+): number => {
+  if (!l || l.tipo === 'smart') return 0;
+
+  if (
+    l.frazioneTipo === 'giornata' ||
+    l.tipo === 'ferie' ||
+    l.tipo === 'malattia' ||
+    l.tipo === 'maternita'
+  ) {
+    return dailyContractHours;
+  }
+
+  if (
+    l.frazioneTipo === 'mattina' ||
+    l.frazioneTipo === 'pomeriggio' ||
+    l.tipo === 'mattina' ||
+    l.tipo === 'pomeriggio'
+  ) {
+    return dailyContractHours / 2;
+  }
+
+  if (
+    (l.frazioneTipo === 'orario' || l.tipo === 'permesso' || (!l.frazioneTipo && l.oraInizio && l.oraFine)) &&
+    l.oraInizio &&
+    l.oraFine
+  ) {
+    const [hStart, mStart] = l.oraInizio.split(':').map(Number);
+    const [hEnd, mEnd] = l.oraFine.split(':').map(Number);
+    if (!isNaN(hStart) && !isNaN(hEnd)) {
+      const diffMs = new Date(2000, 0, 1, hEnd, mEnd || 0).getTime() - new Date(2000, 0, 1, hStart, mStart || 0).getTime();
+      let hrs = Math.max(0, Math.round((diffMs / 3600000) * 100) / 100);
+      if (l.pausaPranzo && l.pausaPranzoOre) {
+        hrs = Math.max(0, hrs - l.pausaPranzoOre);
+      }
+      return Math.min(dailyContractHours, hrs);
+    }
+  }
+
+  if (l.tipo === 'permesso' || l.tipo === 'assenza') {
+    return dailyContractHours / 2;
+  }
+
+  return dailyContractHours;
 };
 
 
@@ -164,6 +219,7 @@ const generateWeeksExtended = (baseDate: Date, numWeeks: number): WeekInfo[] => 
 export default function Commesse() {
   const { 
     isAdmin = false, 
+    isDev = false,
     myAssociatedName = '', 
     userEmail = '',
     dipendenti = [], 
@@ -315,6 +371,60 @@ export default function Commesse() {
   const [selectedClient, setSelectedClient] = useState<{ codice: string; nome: string } | null>(null);
   const [clientSearchText, setClientSearchText] = useState('');
   const [isClientDropdownOpen, setIsClientDropdownOpen] = useState(false);
+
+  // Modal rapida per Aggiungi Cliente
+  const [isNewClientModalOpen, setIsNewClientModalOpen] = useState(false);
+  const [newClientNome, setNewClientNome] = useState('');
+  const [isSavingNewClient, setIsSavingNewClient] = useState(false);
+
+  const nextProgressiveClientCode = useMemo(() => {
+    if (!clientiList || clientiList.length === 0) return '1';
+    const highest = Math.max(...clientiList.map(c => parseInt(c.codice) || 0), 0);
+    return (highest + 1).toString();
+  }, [clientiList]);
+
+  const handleSaveNewClientQuickly = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newClientNome.trim()) {
+      showToast("Inserisci la ragione sociale del nuovo cliente.", "warning");
+      return;
+    }
+
+    setIsSavingNewClient(true);
+    try {
+      let createdDoc: { id: string; codice: string; nome: string } | null = null;
+      await runTransaction(db, async (transaction) => {
+        const clientiSnap = await getDocs(collection(db, 'clienti'));
+        let highest = 0;
+        clientiSnap.forEach(d => {
+          const val = parseInt(d.data().codice) || 0;
+          if (val > highest) highest = val;
+        });
+        const nextCode = (highest + 1).toString();
+        const newRef = doc(collection(db, 'clienti'));
+        const payload = {
+          codice: nextCode,
+          nome: newClientNome.trim()
+        };
+        transaction.set(newRef, payload);
+        createdDoc = { id: newRef.id, ...payload };
+      });
+
+      if (createdDoc) {
+        setSelectedClient(createdDoc);
+        setClientSearchText(createdDoc.nome);
+        setIsClientDropdownOpen(false);
+        showToast(`Cliente ${createdDoc.codice} - ${createdDoc.nome} aggiunto ed impostato!`, "success");
+      }
+      setNewClientNome('');
+      setIsNewClientModalOpen(false);
+    } catch (err) {
+      console.error("Errore salvataggio rapido cliente:", err);
+      showToast("Si è verificato un errore durante il salvataggio del cliente.", "error");
+    } finally {
+      setIsSavingNewClient(false);
+    }
+  };
 
   // Search and Advanced Filters for Catalogo Commesse
   const [searchCommessaQuery, setSearchCommessaQuery] = useState('');
@@ -493,11 +603,43 @@ export default function Commesse() {
 
     const dip = dipendenti.find(d => areNamesEqual(d.nome, personName));
     const macroArea = dip?.macroArea || '';
+    const targetCommessa = commesse.find(c => c.id === commId);
 
-    const isCoordOfResourceArea = (coordinatori || []).some(
-      c => c.area === macroArea && c.email?.toLowerCase() === userEmail?.toLowerCase()
-    );
-    const canDirectlyManage = isAdmin || isSoci(myAssociatedName) || isCoordOfResourceArea;
+    const checkIsUserPmOrResp = (cObj: any): boolean => {
+      if (!cObj) return false;
+      const respStr = String(cObj.responsabile || '').toLowerCase().trim();
+      const pmList: any[] = Array.isArray(cObj.pm) ? cObj.pm : (cObj.pm ? [cObj.pm] : []);
+      const targets = [respStr, ...pmList.map(p => String(p || '').toLowerCase().trim())].filter(Boolean);
+
+      if (targets.length === 0) return false;
+
+      if (myAssociatedName && targets.some(t => areNamesEqual(t, myAssociatedName))) return true;
+      if (myDip?.nome && targets.some(t => areNamesEqual(t, myDip.nome))) return true;
+
+      if (userEmail) {
+        const emailClean = userEmail.toLowerCase().trim();
+        const username = emailClean.split('@')[0];
+        if (targets.some(t => t.includes(emailClean) || (username.length >= 4 && t.includes(username)))) return true;
+      }
+
+      const commonFirstNames = ['andrea', 'matteo', 'marco', 'gabriele', 'luca', 'francesco', 'alessandro', 'stefano', 'davide', 'lorenzo', 'riccardo', 'filippo', 'giuseppe', 'antonio', 'michele'];
+      const fullName = myDip?.nome || myAssociatedName || '';
+      if (fullName) {
+        const parts = fullName.split(/\s+/).filter(p => p.length >= 3);
+        for (const part of parts) {
+          const partLower = part.toLowerCase();
+          if (parts.length > 1 && commonFirstNames.includes(partLower)) {
+            continue;
+          }
+          if (targets.some(t => t.includes(partLower))) return true;
+        }
+      }
+
+      return false;
+    };
+
+    const isPMOrRespOfCommessa = checkIsUserPmOrResp(targetCommessa);
+    const canDirectlyManage = isAdmin || isDev || isSoci(myAssociatedName) || isPMOrRespOfCommessa;
 
     if (e.button === 1) {
       // Rotellina (Middle Click) -> Nuova Scheda
@@ -517,13 +659,7 @@ export default function Commesse() {
         weekId: wkId
       });
     } else {
-      const targetCommessa = commesse.find(c => c.id === commId);
-      const isPMOrRespOfCommessa = targetCommessa ? (
-        areNamesEqual(targetCommessa.responsabile, myAssociatedName) ||
-        (Array.isArray(targetCommessa.pm) ? targetCommessa.pm : [targetCommessa.pm]).some(pmName => areNamesEqual(pmName, myAssociatedName))
-      ) : false;
       const isAnyCoordinator = (coordinatori || []).some(c => c.email?.toLowerCase() === userEmail?.toLowerCase());
-
       const canSendChangeRequest = isAnyCoordinator || isPMOrRespOfCommessa || areNamesEqual(personName, myAssociatedName);
 
       if (!canSendChangeRequest) {
@@ -546,12 +682,39 @@ export default function Commesse() {
     if (e.button !== 0) return;
     e.preventDefault();
 
-    const isPMOrRespOfCommessa = comm ? (
-      areNamesEqual(comm.responsabile, myAssociatedName) ||
-      (Array.isArray(comm.pm) ? comm.pm : [comm.pm]).some((pmName: string) => areNamesEqual(pmName, myAssociatedName))
-    ) : false;
-    const isAnyCoordinator = (coordinatori || []).some(c => c.email?.toLowerCase() === userEmail?.toLowerCase());
-    const canDirectlyManageWeek = isAdmin || isSoci(myAssociatedName) || isAnyCoordinator || isPMOrRespOfCommessa;
+    const isPMOrRespOfCommessa = (cObj: any): boolean => {
+      if (!cObj) return false;
+      const respStr = String(cObj.responsabile || '').toLowerCase().trim();
+      const pmList: any[] = Array.isArray(cObj.pm) ? cObj.pm : (cObj.pm ? [cObj.pm] : []);
+      const targets = [respStr, ...pmList.map(p => String(p || '').toLowerCase().trim())].filter(Boolean);
+
+      if (targets.length === 0) return false;
+
+      if (myAssociatedName && targets.some(t => areNamesEqual(t, myAssociatedName))) return true;
+
+      if (userEmail) {
+        const emailClean = userEmail.toLowerCase().trim();
+        const username = emailClean.split('@')[0];
+        if (targets.some(t => t.includes(emailClean) || (username.length >= 4 && t.includes(username)))) return true;
+      }
+
+      const commonFirstNames = ['andrea', 'matteo', 'marco', 'gabriele', 'luca', 'francesco', 'alessandro', 'stefano', 'davide', 'lorenzo', 'riccardo', 'filippo', 'giuseppe', 'antonio', 'michele'];
+      const fullName = myAssociatedName || '';
+      if (fullName) {
+        const parts = fullName.split(/\s+/).filter(p => p.length >= 3);
+        for (const part of parts) {
+          const partLower = part.toLowerCase();
+          if (parts.length > 1 && commonFirstNames.includes(partLower)) {
+            continue;
+          }
+          if (targets.some(t => t.includes(partLower))) return true;
+        }
+      }
+
+      return false;
+    };
+
+    const canDirectlyManageWeek = isAdmin || isDev || isSoci(myAssociatedName) || isPMOrRespOfCommessa(comm);
 
     if (canDirectlyManageWeek) {
       setPlanningModal({
@@ -929,7 +1092,7 @@ export default function Commesse() {
   }, [assignments]);
 
   const resourceWeekLeavesMap = useMemo(() => {
-    const map = new Map<string, { giorno: string; tipo: string; dettagli: string }[]>();
+    const map = new Map<string, { giorno: string; tipo: string; frazioneTipo?: string; oraInizio?: string; oraFine?: string; pausaPranzo?: boolean; pausaPranzoOre?: number; dettagli: string }[]>();
     if (!approvedLeaves || !approvedLeaves.length || !activeWeeks || !activeWeeks.length) return map;
 
     const dayNames = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
@@ -981,15 +1144,20 @@ export default function Commesse() {
           const wTime = new Date(wY, wM - 1, wD).getTime();
           if (wTime >= curr && wTime <= last) {
             let label = leave.tipo === 'ferie' ? 'Ferie' : leave.tipo === 'malattia' ? 'Malattia' : leave.tipo === 'maternita' ? 'Maternità' : leave.tipo === 'smart' ? 'Smart' : (leave.tipo || 'Assenza');
-            if (leave.tipo === 'mattina') label = 'Ass. Matt.';
-            if (leave.tipo === 'pomeriggio') label = 'Ass. Pom.';
-            if (leave.tipo === 'permesso') label = `Perm. (${leave.oraInizio || ''}-${leave.oraFine || ''})`;
+            if (leave.tipo === 'mattina' || leave.frazioneTipo === 'mattina') label = 'Ass. Matt.';
+            if (leave.tipo === 'pomeriggio' || leave.frazioneTipo === 'pomeriggio') label = 'Ass. Pom.';
+            if (leave.tipo === 'permesso' || leave.frazioneTipo === 'orario') label = `Perm. (${leave.oraInizio || ''}-${leave.oraFine || ''})`;
 
             const mapKey = `${resKey}_${wkId}`;
             const existing = map.get(mapKey) || [];
             existing.push({
               giorno: dayNames[idx],
               tipo: leave.tipo || 'ferie',
+              frazioneTipo: leave.frazioneTipo,
+              oraInizio: leave.oraInizio,
+              oraFine: leave.oraFine,
+              pausaPranzo: leave.pausaPranzo,
+              pausaPranzoOre: leave.pausaPranzoOre,
               dettagli: label
             });
             map.set(mapKey, existing);
@@ -1140,6 +1308,62 @@ export default function Commesse() {
           );
         } else {
           showToast('Commessa chiusa. Nessuna assegnazione futura da rimuovere.', 'success');
+        }
+
+        // Invia notifica e-mail di chiusura commessa a synergiesflow@ingegno06.it
+        try {
+          const whoClosed = myAssociatedName ? `${myAssociatedName} (${userEmail})` : userEmail;
+          const closureMailSubject = `[Notifica Chiusura] Chiusa commessa: ${editingCommessa.codiceCommessa || ''} - ${editingCommessa.nome}`;
+          
+          let progettiClosureHtml = '';
+          if (Array.isArray(editProgetti) && editProgetti.length > 0) {
+            editProgetti.forEach((p: any, index: number) => {
+              progettiClosureHtml += `
+                <tr style="background-color: ${index % 2 === 0 ? '#f9fafb' : '#ffffff'};">
+                  <td style="padding: 8px 10px; border-bottom: 1px solid #e5e7eb; font-weight: 600; font-size: 13px; color: #1f2937;">${p.descrizione || '(Senza descrizione)'}</td>
+                  <td style="padding: 8px 10px; border-bottom: 1px solid #e5e7eb; font-size: 13px; color: #4b5563;">${p.pm || 'Non assegnato'}</td>
+                  <td style="padding: 8px 10px; border-bottom: 1px solid #e5e7eb; font-size: 12px; color: #047857; font-weight: 600;">${(p.utentiDaAbilitare || []).join(', ') || 'Nessuno'}</td>
+                </tr>
+              `;
+            });
+          }
+
+          const closureMailBody = `
+            <p>Gentili,</p>
+            <p>Ti informiamo che la seguente commessa è stata <strong>CONTRASSEGNATA COME CHIUSA</strong> sulla piattaforma di pianificazione:</p>
+            <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 15px 0;" />
+            <table border="0" cellpadding="5" cellspacing="0" style="font-size: 14px; color: #374151; width: 100%;">
+              <tr><td style="font-weight: bold; width: 180px;">Codice Commessa:</td><td>${editingCommessa.codiceCommessa || 'N/D'}</td></tr>
+              <tr><td style="font-weight: bold;">Titolo / Nome:</td><td>${editingCommessa.nome}</td></tr>
+              <tr><td style="font-weight: bold;">Cliente:</td><td>${editingCommessa.cliente || 'Non specificato'}</td></tr>
+              <tr><td style="font-weight: bold;">Data Chiusura:</td><td>${dataChiusura ? new Date(dataChiusura).toLocaleDateString('it-IT') : new Date().toLocaleDateString('it-IT')}</td></tr>
+              <tr><td style="font-weight: bold;">Chiusa da:</td><td><strong style="color: #b91c1c;">${whoClosed}</strong></td></tr>
+              <tr><td style="font-weight: bold;">Responsabile Commessa:</td><td>${editResponsabile || 'Non assegnato'}</td></tr>
+              <tr><td style="font-weight: bold;">Project Manager (PM):</td><td>${pmsUnivoci.join(', ') || 'Non assegnato'}</td></tr>
+            </table>
+            
+            ${progettiClosureHtml ? `
+              <h3 style="color: #991b1b; font-size: 15px; margin-top: 20px; margin-bottom: 10px;">Progetti della Commessa</h3>
+              <table border="0" cellpadding="0" cellspacing="0" style="width: 100%; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden;">
+                <thead style="background-color: #f9fafb;">
+                  <tr>
+                    <th style="padding: 8px 10px; text-align: left; font-size: 12px; font-weight: bold; color: #374151;">Progetto</th>
+                    <th style="padding: 8px 10px; text-align: left; font-size: 12px; font-weight: bold; color: #374151;">PM</th>
+                    <th style="padding: 8px 10px; text-align: left; font-size: 12px; font-weight: bold; color: #374151;">Utenti Abilitati</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${progettiClosureHtml}
+                </tbody>
+              </table>
+            ` : ''}
+            <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;" />
+            <p style="font-size: 12px; color: #6b7280;">Nota: Le eventuali assegnazioni di ore pianificate per questa commessa nelle settimane successive a oggi sono state automaticamente rimosse.</p>
+          `;
+
+          await queueMail('synergiesflow@ingegno06.it', closureMailSubject, closureMailBody);
+        } catch (errMail) {
+          console.error("Errore durante l'invio dell'email di chiusura commessa:", errMail);
         }
       }
 
@@ -1302,14 +1526,24 @@ export default function Commesse() {
     });
   }, [commesse, myAssociatedName]);
 
+  const isCoordinatoreQualsiasi = useMemo(() => {
+    if (!userEmail) return false;
+    const clean = userEmail.toLowerCase().trim();
+    return (coordinatori || []).some(c => c && c.email && typeof c.email === 'string' && c.email.toLowerCase().trim() === clean);
+  }, [userEmail, coordinatori]);
+
+  const canAccessCatalogo = useMemo(() => {
+    return isAdmin || isDev || isSoci(myAssociatedName) || isCoordinatoreQualsiasi;
+  }, [isAdmin, isDev, myAssociatedName, isCoordinatoreQualsiasi]);
+
   const commesseGestibili = useMemo(() => {
-    if (isAdmin) return commesse;
+    if (canAccessCatalogo) return commesse;
     return commesse.filter(c => {
       const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
       const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
       return areNamesEqual(c.responsabile, myAssociatedName) || isPM;
     });
-  }, [commesse, isAdmin, myAssociatedName]);
+  }, [commesse, canAccessCatalogo, myAssociatedName]);
 
   const selectableAnniCatalogo = useMemo(() => {
     const set = new Set<string>();
@@ -1593,6 +1827,7 @@ export default function Commesse() {
           <tr><td style="font-weight: bold;">Cliente:</td><td>${payload.cliente}</td></tr>
           <tr><td style="font-weight: bold;">Tipologia:</td><td>${TIPOLOGIE_COMMESSE[payload.tipologia] || payload.tipologia}</td></tr>
           <tr><td style="font-weight: bold;">Anno:</td><td>${payload.anno}</td></tr>
+          <tr><td style="font-weight: bold;">Aperta da:</td><td><strong style="color: #047857;">${myAssociatedName ? `${myAssociatedName} (${userEmail})` : userEmail}</strong></td></tr>
           <tr><td style="font-weight: bold;">Data Inizio:</td><td>${payload.dataInizio ? new Date(payload.dataInizio).toLocaleDateString('it-IT') : 'Non specificata'}</td></tr>
           <tr><td style="font-weight: bold;">Data Fine:</td><td>${payload.dataFine ? new Date(payload.dataFine).toLocaleDateString('it-IT') : 'Non specificata'}</td></tr>
           <tr><td style="font-weight: bold;">Responsabile Commessa:</td><td>${payload.responsabile || 'Non assegnato'}</td></tr>
@@ -1873,16 +2108,10 @@ export default function Commesse() {
             )}
           </div>
         </h2>
-        
-        <div className={`flex items-center gap-2 text-xs font-bold px-4 py-2 rounded-xl border ${
-          (isAdmin || isResponsabileDiQualcheCommessa) ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-blue-50 text-blue-700 border-blue-100'
-        }`}>
-          {(isAdmin || isResponsabileDiQualcheCommessa) ? 'Vista Amministrazione e Assegnazione' : 'Vista di Sola Consultazione'}
-        </div>
       </div>
       
-      {/* TAB BAR (Solo per Admin e Responsabili) */}
-      {(isAdmin || isResponsabileDiQualcheCommessa) && (
+      {/* TAB BAR (Per Admin, Soci, Coordinatori, Sviluppatori e Responsabili) */}
+      {canAccessCatalogo && (
         <div className="flex border-b border-gray-200 gap-2 no-print">
           <button
             type="button"
@@ -2380,20 +2609,28 @@ export default function Commesse() {
                                      const normName = person.name.toLowerCase().trim();
                                      const dip = dipendentiMap.get(normName);
                                      const dailyContractHours = dip?.tipo === 'collaboratore' ? 8 : (dip?.oreContratto ?? 8);
+                                     const weeklyContractHours = dailyContractHours * 5;
                                      const leaves = resourceWeekLeavesMap.get(`${normName}_${wk.id}`) || [];
-                                     const fullLeaveDaysCount = leaves.filter(l => l.tipo === 'ferie' || l.tipo === 'malattia' || l.tipo === 'maternita').length;
-                                     const activeWorkingDays = Math.max(0, 5 - fullLeaveDaysCount);
-                                     const availableContractHours = dailyContractHours * activeWorkingDays;
-                                     const hours = Math.round((person.pct * availableContractHours) / 100);
-                                     const isAllWeekOnLeave = fullLeaveDaysCount >= 5;
-                                     const hasLeaves = leaves.length > 0;
+
+                                     const totalLeaveHoursInWeek = Math.min(
+                                       weeklyContractHours,
+                                       leaves.reduce((acc, l) => acc + getLeaveHoursForDay(l, dailyContractHours), 0)
+                                     );
+                                     const leavePctInWeek = Math.round((totalLeaveHoursInWeek / weeklyContractHours) * 100);
+
+                                     const availableContractHours = Math.max(0, weeklyContractHours - totalLeaveHoursInWeek);
+                                     const fullLeaveDaysCount = leaves.filter(l => l.tipo === 'ferie' || l.tipo === 'malattia' || l.tipo === 'maternita' || l.frazioneTipo === 'giornata').length;
+                                     const isAllWeekOnLeave = availableContractHours <= 0 || fullLeaveDaysCount >= 5;
+                                     const hasLeaves = leaves.length > 0 && totalLeaveHoursInWeek > 0;
+
+                                     const hours = Math.round((person.pct * weeklyContractHours) / 100);
                                      const personDocId = `${person.name}-${wk.id}`;
                                      const totalPctInWeek = totalPctInWeekMap.get(personDocId.toLowerCase().trim()) || 0;
-                                     const totalAssignedHoursInWeek = Math.round((totalPctInWeek * availableContractHours) / 100);
-                                     const freeHoursInWeek = Math.max(0, availableContractHours - totalAssignedHoursInWeek);
-                                     const freePctInWeek = availableContractHours > 0 ? Math.round((freeHoursInWeek / availableContractHours) * 100) : 0;
-                                     const totalLeaveHoursInWeek = fullLeaveDaysCount * dailyContractHours;
-                                     const leavePctInWeek = Math.round((fullLeaveDaysCount / 5) * 100);
+                                     const totalAssignedHoursInWeek = Math.round((totalPctInWeek * weeklyContractHours) / 100);
+
+                                     const freeHoursInWeek = Math.max(0, weeklyContractHours - totalLeaveHoursInWeek - totalAssignedHoursInWeek);
+                                     const freePctInWeek = Math.max(0, Math.round((freeHoursInWeek / weeklyContractHours) * 100));
+
                                      const leaveDaysStr = leaves.map(l => l.giorno).join(', ');
                                      const leavesFormatted = hasLeaves
                                        ? `(${leaveDaysStr}) ${totalLeaveHoursInWeek}h (${leavePctInWeek}%)`
@@ -2524,37 +2761,14 @@ export default function Commesse() {
         </>
       )}
 
-      {/* TAB 2: GESTIONE CATALOGO (Per Admin e Responsabili) */}
-      {(activeTab === 'gestione' && (isAdmin || isResponsabileDiQualcheCommessa)) && (
+      {/* TAB 2: GESTIONE CATALOGO (Per Admin, Soci, Coordinatori e Sviluppatori) */}
+      {(activeTab === 'gestione' && canAccessCatalogo) && (
         <div className="space-y-8">
           <section className="bg-gradient-to-br from-emerald-50 to-teal-50 p-6 rounded-3xl border border-emerald-100 shadow-sm">
             <div className="flex justify-between items-center mb-4 flex-wrap gap-3">
               <h3 className="text-xl font-bold text-emerald-900 flex items-center gap-2">
                 <Briefcase className="w-6 h-6 text-emerald-600" /> Catalogo Commesse
               </h3>
-              <div className="flex items-center gap-2 flex-wrap">
-                <button
-                  type="button"
-                  onClick={() => setShowNewCommessaForm(prev => !prev)}
-                  className="flex items-center gap-1.5 bg-emerald-700 text-white hover:bg-emerald-800 px-3.5 py-1.5 rounded-xl text-xs font-black transition shadow-sm active:scale-95 cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5" /> {showNewCommessaForm ? 'Nascondi Form Nuova Commessa' : 'Nuova Commessa'}
-                </button>
-                <button
-                  type="button"
-                  onClick={handlePrintCatalogoCommesse}
-                  className="flex items-center gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700 px-3.5 py-1.5 rounded-xl text-xs font-bold transition shadow-sm active:scale-95 cursor-pointer"
-                >
-                  <Printer className="w-3.5 h-3.5" /> Stampa Lista
-                </button>
-                <button
-                  type="button"
-                  onClick={handleExportCatalogoExcel}
-                  className="flex items-center gap-1.5 bg-teal-600 text-white hover:bg-teal-700 px-3.5 py-1.5 rounded-xl text-xs font-bold transition shadow-sm active:scale-95 cursor-pointer"
-                >
-                  <Download className="w-3.5 h-3.5" /> Esporta Excel
-                </button>
-              </div>
             </div>
             
             {showNewCommessaForm && (
@@ -2566,34 +2780,47 @@ export default function Commesse() {
                 </div>
                 <form onSubmit={handleAddCommessa} className="space-y-4">
                 
-                {/* Selettore Cliente Ricercabile */}
+                {/* Selettore Cliente Ricercabile con pulsante Aggiungi Cliente */}
                 <div className="relative">
                   <label className="block text-[10px] font-bold text-emerald-950 mb-1 ml-1">Cliente (Cerca e Seleziona)</label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      placeholder="Digita per cercare un cliente per codice o ragione sociale..."
-                      value={selectedClient ? selectedClient.nome : clientSearchText}
-                      onChange={e => {
-                        setClientSearchText(e.target.value);
-                        if (selectedClient) setSelectedClient(null);
-                        setIsClientDropdownOpen(true);
-                      }}
-                      onFocus={() => setIsClientDropdownOpen(true)}
-                      className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs"
-                    />
-                    {selectedClient && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedClient(null);
-                          setClientSearchText('');
+                  <div className="flex gap-2 items-center">
+                    <div className="relative flex-1">
+                      <input
+                        type="text"
+                        placeholder="Digita per cercare un cliente per codice o ragione sociale..."
+                        value={selectedClient ? selectedClient.nome : clientSearchText}
+                        onChange={e => {
+                          setClientSearchText(e.target.value);
+                          if (selectedClient) setSelectedClient(null);
+                          setIsClientDropdownOpen(true);
                         }}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-red-500 hover:text-red-700 font-extrabold text-[10px] bg-red-50 px-2 py-1 rounded-lg transition"
-                      >
-                        Rimuovi
-                      </button>
-                    )}
+                        onFocus={() => setIsClientDropdownOpen(true)}
+                        className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs"
+                      />
+                      {selectedClient && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedClient(null);
+                            setClientSearchText('');
+                          }}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-red-500 hover:text-red-700 font-extrabold text-[10px] bg-red-50 px-2 py-1 rounded-lg transition"
+                        >
+                          Rimuovi
+                        </button>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNewClientNome('');
+                        setIsNewClientModalOpen(true);
+                      }}
+                      className="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2.5 rounded-xl font-extrabold text-xs shadow-md transition flex items-center gap-1.5 shrink-0 active:scale-95 cursor-pointer"
+                    >
+                      <Building2 className="w-4 h-4" />
+                      <span>+ Aggiungi Cliente</span>
+                    </button>
                   </div>
                   {isClientDropdownOpen && (
                     <>
@@ -2767,7 +2994,7 @@ export default function Commesse() {
                               className="w-full p-2 border border-indigo-200 rounded-lg bg-indigo-50/40 focus:bg-white outline-none focus:ring-1 focus:ring-emerald-400 font-bold text-gray-700 text-xs h-[38px]"
                             >
                               <option value="">+ Seleziona Utente da Abilitare...</option>
-                              {dipendenti.filter(d => !(progetto.utentiDaAbilitare || []).includes(d.nome)).map(d => (
+                              {dipendenti.filter(d => (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it' && !(progetto.utentiDaAbilitare || []).includes(d.nome)).map(d => (
                                 <option key={d.id} value={d.nome}>{d.nome} {d.macroArea ? `(${d.macroArea})` : ''}</option>
                               ))}
                             </select>
@@ -2867,7 +3094,7 @@ export default function Commesse() {
                                 className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
                               >
                                 <option value="">-- Nessuno --</option>
-                                {dipendenti.map(d => (
+                                {dipendenti.filter(d => (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it').map(d => (
                                   <option key={d.id} value={d.nome}>{d.nome}</option>
                                 ))}
                               </select>
@@ -2924,26 +3151,44 @@ export default function Commesse() {
 
             {/* PANNELLO FILTRI IN 2 RIGHE E SPAZIATO */}
             <div className="mb-4 bg-white/85 backdrop-blur-md p-4 rounded-2xl border border-emerald-100/90 shadow-sm space-y-3">
-              {/* RIGA 1: RICERCA TESTUALE + CONTATORE COMMESSE + SELETTORE STATO */}
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-                <div className="flex-1 w-full sm:w-auto flex items-center gap-3">
-                  <div className="relative flex-1">
-                    <input
-                      type="text"
-                      placeholder="🔍 Cerca codice, titolo, cliente, note..."
-                      value={searchCommessaQuery}
-                      onChange={e => setSearchCommessaQuery(e.target.value)}
-                      className="w-full p-2.5 pl-3 border border-emerald-100 rounded-xl bg-white focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs shadow-xs"
-                    />
-                  </div>
+              {/* RIGA 1: RICERCA TESTUALE + CONTATORE COMMESSE + STAMPA & ESPORTA + SELETTORE STATO */}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                {/* Campo di ricerca */}
+                <div className="relative flex-1 min-w-[220px]">
+                  <input
+                    type="text"
+                    placeholder="🔍 Cerca codice, titolo, cliente, note..."
+                    value={searchCommessaQuery}
+                    onChange={e => setSearchCommessaQuery(e.target.value)}
+                    className="w-full p-2.5 pl-3 border border-emerald-100 rounded-xl bg-white focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs shadow-xs"
+                  />
+                </div>
+
+                {/* Contatore, Stampa, Excel e Selettore Stato */}
+                <div className="flex flex-wrap items-center gap-2.5">
                   <span className="text-[11px] text-gray-600 font-extrabold bg-emerald-50/80 px-3 py-1.5 rounded-xl border border-emerald-100 shrink-0 whitespace-nowrap">
                     Visualizzate <strong className="text-emerald-950 font-black">{filteredAndSortedCatalogoCommesse.length}</strong> di {commesseGestibili.length} commesse
                   </span>
-                </div>
 
-                {/* SELETTORE STATO (APERTE / TUTTE / CHIUSE) */}
-                <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
-                  <div className="flex bg-gray-100 p-1 rounded-xl gap-1 border border-gray-200/60 shadow-inner">
+                  <button
+                    type="button"
+                    onClick={handlePrintCatalogoCommesse}
+                    className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold transition shadow-sm active:scale-95 cursor-pointer shrink-0"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    <span>Stampa Lista</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleExportCatalogoExcel}
+                    className="flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold transition shadow-sm active:scale-95 cursor-pointer shrink-0"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Esporta Excel</span>
+                  </button>
+
+                  <div className="flex bg-gray-100 p-1 rounded-xl gap-1 border border-gray-200/60 shadow-inner shrink-0">
                     <button
                       type="button"
                       onClick={() => setCatalogoStatoFilter('Aperta')}
@@ -3348,7 +3593,7 @@ export default function Commesse() {
                                   className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
                                 >
                                   <option value="">-- Nessuno --</option>
-                                  {dipendenti.map(d => (
+                                  {dipendenti.filter(d => (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it').map(d => (
                                     <option key={d.id} value={d.nome}>{d.nome}</option>
                                   ))}
                                 </select>
@@ -3628,6 +3873,75 @@ export default function Commesse() {
         isOpen={isAvailabilityModalOpen}
         onClose={() => setIsAvailabilityModalOpen(false)}
       />
+
+      {/* MODALE DI POPUP: NUOVO CLIENTE */}
+      {isNewClientModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
+          <div className="bg-blue-50/90 backdrop-blur-2xl rounded-3xl p-6 sm:p-7 shadow-2xl max-w-md w-full border border-blue-100/80 animate-in zoom-in-95 duration-200">
+            
+            {/* Header Modale */}
+            <div className="flex justify-between items-start mb-5">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-blue-100 text-blue-600 rounded-2xl shadow-xs">
+                  <Building2 className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-blue-950">Nuovo Cliente</h3>
+                  <p className="text-xs text-gray-500 font-medium">Aggiungi un nuovo cliente all'anagrafica aziendale.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsNewClientModalOpen(false)}
+                className="text-gray-400 hover:text-gray-600 p-1.5 hover:bg-white/60 rounded-xl transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveNewClientQuickly} className="space-y-5">
+              {/* Codice Cliente Progressivo (Disabilitato e Centrato) */}
+              <div>
+                <label className="block text-[10px] font-extrabold text-blue-950 uppercase tracking-wide mb-1.5 ml-1">Codice Cliente (Progressivo)</label>
+                <div className="w-full p-3 rounded-2xl bg-gray-100/80 text-gray-700 font-black text-sm text-center border border-gray-200/60 shadow-inner select-none">
+                  {nextProgressiveClientCode}
+                </div>
+              </div>
+
+              {/* Ragione Sociale Input */}
+              <div>
+                <label className="block text-[10px] font-extrabold text-blue-950 uppercase tracking-wide mb-1.5 ml-1">Ragione Sociale</label>
+                <input
+                  autoFocus
+                  required
+                  type="text"
+                  placeholder="Es. Borgo della Val di Cornia S.r.l."
+                  value={newClientNome}
+                  onChange={e => setNewClientNome(e.target.value)}
+                  className="w-full p-3 border-none rounded-2xl bg-white shadow-sm focus:ring-2 focus:ring-blue-400 outline-none font-semibold text-gray-800 text-xs"
+                />
+              </div>
+
+              {/* Submit Button */}
+              <button
+                type="submit"
+                disabled={isSavingNewClient}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3.5 rounded-2xl font-extrabold text-xs shadow-md shadow-blue-300/50 transition active:scale-95 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {isSavingNewClient ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <Plus className="w-4 h-4" />
+                    <span>+ Aggiungi Cliente</span>
+                  </>
+                )}
+              </button>
+            </form>
+
+          </div>
+        </div>
+      )}
 
       <ConfirmModal
         isOpen={confirmConfig.isOpen}

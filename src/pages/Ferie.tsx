@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, memo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, addDoc, doc, updateDoc, deleteDoc, query, where, getDocs, getDoc } from 'firebase/firestore';
+import { collection, addDoc, doc, updateDoc, deleteDoc, query, where, getDocs, getDoc, onSnapshot } from 'firebase/firestore';
 import { Calendar, CheckCircle, XCircle, Clock, ChevronLeft, ChevronRight, RefreshCw, Pencil, Trash2, AlertTriangle, X, Search } from 'lucide-react';
 import { queueMail } from '../utils/mailSender';
 import { isItalianHoliday, isWeekend, getWeekNumber } from '../utils/date';
@@ -292,6 +292,13 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
 
   useEffect(() => {
     loadFerieData();
+
+    // Listener real-time per aggiornamento automatico dei contatori all'approvazione delle richieste
+    const unsubFerie = onSnapshot(collection(db, 'richieste_ferie'), () => {
+      loadFerieData();
+    });
+
+    return () => unsubFerie();
   }, [myAssociatedName, isHR, isAdmin]);
 
   // Union list for regular users
@@ -302,36 +309,129 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
     return Object.values(map);
   }, [myRichieste, othersApprovedRichieste]);
 
+  // Calcolo ore assenze per l'anno corrente (dal 01 gennaio al 31 dicembre)
+  const currentYear = new Date().getFullYear();
+
+  const yearlyStats = useMemo(() => {
+    if (!targetDipName) {
+      return { ferieHours: 0, permessoHours: 0, malattiaHours: 0, assenzeGenericheHours: 0 };
+    }
+
+    const allList = isHR ? hrRichieste : requestsList;
+    const approvedTarget = allList.filter(r => 
+      r.stato === 'Approvato' && 
+      r.dipendenteName === targetDipName &&
+      r.note !== 'Chiusure Aziendali'
+    );
+
+    let ferieHours = 0;
+    let permessoHours = 0;
+    let malattiaHours = 0;
+    let assenzeGenericheHours = 0;
+
+    approvedTarget.forEach(req => {
+      const dates: string[] = [];
+      if (req.dataInizio && req.dataFine) {
+        const [sY, sM, sD] = req.dataInizio.split('-').map(Number);
+        const [eY, eM, eD] = req.dataFine.split('-').map(Number);
+        if (!isNaN(sY) && !isNaN(eY)) {
+          const curr = new Date(sY, sM - 1, sD);
+          const end = new Date(eY, eM - 1, eD);
+          while (curr <= end) {
+            const y = curr.getFullYear();
+            const m = String(curr.getMonth() + 1).padStart(2, '0');
+            const d = String(curr.getDate()).padStart(2, '0');
+            dates.push(`${y}-${m}-${d}`);
+            curr.setDate(curr.getDate() + 1);
+          }
+        }
+      } else if (req.data) {
+        dates.push(req.data);
+      } else if (req.dataInizio) {
+        dates.push(req.dataInizio);
+      }
+
+      let reqTotalHrs = 0;
+
+      for (const dateStr of dates) {
+        if (!dateStr || !dateStr.startsWith(`${currentYear}-`)) continue;
+
+        const isWk = isWeekend(dateStr);
+        const isHol = isItalianHoliday(dateStr);
+        const isWkApproved = approvedWeekends[`${req.dipendenteName}_${dateStr}`];
+
+        if ((isWk || isHol) && !isWkApproved) {
+          continue;
+        }
+
+        const frazione = req.frazioneTipo;
+        const tipo = req.tipo;
+
+        if (frazione === 'mattina' || frazione === 'pomeriggio' || tipo === 'mattina' || tipo === 'pomeriggio') {
+          reqTotalHrs += 4;
+        } else if ((frazione === 'orario' || tipo === 'orario' || tipo === 'permesso' || tipo === 'assenza') && req.oraInizio && req.oraFine) {
+          const [hStart, mStart] = req.oraInizio.split(':').map(Number);
+          const [hEnd, mEnd] = req.oraFine.split(':').map(Number);
+          const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
+          let hrs = Math.max(0, Math.round((diffMs / 3600000) * 100) / 100);
+          if (req.pausaPranzo && req.pausaPranzoOre) {
+            hrs = Math.max(0, hrs - req.pausaPranzoOre);
+          }
+          reqTotalHrs += hrs;
+        } else {
+          reqTotalHrs += 8;
+        }
+      }
+
+      assenzeGenericheHours += reqTotalHrs;
+      const t = req.tipo;
+      if (t === 'ferie') {
+        ferieHours += reqTotalHrs;
+      } else if (t === 'malattia' || t === 'maternita') {
+        malattiaHours += reqTotalHrs;
+      } else {
+        permessoHours += reqTotalHrs;
+      }
+    });
+
+    return {
+      ferieHours: Math.round(ferieHours * 100) / 100,
+      permessoHours: Math.round(permessoHours * 100) / 100,
+      malattiaHours: Math.round(malattiaHours * 100) / 100,
+      assenzeGenericheHours: Math.round(assenzeGenericheHours * 100) / 100
+    };
+  }, [isHR, hrRichieste, requestsList, targetDipName, currentYear, approvedWeekends]);
+
   // Sorted full list depending on role
   const richieste = useMemo(() => {
-    const list = (isHR || isAdmin) ? hrRichieste : requestsList;
+    const list = isHR ? hrRichieste : requestsList;
     return list.sort((a, b) => {
       const timeA = a.timestamp ? new Date(a.timestamp).getTime() : new Date(a.dataInizio || a.data).getTime();
       const timeB = b.timestamp ? new Date(b.timestamp).getTime() : new Date(b.dataInizio || b.data).getTime();
       return timeB - timeA;
     });
-  }, [hrRichieste, requestsList, isHR, isAdmin]);
+  }, [hrRichieste, requestsList, isHR]);
 
   const pendingCount = useMemo(() => {
-    const list = (isHR || isAdmin) ? hrRichieste : myRichieste;
+    const list = isHR ? hrRichieste : myRichieste;
     return list.filter(r => r.stato === 'In attesa' || r.stato === 'Richiesta Annullamento' || r.stato === 'Richiesta Modifica').length;
-  }, [hrRichieste, myRichieste, isHR, isAdmin]);
+  }, [hrRichieste, myRichieste, isHR]);
 
   const searchedBaseRequests = useMemo(() => {
-    let baseList = (isHR || isAdmin) ? hrRichieste : requestsList;
+    let baseList = isHR ? hrRichieste : requestsList;
 
-    if (!isHR && !isAdmin) {
+    if (!isHR) {
       baseList = baseList.filter(r => r.dipendenteName === myAssociatedName && r.note !== 'Chiusure Aziendali');
     } else {
       baseList = baseList.filter(r => r.note !== 'Chiusure Aziendali');
     }
 
-    if ((isHR || isAdmin) && searchResourceText.trim()) {
+    if (isHR && searchResourceText.trim()) {
       const term = searchResourceText.trim().toLowerCase();
       baseList = baseList.filter(r => r.dipendenteName?.toLowerCase().includes(term));
     }
     return baseList;
-  }, [isHR, isAdmin, hrRichieste, requestsList, myAssociatedName, searchResourceText]);
+  }, [isHR, hrRichieste, requestsList, myAssociatedName, searchResourceText]);
 
   const filteredRequestsList = useMemo(() => {
     let baseList = [...searchedBaseRequests];
@@ -1072,7 +1172,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
 
     const firstDayOfMonthStr = `${year}-${String(month + 1).padStart(2, '0')}-01`;
     const sortedDipendenti = dipendenti
-      .filter(d => !d.dataCessazione || d.dataCessazione >= firstDayOfMonthStr)
+      .filter(d => (!d.dataCessazione || d.dataCessazione >= firstDayOfMonthStr) && (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it')
       .sort((a, b) => a.nome.trim().localeCompare(b.nome.trim()));
 
     const statusMap: Record<string, Record<number, RichiestaFerie>> = {};
@@ -1575,7 +1675,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
   return (
     <div className="flex flex-col gap-8">
       <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl p-6 sm:p-10 border border-white/50 no-print">
-        <div className="flex justify-between items-center mb-8">
+        <div className="flex justify-between items-center mb-6">
           <h2 className="text-3xl font-extrabold text-gray-900 flex items-center gap-3">
             <div className="p-3 bg-green-100 rounded-2xl"><Calendar className="w-8 h-8 text-green-600" /></div>
             <div className="flex items-center gap-3">
@@ -1589,6 +1689,103 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
               </button>
             </div>
           </h2>
+        </div>
+
+        {/* Contatori Assenze Anno Corrente */}
+        <div className="mb-8 bg-gradient-to-r from-emerald-50/80 via-teal-50/60 to-indigo-50/80 p-5 rounded-3xl border border-emerald-100/90 shadow-sm animate-in fade-in zoom-in-95 duration-200">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4 border-b border-emerald-200/50 pb-3">
+            <div className="flex items-center gap-2">
+              <div className="p-2 bg-emerald-600 text-white rounded-xl shadow-xs">
+                <Clock className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-emerald-950 uppercase tracking-wide">
+                  Riepilogo Assenze Approvate {currentYear}
+                </h3>
+                <p className="text-[11px] font-semibold text-emerald-800/80">
+                  Risorsa: <strong className="text-emerald-950">{targetDipName || 'Seleziona risorsa'}</strong> {isCollaboratoreUser ? '(Collaboratore)' : '(Dipendente)'}
+                </p>
+              </div>
+            </div>
+            <span className="text-[10px] font-extrabold uppercase tracking-wider bg-white/80 text-emerald-800 px-3 py-1 rounded-full border border-emerald-200 shadow-2xs">
+              01 Gen - 31 Dic {currentYear}
+            </span>
+          </div>
+
+          {isCollaboratoreUser ? (
+            /* Vista per Collaboratori: Unico contatore generico Assenze */
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="bg-white/90 p-4 rounded-2xl border border-amber-200/80 shadow-xs flex items-center gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 font-extrabold text-xl flex items-center justify-center shrink-0">
+                  📅
+                </div>
+                <div>
+                  <span className="block text-[11px] font-extrabold text-amber-800 uppercase tracking-wider">Totale Ore Assenze</span>
+                  <div className="flex items-baseline gap-1.5 mt-0.5">
+                    <span className="text-2xl font-black text-amber-950">{yearlyStats.assenzeGenericheHours}</span>
+                    <span className="text-xs font-bold text-amber-800">ore</span>
+                    <span className="text-[11px] font-bold text-gray-500 ml-1">
+                      (~{(yearlyStats.assenzeGenericheHours / 8).toFixed(1).replace('.0', '')} gg)
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* Vista per Dipendenti: 3 Contatori specifici (Ferie, Permessi, Malattia) */
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {/* Ore Ferie */}
+              <div className="bg-white/90 p-4 rounded-2xl border border-emerald-200/80 shadow-xs flex items-center gap-3.5">
+                <div className="w-11 h-11 rounded-2xl bg-emerald-100 text-emerald-700 font-extrabold text-lg flex items-center justify-center shrink-0">
+                  🌴
+                </div>
+                <div>
+                  <span className="block text-[10.5px] font-black text-emerald-900 uppercase tracking-wider">Ore Ferie</span>
+                  <div className="flex items-baseline gap-1 mt-0.5">
+                    <span className="text-2xl font-black text-emerald-950">{yearlyStats.ferieHours}</span>
+                    <span className="text-xs font-bold text-emerald-800">ore</span>
+                    <span className="text-[10px] font-bold text-gray-500 ml-1">
+                      (~{(yearlyStats.ferieHours / 8).toFixed(1).replace('.0', '')} gg)
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Ore Permesso */}
+              <div className="bg-white/90 p-4 rounded-2xl border border-amber-200/80 shadow-xs flex items-center gap-3.5">
+                <div className="w-11 h-11 rounded-2xl bg-amber-100 text-amber-700 font-extrabold text-lg flex items-center justify-center shrink-0">
+                  ⏱️
+                </div>
+                <div>
+                  <span className="block text-[10.5px] font-black text-amber-900 uppercase tracking-wider">Ore Permesso</span>
+                  <div className="flex items-baseline gap-1 mt-0.5">
+                    <span className="text-2xl font-black text-amber-950">{yearlyStats.permessoHours}</span>
+                    <span className="text-xs font-bold text-amber-800">ore</span>
+                    <span className="text-[10px] font-bold text-gray-500 ml-1">
+                      (~{(yearlyStats.permessoHours / 8).toFixed(1).replace('.0', '')} gg)
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Ore Malattia / Maternità */}
+              <div className="bg-white/90 p-4 rounded-2xl border border-rose-200/80 shadow-xs flex items-center gap-3.5">
+                <div className="w-11 h-11 rounded-2xl bg-rose-100 text-rose-700 font-extrabold text-lg flex items-center justify-center shrink-0">
+                  🏥
+                </div>
+                <div>
+                  <span className="block text-[10.5px] font-black text-rose-900 uppercase tracking-wider">Ore Malattia / Maternità</span>
+                  <div className="flex items-baseline gap-1 mt-0.5">
+                    <span className="text-2xl font-black text-rose-950">{yearlyStats.malattiaHours}</span>
+                    <span className="text-xs font-bold text-rose-800">ore</span>
+                    <span className="text-[10px] font-bold text-gray-500 ml-1">
+                      (~{(yearlyStats.malattiaHours / 8).toFixed(1).replace('.0', '')} gg)
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
         
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-stretch">
@@ -1628,7 +1825,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                         className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900"
                       >
                         <option value="">-- Seleziona Dipendente --</option>
-                        {dipendenti.filter(d => !d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')).map(d => (
+                        {dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')) && (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it').map(d => (
                           <option key={d.id} value={d.nome}>{d.nome}</option>
                         ))}
                       </select>
@@ -1839,7 +2036,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                 </p>
 
                 {/* CAMPO DI RICERCA RISORSA PER HR */}
-                {(isHR || isAdmin) && (
+                {isHR && (
                   <div className="relative mt-3">
                     <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                     <input
@@ -1952,12 +2149,12 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
 
                         <div className="flex items-center gap-1.5 flex-wrap">
                           {/* AZIONE DIPENDENTE O HR SU RICHIESTA APPROVATA: MODIFICA / ANNULLA (MATITINA) */}
-                          {(isMyReq || isHR || isAdmin) && req.stato === 'Approvato' && (
+                          {(isMyReq || isHR) && req.stato === 'Approvato' && (
                             <button
                               type="button"
                               onClick={() => openModificationModal(req)}
                               className="flex items-center gap-1 px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300/80 rounded-lg text-[11px] font-extrabold transition-all shadow-2xs hover:shadow-xs active:scale-95 cursor-pointer"
-                              title={isHR || isAdmin ? "Modifica o annulla direttamente le ferie/permesso approvati per questa risorsa" : "Richiedi modifica o annullamento all'HR"}
+                              title={isHR ? "Modifica o annulla direttamente le ferie/permesso approvati per questa risorsa" : "Richiedi modifica o annullamento all'HR"}
                             >
                               <Pencil className="w-3 h-3 text-amber-700" />
                               <span>Modifica / Annulla</span>
@@ -1978,7 +2175,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                           )}
 
                           {/* AZIONI HR PER RICHIESTE IN ATTESA */}
-                          {(isHR || isAdmin) && req.stato === 'In attesa' && (
+                          {isHR && req.stato === 'In attesa' && (
                             <div className="flex gap-1.5">
                               <button 
                                 onClick={() => handleDecision(req.id, true)} 
@@ -1996,7 +2193,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                           )}
 
                           {/* AZIONI HR PER RICHIESTE DI ANNULLAMENTO / MODIFICA */}
-                          {(isHR || isAdmin) && (req.stato === 'Richiesta Annullamento' || req.stato === 'Richiesta Modifica') && (
+                          {isHR && (req.stato === 'Richiesta Annullamento' || req.stato === 'Richiesta Modifica') && (
                             <div className="flex flex-wrap gap-1.5">
                               {req.stato === 'Richiesta Annullamento' ? (
                                 <button 
@@ -2356,7 +2553,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
               {/* Selettore Tipo Azione: Annullamento vs Modifica */}
               <div className="space-y-2">
                 <label className="block text-xs font-black text-gray-800 uppercase tracking-wider">
-                  {(isHR || isAdmin) ? `Azione da applicare direttamente per ${modifyingRequest.dipendenteName}:` : "Cosa desideri richiedere all'HR?"}
+                  {isHR ? `Azione da applicare direttamente per ${modifyingRequest.dipendenteName}:` : "Cosa desideri richiedere all'HR?"}
                 </label>
                 <div className="grid grid-cols-2 gap-3">
                   <button
@@ -2369,7 +2566,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                     }`}
                   >
                     <Trash2 className="w-4 h-4" />
-                    <span>{(isHR || isAdmin) ? "Annulla Permesso/Ferie" : "Annulla Ferie Approvate"}</span>
+                    <span>{isHR ? "Annulla Permesso/Ferie" : "Annulla Ferie Approvate"}</span>
                   </button>
 
                   <button
@@ -2429,7 +2626,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
               )}
 
               {/* Nota / Motivazione per HR (solo per dipendenti che inviano la richiesta) */}
-              {!(isHR || isAdmin) && (
+              {!isHR && (
                 <div>
                   <label className="block text-xs font-bold text-gray-800 mb-1 flex items-center justify-between">
                     <span>Motivazione / Nota per l'HR</span>
@@ -2461,7 +2658,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                 disabled={modLoading}
                 className="flex-1 py-3 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-extrabold transition shadow-md disabled:opacity-50 cursor-pointer"
               >
-                {modLoading ? "Elaborazione in corso..." : (isHR || isAdmin ? (modTipoAzione === 'annullamento' ? "Conferma Annullamento Diretto" : "Applica Modifica Diretta") : "Invia Richiesta all'HR")}
+                {modLoading ? "Elaborazione in corso..." : (isHR ? (modTipoAzione === 'annullamento' ? "Conferma Annullamento Diretto" : "Applica Modifica Diretta") : "Invia Richiesta all'HR")}
               </button>
             </div>
 

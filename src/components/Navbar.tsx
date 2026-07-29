@@ -17,6 +17,16 @@ interface UpcomingHolidayWork {
 
 export default function Navbar() {
   const navigate = useNavigate();
+
+  const handleNav = (e: React.MouseEvent, path: string) => {
+    if (e.button === 1 || e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      window.open(path, '_blank', 'noopener,noreferrer');
+    } else if (e.button === 0) {
+      navigate(path);
+    }
+  };
+
   const { user, isAdmin, isHR, myAssociatedName, userEmail } = useAuth();
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [oldPassword, setOldPassword] = useState('');
@@ -148,7 +158,9 @@ export default function Navbar() {
         <div className="flex items-center gap-4">
           {location.pathname !== '/' && (
             <button 
-              onClick={() => navigate('/')}
+              onClick={(e) => handleNav(e, '/')}
+              onAuxClick={(e) => handleNav(e, '/')}
+              onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
               className="text-sm font-medium flex items-center gap-1 transition-colors animate-in fade-in duration-300 text-gray-600 hover:text-blue-600 cursor-pointer"
             >
               <Home className="w-4 h-4" /> <span className="hidden sm:inline">Dashboard</span>
@@ -156,7 +168,9 @@ export default function Navbar() {
           )}
 
           <button 
-            onClick={() => navigate('/organigramma')}
+            onClick={(e) => handleNav(e, '/organigramma')}
+            onAuxClick={(e) => handleNav(e, '/organigramma')}
+            onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
             className={`text-sm font-medium flex items-center gap-1 transition-colors animate-in fade-in duration-300 ${
               location.pathname === '/organigramma' ? 'text-blue-600 font-bold' : 'text-gray-600 hover:text-blue-600'
             }`}

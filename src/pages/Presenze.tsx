@@ -247,7 +247,7 @@ export default function Presenze() {
   const filteredDipendenti = useMemo(() => {
     return dipendenti.filter(d => {
       const email = d.email?.trim().toLowerCase();
-      return email !== 'aprofeti@ingegno06.it' && email !== 'mcorbellini@ingegno06.it';
+      return email !== 'aprofeti@ingegno06.it' && email !== 'mcorbellini@ingegno06.it' && email !== 'synergiesflow@ingegno06.it';
     });
   }, [dipendenti]);
 

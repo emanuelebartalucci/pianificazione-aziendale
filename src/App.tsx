@@ -18,6 +18,7 @@ import Organigramma from './pages/Organigramma';
 // Components
 import Navbar from './components/Navbar';
 import DevImpersonator from './components/DevImpersonator';
+import ErrorBoundary from './components/ErrorBoundary';
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -82,18 +83,20 @@ function App() {
             <Navbar />
             <DevImpersonator />
             <main className="max-w-[1400px] mx-auto px-4 py-8">
-              <Routes>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/commesse" element={<Commesse />} />
-                <Route path="/ferie" element={<Ferie />} />
-                <Route path="/impostazioni" element={<Impostazioni />} />
-                <Route path="/presenze" element={<Presenze />} />
-                <Route path="/suggerimenti" element={<Suggerimenti />} />
-                <Route path="/pianificazione-personale" element={<PianificazionePersonale />} />
-                <Route path="/prenotazioni" element={<Prenotazioni />} />
-                <Route path="/organigramma" element={<Organigramma />} />
-                <Route path="*" element={<Navigate to="/" />} />
-              </Routes>
+              <ErrorBoundary>
+                <Routes>
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/commesse" element={<Commesse />} />
+                  <Route path="/ferie" element={<Ferie />} />
+                  <Route path="/impostazioni" element={<Impostazioni />} />
+                  <Route path="/presenze" element={<Presenze />} />
+                  <Route path="/suggerimenti" element={<Suggerimenti />} />
+                  <Route path="/pianificazione-personale" element={<PianificazionePersonale />} />
+                  <Route path="/prenotazioni" element={<Prenotazioni />} />
+                  <Route path="/organigramma" element={<Organigramma />} />
+                  <Route path="*" element={<Navigate to="/" />} />
+                </Routes>
+              </ErrorBoundary>
             </main>
           </div>
           <footer className="py-6 px-6 text-xs text-gray-400 select-none print:hidden border-t border-gray-200/50 mt-auto">

@@ -15,9 +15,11 @@ export async function queueMail(toEmail: string, subject: string, htmlBody: stri
     }
 
     const normalizedEmail = toEmail.toLowerCase().trim();
-    const bypassedEmails = ['synergiesflow@ingegno06.it'];
 
-    if (!bypassedEmails.includes(normalizedEmail)) {
+    // Se l'email è un indirizzo di sistema aziendale (es. synergiesflow@ingegno06.it), viene accodata sempre
+    const isSystemEmail = normalizedEmail === 'synergiesflow@ingegno06.it';
+
+    if (!isSystemEmail) {
       // Controlla se il destinatario ha le notifiche e-mail abilitate nel suo profilo dipendente
       const dipendentiRef = collection(db, 'dipendenti');
       const q = query(dipendentiRef, where('email', '==', normalizedEmail));
