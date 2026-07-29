@@ -34,8 +34,7 @@ export default function Dashboard() {
     }
   };
 
-  const { isAdmin, isHR, isDev, isRealDev, myAssociatedName, user, dipendenti, userEmail, assegnazioni, commesse, prioritaCommesse, coordinatori = [], richiesteDisegnatori = [] } = useAuth();
-  const canAccessSettings = isRealDev || isDev;
+  const { isAdmin, isHR, isDev, myAssociatedName, user, dipendenti, userEmail, assegnazioni, commesse, prioritaCommesse, coordinatori = [], richiesteDisegnatori = [] } = useAuth();
 
   // States per le comunicazioni
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
@@ -698,7 +697,6 @@ export default function Dashboard() {
     return () => unsub();
   }, [userEmail, myCoordinatedAreas]);
 
-  const showAdminSettings = isAdmin || isHR;
   const canPublish = isAdmin || isHR;
 
   return (

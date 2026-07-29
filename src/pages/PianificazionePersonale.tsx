@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth, type Dipendente } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, doc, writeBatch, addDoc, updateDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
-import { Users, ChevronLeft, ChevronRight, Save, Download, ZoomIn, ZoomOut, Trash2, Plus, RefreshCw, CalendarDays, FileText, X, UserCheck, MoveVertical, Clock } from 'lucide-react';
+import { Users, ChevronLeft, ChevronRight, Save, Download, ZoomIn, ZoomOut, Trash2, Plus, RefreshCw, CalendarDays, FileText, X, UserCheck, MoveVertical, Clock, Pencil } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays, isItalianHoliday } from '../utils/date';
 
 import ConfirmModal from '../components/ConfirmModal';
@@ -4458,7 +4458,7 @@ export default function PianificazionePersonale() {
                   <select
                     required
                     value={reqAreaTarget}
-                    onChange={e => setReqAreaTarget(e.target.value)}
+                    onChange={e => setReqAreaTarget(e.target.value as MacroArea)}
                     className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
                   >
                     {MACRO_AREE.map(a => (

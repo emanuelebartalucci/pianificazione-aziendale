@@ -173,8 +173,7 @@ export const EMAIL_TEST_TEMPLATES = [
 
 export default function Impostazioni() {
   const navigate = useNavigate();
-  const { isDev, isRealDev, dipendenti, coordinatori, refreshData, userEmail, myAssociatedName } = useAuth();
-  const canAccessSettings = isRealDev || isDev;
+  const { isDev, dipendenti, coordinatori, refreshData, userEmail, myAssociatedName } = useAuth();
   
   // Stato per il simulatore di e-mail sviluppatore
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('planning_update');

@@ -6,7 +6,7 @@ import { Calendar, CheckCircle, XCircle, Clock, ChevronLeft, ChevronRight, Refre
 import { queueMail } from '../utils/mailSender';
 import { isItalianHoliday, isWeekend, getWeekNumber } from '../utils/date';
 import { getPrintFooterHtml } from '../config/version';
-import { isCollaboratore } from './Impostazioni';
+import { isCollaboratore, isSoci } from './Impostazioni';
 
 const formatDate = (dateStr: string) => {
   if (!dateStr) return '';
@@ -101,7 +101,8 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
   }, [myAssociatedName]);
 
   const targetDipName = (isHR || isAdmin) ? (dipendenteSelezionato || myAssociatedName) : myAssociatedName;
-  const isCollaboratoreUser = isCollaboratore(targetDipName, dipendenti);
+  // I Soci vengono trattati come collaboratori nel Piano Ferie
+  const isCollaboratoreUser = isCollaboratore(targetDipName, dipendenti) || isSoci(targetDipName);
 
   useEffect(() => {
     if (isCollaboratoreUser && (tipoRichiesta === 'ferie' || tipoRichiesta === 'permesso' || tipoRichiesta === 'studio' || tipoRichiesta === 'donazione' || tipoRichiesta === 'elettorale')) {
@@ -1128,7 +1129,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
   };
 
   const getTipoData = (tipo: string, frazioneTipo?: string, dipName?: string) => {
-    const isCollab = isCollaboratore(dipName, dipendenti);
+    const isCollab = isCollaboratore(dipName, dipendenti) || isSoci(dipName);
     const tipi: Record<string, {label: string, color: string}> = {
       ferie: {label: isCollab ? 'Assenza' : 'Ferie', color: 'bg-red-500'},
       malattia: {label: 'Malattia', color: 'bg-purple-600'},
@@ -1244,7 +1245,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         } else if (isSpecialDay) {
           cellBg = '#f3f4f6';
         } else if (tipo) {
-          const isCollabDip = isCollaboratore(dip.nome, dipendenti);
+          const isCollabDip = isCollaboratore(dip.nome, dipendenti) || isSoci(dip.nome);
           const isFractional = Boolean(reqObj.frazioneTipo || (reqObj.oraInizio && reqObj.oraFine) || tipo === 'mattina' || tipo === 'pomeriggio');
 
           if (tipo === 'ferie' || (isCollabDip && (tipo === 'assenza' || tipo === 'ferie') && !isFractional)) {

@@ -412,9 +412,9 @@ export default function Commesse() {
 
       if (createdDoc) {
         setSelectedClient(createdDoc);
-        setClientSearchText(createdDoc.nome);
+        setClientSearchText((createdDoc as any).nome);
         setIsClientDropdownOpen(false);
-        showToast(`Cliente ${createdDoc.codice} - ${createdDoc.nome} aggiunto ed impostato!`, "success");
+        showToast(`Cliente ${(createdDoc as any).codice} - ${(createdDoc as any).nome} aggiunto ed impostato!`, "success");
       }
       setNewClientNome('');
       setIsNewClientModalOpen(false);
@@ -436,7 +436,7 @@ export default function Commesse() {
   const [catalogoTipologiaFilter, setCatalogoTipologiaFilter] = useState<string>('');
   const [catalogoSortBy, setCatalogoSortBy] = useState<'codice' | 'anno' | 'tipologia' | 'titolo' | 'cliente' | 'stato' | 'responsabile' | 'pm'>('codice');
   const [catalogoSortDir, setCatalogoSortDir] = useState<'asc' | 'desc'>('asc');
-  const [showNewCommessaForm, setShowNewCommessaForm] = useState(true);
+  const [showNewCommessaForm, _setShowNewCommessaForm] = useState(true);
   
   const weekColumnMinWidth = useMemo(() => {
     // Estimating remaining width of a container on standard screen (approx 900px)
@@ -607,32 +607,21 @@ export default function Commesse() {
 
     const checkIsUserPmOrResp = (cObj: any): boolean => {
       if (!cObj) return false;
-      const respStr = String(cObj.responsabile || '').toLowerCase().trim();
+      const respStr = String(cObj.responsabile || '').trim();
       const pmList: any[] = Array.isArray(cObj.pm) ? cObj.pm : (cObj.pm ? [cObj.pm] : []);
-      const targets = [respStr, ...pmList.map(p => String(p || '').toLowerCase().trim())].filter(Boolean);
+      const targets = [respStr, ...pmList.map((p: any) => String(p || '').trim())].filter(Boolean);
 
       if (targets.length === 0) return false;
 
       if (myAssociatedName && targets.some(t => areNamesEqual(t, myAssociatedName))) return true;
-      if (myDip?.nome && targets.some(t => areNamesEqual(t, myDip.nome))) return true;
 
       if (userEmail) {
         const emailClean = userEmail.toLowerCase().trim();
         const username = emailClean.split('@')[0];
-        if (targets.some(t => t.includes(emailClean) || (username.length >= 4 && t.includes(username)))) return true;
-      }
-
-      const commonFirstNames = ['andrea', 'matteo', 'marco', 'gabriele', 'luca', 'francesco', 'alessandro', 'stefano', 'davide', 'lorenzo', 'riccardo', 'filippo', 'giuseppe', 'antonio', 'michele'];
-      const fullName = myDip?.nome || myAssociatedName || '';
-      if (fullName) {
-        const parts = fullName.split(/\s+/).filter(p => p.length >= 3);
-        for (const part of parts) {
-          const partLower = part.toLowerCase();
-          if (parts.length > 1 && commonFirstNames.includes(partLower)) {
-            continue;
-          }
-          if (targets.some(t => t.includes(partLower))) return true;
-        }
+        if (targets.some(t => {
+          const tl = t.toLowerCase();
+          return tl.includes(emailClean) || (username.length >= 4 && tl.includes(username));
+        })) return true;
       }
 
       return false;
@@ -1518,13 +1507,7 @@ export default function Commesse() {
     return (dipendenti || []).filter(d => d && d.email && typeof d.email === 'string' && safePms.includes(d.email.toLowerCase()));
   }, [dipendenti, pmsEmails]);
 
-  const isResponsabileDiQualcheCommessa = useMemo(() => {
-    return commesse.some(c => {
-      const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
-      const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
-      return areNamesEqual(c.responsabile, myAssociatedName) || isPM;
-    });
-  }, [commesse, myAssociatedName]);
+  // isResponsabileDiQualcheCommessa rimosso: non più utilizzato dopo la revisione dei permessi.
 
   const isCoordinatoreQualsiasi = useMemo(() => {
     if (!userEmail) return false;
