@@ -971,7 +971,7 @@ export default function Presenze() {
           }
 
           let finalData = { ...data, id: docSnap.id } as RapportinoPresenze;
-          if ((finalData.stato === 'Bozza' || finalData.stato === 'Richiede Modifica') && !finalData.hrModified && targetEmpName) {
+          if ((finalData.stato === 'Bozza' || finalData.stato === 'Richiede Modifica') && targetEmpName) {
             try {
               const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === targetEmpName.trim().toLowerCase());
               const contractHours = profile?.oreContratto ?? 8;
@@ -1035,7 +1035,8 @@ export default function Presenze() {
                 }
 
                 const abs = leaves[dateStr];
-                if (abs) {
+                if (abs && !finalData.hrModified) {
+                  // Aggiorna il giorno in base all'assenza approvata (solo se non hrModified)
                   let targetOre = (isWeekend || isHoliday) ? 0 : dayContractHours;
                   let targetFerie = 0;
                   let targetPermessi = 0;
@@ -1126,6 +1127,7 @@ export default function Presenze() {
                     hasChanges = true;
                   }
                 } else {
+                  // Nessuna assenza approvata per questo giorno → ripristina i campi se erano stati impostati automaticamente
                   const isCleanFerie = 
                     currentDay.ore === 0 &&
                     currentDay.ferie === dayContractHours &&
@@ -1142,9 +1144,12 @@ export default function Presenze() {
                     currentDay.permessi === 0 &&
                     !currentDay.trasferta;
 
+                  // Tolleranza floating-point: accetta qualsiasi giorno con permessi > 0
+                  // dove ore + permessi ≈ dayContractHours (entro 0.05h di scarto)
+                  const permessiSum = currentDay.permessi + currentDay.ore;
                   const isCleanPermesso = 
                     currentDay.permessi > 0 &&
-                    currentDay.ore === Math.max(0, dayContractHours - currentDay.permessi) &&
+                    Math.abs(permessiSum - dayContractHours) < 0.05 &&
                     currentDay.straordinari === 0 &&
                     currentDay.ferie === 0 &&
                     !currentDay.malattia &&
