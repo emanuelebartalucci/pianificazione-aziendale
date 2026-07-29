@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, doc, setDoc, getDocs, query, where, addDoc, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
-import { FileText, Printer, Save, Send, CheckCircle, AlertCircle, Edit, Edit3, Trash2, MessageSquare, Clock, MapPin, Check, X, ShieldAlert, Download, RefreshCw } from 'lucide-react';
+import { FileText, Printer, Save, Send, CheckCircle, AlertCircle, Edit, Edit3, Trash2, MessageSquare, Clock, MapPin, Check, X, ShieldAlert, Download, RefreshCw, Plus } from 'lucide-react';
 import { queueMail } from '../utils/mailSender';
 import ConfirmModal from '../components/ConfirmModal';
 import { isItalianHoliday, isWeekend as isWeekendGlobal } from '../utils/date';
@@ -49,6 +49,11 @@ const formatDate = (dateStr: string) => {
   return `${day}/${month}/${year}`;
 };
 
+export interface Tratta {
+  partenza: string;
+  arrivo: string;
+}
+
 interface GiornoPresenza {
   ore: number;
   straordinari: number;
@@ -60,6 +65,7 @@ interface GiornoPresenza {
   luogoTrasferta?: string;
   noteGiorno?: string;
   itinerarioTrasferta?: string;
+  tratte?: Tratta[];
   kmTrasferta?: number;
   marcaAutomezzo?: string; // NEW: vehicle info per trip/day
   modelloAutomezzo?: string; // NEW: vehicle info per trip/day
@@ -194,6 +200,37 @@ export function recalculateCollabData(
   };
 }
 
+export function isFullDayAbsence(giorno?: GiornoPresenza, defaultContractHours: number = 8): boolean {
+  if (!giorno) return false;
+  const contract = giorno.oreContratto ?? defaultContractHours;
+  if (giorno.malattia) return true;
+  if ((giorno.ferie || 0) >= contract) return true;
+  if ((giorno.permessi || 0) >= contract) return true;
+  if ((giorno.permessoStudio || 0) >= contract) return true;
+  if ((giorno.permessoDonazione || 0) >= contract) return true;
+  if ((giorno.permessoElettorale || 0) >= contract) return true;
+  return false;
+}
+
+export function getTratteForGiorno(giorno?: GiornoPresenza): Tratta[] {
+  if (giorno?.tratte && Array.isArray(giorno.tratte) && giorno.tratte.length > 0) {
+    return giorno.tratte;
+  }
+  if (giorno?.itinerarioTrasferta || giorno?.luogoTrasferta) {
+    const text = (giorno.itinerarioTrasferta || giorno.luogoTrasferta || '').trim();
+    if (text.includes(' -> ')) {
+      const parts = text.split(' -> ');
+      return [{ partenza: parts[0].trim(), arrivo: parts.slice(1).join(' -> ').trim() }];
+    }
+    if (text.includes(' - ')) {
+      const parts = text.split(' - ');
+      return [{ partenza: parts[0].trim(), arrivo: parts.slice(1).join(' - ').trim() }];
+    }
+    return [{ partenza: '', arrivo: text }];
+  }
+  return [{ partenza: '', arrivo: '' }];
+}
+
 const MESI = [
   'Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno',
   'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre'
@@ -256,7 +293,7 @@ export default function Presenze() {
       setLocalOrarioSettimanale({ lun: h, mar: h, mer: h, gio: h, ven: h });
     }
   }, [profile]);
-  const [activeTab, setActiveTab] = useState<'ore' | 'spese' | 'weekend'>('ore');
+  const [activeTab, setActiveTab] = useState<'ore' | 'weekend'>('ore');
   const [chiusureAziendali, setChiusureAziendali] = useState<Array<{ dataInizio: string; dataFine: string }>>([]);
 
   const isInChiusuraAziendaleLocal = (dateStr: string) => {
@@ -417,13 +454,25 @@ export default function Presenze() {
     if (isCessato) return true;
 
     if (approvedLeaves[dateStr]) {
-      return true;
+      const abs = approvedLeaves[dateStr];
+      // Blocca SOLO se è una assenza di giornata intera:
+      // ferie, malattia, maternità oppure permesso esplicitamente per 'giornata'
+      const isFullDay =
+        abs.tipo === 'ferie' ||
+        abs.tipo === 'malattia' ||
+        abs.tipo === 'maternita' ||
+        (abs.tipo === 'permesso' && abs.frazioneTipo === 'giornata');
+      if (isFullDay) {
+        return true;
+      }
+      // Permessi parziali (orario, mattina, pomeriggio, smart, ecc.) → non blocca
     }
     const isWk = isWeekend(dNum);
     const isChiusura = isInChiusuraAziendaleLocal(dateStr);
     const isHoliday = isItalianHoliday(dateStr);
     return (isWk || isChiusura || isHoliday) && !approvedWeekends[dateStr];
   };
+
 
   // Convert 1-31 number to padded string
   const dayStr = (d: number) => String(d);
@@ -1306,6 +1355,107 @@ export default function Presenze() {
       );
     }
     setRapportino(updatedRapportino);
+  };
+
+  const handleAddTratta = (dayKey: string, isReview: boolean = false) => {
+    const currentRapportino = isReview ? reviewingRapportino : rapportino;
+    if (!currentRapportino) return;
+    const currentG = currentRapportino.giorni[dayKey] || {};
+    const currentTratte = getTratteForGiorno(currentG);
+    const newTratte = [...currentTratte, { partenza: '', arrivo: '' }];
+    
+    const summaryStr = newTratte
+      .filter(t => t.partenza || t.arrivo)
+      .map(t => `${t.partenza || '?'} -> ${t.arrivo || '?'}`)
+      .join('; ');
+
+    const updatedG = {
+      ...currentG,
+      tratte: newTratte,
+      itinerarioTrasferta: summaryStr,
+      luogoTrasferta: newTratte[0]?.arrivo || summaryStr
+    };
+
+    if (isReview) {
+      setReviewingRapportino({
+        ...currentRapportino,
+        giorni: { ...currentRapportino.giorni, [dayKey]: updatedG }
+      });
+    } else {
+      setRapportino({
+        ...currentRapportino,
+        giorni: { ...currentRapportino.giorni, [dayKey]: updatedG }
+      });
+    }
+  };
+
+  const handleUpdateTratta = (dayKey: string, index: number, field: 'partenza' | 'arrivo', value: string, isReview: boolean = false) => {
+    const currentRapportino = isReview ? reviewingRapportino : rapportino;
+    if (!currentRapportino) return;
+    const currentG = currentRapportino.giorni[dayKey] || {};
+    const currentTratte = [...getTratteForGiorno(currentG)];
+    currentTratte[index] = {
+      ...currentTratte[index],
+      [field]: value
+    };
+
+    const summaryStr = currentTratte
+      .filter(t => t.partenza || t.arrivo)
+      .map(t => `${t.partenza || '?'} -> ${t.arrivo || '?'}`)
+      .join('; ');
+
+    const updatedG = {
+      ...currentG,
+      tratte: currentTratte,
+      itinerarioTrasferta: summaryStr,
+      luogoTrasferta: currentTratte[0]?.arrivo || summaryStr
+    };
+
+    if (isReview) {
+      setReviewingRapportino({
+        ...currentRapportino,
+        giorni: { ...currentRapportino.giorni, [dayKey]: updatedG }
+      });
+    } else {
+      setRapportino({
+        ...currentRapportino,
+        giorni: { ...currentRapportino.giorni, [dayKey]: updatedG }
+      });
+    }
+  };
+
+  const handleRemoveTratta = (dayKey: string, index: number, isReview: boolean = false) => {
+    const currentRapportino = isReview ? reviewingRapportino : rapportino;
+    if (!currentRapportino) return;
+    const currentG = currentRapportino.giorni[dayKey] || {};
+    let currentTratte = getTratteForGiorno(currentG).filter((_, idx) => idx !== index);
+    if (currentTratte.length === 0) {
+      currentTratte = [{ partenza: '', arrivo: '' }];
+    }
+
+    const summaryStr = currentTratte
+      .filter(t => t.partenza || t.arrivo)
+      .map(t => `${t.partenza || '?'} -> ${t.arrivo || '?'}`)
+      .join('; ');
+
+    const updatedG = {
+      ...currentG,
+      tratte: currentTratte,
+      itinerarioTrasferta: summaryStr,
+      luogoTrasferta: currentTratte[0]?.arrivo || summaryStr
+    };
+
+    if (isReview) {
+      setReviewingRapportino({
+        ...currentRapportino,
+        giorni: { ...currentRapportino.giorni, [dayKey]: updatedG }
+      });
+    } else {
+      setRapportino({
+        ...currentRapportino,
+        giorni: { ...currentRapportino.giorni, [dayKey]: updatedG }
+      });
+    }
   };
   const handleCollabFieldChange = (field: string, value: number | string) => {
     if (!rapportino || !rapportino.collaboratoreData || rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato') return;
@@ -2331,8 +2481,8 @@ export default function Presenze() {
       "Permessi (Ore)",
       "Malattia",
       "Trasferta",
-      "Luogo Trasferta",
-      "Itinerario (Tratta A/R)",
+      "Rimborso Km",
+      "Tratte Spostamento (Partenza -> Arrivo)",
       "Km Percorsi",
       "Note"
     ];
@@ -2348,6 +2498,11 @@ export default function Presenze() {
         dayStatus = "Weekend";
       }
 
+      const tratteList = getTratteForGiorno(g).filter(t => t.partenza || t.arrivo);
+      const tratteStr = tratteList.length > 0
+        ? tratteList.map((t, idx) => `Tratta ${idx + 1}: ${t.partenza || '?'} -> ${t.arrivo || '?'}`).join(' | ')
+        : '';
+
       rows.push([
         d.toString(),
         formattedDate,
@@ -2358,8 +2513,8 @@ export default function Presenze() {
         g ? (g.permessi || 0).toString() : "0",
         g && g.malattia ? "M" : "",
         g && g.trasferta ? "T" : "",
-        g ? (g.luogoTrasferta || "") : "",
-        g ? (g.itinerarioTrasferta || "") : "",
+        g && g.rimborsoKm ? "K" : "",
+        tratteStr,
         g ? (g.kmTrasferta || 0).toString() : "0",
         g ? (g.noteGiorno || "") : ""
       ]);
@@ -2765,15 +2920,7 @@ export default function Presenze() {
               >
                 📋 {isCollaboratore(myAssociatedName, dipendenti) ? 'Bozza Fattura' : 'Foglio Ore'}
               </button>
-              {!isCollaboratore(myAssociatedName, dipendenti) && (
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('spese')}
-                  className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'spese' ? 'bg-white text-indigo-600 shadow-sm font-extrabold' : 'text-gray-500 hover:text-gray-700'}`}
-                >
-                  🚗 Nota Spese
-                </button>
-              )}
+
               <button
                 type="button"
                 onClick={() => setActiveTab('weekend')}
@@ -4139,7 +4286,7 @@ export default function Presenze() {
                                     <div className="w-full h-full flex justify-center items-center">
                                       <input 
                                         type="checkbox"
-                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || isCellDisabled(d, 'lavoro')}
+                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || isCellDisabled(d, 'lavoro') || isFullDayAbsence(giorno, giorno.oreContratto)}
                                         checked={giorno.trasferta || false}
                                         onChange={e => handleCellChange(dayStr(d), 'trasferta', e.target.checked)}
                                         className="w-4 h-4 rounded text-blue-600 focus:ring-blue-400 cursor-pointer"
@@ -4175,7 +4322,7 @@ export default function Presenze() {
                                     <div className="w-full h-full flex justify-center items-center">
                                       <input 
                                         type="checkbox"
-                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || isCellDisabled(d, 'lavoro')}
+                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato' || isCellDisabled(d, 'lavoro') || isFullDayAbsence(giorno, giorno.oreContratto)}
                                         checked={giorno.rimborsoKm || false}
                                         onChange={e => handleCellChange(dayStr(d), 'rimborsoKm', e.target.checked)}
                                         className="w-4 h-4 rounded text-amber-600 focus:ring-amber-400 cursor-pointer"
@@ -4215,10 +4362,13 @@ export default function Presenze() {
                       <p className="text-xs text-gray-400 italic font-medium p-2">Nessun giorno contrassegnato come Trasferta (T) o Rimborso Km (K) nel tabellone presenze.</p>
                     ) : (
                       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 max-h-96 overflow-y-auto pr-1">
-                        {getTrasferteList(rapportino.giorni, daysInMonth).map(({ giorno, luogo, trasferta, rimborsoKm }) => {
+                        {getTrasferteList(rapportino.giorni, daysInMonth).map(({ giorno, trasferta, rimborsoKm }) => {
                           const gPres = rapportino.giorni[dayStr(giorno)] || {};
+                          const isLocked = rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato';
+                          const tratte = getTratteForGiorno(gPres);
+
                           return (
-                            <div key={giorno} className="bg-white p-3 rounded-2xl border border-gray-200 shadow-xs space-y-2">
+                            <div key={giorno} className="bg-white p-3 rounded-2xl border border-gray-200 shadow-xs space-y-3">
                               <div className="flex items-center justify-between border-b border-gray-100 pb-1.5">
                                 <div className="flex items-center gap-2">
                                   <span className="text-xs font-black text-gray-800">Giorno {giorno}</span>
@@ -4231,7 +4381,7 @@ export default function Presenze() {
                                     type="number"
                                     min={0}
                                     placeholder="0"
-                                    disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                    disabled={isLocked}
                                     value={gPres.kmTrasferta === 0 ? '' : gPres.kmTrasferta || ''}
                                     onChange={e => handleCellChange(dayStr(giorno), 'kmTrasferta', e.target.value === '' ? 0 : Number(e.target.value))}
                                     className="w-20 p-1 text-center border border-amber-300 rounded-lg bg-amber-50/50 font-extrabold text-amber-900 outline-none focus:border-amber-500"
@@ -4239,38 +4389,14 @@ export default function Presenze() {
                                 </div>
                               </div>
 
+                              {/* Automezzo */}
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                <div>
-                                  <label className="block text-[9px] font-bold text-gray-400 mb-0.5">Destinazione / Località</label>
-                                  <input 
-                                    type="text"
-                                    placeholder="Es. Milano / Cantiere X"
-                                    disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                                    value={luogo}
-                                    onChange={e => handleCellChange(dayStr(giorno), 'luogoTrasferta', e.target.value)}
-                                    className="w-full p-1.5 text-xs border border-gray-200 rounded-lg outline-none focus:border-indigo-400 font-medium"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="block text-[9px] font-bold text-gray-400 mb-0.5">Itinerario (Tratta A/R)</label>
-                                  <input 
-                                    type="text"
-                                    placeholder="Es. Sede - Milano - Sede"
-                                    disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                                    value={gPres.itinerarioTrasferta || ''}
-                                    onChange={e => handleCellChange(dayStr(giorno), 'itinerarioTrasferta', e.target.value)}
-                                    className="w-full p-1.5 text-xs border border-gray-200 rounded-lg outline-none focus:border-indigo-400 font-medium"
-                                  />
-                                </div>
-                              </div>
-
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-0.5">
                                 <div>
                                   <label className="block text-[9px] font-bold text-gray-400 mb-0.5">Marca Automezzo</label>
                                   <input 
                                     type="text"
                                     placeholder="Es. Fiat"
-                                    disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                    disabled={isLocked}
                                     value={gPres.marcaAutomezzo || ''}
                                     onChange={e => handleCellChange(dayStr(giorno), 'marcaAutomezzo', e.target.value)}
                                     className="w-full p-1.5 text-xs border border-gray-200 rounded-lg outline-none focus:border-indigo-400 font-medium"
@@ -4281,12 +4407,71 @@ export default function Presenze() {
                                   <input 
                                     type="text"
                                     placeholder="Es. Panda"
-                                    disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                    disabled={isLocked}
                                     value={gPres.modelloAutomezzo || ''}
                                     onChange={e => handleCellChange(dayStr(giorno), 'modelloAutomezzo', e.target.value)}
                                     className="w-full p-1.5 text-xs border border-gray-200 rounded-lg outline-none focus:border-indigo-400 font-medium"
                                   />
                                 </div>
+                              </div>
+
+                              {/* Lista Tratte Spostamento */}
+                              <div className="space-y-2 pt-2 border-t border-gray-100">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[10px] font-extrabold text-gray-700 uppercase tracking-wider">Tratte Spostamento</span>
+                                  {!isLocked && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleAddTratta(dayStr(giorno))}
+                                      className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded-lg transition cursor-pointer"
+                                    >
+                                      <Plus className="w-3 h-3" />
+                                      <span>Aggiungi tratta</span>
+                                    </button>
+                                  )}
+                                </div>
+
+                                {tratte.map((tratta, tIdx) => (
+                                  <div key={tIdx} className="bg-gray-50/80 p-2 rounded-xl border border-gray-150 space-y-1">
+                                    <div className="flex items-center justify-between text-[9px] font-bold text-gray-500">
+                                      <span>Tratta {tIdx + 1}</span>
+                                      {!isLocked && tratte.length > 1 && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRemoveTratta(dayStr(giorno), tIdx)}
+                                          className="text-red-500 hover:text-red-700 p-0.5 rounded hover:bg-red-50 transition cursor-pointer"
+                                          title="Elimina questa tratta"
+                                        >
+                                          <Trash2 className="w-3 h-3" />
+                                        </button>
+                                      )}
+                                    </div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                      <div>
+                                        <label className="block text-[9px] font-semibold text-gray-400 mb-0.5">Partenza</label>
+                                        <input 
+                                          type="text"
+                                          placeholder="Es. Sede / Firenze"
+                                          disabled={isLocked}
+                                          value={tratta.partenza || ''}
+                                          onChange={e => handleUpdateTratta(dayStr(giorno), tIdx, 'partenza', e.target.value)}
+                                          className="w-full p-1.5 text-xs border border-gray-200 rounded-lg outline-none focus:border-indigo-400 font-medium bg-white"
+                                        />
+                                      </div>
+                                      <div>
+                                        <label className="block text-[9px] font-semibold text-gray-400 mb-0.5">Arrivo</label>
+                                        <input 
+                                          type="text"
+                                          placeholder="Es. Milano / Cantiere X"
+                                          disabled={isLocked}
+                                          value={tratta.arrivo || ''}
+                                          onChange={e => handleUpdateTratta(dayStr(giorno), tIdx, 'arrivo', e.target.value)}
+                                          className="w-full p-1.5 text-xs border border-gray-200 rounded-lg outline-none focus:border-indigo-400 font-medium bg-white"
+                                        />
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
                               </div>
                             </div>
                           );
@@ -5231,7 +5416,7 @@ export default function Presenze() {
                                     <div className="flex justify-center items-center">
                                       <input 
                                         type="checkbox"
-                                        disabled={isCellDisabled(d, 'lavoro')}
+                                        disabled={isCellDisabled(d, 'lavoro') || isFullDayAbsence(g, g.oreContratto)}
                                         checked={g.trasferta || false}
                                         onChange={e => handleReviewCellChange(dayStr(d), 'trasferta', e.target.checked)}
                                         className="w-3.5 h-3.5 text-blue-500 rounded cursor-pointer"
@@ -5244,6 +5429,37 @@ export default function Presenze() {
                             })}
                             <td className="p-2 font-bold text-blue-600 bg-gray-50 border-l">
                               {calculateTotals(reviewingRapportino.giorni, daysInMonth).ggTrasferta} gg
+                            </td>
+                          </tr>
+
+                          {/* DIPENDENTI STANDARD RIGA 7: CONTRASSEGNO RIMBORSO KM */}
+                          <tr>
+                            <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Rimborso Km</td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const out = d > daysInMonth;
+                              const g = reviewingRapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
+
+                              return (
+                                <td key={i} style={dayStyle.style} className={`p-1 border-r ${out ? 'bg-gray-100/30' : dayStyle.className || ''} align-middle`}>
+                                  {!out && g && (
+                                    <div className="flex justify-center items-center">
+                                      <input 
+                                        type="checkbox"
+                                        disabled={isCellDisabled(d, 'lavoro') || isFullDayAbsence(g, g.oreContratto)}
+                                        checked={g.rimborsoKm || false}
+                                        onChange={e => handleReviewCellChange(dayStr(d), 'rimborsoKm', e.target.checked)}
+                                        className="w-3.5 h-3.5 text-amber-600 rounded cursor-pointer"
+                                      />
+                                    </div>
+                                  )}
+                                  {out && '-'}
+                                </td>
+                              );
+                            })}
+                            <td className="p-2 font-bold text-amber-700 bg-gray-50 border-l">
+                              {calculateTotals(reviewingRapportino.giorni, daysInMonth).ggRimborsoKm} gg
                             </td>
                           </tr>
                         </>
@@ -5335,80 +5551,112 @@ export default function Presenze() {
                   {getTrasferteList(reviewingRapportino.giorni, daysInMonth).length === 0 ? (
                     <p className="text-xs text-gray-400 italic">Nessun giorno segnato in Trasferta (T) o Rimborso Km (K) nel tabellone presenze.</p>
                   ) : (
-                    <div className="border rounded-2xl overflow-hidden shadow-inner bg-gray-50 max-h-[280px] overflow-y-auto scrollbar-thin">
-                      <table className="w-full text-left border-collapse text-xs">
-                        <thead>
-                          <tr className="bg-gray-100 border-b border-gray-200 uppercase font-bold text-gray-500 text-[9px]">
-                            <th className="p-2.5 w-24">Giorno</th>
-                            <th className="p-2.5">Destinazione</th>
-                            <th className="p-2.5">Itinerario (Tratta A/R)</th>
-                            <th className="p-2.5 w-32">Marca Auto</th>
-                            <th className="p-2.5 w-32">Modello Auto</th>
-                            <th className="p-2.5 w-24 text-right">Km Percorsi</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-200 font-semibold text-gray-700">
-                          {getTrasferteList(reviewingRapportino.giorni, daysInMonth).map(({ giorno, trasferta, rimborsoKm }) => {
-                            const gPresenza = reviewingRapportino.giorni[dayStr(giorno)] || {};
-                            return (
-                              <tr key={giorno}>
-                                <td className="p-2.5 font-bold">
-                                  <div className="flex items-center gap-1">
-                                    <span>Gg {giorno}</span>
-                                    {trasferta && <span className="text-[8px] font-extrabold bg-blue-100 text-blue-700 px-1 rounded">T</span>}
-                                    {rimborsoKm && <span className="text-[8px] font-extrabold bg-amber-100 text-amber-800 px-1 rounded">K</span>}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[350px] overflow-y-auto pr-1">
+                      {getTrasferteList(reviewingRapportino.giorni, daysInMonth).map(({ giorno, trasferta, rimborsoKm }) => {
+                        const gPresenza = reviewingRapportino.giorni[dayStr(giorno)] || {};
+                        const tratte = getTratteForGiorno(gPresenza);
+
+                        return (
+                          <div key={giorno} className="bg-white p-3 rounded-2xl border border-gray-200 shadow-xs space-y-3 text-xs">
+                            <div className="flex items-center justify-between border-b border-gray-100 pb-1.5">
+                              <div className="flex items-center gap-2">
+                                <span className="font-extrabold text-gray-800">Giorno {giorno}</span>
+                                {trasferta && <span className="text-[9px] font-extrabold bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">T</span>}
+                                {rimborsoKm && <span className="text-[9px] font-extrabold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">K</span>}
+                              </div>
+                              <div className="flex items-center gap-1 text-xs font-bold text-gray-700">
+                                <span>Km:</span>
+                                <input 
+                                  type="number"
+                                  min={0}
+                                  value={gPresenza.kmTrasferta === 0 ? '' : gPresenza.kmTrasferta || ''}
+                                  onChange={e => handleReviewCellChange(dayStr(giorno), 'kmTrasferta', e.target.value === '' ? 0 : Number(e.target.value))}
+                                  className="w-20 p-1 text-center border border-amber-300 rounded-lg bg-amber-50/50 font-extrabold text-amber-900 outline-none focus:border-amber-500 text-xs"
+                                />
+                              </div>
+                            </div>
+
+                            {/* Automezzo */}
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="block text-[9px] font-bold text-gray-400 mb-0.5">Marca Auto</label>
+                                <input 
+                                  type="text"
+                                  placeholder="Fiat"
+                                  value={gPresenza.marcaAutomezzo || ''}
+                                  onChange={e => handleReviewCellChange(dayStr(giorno), 'marcaAutomezzo', e.target.value)}
+                                  className="w-full p-1.5 border rounded bg-white text-xs"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[9px] font-bold text-gray-400 mb-0.5">Modello Auto</label>
+                                <input 
+                                  type="text"
+                                  placeholder="Panda"
+                                  value={gPresenza.modelloAutomezzo || ''}
+                                  onChange={e => handleReviewCellChange(dayStr(giorno), 'modelloAutomezzo', e.target.value)}
+                                  className="w-full p-1.5 border rounded bg-white text-xs"
+                                />
+                              </div>
+                            </div>
+
+                            {/* Tratte */}
+                            <div className="space-y-2 pt-1 border-t border-gray-100">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-extrabold text-gray-700 uppercase tracking-wider">Tratte Spostamento</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleAddTratta(dayStr(giorno), true)}
+                                  className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded-lg transition cursor-pointer"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                  <span>Aggiungi tratta</span>
+                                </button>
+                              </div>
+
+                              {tratte.map((tratta, tIdx) => (
+                                <div key={tIdx} className="bg-gray-50/80 p-2 rounded-xl border border-gray-150 space-y-1">
+                                  <div className="flex items-center justify-between text-[9px] font-bold text-gray-500">
+                                    <span>Tratta {tIdx + 1}</span>
+                                    {tratte.length > 1 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRemoveTratta(dayStr(giorno), tIdx, true)}
+                                        className="text-red-500 hover:text-red-700 p-0.5 rounded hover:bg-red-50 transition cursor-pointer"
+                                        title="Elimina questa tratta"
+                                      >
+                                        <Trash2 className="w-3 h-3" />
+                                      </button>
+                                    )}
                                   </div>
-                                </td>
-                                <td className="p-2">
-                                  <input 
-                                    type="text"
-                                    placeholder="Località (Milano, ecc.)"
-                                    value={gPresenza.luogoTrasferta || ''}
-                                    onChange={e => handleReviewCellChange(dayStr(giorno), 'luogoTrasferta', e.target.value)}
-                                    className="w-full p-1.5 border rounded bg-white text-xs"
-                                  />
-                                </td>
-                                <td className="p-2">
-                                  <input 
-                                    type="text"
-                                    placeholder="Sede - Destinazione - Sede"
-                                    value={gPresenza.itinerarioTrasferta || ''}
-                                    onChange={e => handleReviewCellChange(dayStr(giorno), 'itinerarioTrasferta', e.target.value)}
-                                    className="w-full p-1.5 border rounded bg-white text-xs"
-                                  />
-                                </td>
-                                <td className="p-2">
-                                  <input 
-                                    type="text"
-                                    placeholder="Fiat"
-                                    value={gPresenza.marcaAutomezzo || ''}
-                                    onChange={e => handleReviewCellChange(dayStr(giorno), 'marcaAutomezzo', e.target.value)}
-                                    className="w-full p-1.5 border rounded bg-white text-xs"
-                                  />
-                                </td>
-                                <td className="p-2">
-                                  <input 
-                                    type="text"
-                                    placeholder="Panda"
-                                    value={gPresenza.modelloAutomezzo || ''}
-                                    onChange={e => handleReviewCellChange(dayStr(giorno), 'modelloAutomezzo', e.target.value)}
-                                    className="w-full p-1.5 border rounded bg-white text-xs"
-                                  />
-                                </td>
-                                <td className="p-2 text-right">
-                                  <input 
-                                    type="number"
-                                    min="0"
-                                    value={gPresenza.kmTrasferta === 0 ? '' : gPresenza.kmTrasferta || ''}
-                                    onChange={e => handleReviewCellChange(dayStr(giorno), 'kmTrasferta', e.target.value === '' ? 0 : Number(e.target.value))}
-                                    className="w-20 p-1.5 border rounded bg-amber-50/50 text-xs text-right font-bold text-amber-900 border-amber-300"
-                                  />
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                      <label className="block text-[9px] font-semibold text-gray-400 mb-0.5">Partenza</label>
+                                      <input 
+                                        type="text"
+                                        placeholder="Sede"
+                                        value={tratta.partenza || ''}
+                                        onChange={e => handleUpdateTratta(dayStr(giorno), tIdx, 'partenza', e.target.value, true)}
+                                        className="w-full p-1.5 border rounded bg-white text-xs"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="block text-[9px] font-semibold text-gray-400 mb-0.5">Arrivo</label>
+                                      <input 
+                                        type="text"
+                                        placeholder="Milano"
+                                        value={tratta.arrivo || ''}
+                                        onChange={e => handleUpdateTratta(dayStr(giorno), tIdx, 'arrivo', e.target.value, true)}
+                                        className="w-full p-1.5 border rounded bg-white text-xs"
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -5973,10 +6221,9 @@ export default function Presenze() {
                             <thead>
                               <tr className="bg-gray-100 border-b border-gray-900 font-bold text-gray-900 uppercase">
                                 <th className="p-1 border-r border-gray-900 w-16">Data</th>
-                                <th className="p-1 border-r border-gray-900 w-20">Tipo</th>
-                                <th className="p-1 border-r border-gray-900">Destinazione</th>
-                                <th className="p-1 border-r border-gray-900">Itinerario TRATTA A/R</th>
-                                <th className="p-1 border-r border-gray-900 w-28">Automezzo</th>
+                                <th className="p-1 border-r border-gray-900 w-24">Tipo</th>
+                                <th className="p-1 border-r border-gray-900">Tratte Spostamento (Partenza → Arrivo)</th>
+                                <th className="p-1 border-r border-gray-900 w-32">Automezzo</th>
                                 <th className="p-1 text-right w-16">Km Percorsi</th>
                               </tr>
                             </thead>
@@ -5984,14 +6231,17 @@ export default function Presenze() {
                               {trasferte.map(tr => {
                                 const gPresenza = sheetToPrint.giorni[dayStr(tr.giorno)] || {};
                                 const autoStr = [gPresenza.marcaAutomezzo, gPresenza.modelloAutomezzo].filter(Boolean).join(' ') || '-';
+                                const tratteList = getTratteForGiorno(gPresenza).filter(t => t.partenza || t.arrivo);
+                                const tratteStr = tratteList.length > 0
+                                  ? tratteList.map((t, idx) => `Tratta ${idx + 1}: ${t.partenza || '?'} → ${t.arrivo || '?'}`).join(' | ')
+                                  : '-';
                                 return (
                                   <tr key={tr.giorno}>
                                     <td className="p-1 border-r border-gray-900">{String(tr.giorno).padStart(2, '0')}/{String(selectedMonth).padStart(2, '0')}/{selectedYear}</td>
                                     <td className="p-1 border-r border-gray-900 font-bold">
                                       {tr.trasferta ? 'Trasferta (T)' : 'Rimborso Km (K)'}
                                     </td>
-                                    <td className="p-1 border-r border-gray-900">{tr.luogo || '-'}</td>
-                                    <td className="p-1 border-r border-gray-900">{gPresenza.itinerarioTrasferta || '-'}</td>
+                                    <td className="p-1 border-r border-gray-900">{tratteStr}</td>
                                     <td className="p-1 border-r border-gray-900">{autoStr}</td>
                                     <td className="p-1 text-right font-bold">{formatDec(gPresenza.kmTrasferta || 0)} km</td>
                                   </tr>
