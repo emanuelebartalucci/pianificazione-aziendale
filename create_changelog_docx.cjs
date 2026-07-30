@@ -72,8 +72,8 @@ async function generateDocx() {
             spacing: { before: 60, after: 60 },
             bullet: { level: 0 },
             children: [
-              new TextRun({ text: "Integrazione Permesso ex L.104 (Ferie, Presenze & Pianificazioni): ", bold: true, color: "111827", font: "Calibri", size: 22 }),
-              new TextRun({ text: "Sostituito il badge numerico '104' con la lettera identificativa 'L' (coerente con 'S' Studio, 'D' Donazione, 'E' Elettorale, 'P' Permesso). Verificata ed estesa la gestione dei permessi ex L.104 nei moduli di Pianificazione Personale e Pianificazione Commesse per il calcolo automatico del carico ore e della disponibilità delle risorse.", color: "374151", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Integrazione Permesso ex L.104 & Deploy Cloudflare: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Impostata la lettera identificativa 'L' per i permessi ex L.104 ed estesa la gestione nei moduli di pianificazione. Risolto definitivamente il deploy Cloudflare rimuovendo il file _redirects in conflitto con il routing SPA nativo ('single-page-application').", color: "374151", font: "Calibri", size: 22 }),
             ],
           }),
           new Paragraph({
