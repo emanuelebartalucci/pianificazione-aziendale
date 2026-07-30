@@ -247,7 +247,7 @@ export default function Presenze() {
   const filteredDipendenti = useMemo(() => {
     return dipendenti.filter(d => {
       const email = d.email?.trim().toLowerCase();
-      return email !== 'aprofeti@ingegno06.it' && email !== 'mcorbellini@ingegno06.it' && email !== 'synergiesflow@ingegno06.it';
+      return email !== 'aprofeti@ingegno06.it' && email !== 'mcorbellini@ingegno06.it' && email !== 'synergieflow@ingegno06.it' && email !== 'synergiesflow@ingegno06.it';
     });
   }, [dipendenti]);
 
@@ -731,10 +731,13 @@ export default function Presenze() {
       setChiusureAziendali(listClosures);
 
       if (viewMode === 'hr') {
-        setLoadingHR(true);
+        const sixtyDaysAgo = new Date();
+        sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+        const sixtyDaysAgoIso = `${sixtyDaysAgo.getFullYear()}-${String(sixtyDaysAgo.getMonth() + 1).padStart(2, '0')}-${String(sixtyDaysAgo.getDate()).padStart(2, '0')}`;
+
         const [presSnap, wkSnap] = await Promise.all([
           getDocs(query(collection(db, 'presenze'), where('mese', '==', selectedMonth), where('anno', '==', selectedYear))),
-          getDocs(collection(db, 'richieste_weekend'))
+          getDocs(query(collection(db, 'richieste_weekend'), where('data', '>=', sixtyDaysAgoIso)))
         ]);
 
         const dataMap: Record<string, RapportinoPresenze> = {};
@@ -770,9 +773,7 @@ export default function Presenze() {
           }
         }
 
-        const sixtyDaysAgo = new Date();
-        sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
-        const sixtyDaysAgoIso = `${sixtyDaysAgo.getFullYear()}-${String(sixtyDaysAgo.getMonth() + 1).padStart(2, '0')}-${String(sixtyDaysAgo.getDate()).padStart(2, '0')}`;
+
 
         const listWk: any[] = [];
         wkSnap.forEach(docSnap => {

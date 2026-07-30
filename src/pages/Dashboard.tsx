@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Briefcase, Calendar, Settings, FileText, MessageSquare, Plus, Trash2, Megaphone, X, Users, CalendarDays, Edit, Network, AlertCircle, ChevronRight } from 'lucide-react';
+import { Briefcase, Calendar, Settings, FileText, MessageSquare, Plus, Trash2, Megaphone, X, Users, CalendarDays, Edit, Network, AlertCircle, ChevronRight, HeartPulse } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
@@ -8,7 +8,6 @@ import ConfirmModal from '../components/ConfirmModal';
 import ClimaModal from '../components/ClimaModal';
 import QuestionnaireModal from '../components/QuestionnaireModal';
 import { isSoci, isCollaboratore } from './Impostazioni';
-import { isItalianHoliday } from './Presenze';
 import { getWeekNumber } from '../utils/date';
 
 interface Announcement {
@@ -162,87 +161,7 @@ export default function Dashboard() {
     }
   }, [myAssociatedName]);
 
-  // Effetto temporaneo di pulizia dello storico chiusure aziendali
-  useEffect(() => {
-    const runCleanup = async () => {
-      try {
-        console.log("Inizio pulizia dello storico ferie inserite automaticamente...");
-        
-        // 1. Rimuove tutte le richieste in 'richieste_ferie' con nota === 'Chiusure Aziendali'
-        const qFerie = query(collection(db, 'richieste_ferie'), where('note', '==', 'Chiusure Aziendali'));
-        const ferieSnap = await getDocs(qFerie);
-        let ferieDeleted = 0;
-        for (const docSnap of ferieSnap.docs) {
-          await deleteDoc(doc(db, 'richieste_ferie', docSnap.id));
-          ferieDeleted++;
-        }
-        console.log(`Eliminate ${ferieDeleted} richieste ferie automatiche.`);
 
-        // 2. Carica le chiusure aziendali
-        const closuresSnap = await getDocs(collection(db, 'chiusure_aziendali'));
-        const closuresList: Array<{ dataInizio: string; dataFine: string }> = [];
-        closuresSnap.forEach(docSnap => {
-          closuresList.push(docSnap.data() as { dataInizio: string; dataFine: string });
-        });
-
-        // Verificatore se una data ricade nelle chiusure aziendali
-        const isClosureDate = (dateStr: string) => {
-          return closuresList.some(c => dateStr >= c.dataInizio && dateStr <= c.dataFine);
-        };
-
-        // 3. Ripristina i giorni nei rapportini in Bozza o Richiede Modifica
-        const presenzeSnap = await getDocs(collection(db, 'presenze'));
-        let sheetsUpdated = 0;
-        for (const presDoc of presenzeSnap.docs) {
-          const sheet = presDoc.data();
-          const isCollab = isCollaboratore(sheet.dipendenteNome, dipendenti);
-          if (!isCollab && (sheet.stato === 'Bozza' || sheet.stato === 'Richiede Modifica')) {
-            const updatedGiorni = { ...sheet.giorni };
-            let changed = false;
-            const sheetMonth = sheet.mese;
-            const sheetYear = sheet.anno;
-
-            for (const dayStr of Object.keys(updatedGiorni)) {
-              const dNum = Number(dayStr);
-              const dateStr = `${sheetYear}-${String(sheetMonth).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`;
-              
-              if (isClosureDate(dateStr)) {
-                const g = updatedGiorni[dayStr];
-                const dayContractHours = g.oreContratto ?? 8;
-                if (g.ferie === dayContractHours && g.ore === 0 && !g.malattia && g.permessi === 0) {
-                  g.ferie = 0;
-                  const dObj = new Date(sheetYear, sheetMonth - 1, dNum);
-                  const dayOfWeek = dObj.getDay();
-                  const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
-                  const isHoliday = isItalianHoliday(dateStr);
-                  g.ore = (isWknd || isHoliday) ? 0 : dayContractHours;
-                  changed = true;
-                }
-              }
-            }
-
-            if (changed) {
-              await updateDoc(doc(db, 'presenze', presDoc.id), {
-                giorni: updatedGiorni,
-                timestamp: new Date().toISOString()
-              });
-              sheetsUpdated++;
-            }
-          }
-        }
-        console.log(`Ripristinati i giorni nei rapportini per ${sheetsUpdated} schede.`);
-        if (ferieDeleted > 0 || sheetsUpdated > 0) {
-          showToast(`Pulizia storico chiusure: eliminate ${ferieDeleted} ferie e ripristinate ${sheetsUpdated} schede presenze!`);
-        }
-      } catch (err) {
-        console.error("Errore durante la pulizia dello storico:", err);
-      }
-    };
-
-    if (dipendenti && dipendenti.length > 0) {
-      runCleanup();
-    }
-  }, [dipendenti]);
 
   const loadDashboardData = async () => {
     try {
@@ -321,7 +240,7 @@ export default function Dashboard() {
           getDocs(query(collection(db, 'richieste_ferie'), where('stato', '==', 'In attesa'))),
           getDocs(query(collection(db, 'presenze'), where('stato', '==', 'Inviato'))),
           getDocs(query(collection(db, 'richieste_weekend'), where('stato', '==', 'In attesa'))),
-          getDocs(collection(db, 'suggerimenti'))
+          getDocs(query(collection(db, 'suggerimenti'), where('stato', '==', 'In attesa')))
         ]);
 
         const todayStr = new Date().toLocaleDateString('sv-SE');
@@ -609,7 +528,7 @@ export default function Dashboard() {
       "Grazie per il tuo prezioso contributo quotidiano."
     ];
 
-    const unsub = onSnapshot(collection(db, 'dashboard_greetings'), (snap) => {
+    getDocs(collection(db, 'dashboard_greetings')).then((snap) => {
       const list: string[] = [];
       snap.forEach(docSnap => {
         const t = docSnap.data().testo;
@@ -618,8 +537,11 @@ export default function Dashboard() {
       const finalPhrases = list.length > 0 ? list : defaultPhrases;
       const randomIndex = Math.floor(Math.random() * finalPhrases.length);
       setWelcomePhrase(finalPhrases[randomIndex]);
+    }).catch(err => {
+      console.error("Errore frasi benvenuto:", err);
+      const randomIndex = Math.floor(Math.random() * defaultPhrases.length);
+      setWelcomePhrase(defaultPhrases[randomIndex]);
     });
-    return () => unsub();
   }, []);
 
   const currentDateString = useMemo(() => {
@@ -682,14 +604,13 @@ export default function Dashboard() {
       setPendingAvailabilityCount(0);
       return;
     }
-    const unsub = onSnapshot(collection(db, 'segnalazioni_disponibilita'), (snap) => {
+    const qDisp = query(collection(db, 'segnalazioni_disponibilita'), where('stato', '==', 'in_attesa'));
+    const unsub = onSnapshot(qDisp, (snap) => {
       let count = 0;
       snap.forEach(docSnap => {
         const data = docSnap.data();
-        if (data.stato === 'in_attesa') {
-          if (myCoordinatedAreas.includes(data.macroArea)) {
-            count++;
-          }
+        if (myCoordinatedAreas.includes(data.macroArea)) {
+          count++;
         }
       });
       setPendingAvailabilityCount(count);
@@ -909,24 +830,13 @@ export default function Dashboard() {
             >
               <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-purple-100 text-purple-600 rounded-2xl flex items-center justify-center group-hover:bg-purple-600 group-hover:text-white transition-colors relative mb-3">
                 <MessageSquare className="w-6 h-6 sm:w-7 sm:h-7" />
-                {isHR ? (
-                  pendingSuggerimentiCount > 0 && (
-                    <span className="absolute -top-1 -right-1 flex h-5 w-5">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-5 w-5 bg-red-500 text-[10px] font-black text-white items-center justify-center border border-white">
-                        {pendingSuggerimentiCount}
-                      </span>
+                {!isSoci(myAssociatedName) && activeQuestionnaire && activeQuestionnaire.active && !hasCompletedSurvey && (
+                  <span className="absolute -top-1 -right-1 flex h-5 w-5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-5 w-5 bg-red-500 text-[10px] font-black text-white items-center justify-center border border-white">
+                      1
                     </span>
-                  )
-                ) : (
-                  !isSoci(myAssociatedName) && activeQuestionnaire && activeQuestionnaire.active && !hasCompletedSurvey && (
-                    <span className="absolute -top-1 -right-1 flex h-5 w-5">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-5 w-5 bg-red-500 text-[10px] font-black text-white items-center justify-center border border-white">
-                        1
-                      </span>
-                    </span>
-                  )
+                  </span>
                 )}
               </div>
               <div className="h-11 xl:h-12 shrink-0 flex items-start overflow-hidden">
@@ -936,6 +846,34 @@ export default function Dashboard() {
                 <p className="text-xs font-semibold text-gray-500 leading-snug">Invia suggerimenti e partecipa alla valutazione del clima.</p>
               </div>
             </div>
+
+            {/* Gestione HR (Riservato ad HR e Sviluppatore - Non Admin semplici) */}
+            {(isHR || isDev) && (
+              <div 
+                onClick={(e) => handleNav(e, '/gestione-hr')} 
+                onAuxClick={(e) => handleNav(e, '/gestione-hr')} 
+                onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
+                className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
+              >
+                <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-purple-100 text-purple-600 rounded-2xl flex items-center justify-center group-hover:bg-purple-600 group-hover:text-white transition-colors relative mb-3">
+                  <HeartPulse className="w-6 h-6 sm:w-7 sm:h-7" />
+                  {pendingSuggerimentiCount > 0 && (
+                    <span className="absolute -top-1 -right-1 flex h-5 w-5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-5 w-5 bg-red-500 text-[10px] font-black text-white items-center justify-center border border-white">
+                        {pendingSuggerimentiCount}
+                      </span>
+                    </span>
+                  )}
+                </div>
+                <div className="h-11 xl:h-12 shrink-0 flex items-start overflow-hidden">
+                  <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-900 leading-snug">Gestione HR</h2>
+                </div>
+                <div className="hidden xl:block h-12 shrink-0 overflow-hidden mt-1">
+                  <p className="text-xs font-semibold text-gray-500 leading-snug">Gestisci frasi di benvenuto, benessere, questionari e suggerimenti.</p>
+                </div>
+              </div>
+            )}
 
             {/* Impostazioni Sviluppatore */}
             {isDev && (
@@ -1284,6 +1222,7 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
     </div>
   );
 }

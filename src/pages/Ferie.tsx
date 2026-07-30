@@ -294,8 +294,13 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
   useEffect(() => {
     loadFerieData();
 
-    // Listener real-time per aggiornamento automatico dei contatori all'approvazione delle richieste
-    const unsubFerie = onSnapshot(collection(db, 'richieste_ferie'), () => {
+    // Listener real-time filtrato per aggiornamento automatico dei contatori all'approvazione delle richieste
+    const twoYearsAgo = new Date();
+    twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
+    const startLimit = twoYearsAgo.toLocaleDateString('sv-SE');
+    const qUnsub = query(collection(db, 'richieste_ferie'), where('dataFine', '>=', startLimit));
+    
+    const unsubFerie = onSnapshot(qUnsub, () => {
       loadFerieData();
     });
 

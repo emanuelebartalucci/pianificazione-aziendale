@@ -1,5 +1,6 @@
-import React, { useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useAuth, isTechnicalUser, type Dipendente } from '../contexts/AuthContext';
+import { isCollaboratore } from '../pages/Impostazioni';
 import { 
   Users, 
   Crown, 
@@ -8,8 +9,11 @@ import {
   FileSpreadsheet,
   HardHat,
   ShieldCheck,
-  Building2
+  Building2,
+  Printer,
+  X
 } from 'lucide-react';
+import { APP_VERSION, getPrintDateString } from '../config/version';
 
 const areNamesEqual = (n1?: string | null, n2?: string | null): boolean => {
   if (!n1 || !n2) return false;
@@ -32,6 +36,11 @@ const MACRO_AREA_ICONS: Record<string, React.ReactNode> = {
 export const OrganigrammaView: React.FC = () => {
   const { dipendenti = [], coordinatori = [], userEmail, myAssociatedName } = useAuth();
 
+  // Stati Modal di Stampa e Filtri
+  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+  const [printTipoFilter, setPrintTipoFilter] = useState<'tutti' | 'dipendenti' | 'collaboratori'>('tutti');
+  const [printAreaFilter, setPrintAreaFilter] = useState<string>('tutte');
+
   // Helper per verificare se un dipendente è l'utente attualmente collegato
   const isCurrentUser = (nome?: string, email?: string) => {
     if (email && userEmail && email.toLowerCase().trim() === userEmail.toLowerCase().trim()) return true;
@@ -53,7 +62,7 @@ export const OrganigrammaView: React.FC = () => {
     });
   }, [activeDipendenti]);
 
-  // Coordinatori mappati con nome ed email per ciascuna area (incluso Corbellini Matteo per Amministrazione)
+  // Coordinatori mappati con nome ed email per ciascuna area
   const coordinatorsByArea = useMemo(() => {
     const map: Record<string, { nome: string; email: string }[]> = {};
 
@@ -70,7 +79,6 @@ export const OrganigrammaView: React.FC = () => {
       }
     });
 
-    // Assicura che Corbellini Matteo sia presente nei coordinatori di Amministrazione
     if (!map['Amministrazione']) map['Amministrazione'] = [];
     if (!map['Amministrazione'].some(c => c.email.toLowerCase().includes('mcorbellini'))) {
       map['Amministrazione'].push({
@@ -82,7 +90,7 @@ export const OrganigrammaView: React.FC = () => {
     return map;
   }, [coordinatori, activeDipendenti]);
 
-  // Aree standard in ordine fisso come richiesto (escludendo la Direzione che va in alto)
+  // Aree standard in ordine fisso
   const MACRO_AREE_ORDINE = [
     'Disegnatori',
     'Ingegneria',
@@ -91,7 +99,7 @@ export const OrganigrammaView: React.FC = () => {
     'Amministrazione'
   ];
 
-  // Raggruppamento dei dipendenti per ciascuna Macro Area (escludendo i Soci che vanno in Direzione)
+  // Raggruppamento dei dipendenti per ciascuna Macro Area (escludendo i Soci)
   const groupedDipendenti = useMemo(() => {
     const map: Record<string, Dipendente[]> = {};
 
@@ -100,20 +108,263 @@ export const OrganigrammaView: React.FC = () => {
     activeDipendenti.forEach(dip => {
       const cleanName = dip.nome.toLowerCase().trim();
       const isSocio = cleanName === 'corbellini matteo' || cleanName === 'profeti andrea' || cleanName === 'matteo corbellini' || cleanName === 'andrea profeti';
-      if (isSocio) return; // già in Direzione in alto
+      if (isSocio) return;
 
       const areaName = dip.macroArea || 'Altro';
       if (!map[areaName]) map[areaName] = [];
       map[areaName].push(dip);
     });
 
-    // Ordina i membri in ciascuna area in ordine alfabetico
     Object.keys(map).forEach(area => {
       map[area].sort((a, b) => a.nome.localeCompare(b.nome));
     });
 
     return map;
   }, [activeDipendenti]);
+
+  // Calcolo Risorse Filtrate per la Stampa
+  const filteredPrintResources = useMemo(() => {
+    const list: Array<{
+      id: string;
+      nome: string;
+      email: string;
+      tipoFormatted: string;
+      tipoRaw: 'socio' | 'dipendente' | 'collaboratore';
+      macroArea: string;
+    }> = [];
+
+    // 1. Soci / Direzione
+    direzioneMembers.forEach(m => {
+      list.push({
+        id: m.id,
+        nome: m.nome,
+        email: m.email || '',
+        tipoFormatted: 'Socio / Direzione',
+        tipoRaw: 'socio',
+        macroArea: 'Direzione Aziendale'
+      });
+    });
+
+    // 2. Altri Dipendenti e Collaboratori (usando isCollaboratore per conteggio esatto di tutti i 14 collaboratori)
+    activeDipendenti.forEach(dip => {
+      const cleanName = dip.nome.toLowerCase().trim();
+      const isSocio = cleanName === 'corbellini matteo' || cleanName === 'profeti andrea' || cleanName === 'matteo corbellini' || cleanName === 'andrea profeti';
+      if (isSocio) return;
+
+      const isCollab = isCollaboratore(dip.nome, dip.tipo);
+      const areaName = dip.macroArea || 'Altro';
+
+      list.push({
+        id: dip.id,
+        nome: dip.nome,
+        email: dip.email || '',
+        tipoFormatted: isCollab ? 'Collaboratore' : 'Dipendente',
+        tipoRaw: isCollab ? 'collaboratore' : 'dipendente',
+        macroArea: areaName
+      });
+    });
+
+    const getSortKey = (name: string) => {
+      if (!name) return '';
+      const clean = name.trim().replace(/\s+/g, ' ');
+      const lower = clean.toLowerCase();
+      if (lower === 'matteo corbellini') return 'Corbellini Matteo';
+      if (lower === 'andrea profeti') return 'Profeti Andrea';
+      return clean;
+    };
+
+    return list.filter(item => {
+      if (printTipoFilter === 'dipendenti' && item.tipoRaw !== 'dipendente') return false;
+      if (printTipoFilter === 'collaboratori' && item.tipoRaw !== 'collaboratore') return false;
+      if (printAreaFilter !== 'tutte' && item.macroArea !== printAreaFilter) return false;
+      return true;
+    }).sort((a, b) => {
+      return getSortKey(a.nome).localeCompare(getSortKey(b.nome), 'it', { sensitivity: 'base' });
+    });
+  }, [direzioneMembers, activeDipendenti, printTipoFilter, printAreaFilter]);
+
+  // Generatore di Stampa HTML Pulito ed Elegante
+  const handlePrintList = () => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert("Impossibile aprire la finestra di stampa. Assicurati che i pop-up siano abilitati per questo sito.");
+      return;
+    }
+
+    const printDate = getPrintDateString();
+    const logoUrl = `${window.location.origin}/Logo.png`;
+
+    const tipoLabel = printTipoFilter === 'tutti' ? 'Tutti (Soci, Dipendenti, Collaboratori)' : (printTipoFilter === 'dipendenti' ? 'Solo Dipendenti' : 'Solo Collaboratori');
+    const areaLabel = printAreaFilter === 'tutte' ? 'Tutte le Macroaree' : printAreaFilter;
+
+    const rowsHtml = filteredPrintResources.map((res, index) => `
+      <tr>
+        <td style="text-align: center; font-weight: bold; color: #475569; width: 40px; font-size: 10.5px;">${index + 1}</td>
+        <td style="font-weight: 700; color: #0f172a; font-size: 11px;">${res.nome}</td>
+        <td style="font-weight: 600; color: #334155; font-size: 10.5px;">${res.macroArea}</td>
+        <td style="text-align: center; font-weight: 700; color: #1e293b; font-size: 10.5px;">${res.tipoFormatted}</td>
+        <td style="font-size: 10px; color: #475569; font-family: monospace;">${res.email || '-'}</td>
+      </tr>
+    `).join('');
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html lang="it">
+      <head>
+        <meta charset="UTF-8">
+        <title>Elenco Risorse Umane - INGEGNO P&C S.R.L.</title>
+        <style>
+          @page {
+            size: A4 portrait;
+            margin: 1.2cm 1cm 1.5cm 1cm;
+          }
+          body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            color: #0f172a;
+            margin: 0;
+            padding: 0;
+            background: #fff;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+          .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid #0f172a;
+            padding-bottom: 10px;
+            margin-bottom: 14px;
+          }
+          .logo {
+            height: 44px;
+            object-fit: contain;
+          }
+          .title-container {
+            text-align: right;
+          }
+          .company-name {
+            font-size: 13px;
+            font-weight: 900;
+            color: #0f172a;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+          }
+          .doc-title {
+            font-size: 16px;
+            font-weight: 900;
+            color: #2563eb;
+            margin-top: 2px;
+            text-transform: uppercase;
+            letter-spacing: -0.01em;
+          }
+          .filter-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 8px 12px;
+            margin-bottom: 14px;
+            font-size: 10px;
+            color: #475569;
+            font-weight: 600;
+          }
+          .filter-pill {
+            font-weight: 800;
+            color: #1e293b;
+          }
+          table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 11px;
+          }
+          th {
+            background-color: #1e293b !important;
+            color: #ffffff !important;
+            font-size: 10px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 8px 10px;
+            border: 1px solid #0f172a;
+          }
+          td {
+            padding: 7px 10px;
+            border: 1px solid #cbd5e1;
+            vertical-align: middle;
+          }
+          tr:nth-child(even) td {
+            background-color: #f8fafc !important;
+          }
+          .footer-fixed {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 8pt;
+            color: #64748b;
+            border-top: 1px solid #e2e8f0;
+            padding-top: 6px;
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: #ffffff;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <img src="${logoUrl}" alt="INGEGNO Logo" class="logo" />
+          <div class="title-container">
+            <div class="company-name">INGEGNO P&C S.R.L.</div>
+            <div class="doc-title">Elenco Risorse Umane</div>
+          </div>
+        </div>
+
+        <div class="filter-info">
+          <div>
+            <span>Filtro Inquadramento: </span><span class="filter-pill">${tipoLabel}</span>
+            <span style="margin: 0 8px; color: #cbd5e1;">|</span>
+            <span>Macroarea: </span><span class="filter-pill">${areaLabel}</span>
+          </div>
+          <div>Totale Risorse Stampate: <strong style="color: #0f172a; font-size: 11px;">${filteredPrintResources.length}</strong></div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 40px; text-align: center;">#</th>
+              <th style="text-align: left;">Cognome e Nome</th>
+              <th style="text-align: left;">Macroarea</th>
+              <th style="text-align: center; width: 120px;">Inquadramento</th>
+              <th style="text-align: left;">E-mail Aziendale</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml}
+          </tbody>
+        </table>
+
+        <div class="footer-fixed">
+          <span>INGEGNO P&C S.R.L. · Documento Ufficiale Risorse Umane</span>
+          <span>${APP_VERSION} — Data Stampa: ${printDate}</span>
+        </div>
+
+        <script>
+          window.onload = function() {
+            setTimeout(function() {
+              window.print();
+              window.close();
+            }, 300);
+          };
+        </script>
+      </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
 
   return (
     <div className="flex flex-col gap-6 animate-fade-in pb-10">
@@ -138,18 +389,13 @@ export const OrganigrammaView: React.FC = () => {
             return (
               <div 
                 key={member.id}
-                className={`flex items-center gap-3 px-4 py-2.5 rounded-2xl text-xs font-black shadow-xs transition-all ${
+                className={`flex items-center gap-2.5 px-4.5 py-2.5 rounded-2xl text-xs font-black shadow-xs transition-all ${
                   isMe 
                     ? 'bg-indigo-600 text-white ring-4 ring-indigo-300 shadow-lg scale-105' 
                     : 'bg-white/95 text-amber-950 hover:bg-white'
                 }`}
               >
-                <div className={`w-7 h-7 rounded-full flex items-center justify-center font-black text-xs ${
-                  isMe ? 'bg-white text-indigo-900' : 'bg-amber-600 text-white'
-                }`}>
-                  {member.nome.charAt(0).toUpperCase()}
-                </div>
-                <span className="font-extrabold text-sm">{member.nome}</span>
+                <span className="font-extrabold text-sm tracking-tight">{member.nome}</span>
 
                 {isMe && (
                   <span className="bg-white text-indigo-900 text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider shadow-xs ml-1 flex items-center gap-1">
@@ -164,16 +410,25 @@ export const OrganigrammaView: React.FC = () => {
 
       {/* 2. SCHEMA COMPATTO A 5 COLONNE PER TUTTE LE MACROAREE */}
       <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] p-4 sm:p-6 border border-white/60 shadow-sm">
-        <div className="flex items-center justify-between mb-4 pb-2 border-b border-gray-150">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 pb-2 border-b border-gray-150 gap-2">
           <div className="flex items-center gap-2">
             <Users className="w-5 h-5 text-indigo-600" />
             <h3 className="text-base font-black text-gray-900 uppercase tracking-wide">
               Composizione Macro Aree e Team
             </h3>
           </div>
-          <span className="text-xs font-bold text-gray-500">
-            {activeDipendenti.length} Risorse Totali
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-bold text-gray-500">
+              {activeDipendenti.length} Risorse Totali
+            </span>
+            <button
+              type="button"
+              onClick={() => setIsPrintModalOpen(true)}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold px-3.5 py-1.5 rounded-xl shadow-xs transition flex items-center gap-1.5 text-xs cursor-pointer active:scale-95"
+            >
+              <Printer className="w-4 h-4" /> Stampa Elenco Risorse
+            </button>
+          </div>
         </div>
 
         {/* GRIGLIA COMPATTA 5 COLONNE AFFIANCATE */}
@@ -183,12 +438,10 @@ export const OrganigrammaView: React.FC = () => {
             const areaCoords = coordinatorsByArea[areaName] || [];
             const icon = MACRO_AREA_ICONS[areaName] || <Building2 className="w-4 h-4 text-gray-600 shrink-0" />;
 
-            // Se uno è già tra i coordinatori, non mostrare di nuovo nella lista dipendenti in basso
             const nonCoordMembers = members.filter(m => 
               !areaCoords.some(c => c.email.toLowerCase().trim() === m.email?.toLowerCase().trim() || areNamesEqual(c.nome, m.nome))
             );
 
-            // Verifica se l'utente corrente appartiene a questa categoria/area (come coordinatore o come membro)
             const isUserCategory = areaCoords.some(c => isCurrentUser(c.nome, c.email)) ||
                                    members.some(m => isCurrentUser(m.nome, m.email));
 
@@ -202,7 +455,6 @@ export const OrganigrammaView: React.FC = () => {
                 }`}
               >
                 <div>
-                  {/* INTESTAZIONE COLONNA CON ALTEZZA MINIMA UNIFORME */}
                   <div className="flex items-center justify-between pb-2.5 border-b border-slate-200 mb-3 gap-2 min-h-[46px]">
                     <div className="flex items-center gap-1.5 min-w-0">
                       <div className="p-1.5 bg-white rounded-lg border border-slate-100 shadow-2xs shrink-0">
@@ -218,7 +470,6 @@ export const OrganigrammaView: React.FC = () => {
                     </span>
                   </div>
 
-                  {/* SEZIONE COORDINATORI DELL'AREA */}
                   <div className="mb-3">
                     <div className="text-[10px] uppercase font-black text-emerald-800 tracking-wider mb-1.5">
                       <span>COORDINATORI ({areaCoords.length})</span>
@@ -258,7 +509,6 @@ export const OrganigrammaView: React.FC = () => {
 
                   <hr className="border-slate-200 my-2.5" />
 
-                  {/* ELENCO MEMBRI DEL TEAM (SOLO CHI NON È GIÀ COORDINATORE) */}
                   <div className="space-y-1.5">
                     {nonCoordMembers.length === 0 ? (
                       <div className="text-[10.5px] text-slate-400 italic text-center p-2">
@@ -297,6 +547,113 @@ export const OrganigrammaView: React.FC = () => {
           })}
         </div>
       </div>
+
+      {/* MODALE PER FILTRO E STAMPA ELENCO RISORSE */}
+      {isPrintModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-6">
+            
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-2xl">
+                  <Printer className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-900 leading-tight">
+                    Stampa Elenco Risorse
+                  </h3>
+                  <p className="text-xs text-slate-500">Filtra e genera il documento ufficiale di stampa dell'organigramma</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsPrintModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-xl hover:bg-slate-100 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-black text-slate-700 uppercase tracking-wider mb-2">
+                  Tipologia Risorse (Inquadramento)
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'tutti', label: 'Tutti (incl. Soci)' },
+                    { id: 'dipendenti', label: 'Solo Dipendenti' },
+                    { id: 'collaboratori', label: 'Solo Collaboratori' },
+                  ].map(item => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setPrintTipoFilter(item.id as any)}
+                      className={`py-2.5 px-2 rounded-xl border text-xs font-bold transition flex items-center justify-center text-center cursor-pointer ${
+                        printTipoFilter === item.id
+                          ? 'bg-indigo-600 text-white border-indigo-700 shadow-xs font-black'
+                          : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-black text-slate-700 uppercase tracking-wider mb-2">
+                  Macroarea di Appartenenza
+                </label>
+                <select
+                  value={printAreaFilter}
+                  onChange={e => setPrintAreaFilter(e.target.value)}
+                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500 shadow-xs"
+                >
+                  <option value="tutte">── Tutte le Macroaree ──</option>
+                  <option value="Direzione Aziendale">Direzione Aziendale (Soci)</option>
+                  <option value="Disegnatori">Disegnatori</option>
+                  <option value="Ingegneria">Ingegneria</option>
+                  <option value="Sicurezza Cantieri">Sicurezza Cantieri</option>
+                  <option value="Consulenza Sicurezza">Consulenza Sicurezza</option>
+                  <option value="Amministrazione">Amministrazione</option>
+                </select>
+              </div>
+
+              <div className="bg-indigo-50/70 border border-indigo-150 p-3.5 rounded-2xl flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs font-extrabold text-indigo-950">
+                  <Users className="w-4 h-4 text-indigo-600" /> Risorse Selezionate per la Stampa:
+                </div>
+                <span className="bg-indigo-600 text-white font-black text-xs px-2.5 py-1 rounded-full shadow-xs">
+                  {filteredPrintResources.length}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setIsPrintModalOpen(false)}
+                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition cursor-pointer"
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsPrintModalOpen(false);
+                  handlePrintList();
+                }}
+                disabled={filteredPrintResources.length === 0}
+                className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-md transition flex items-center gap-2 cursor-pointer disabled:opacity-50 active:scale-95"
+              >
+                <Printer className="w-4 h-4" /> Genera e Stampa Documento
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
 
     </div>
   );

@@ -16,24 +16,39 @@ export const EMAIL_TEMPLATES_LIST: EmailTemplateDefinition[] = [
     label: 'Notifica Apertura Nuova Commessa',
     category: 'Commesse',
     defaultSubject: '[Nuova Commessa] Aperta commessa: {NOME_COMMESSA}',
-    defaultBody: `<p>Gentili,</p>
-<p>Ti informiamo che è stata aperta una nuova commessa sulla piattaforma di pianificazione con i seguenti dettagli:</p>
+    defaultBody: `<p>Ciao,</p>
+<p>Ti comunichiamo che è stata aperta una nuova commessa sulla piattaforma di pianificazione con i seguenti dettagli:</p>
 <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 15px 0;" />
 <table border="0" cellpadding="5" cellspacing="0" style="font-size: 14px; color: #374151; width: 100%;">
-  <tr><td style="font-weight: bold; width: 180px;">Codice Commessa:</td><td>{CODICE_COMMESSA}</td></tr>
+  <tr><td style="font-weight: bold; width: 220px;">Codice Commessa:</td><td>{CODICE_COMMESSA}</td></tr>
   <tr><td style="font-weight: bold;">Titolo:</td><td>{NOME_COMMESSA}</td></tr>
   <tr><td style="font-weight: bold;">Cliente:</td><td>{CLIENTE}</td></tr>
+  <tr><td style="font-weight: bold;">Tipologia:</td><td>{TIPOLOGIA}</td></tr>
+  <tr><td style="font-weight: bold;">Anno:</td><td>{ANNO}</td></tr>
   <tr><td style="font-weight: bold;">Aperta da:</td><td><strong style="color: #047857;">{APERTA_DA}</strong></td></tr>
+  <tr><td style="font-weight: bold;">Data Inizio:</td><td>{DATA_INIZIO}</td></tr>
+  <tr><td style="font-weight: bold;">Data Fine:</td><td>{DATA_FINE}</td></tr>
   <tr><td style="font-weight: bold;">Responsabile Commessa:</td><td>{RESPONSABILE}</td></tr>
+  <tr><td style="font-weight: bold;">Giornate Totali Stimate (No SGQ):</td><td>{GIORNATE_STIMATE}</td></tr>
 </table>
+
+<h3 style="color: #065f46; font-size: 15px; margin-top: 25px; margin-bottom: 10px;">Dettagli Progetti & SGQ</h3>
+{TABELLA_PROGETTI}
+
 <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 25px 0;" />
 <p>Puoi ora procedere all'apertura di questa commessa sul gestionale aziendale.</p>`,
     placeholders: [
       { code: '{CODICE_COMMESSA}', label: 'Codice Commessa', sample: '2026-042' },
       { code: '{NOME_COMMESSA}', label: 'Nome Commessa', sample: 'Progettazione Impianti Idrici' },
       { code: '{CLIENTE}', label: 'Cliente', sample: 'Acque S.p.A.' },
+      { code: '{TIPOLOGIA}', label: 'Tipologia', sample: 'P - Progettazione' },
+      { code: '{ANNO}', label: 'Anno', sample: '2026' },
       { code: '{APERTA_DA}', label: 'Operatore Apertura', sample: 'Bartalucci Emanuele' },
+      { code: '{DATA_INIZIO}', label: 'Data Inizio', sample: '01/09/2026' },
+      { code: '{DATA_FINE}', label: 'Data Fine', sample: '31/12/2026' },
       { code: '{RESPONSABILE}', label: 'Responsabile Commessa', sample: 'Profeti Andrea' },
+      { code: '{GIORNATE_STIMATE}', label: 'Giornate Stimate', sample: 'Senior: 10 gg | Project: 25 gg | Junior: 15 gg' },
+      { code: '{TABELLA_PROGETTI}', label: 'Tabella Dettagli Progetti & SGQ', sample: `<table border="0" cellpadding="0" cellspacing="0" style="width: 100%; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; font-family: inherit;"><thead style="background-color: #f3f4f6;"><tr><th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563;">Descrizione Progetto</th><th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563;">Project Manager</th><th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563;">Utenti da Abilitare</th><th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563;">Configurazione / SGQ</th></tr></thead><tbody><tr style="background-color: #ffffff;"><td style="padding: 10px; font-weight: 600; font-size: 13px;">Progettazione Esecutiva Impianti</td><td style="padding: 10px; font-size: 13px;">Profeti Andrea</td><td style="padding: 10px; font-size: 12px; color: #047857; font-weight: 600;">Cappelli Marco, Biagioni Matteo</td><td style="padding: 10px; font-size: 12px;"><strong>SGQ:</strong> Sì<br/><strong>Verif./Valid.:</strong> Bartalucci Emanuele<br/><strong>Compilatore:</strong> Profeti Andrea</td></tr></tbody></table>` },
     ]
   },
   {
@@ -41,8 +56,8 @@ export const EMAIL_TEMPLATES_LIST: EmailTemplateDefinition[] = [
     label: 'Notifica Chiusura Commessa',
     category: 'Commesse',
     defaultSubject: '[Notifica Chiusura] Chiusa commessa: {CODICE_COMMESSA} - {NOME_COMMESSA}',
-    defaultBody: `<p>Gentili,</p>
-<p>Ti informiamo che la seguente commessa è stata <strong>CONTRASSEGNATA COME CHIUSA</strong> sulla piattaforma di pianificazione:</p>
+    defaultBody: `<p>Ciao,</p>
+<p>Ti comunichiamo che la seguente commessa è stata <strong>CONTRASSEGNATA COME CHIUSA</strong> sulla piattaforma di pianificazione:</p>
 <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 15px 0;" />
 <table border="0" cellpadding="5" cellspacing="0" style="font-size: 14px; color: #374151; width: 100%;">
   <tr><td style="font-weight: bold; width: 180px;">Codice Commessa:</td><td>{CODICE_COMMESSA}</td></tr>
@@ -176,4 +191,22 @@ export function substitutePlaceholders(templateStr: string, sampleData: Record<s
     result = result.replaceAll(key, sampleData[key]);
   });
   return result;
+}
+
+export async function getCommesseNotificationEmails(): Promise<string[]> {
+  try {
+    const docSnap = await getDoc(doc(db, 'configurazioni', 'notifiche_commesse'));
+    if (docSnap.exists() && Array.isArray(docSnap.data().emails) && docSnap.data().emails.length > 0) {
+      return docSnap.data().emails.map((e: string) => e.toLowerCase().trim()).filter(Boolean);
+    }
+  } catch (err) {
+    console.error("Errore lettura destinatari notifiche commesse:", err);
+  }
+  return ['synergieflow@ingegno06.it'];
+}
+
+export async function saveCommesseNotificationEmails(emails: string[]): Promise<void> {
+  const cleaned = Array.from(new Set(emails.map(e => e.toLowerCase().trim()).filter(Boolean)));
+  const docRef = doc(db, 'configurazioni', 'notifiche_commesse');
+  await setDoc(docRef, { emails: cleaned, updatedAt: new Date().toISOString() });
 }

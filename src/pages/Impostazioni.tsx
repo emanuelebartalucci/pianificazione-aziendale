@@ -2,8 +2,8 @@ import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, addDoc, doc, setDoc, deleteDoc, onSnapshot, updateDoc } from 'firebase/firestore';
-import { Shield, UserCheck, Star, Users, Plus, Trash2, Settings, Printer, Building2, Search, Pencil, X, Mail, Eye, Send, Code } from 'lucide-react';
+import { collection, addDoc, doc, setDoc, deleteDoc, getDocs, updateDoc } from 'firebase/firestore';
+import { Shield, UserCheck, Star, Users, Plus, Trash2, Settings, Printer, Building2, Search, Pencil, X, Mail, Eye, Send, Code, Save } from 'lucide-react';
 import ConfirmModal from '../components/ConfirmModal';
 import { wrapMailTemplate } from '../utils/mailTemplate';
 import { queueMail } from '../utils/mailSender';
@@ -12,7 +12,9 @@ import {
   EMAIL_TEMPLATES_LIST, 
   loadSavedEmailTemplates, 
   saveEmailTemplates, 
-  substitutePlaceholders 
+  substitutePlaceholders,
+  getCommesseNotificationEmails,
+  saveCommesseNotificationEmails
 } from '../utils/emailTemplateManager';
 
 
@@ -95,7 +97,14 @@ export default function Impostazioni() {
     loadSavedEmailTemplates().then(data => {
       setCustomTemplates(data);
     });
+    getCommesseNotificationEmails().then(emails => {
+      setCommesseNotifyEmails(emails);
+    });
   }, []);
+
+  const [commesseNotifyEmails, setCommesseNotifyEmails] = useState<string[]>(['synergieflow@ingegno06.it']);
+  const [newCommessaNotifyEmailInput, setNewCommessaNotifyEmailInput] = useState('');
+  const [savingCommesseEmails, setSavingCommesseEmails] = useState(false);
 
   const currentTmplDef = useMemo(() => {
     return EMAIL_TEMPLATES_LIST.find(t => t.id === selectedTemplateId) || EMAIL_TEMPLATES_LIST[0];
@@ -216,26 +225,33 @@ export default function Impostazioni() {
   const [editOrarioSettimanale, setEditOrarioSettimanale] = useState<Record<string, number | ''>>({ lun: 8, mar: 8, mer: 8, gio: 8, ven: 8 });
   const [emailSearchText, setEmailSearchText] = useState('');
 
-  useEffect(() => {
+  const loadImpostazioniLists = async () => {
     if (!isDev) return;
-    const unsubA = onSnapshot(collection(db, 'admins'), (snap) => setAdminsList(snap.docs.map(d => ({id: d.id, email: d.data().email}))));
-    const unsubH = onSnapshot(collection(db, 'hr'), (snap) => {
-      setHrList(snap.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
-    });
-    const unsubD = onSnapshot(collection(db, 'sviluppatori'), (snap) => {
-      setDevsList(snap.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
-    });
-    const unsubC = onSnapshot(collection(db, 'clienti'), (snap) => {
-      setClientiList(snap.docs.map(d => ({
+    try {
+      const [snapA, snapH, snapD, snapC, snapPM] = await Promise.all([
+        getDocs(collection(db, 'admins')),
+        getDocs(collection(db, 'hr')),
+        getDocs(collection(db, 'sviluppatori')),
+        getDocs(collection(db, 'clienti')),
+        getDocs(collection(db, 'project_managers'))
+      ]);
+
+      setAdminsList(snapA.docs.map(d => ({ id: d.id, email: d.data().email })));
+      setHrList(snapH.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
+      setDevsList(snapD.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
+      setClientiList(snapC.docs.map(d => ({
         id: d.id,
         codice: d.data().codice,
         nome: d.data().nome
       })).sort((a, b) => Number(a.codice) - Number(b.codice)));
-    });
-    const unsubPM = onSnapshot(collection(db, 'project_managers'), (snap) => {
-      setPmsList(snap.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
-    });
-    return () => { unsubA(); unsubH(); unsubD(); unsubC(); unsubPM(); };
+      setPmsList(snapPM.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
+    } catch (err) {
+      console.error("Errore caricamento liste impostazioni:", err);
+    }
+  };
+
+  useEffect(() => {
+    loadImpostazioniLists();
   }, [isDev]);
 
   // Handlers
@@ -244,6 +260,7 @@ export default function Impostazioni() {
     if(newAdminEmail) {
       await addDoc(collection(db, 'admins'), { email: newAdminEmail.toLowerCase() });
       await refreshData();
+      await loadImpostazioniLists();
     }
     setNewAdminEmail('');
   };
@@ -251,6 +268,7 @@ export default function Impostazioni() {
   const handleRemoveAdmin = async (id: string) => {
     await deleteDoc(doc(db, 'admins', id));
     await refreshData();
+    await loadImpostazioniLists();
   };
 
   const handleAddHR = async (e: React.FormEvent) => {
@@ -262,6 +280,7 @@ export default function Impostazioni() {
       }
       await addDoc(collection(db, 'hr'), { email: newHrEmail.toLowerCase() });
       await refreshData();
+      await loadImpostazioniLists();
       setNewHrEmail('');
     }
   };
@@ -269,6 +288,7 @@ export default function Impostazioni() {
   const handleRemoveHR = async (id: string) => {
     await deleteDoc(doc(db, 'hr', id));
     await refreshData();
+    await loadImpostazioniLists();
   };
 
   const handleAddDev = async (e: React.FormEvent) => {
@@ -280,6 +300,7 @@ export default function Impostazioni() {
       }
       await addDoc(collection(db, 'sviluppatori'), { email: newDevEmail.toLowerCase().trim() });
       await refreshData();
+      await loadImpostazioniLists();
       setNewDevEmail('');
       showToast("Sviluppatore nominato con successo!", "success");
     }
@@ -293,6 +314,7 @@ export default function Impostazioni() {
     }
     await deleteDoc(doc(db, 'sviluppatori', id));
     await refreshData();
+    await loadImpostazioniLists();
     showToast("Sviluppatore rimosso con successo!", "success");
   };
 
@@ -314,6 +336,7 @@ export default function Impostazioni() {
         codice: nextCode,
         nome: newClientNome.trim()
       });
+      await loadImpostazioniLists();
       setNewClientNome('');
       showToast("Cliente creato con successo!", "success");
     } catch (err) {
@@ -337,6 +360,7 @@ export default function Impostazioni() {
       await updateDoc(doc(db, 'clienti', editingClient.id), {
         nome: editClientNome.trim()
       });
+      await loadImpostazioniLists();
       showToast("Ragione sociale del cliente aggiornata con successo!", "success");
       setEditingClient(null);
     } catch (err) {
@@ -1340,7 +1364,7 @@ export default function Impostazioni() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 items-stretch">
                 {(['Disegnatori', 'Ingegneria', 'Sicurezza Cantieri', 'Consulenza Sicurezza', 'Amministrazione'] as const).map(areaName => {
                   const areaMembers = dipendenti
-                    .filter(d => d && d.macroArea === areaName && !isSoci(d.nome) && (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it' && !coordinatori.some(c => (c.email || '').toLowerCase() === (d.email || '').toLowerCase() && c.area === areaName))
+                    .filter(d => d && d.macroArea === areaName && !isSoci(d.nome) && (d.email || '').toLowerCase().trim() !== 'synergieflow@ingegno06.it' && (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it' && !coordinatori.some(c => (c.email || '').toLowerCase() === (d.email || '').toLowerCase() && c.area === areaName))
                     .sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'it'));
                   const areaCoordinators = coordinatori
                     .filter(c => c && c.area === areaName)
@@ -1675,6 +1699,100 @@ export default function Impostazioni() {
                     );
                   });
                 })()}
+              </div>
+            </section>
+
+            {/* Destinatari Notifiche Commesse (Apertura & Chiusura) */}
+            <section className="bg-gradient-to-br from-emerald-50/80 to-teal-50 p-6 rounded-3xl border border-emerald-200 shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-emerald-200/60 pb-3">
+                <div>
+                  <h3 className="text-xl font-bold text-emerald-950 flex items-center gap-2">
+                    <Mail className="w-6 h-6 text-emerald-600" /> Destinatari Notifiche Commesse (Apertura & Chiusura)
+                  </h3>
+                  <p className="text-xs text-emerald-800/80 mt-1">
+                    Aggiungi uno o più indirizzi e-mail a cui inviare le notifiche automatiche quando una commessa viene <strong>aperta</strong> o <strong>chiusa</strong>. Se una persona è in ferie, gli altri indirizzi in lista continueranno a ricevere regolarmente le comunicazioni.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setSavingCommesseEmails(true);
+                    try {
+                      await saveCommesseNotificationEmails(commesseNotifyEmails);
+                      showToast("Elenco destinatari e-mail commesse salvato con successo!", "success");
+                    } catch (err) {
+                      console.error(err);
+                      showToast("Errore durante il salvataggio degli indirizzi e-mail.", "error");
+                    } finally {
+                      setSavingCommesseEmails(false);
+                    }
+                  }}
+                  disabled={savingCommesseEmails}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl shadow-sm transition text-xs flex items-center gap-1.5 shrink-0 cursor-pointer disabled:opacity-50"
+                >
+                  <Save className="w-4 h-4" /> {savingCommesseEmails ? 'Salvataggio...' : 'Salva Destinatari'}
+                </button>
+              </div>
+
+              {/* Form per inserire un nuovo indirizzo */}
+              <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
+                <input
+                  type="email"
+                  placeholder="Es. synergieflow@ingegno06.it"
+                  value={newCommessaNotifyEmailInput}
+                  onChange={e => setNewCommessaNotifyEmailInput(e.target.value)}
+                  className="flex-1 px-4 py-2.5 bg-white border border-emerald-200 rounded-xl text-xs font-bold text-slate-800 placeholder-slate-400 outline-none focus:ring-2 focus:ring-emerald-500 shadow-sm"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cleaned = newCommessaNotifyEmailInput.toLowerCase().trim();
+                    if (!cleaned) {
+                      showToast("Inserisci un indirizzo e-mail valido.", "warning");
+                      return;
+                    }
+                    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleaned)) {
+                      showToast("Il formato dell'indirizzo e-mail non è valido.", "warning");
+                      return;
+                    }
+                    if (commesseNotifyEmails.includes(cleaned)) {
+                      showToast("Questo indirizzo e-mail è già presente nell'elenco.", "warning");
+                      return;
+                    }
+                    setCommesseNotifyEmails(prev => [...prev, cleaned]);
+                    setNewCommessaNotifyEmailInput('');
+                  }}
+                  className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-4 py-2.5 rounded-xl transition text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" /> Aggiungi Indirizzo
+                </button>
+              </div>
+
+              {/* Badge / Chips con gli indirizzi aggiunti */}
+              <div className="flex flex-wrap gap-2 pt-1">
+                {commesseNotifyEmails.length === 0 ? (
+                  <span className="text-xs text-slate-400 italic font-medium">Nessun indirizzo impostato. Verrà usato di default synergieflow@ingegno06.it</span>
+                ) : (
+                  commesseNotifyEmails.map((email, idx) => (
+                    <span
+                      key={idx}
+                      className="inline-flex items-center gap-2 bg-white border border-emerald-300 text-emerald-900 font-extrabold text-xs px-3 py-1.5 rounded-xl shadow-xs"
+                    >
+                      <Mail className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>{email}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCommesseNotifyEmails(prev => prev.filter((_, i) => i !== idx));
+                        }}
+                        className="text-slate-400 hover:text-rose-600 transition p-0.5 rounded cursor-pointer"
+                        title="Rimuovi indirizzo"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </span>
+                  ))
+                )}
               </div>
             </section>
 

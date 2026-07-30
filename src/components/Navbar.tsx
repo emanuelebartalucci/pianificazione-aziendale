@@ -178,6 +178,8 @@ export default function Navbar() {
             <Network className="w-4 h-4" /> <span className="hidden sm:inline">Organigramma</span>
           </button>
 
+
+
           {/* BADGE PRESENZE FESTIVI (PROSSIMI 7 GIORNI) PER SOCI E ADMIN */}
           {(isSoci(myAssociatedName) || isAdmin) && upcomingHolidayWorkList.length > 0 && (
             <button
@@ -356,6 +358,7 @@ export default function Navbar() {
           </div>
         </div>
       )}
+
     </>
   );
 }

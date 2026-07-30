@@ -1,5 +1,5 @@
-export const APP_VERSION = "v1.0.3";
-export const APP_RELEASE_DATE = "29/07/2026";
+export const APP_VERSION = "v1.0.4";
+export const APP_RELEASE_DATE = "30/07/2026";
 
 export const getPrintDateString = () => {
   const d = new Date();

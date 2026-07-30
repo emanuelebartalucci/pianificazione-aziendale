@@ -14,6 +14,7 @@ import Suggerimenti from './pages/Suggerimenti';
 import PianificazionePersonale from './pages/PianificazionePersonale';
 import Prenotazioni from './pages/Prenotazioni';
 import Organigramma from './pages/Organigramma';
+import GestioneHR from './pages/GestioneHR';
 
 // Components
 import Navbar from './components/Navbar';
@@ -94,6 +95,7 @@ function App() {
                   <Route path="/pianificazione-personale" element={<PianificazionePersonale />} />
                   <Route path="/prenotazioni" element={<Prenotazioni />} />
                   <Route path="/organigramma" element={<Organigramma />} />
+                  <Route path="/gestione-hr" element={<GestioneHR />} />
                   <Route path="*" element={<Navigate to="/" />} />
                 </Routes>
               </ErrorBoundary>

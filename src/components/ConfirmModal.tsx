@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import { AlertTriangle, Info } from 'lucide-react';
 
 interface ConfirmModalProps {
@@ -50,8 +51,8 @@ export default function ConfirmModal({
 
   const { icon, iconBg, btnClass } = getStyle();
 
-  return (
-    <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+  return createPortal(
+    <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[999999] flex items-center justify-center p-4">
       {/* Card contenitore */}
       <div 
         className="bg-white rounded-[2rem] shadow-2xl max-w-md w-full border border-gray-100 p-8 flex flex-col items-center text-center animate-in fade-in zoom-in-95 duration-200"
@@ -84,6 +85,7 @@ export default function ConfirmModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

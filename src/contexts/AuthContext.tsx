@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { type User, onAuthStateChanged } from 'firebase/auth';
-import { collection, doc, addDoc, deleteDoc, getDoc, onSnapshot } from 'firebase/firestore';
+import { collection, doc, addDoc, deleteDoc, getDoc, onSnapshot, query, where, type QuerySnapshot } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
 
 const DEFAULT_ADMINS = ['aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it'];
@@ -26,7 +26,7 @@ export function isTechnicalUser(user?: { email?: string | null; nome?: string | 
   if (!user) return false;
   const email = (user.email || '').toLowerCase().trim();
   const nome = (user.nome || '').toLowerCase().trim();
-  return email.includes('synergiesflow') || nome.includes('synergies flow') || nome.includes('synergiesflow');
+  return email.includes('synergieflow') || email.includes('synergiesflow') || nome.includes('synergie flow') || nome.includes('synergies flow') || nome.includes('synergieflow') || nome.includes('synergiesflow');
 }
 
 export interface Commessa {
@@ -278,15 +278,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             setDynamicCommerciali(snap.docs.map(d => (d.data().email || '').toLowerCase()).filter(Boolean));
           }));
 
-          // 12. Richieste ferie (approved leaves)
-          unsubs.push(onSnapshot(collection(db, 'richieste_ferie'), (snap) => {
-            const list: any[] = [];
-            snap.forEach(docSnap => {
-              const data = docSnap.data();
-              if (data.stato === 'Approvato') {
-                list.push({ id: docSnap.id, ...data });
-              }
-            });
+          // 12. Richieste ferie (approved leaves) - query filtrata alla fonte
+          unsubs.push(onSnapshot(query(collection(db, 'richieste_ferie'), where('stato', '==', 'Approvato')), (snap: QuerySnapshot) => {
+            const list: any[] = snap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
             setApprovedLeaves(list);
           }));
 

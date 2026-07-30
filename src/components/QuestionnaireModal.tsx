@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { db } from '../services/firebase';
 import { collection, addDoc } from 'firebase/firestore';
 import { ShieldCheck, X, ChevronRight, ChevronLeft, Send, Check } from 'lucide-react';
@@ -40,6 +41,9 @@ export default function QuestionnaireModal({ isOpen, onClose, activeQuestionnair
 
   // Carica la bozza salvata al montaggio o al cambio di questionario/utente
   useEffect(() => {
+    if (isOpen) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
     if (isOpen && activeQuestionnaire?.id && userId) {
       const draftKey = `survey_draft_${userId}_${activeQuestionnaire.id}`;
       const saved = localStorage.getItem(draftKey);
@@ -161,9 +165,9 @@ export default function QuestionnaireModal({ isOpen, onClose, activeQuestionnair
   };
 
   if (showSuccess) {
-    return (
-      <div className="fixed inset-0 bg-gray-900/70 backdrop-blur-md z-[9999] flex items-center justify-center p-4 overflow-y-auto">
-        <div className="bg-white rounded-[2.5rem] shadow-2xl max-w-md w-full border border-gray-100 p-8 flex flex-col items-center justify-center gap-4 animate-in fade-in zoom-in-95 duration-200 my-auto">
+    return createPortal(
+      <div className="fixed inset-0 z-[999999] bg-gray-900/70 backdrop-blur-md flex items-center justify-center p-4 overflow-hidden">
+        <div className="bg-white rounded-[2.5rem] shadow-2xl max-w-md w-full border border-gray-100 p-8 flex flex-col items-center justify-center gap-4 animate-in fade-in zoom-in-95 duration-200">
           <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center animate-bounce">
             <Check className="w-10 h-10 stroke-[3]" />
           </div>
@@ -174,15 +178,16 @@ export default function QuestionnaireModal({ isOpen, onClose, activeQuestionnair
               : "Grazie per aver dedicato del tempo alla compilazione."}
           </p>
         </div>
-      </div>
+      </div>,
+      document.body
     );
   }
 
   const progressPercentage = Math.round(((currentStep + 1) / sections.length) * 100);
 
-  return (
-    <div className="fixed inset-0 bg-gray-900/70 backdrop-blur-md z-[9999] flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white rounded-[2.5rem] shadow-2xl max-w-3xl w-full max-h-[90vh] border border-gray-100 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200 my-auto">
+  return createPortal(
+    <div className="fixed inset-0 z-[999999] bg-gray-900/70 backdrop-blur-md flex items-center justify-center p-4 sm:p-6 overflow-hidden">
+      <div className="bg-white rounded-[2.5rem] shadow-2xl max-w-3xl w-full max-h-[88vh] border border-gray-100 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
         {isPreview && (
           <div className="bg-amber-500 text-white text-center py-2.5 text-xs font-extrabold shrink-0 tracking-wider">
             ⚠️ MODALITÀ ANTEPRIMA: Le risposte non verranno salvate nel database.
@@ -361,6 +366,7 @@ export default function QuestionnaireModal({ isOpen, onClose, activeQuestionnair
         </div>
 
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

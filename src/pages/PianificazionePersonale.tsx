@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth, isTechnicalUser, type Dipendente } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, doc, writeBatch, addDoc, updateDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
+import { collection, doc, writeBatch, addDoc, updateDoc, deleteDoc, onSnapshot, query, where } from 'firebase/firestore';
 import { Users, ChevronLeft, ChevronRight, Save, Download, ZoomIn, ZoomOut, Trash2, Plus, RefreshCw, CalendarDays, FileText, X, UserCheck, MoveVertical, Clock, Pencil } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays, isItalianHoliday } from '../utils/date';
 
@@ -980,7 +980,8 @@ export default function PianificazionePersonale() {
   const [segnalazioniDisponibilita, setSegnalazioniDisponibilita] = useState<any[]>([]);
 
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'segnalazioni_disponibilita'), (snap) => {
+    const qDisp = query(collection(db, 'segnalazioni_disponibilita'), where('stato', '==', 'in_attesa'));
+    const unsub = onSnapshot(qDisp, (snap) => {
       const list: any[] = [];
       snap.forEach(docSnap => {
         list.push({ id: docSnap.id, ...docSnap.data() });
@@ -1052,7 +1053,7 @@ export default function PianificazionePersonale() {
         const richiedente = myAssociatedName || userEmail;
         const subject = `[Richiesta Personale] Richiesta risorsa ${reqAreaTarget} per commessa ${commName}`;
         const htmlBody = `
-          <p>Gentile Coordinatore,</p>
+          <p>Ciao Coordinatore,</p>
           <p>È stata ricevuta una nuova richiesta di personale dall'area <strong>${reqAreaTarget}</strong>.</p>
           <table border="0" cellpadding="6" cellspacing="0" style="font-size:13px;color:#374151;width:100%">
             <tr><td style="font-weight:bold;width:180px">Commessa:</td><td>${commName}</td></tr>
@@ -1165,11 +1166,11 @@ export default function PianificazionePersonale() {
           ? `[Approvato Annullamento] Rimosso ${risorsaNome} da ${req.commessaName}`
           : `[Approvata] Richiesta ${areaLabel} per ${req.commessaName}`;
         const htmlBody = isCancellation ? `
-          <p>Gentile ${req.richiedenteNome || req.richiedenteEmail},</p>
+          <p>Ciao <strong>${req.richiedenteNome || req.richiedenteEmail}</strong>,</p>
           <p>La tua richiesta di <strong style="color:#e11d48">rimozione della risorsa ${risorsaNome}</strong> dalla commessa <strong>${req.commessaName}</strong> è stata <strong style="color:#059669">approvata</strong>.</p>
           <p>La risorsa è stata rimossa dalla commessa per il periodo ${req.dataInizio} → ${req.dataFine}.</p>
         ` : `
-          <p>Gentile ${req.richiedenteNome || req.richiedenteEmail},</p>
+          <p>Ciao <strong>${req.richiedenteNome || req.richiedenteEmail}</strong>,</p>
           <p>La tua richiesta di personale dell'area <strong>${areaLabel}</strong> per la commessa <strong>${req.commessaName}</strong> è stata <strong style="color:#059669">approvata</strong>.</p>
           <p>Risorsa assegnata: <strong>${risorsaNome}</strong></p>
           <p>Periodo: ${req.dataInizio} → ${req.dataFine} | Carico: ${req.percentuale}%</p>
@@ -1266,7 +1267,7 @@ export default function PianificazionePersonale() {
             const commName = targetReq.commessaName || 'Commessa';
             const subject = `[Rifiutata] Richiesta ${areaLabel} per ${commName}`;
             const htmlBody = `
-              <p>Gentile <strong>${targetReq.richiedenteNome || targetReq.richiedenteEmail}</strong>,</p>
+              <p>Ciao <strong>${targetReq.richiedenteNome || targetReq.richiedenteEmail}</strong>,</p>
               <p>Ti informiamo che la tua richiesta di personale per l'area <strong>${areaLabel}</strong> relativa alla commessa <strong>${commName}</strong> è stata <strong style="color:#e11d48">RIFIUTATA</strong> dal coordinatore d'area.</p>
               <table border="0" cellpadding="5" cellspacing="0" style="font-size: 13px; color: #374151; width: 100%;">
                 <tr><td style="font-weight: bold; width: 160px;">Commessa:</td><td>${commName}</td></tr>
@@ -1319,7 +1320,7 @@ export default function PianificazionePersonale() {
 
     // 1. Aggiungi le ferie approvate individuali
     approvedLeaves.forEach(leave => {
-      if (leave.dipendenteName !== resName) return;
+      if (!areNamesEqual(leave.dipendenteName, resName)) return;
       const start = leave.dataInizio || leave.data;
       const end = leave.dataFine || leave.data;
       if (start && end) {
@@ -1334,7 +1335,7 @@ export default function PianificazionePersonale() {
           if (wDate >= curr && wDate <= last && !isItalianHoliday(wDateStr)) {
             const alreadyExists = leaveDaysFound.some(l => l.giorno === dayNames[idx]);
             if (!alreadyExists) {
-              let label = leave.tipo === 'ferie' ? 'Ferie' : leave.tipo === 'malattia' ? 'Malattia' : leave.tipo === 'maternita' ? 'Maternità' : leave.tipo === 'smart' ? 'Smart' : leave.tipo;
+              let label = (leave.tipo === 'ferie' || leave.tipo === 'assenza') ? 'Ferie' : leave.tipo === 'malattia' ? 'Malattia' : leave.tipo === 'maternita' ? 'Maternità' : leave.tipo === 'smart' ? 'Smart' : leave.tipo;
               if (leave.tipo === 'mattina' || leave.frazioneTipo === 'mattina') label = 'Ass. Matt.';
               if (leave.tipo === 'pomeriggio' || leave.frazioneTipo === 'pomeriggio') label = 'Ass. Pom.';
               if (leave.tipo === 'permesso' || leave.frazioneTipo === 'orario') label = `Perm. (${leave.oraInizio || ''}-${leave.oraFine || ''})`;
@@ -1362,10 +1363,11 @@ export default function PianificazionePersonale() {
     const leaves = getLeavesForResourceInWeek(resName, wkId);
     const fullLeaveDays = leaves.filter(l => 
       l.tipo === 'ferie' || 
+      l.tipo === 'assenza' ||
       l.tipo === 'malattia' || 
       l.tipo === 'maternita' || 
       l.frazioneTipo === 'giornata' ||
-      (l.tipo !== 'smart' && l.tipo !== 'permesso' && l.tipo !== 'mattina' && l.tipo !== 'pomeriggio' && l.frazioneTipo !== 'orario')
+      (l.tipo !== 'smart' && l.tipo !== 'permesso' && l.tipo !== 'mattina' && l.tipo !== 'pomeriggio' && l.frazioneTipo !== 'orario' && l.frazioneTipo !== 'mattina' && l.frazioneTipo !== 'pomeriggio')
     );
     const uniqueDays = new Set(fullLeaveDays.map(l => l.giorno));
     return uniqueDays.size >= 5;
@@ -1377,10 +1379,11 @@ export default function PianificazionePersonale() {
     if (leavesForDay.length > 0) {
       const leaveHrs = leavesForDay.reduce((acc, l) => {
         let hrs = 0;
-        if (l.tipo === 'smart') hrs = 0;
-        else if (l.frazioneTipo === 'giornata' || l.tipo === 'ferie' || l.tipo === 'malattia' || l.tipo === 'maternita') hrs = dailyContractHours;
-        else if (l.frazioneTipo === 'mattina' || l.frazioneTipo === 'pomeriggio' || l.tipo === 'mattina' || l.tipo === 'pomeriggio') hrs = dailyContractHours / 2;
-        else if ((l.frazioneTipo === 'orario' || l.tipo === 'permesso' || (!l.frazioneTipo && l.oraInizio && l.oraFine)) && l.oraInizio && l.oraFine) {
+        if (l.tipo === 'smart') {
+          hrs = 0;
+        } else if (l.frazioneTipo === 'mattina' || l.frazioneTipo === 'pomeriggio' || l.tipo === 'mattina' || l.tipo === 'pomeriggio') {
+          hrs = dailyContractHours / 2;
+        } else if ((l.frazioneTipo === 'orario' || l.tipo === 'permesso' || (!l.frazioneTipo && l.oraInizio && l.oraFine)) && l.oraInizio && l.oraFine) {
           const [hStart, mStart] = l.oraInizio.split(':').map(Number);
           const [hEnd, mEnd] = l.oraFine.split(':').map(Number);
           if (!isNaN(hStart) && !isNaN(hEnd)) {
@@ -1390,9 +1393,10 @@ export default function PianificazionePersonale() {
               hrs = Math.max(0, hrs - l.pausaPranzoOre);
             }
           }
-        } else if (l.tipo === 'permesso' || l.tipo === 'assenza') {
+        } else if (l.tipo === 'permesso') {
           hrs = dailyContractHours / 2;
         } else {
+          // 'giornata', 'ferie', 'assenza', 'malattia', 'maternita'
           hrs = dailyContractHours;
         }
         return acc + Math.min(dailyContractHours, hrs);
@@ -1420,7 +1424,7 @@ export default function PianificazionePersonale() {
 
     // 1. Aggiungi le ferie approvate
     approvedLeaves.forEach(leave => {
-      if (leave.dipendenteName !== resName) return;
+      if (!areNamesEqual(leave.dipendenteName, resName)) return;
       const start = leave.dataInizio || leave.data;
       const end = leave.dataFine || leave.data;
       if (start && end) {
@@ -2399,7 +2403,7 @@ export default function PianificazionePersonale() {
             }
           }
 
-          const ferieCount = leaves.filter(l => l.tipo === 'ferie').length;
+          const ferieCount = leaves.filter(l => l.tipo === 'ferie' || l.tipo === 'assenza').length;
           const malattiaCount = leaves.filter(l => l.tipo === 'malattia').length;
           const maternitaCount = leaves.filter(l => l.tipo === 'maternita').length;
           const permessoCount = leaves.filter(l => l.tipo === 'permesso' || l.tipo === 'mattina' || l.tipo === 'pomeriggio').length;

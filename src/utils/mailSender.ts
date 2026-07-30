@@ -6,7 +6,13 @@ import { wrapMailTemplate } from './mailTemplate';
  * Accoda un'email in Firestore nella collezione 'mail'.
  * Se l'email appartiene a una risorsa non abilitata in anagrafica, l'email viene scartata (senza accumulare code pendenti).
  */
-export async function queueMail(toEmail: string, subject: string, htmlBody: string, plainText?: string) {
+export async function queueMail(
+  toEmail: string, 
+  subject: string, 
+  htmlBody: string, 
+  plainText?: string,
+  options?: { isSystemNotification?: boolean }
+) {
   try {
     // Verifica se l'email di destinazione è valida
     if (!toEmail || !toEmail.trim()) {
@@ -16,8 +22,12 @@ export async function queueMail(toEmail: string, subject: string, htmlBody: stri
 
     const normalizedEmail = toEmail.toLowerCase().trim();
 
-    // Se l'email è un indirizzo di sistema aziendale (es. synergiesflow@ingegno06.it), viene accodata sempre
-    const isSystemEmail = normalizedEmail === 'synergiesflow@ingegno06.it';
+    // L'email è considerata di sistema se inviata esplicitamente come notifica di sistema (es. commesse)
+    // o indirizzata a un indirizzo generico di sistema (synergieflow)
+    const isSystemEmail = 
+      options?.isSystemNotification === true || 
+      normalizedEmail === 'synergieflow@ingegno06.it' || 
+      normalizedEmail === 'synergiesflow@ingegno06.it';
 
     if (!isSystemEmail) {
       // Controlla se il destinatario ha le notifiche e-mail abilitate nel suo profilo dipendente
