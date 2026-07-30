@@ -72,8 +72,8 @@ async function generateDocx() {
             spacing: { before: 60, after: 60 },
             bullet: { level: 0 },
             children: [
-              new TextRun({ text: "Perfezionamento Stampa Organigramma ed Elenco Risorse: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
-              new TextRun({ text: "Impostato l'ordinamento rigorosamente alfabetico per cognome (A-Z) per l'intera lista di stampa (compresi i Soci). Rimosso il pulsante di stampa duplicato nella sezione Direzione, corretto il riconoscimento dei 14 collaboratori, pulita la grafica rimuovendo badge e riferimenti ai coordinatori, e attivata la chiusura automatica di modale e pop-up.", color: "374151", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Integrazione Permesso ex L.104 (Ferie, Presenze & Pianificazioni): ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Sostituito il badge numerico '104' con la lettera identificativa 'L' (coerente con 'S' Studio, 'D' Donazione, 'E' Elettorale, 'P' Permesso). Verificata ed estesa la gestione dei permessi ex L.104 nei moduli di Pianificazione Personale e Pianificazione Commesse per il calcolo automatico del carico ore e della disponibilità delle risorse.", color: "374151", font: "Calibri", size: 22 }),
             ],
           }),
           new Paragraph({
@@ -148,20 +148,179 @@ async function generateDocx() {
             ],
           }),
 
+          // PRIORITÀ E COMMESSE
           new Paragraph({
-            spacing: { before: 60, after: 60 },
-            bullet: { level: 0 },
+            spacing: { before: 120, after: 60 },
             children: [
-              new TextRun({ text: "Navigazione Diretta ed Interazioni: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
-              new TextRun({ text: "Abilitato il click diretto sulle pillole delle risorse assegnate alle commesse dei PM, aprendo direttamente la modale di pianificazione senza passare dal flusso e-mail per le proprie commesse.", color: "374151", font: "Calibri", size: 22 }),
+              new TextRun({ text: "PRIORITÀ E COMMESSE", bold: true, size: 24, color: "1E1B4B", font: "Calibri" }),
             ],
           }),
           new Paragraph({
-            spacing: { before: 60, after: 60 },
+            spacing: { before: 40, after: 40 },
             bullet: { level: 0 },
             children: [
-              new TextRun({ text: "Griglia Carichi e Filtri: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
-              new TextRun({ text: "Risolte le eccezioni di rendering nei campi opzionali delle commesse e migliorato il calcolo delle percentuali d'impegno settimanale.", color: "374151", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Priorità Commesse: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Possibilità per PM, Coordinatori e Admin di impostare la priorità (Alta, Standard, Bassa) per la settimana selezionata.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 40, after: 40 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Banner ed Evidenziatori: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Banner d'avviso in Dashboard per le commesse ad Alta priorità nella settimana corrente e bordo marcato nel calendario.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 40, after: 40 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Vista Risorse Semplici: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Filtraggio automatico sulle sole commesse assegnate, interazione limitata al proprio tassello e invio mail diretto al Coordinatore d'Area cliccando sulla settimana.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 40, after: 40 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Gestione PM: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Restrizione per i PM ad assegnare solo risorse della propria macroarea.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 40, after: 40 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Richiesta Personale: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Allineata la modale in Commesse per consentire la richiesta di risorse specifiche anche appartenenti ad altre aree.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+
+          // SEGNALAZIONE DISPONIBILITÀ ("CHIEDI LAVORO")
+          new Paragraph({
+            spacing: { before: 120, after: 60 },
+            children: [
+              new TextRun({ text: "SEGNALAZIONE DISPONIBILITÀ (\"CHIEDI LAVORO\")", bold: true, size: 24, color: "1E1B4B", font: "Calibri" }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 40, after: 40 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Nuovo Pulsante e Modale: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Aggiunto pulsante nell'intestazione per dipendenti e collaboratori per segnalare ai coordinatori la propria disponibilità (sia se scarichi, sia se hanno terminato in anticipo i compiti assegnati).", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 40, after: 40 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Notifiche Coordinatori: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Invio email automatico e avviso/badge in rilievo in Dashboard e in Pianificazione Personale per i Coordinatori.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+
+          // PIANIFICAZIONE PERSONALE E LAYOUT
+          new Paragraph({
+            spacing: { before: 120, after: 60 },
+            children: [
+              new TextRun({ text: "PIANIFICAZIONE PERSONALE E LAYOUT", bold: true, size: 24, color: "1E1B4B", font: "Calibri" }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 40, after: 40 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Sotto-Periodi Granulari: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Raggruppamento delle risorse assegnate in sotto-periodi con la stessa percentuale di carico, modificabili singolarmente con indicazione esatta del range di date e funzione \"Applica % uniforme\".", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 40, after: 40 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Layout Flessibile: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Tabelloni ad altezza adattiva per eliminare gli spazi bianchi vuoti quando si applicano filtri o si mostrano poche righe.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 40, after: 40 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Approvazioni: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Disabilitato il pulsante Approva se la preferenza della risorsa non è valida.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+
+          // PRESENZE, FOGLI ORE E TRASFERTE
+          new Paragraph({
+            spacing: { before: 120, after: 60 },
+            children: [
+              new TextRun({ text: "PRESENZE, FOGLI ORE E TRASFERTE", bold: true, size: 24, color: "1E1B4B", font: "Calibri" }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 40, after: 40 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Dettaglio Spostamenti e Rimborso Km: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Nuova riga \"Rimborso Km\" e campi dettagliati (Località, Automezzo, Km percorsi) per trasferte e rimborsi con calcolo automatico nei PDF.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 40, after: 40 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Nota Spese Varie: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Integrata direttamente a tutta larghezza sotto il Dettaglio Spostamenti nel foglio ore.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 40, after: 40 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Stampa e Gestione HR: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Stampa in 1-click del singolo foglio ore o bozza fattura; possibilità per l'HR di revocare l'approvazione per consentire modifiche successive.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 40, after: 40 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Formattazione e Sezioni: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Uniformata la formattazione numerica italiana (virgola per i decimali, punto per le migliaia) e riorganizzate le sezioni finali (Certificati e Comunicazioni HR).", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+
+          // PIANO FERIE E PERMESSI
+          new Paragraph({
+            spacing: { before: 120, after: 60 },
+            children: [
+              new TextRun({ text: "PIANO FERIE E PERMESSI", bold: true, size: 24, color: "1E1B4B", font: "Calibri" }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 40, after: 40 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Collaboratori: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Form limitato alle sole opzioni pertinenti (Assenza, Malattia, Maternità, Smart Working) e catalogazione unica a registro come \"Assenza\".", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 40, after: 40 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Miglioramenti HR: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Smart Working frazionabile (AM/PM/Orario), campo di ricerca per risorsa nel registro e possibilità per l'HR di modificare o annullare direttamente i permessi approvati.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 40, after: 40 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Bugfix: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Corretta la visualizzazione anagrafica dei collaboratori P.IVA nella stampa PDF del registro.", color: "374151", font: "Calibri", size: 22 }),
             ],
           }),
 

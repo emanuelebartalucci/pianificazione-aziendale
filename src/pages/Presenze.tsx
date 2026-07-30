@@ -71,6 +71,7 @@ interface GiornoPresenza {
   modelloAutomezzo?: string; // NEW: vehicle info per trip/day
   oreContratto?: number;
   permessoStudio?: number;
+  permessoExL104?: number;
   permessoDonazione?: number;
   permessoElettorale?: number;
 }
@@ -150,6 +151,7 @@ export function calculateDynamicGiornate(
           (g.ferie || 0) +
           (g.permessi || 0) +
           (g.permessoStudio || 0) +
+          (g.permessoExL104 || 0) +
           (g.permessoDonazione || 0) +
           (g.permessoElettorale || 0);
 
@@ -207,6 +209,7 @@ export function isFullDayAbsence(giorno?: GiornoPresenza, defaultContractHours: 
   if ((giorno.ferie || 0) >= contract) return true;
   if ((giorno.permessi || 0) >= contract) return true;
   if ((giorno.permessoStudio || 0) >= contract) return true;
+  if ((giorno.permessoExL104 || 0) >= contract) return true;
   if ((giorno.permessoDonazione || 0) >= contract) return true;
   if ((giorno.permessoElettorale || 0) >= contract) return true;
   return false;
@@ -570,6 +573,7 @@ export default function Presenze() {
         let malattia = false;
         let trasferta = false;
         let permessoStudio = 0;
+        let permessoExL104 = 0;
         let permessoDonazione = 0;
         let permessoElettorale = 0;
 
@@ -590,6 +594,21 @@ export default function Presenze() {
           } else if (abs.tipo === 'studio') {
             ore = 0;
             permessoStudio = dayContractHours;
+          } else if (abs.tipo === 'ex_l104') {
+            let hrs = dayContractHours;
+            if (abs.frazioneTipo === 'mattina' || abs.frazioneTipo === 'pomeriggio') {
+              hrs = dayContractHours / 2;
+            } else if (abs.frazioneTipo === 'orario' && abs.oraInizio && abs.oraFine) {
+              const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
+              const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
+              const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
+              hrs = Math.round((diffMs / 3600000) * 100) / 100;
+              if (abs.pausaPranzo && abs.pausaPranzoOre) {
+                hrs = Math.max(0, hrs - abs.pausaPranzoOre);
+              }
+            }
+            ore = Math.max(0, dayContractHours - hrs);
+            permessoExL104 = hrs;
           } else if (abs.tipo === 'donazione') {
             ore = 0;
             permessoDonazione = dayContractHours;
@@ -634,6 +653,7 @@ export default function Presenze() {
           trasferta,
           oreContratto: dayContractHours,
           permessoStudio,
+          permessoExL104,
           permessoDonazione,
           permessoElettorale
         };
@@ -1292,6 +1312,21 @@ export default function Presenze() {
         currentDay.ore = 0;
         currentDay.ferie = 0;
         currentDay.permessi = 0;
+        currentDay.permessoExL104 = 0;
+        currentDay.permessoDonazione = 0;
+        currentDay.permessoElettorale = 0;
+        currentDay.malattia = false;
+      } else {
+        currentDay.ore = dayContractHours;
+      }
+    } else if (field === 'permessoExL104') {
+      const isChecked = !!value;
+      currentDay.permessoExL104 = isChecked ? dayContractHours : 0;
+      if (isChecked) {
+        currentDay.ore = 0;
+        currentDay.ferie = 0;
+        currentDay.permessi = 0;
+        currentDay.permessoStudio = 0;
         currentDay.permessoDonazione = 0;
         currentDay.permessoElettorale = 0;
         currentDay.malattia = false;
@@ -1870,6 +1905,21 @@ export default function Presenze() {
         currentDay.ore = 0;
         currentDay.ferie = 0;
         currentDay.permessi = 0;
+        currentDay.permessoExL104 = 0;
+        currentDay.permessoDonazione = 0;
+        currentDay.permessoElettorale = 0;
+        currentDay.malattia = false;
+      } else {
+        currentDay.ore = dayContractHours;
+      }
+    } else if (field === 'permessoExL104') {
+      const isChecked = !!value;
+      currentDay.permessoExL104 = isChecked ? dayContractHours : 0;
+      if (isChecked) {
+        currentDay.ore = 0;
+        currentDay.ferie = 0;
+        currentDay.permessi = 0;
+        currentDay.permessoStudio = 0;
         currentDay.permessoDonazione = 0;
         currentDay.permessoElettorale = 0;
         currentDay.malattia = false;
@@ -2116,6 +2166,7 @@ export default function Presenze() {
     let ggIntere = 0;
     let ggMezze = 0;
     let oreStudio = 0;
+    let oreExL104 = 0;
     let oreDonazione = 0;
     let oreElettorale = 0;
 
@@ -2138,6 +2189,7 @@ export default function Presenze() {
         totalKm += Number(g.kmTrasferta || 0);
 
         oreStudio += Number(g.permessoStudio || 0);
+        oreExL104 += Number(g.permessoExL104 || 0);
         oreDonazione += Number(g.permessoDonazione || 0);
         oreElettorale += Number(g.permessoElettorale || 0);
 
@@ -2146,7 +2198,7 @@ export default function Presenze() {
       }
     }
 
-    return { oreOrd, oreStra, oreFerie, orePerm, ggMalattia, oreMalattia, ggTrasferta, ggRimborsoKm, totalKm, ggIntere, ggMezze, oreStudio, oreDonazione, oreElettorale };
+    return { oreOrd, oreStra, oreFerie, orePerm, ggMalattia, oreMalattia, ggTrasferta, ggRimborsoKm, totalKm, ggIntere, ggMezze, oreStudio, oreExL104, oreDonazione, oreElettorale };
   };
 
   // --- EXPORT TO EXCEL (CSV COMPATIBLE) ---
@@ -4213,6 +4265,36 @@ export default function Presenze() {
                             </td>
                           </tr>
 
+                          {/* DIPENDENTI STANDARD RIGA 5b-2: PERMESSO EX L.104 */}
+                          <tr className="hover:bg-gray-50/50 transition-colors h-10">
+                            <td className="px-3 py-2 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 whitespace-nowrap h-10 align-middle">
+                              <div className="flex items-center gap-1.5">
+                                <span>Permesso ex L.104</span>
+                                <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-1 py-0.5 rounded font-mono">L</span>
+                              </div>
+                            </td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const outOfMonth = d > daysInMonth;
+                              const giorno = rapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
+
+                              return (
+                                <td key={i} style={dayStyle.style} className={`p-0 border-r border-gray-200 h-10 align-middle text-center ${outOfMonth ? 'bg-gray-200/30' : dayStyle.className || (giorno && giorno.permessoExL104 ? 'bg-emerald-100/70' : '')}`}>
+                                  {!outOfMonth && giorno && (
+                                    <div className="w-full h-full flex items-center justify-center font-bold text-emerald-800 text-xs">
+                                      {(giorno.permessoExL104 ?? 0) > 0 ? formatDec(giorno.permessoExL104) : '-'}
+                                    </div>
+                                  )}
+                                  {outOfMonth && <span className="text-[10px] text-gray-400">N/D</span>}
+                                </td>
+                              );
+                            })}
+                            <td className="p-2 font-bold text-emerald-800 bg-gray-50 border-l-2 border-gray-300 text-xs h-10 align-middle">
+                              {formatDec(calculateTotals(rapportino.giorni, daysInMonth).oreExL104)} ore
+                            </td>
+                          </tr>
+
                           {/* DIPENDENTI STANDARD RIGA 5c: PERMESSO DONAZIONE */}
                           <tr className="hover:bg-gray-50/50 transition-colors h-10">
                             <td className="px-3 py-2 text-left font-bold text-gray-800 bg-gray-50 border-r border-gray-200 sticky left-0 z-10 whitespace-nowrap h-10 align-middle">
@@ -5346,6 +5428,37 @@ export default function Presenze() {
                             </td>
                           </tr>
 
+                          {/* DIPENDENTI STANDARD RIGA 5b-2: PERMESSO EX L.104 */}
+                          <tr>
+                            <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Permesso ex L.104</td>
+                            {Array.from({ length: 31 }).map((_, i) => {
+                              const d = i + 1;
+                              const out = d > daysInMonth;
+                              const g = reviewingRapportino.giorni[dayStr(d)];
+                              const dayStyle = getCellDayStyle(d);
+
+                              return (
+                                <td key={i} style={dayStyle.style} className={`p-1 border-r ${out ? 'bg-gray-100/30' : dayStyle.className || (g && g.permessoExL104 ? 'bg-emerald-100' : '')} align-middle`}>
+                                  {!out && g && (
+                                    <div className="flex justify-center items-center">
+                                      <input 
+                                        type="checkbox"
+                                        disabled={g.malattia || isCellDisabled(d, 'assenza')}
+                                        checked={!!g.permessoExL104}
+                                        onChange={e => handleReviewCellChange(dayStr(d), 'permessoExL104', e.target.checked)}
+                                        className="w-3.5 h-3.5 rounded text-emerald-700 cursor-pointer"
+                                      />
+                                    </div>
+                                  )}
+                                  {out && '-'}
+                                </td>
+                              );
+                            })}
+                            <td className="p-2 font-bold text-emerald-800 bg-gray-50 border-l">
+                              {formatDec(calculateTotals(reviewingRapportino.giorni, daysInMonth).oreExL104)} ore
+                            </td>
+                          </tr>
+
                           {/* DIPENDENTI STANDARD RIGA 5c: PERMESSO DONAZIONE */}
                           <tr>
                             <td className="p-2 text-left font-bold bg-gray-50 border-r sticky left-0 z-10">Permesso Donazione</td>
@@ -6016,6 +6129,25 @@ export default function Presenze() {
                             );
                           })}
                           <td className="p-1 font-extrabold bg-gray-100">{formatDec(totals.oreStudio)} ore</td>
+                        </tr>
+                        <tr>
+                          <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">EX L.104 (L)</td>
+                          {Array.from({ length: 31 }).map((_, i) => {
+                            const d = i + 1;
+                            const val = sheetToPrint.giorni[dayStr(d)]?.permessoExL104;
+                            const out = d > daysInMonth;
+                            const hasVal = !out && val && val > 0;
+                            return (
+                              <td 
+                                key={i} 
+                                className={`p-0.5 border-r border-gray-955 ${out ? 'bg-gray-300' : ''}`}
+                                style={hasVal ? { backgroundColor: '#a7f3d0' } : undefined}
+                              >
+                                {!out && val && val > 0 ? formatDec(val) : ''}
+                              </td>
+                            );
+                          })}
+                          <td className="p-1 font-extrabold bg-gray-100">{formatDec(totals.oreExL104)} ore</td>
                         </tr>
                         <tr>
                           <td className="p-1 text-left bg-gray-50 border-r border-gray-955 font-extrabold">DONAZIONE (D)</td>

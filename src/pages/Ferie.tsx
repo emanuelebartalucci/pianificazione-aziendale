@@ -1182,13 +1182,14 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       mattina: {label: 'Assenza Mattina', color: 'bg-amber-500'},
       pomeriggio: {label: 'Assenza Pomeriggio', color: 'bg-amber-500'},
       studio: {label: 'Permesso Studio', color: 'bg-violet-600'},
+      ex_l104: {label: 'Permesso ex L.104', color: 'bg-emerald-600'},
       donazione: {label: 'Permesso Donazione', color: 'bg-teal-500'},
       elettorale: {label: 'Permesso Elettorale', color: 'bg-indigo-500'}
     };
     const base = tipi[tipo] || {label: isCollab ? 'Assenza' : tipo, color: 'bg-gray-500'};
-    if ((tipo === 'permesso' || tipo === 'assenza' || tipo === 'smart') && frazioneTipo) {
+    if ((tipo === 'permesso' || tipo === 'assenza' || tipo === 'smart' || tipo === 'ex_l104' || tipo === 'studio') && frazioneTipo) {
       const copy = { ...base };
-      const prefix = (isCollab || tipo === 'assenza') ? 'Assenza' : (tipo === 'smart' ? 'Lavora da Casa' : 'Permesso');
+      const prefix = (isCollab || tipo === 'assenza') ? 'Assenza' : (tipo === 'smart' ? 'Lavora da Casa' : (tipo === 'ex_l104' ? 'Permesso ex L.104' : 'Permesso'));
       if (frazioneTipo === 'mattina') copy.label = `${prefix} Mattina`;
       if (frazioneTipo === 'pomeriggio') copy.label = `${prefix} Pomeriggio`;
       if (frazioneTipo === 'giornata') copy.label = `${prefix} Giornata Intera`;
@@ -1300,7 +1301,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
           } else if (tipo === 'smart') {
             cellBg = '#84cc16'; // Verde Lime (Lavora da Casa)
             textColor = '#ffffff';
-          } else if (['mattina', 'pomeriggio', 'permesso', 'assenza'].includes(tipo) || (isCollabDip && isFractional)) {
+          } else if (['mattina', 'pomeriggio', 'permesso', 'assenza', 'ex_l104'].includes(tipo) || (isCollabDip && isFractional)) {
             cellBg = '#facc15'; // Giallo (Permesso Dipendenti / Assenza Oraria Collaboratori)
             textColor = '#713f12';
             
@@ -1950,6 +1951,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                           <option value="maternita">Maternità</option>
                           <option value="smart">Lavora da Casa</option>
                           <option value="studio">Permesso Studio</option>
+                          <option value="ex_l104">Permesso ex L.104</option>
                           <option value="donazione">Permesso Donazione</option>
                           <option value="elettorale">Permesso Elettorale</option>
                         </>
@@ -1957,7 +1959,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                     </select>
                   </div>
 
-                  {(tipoRichiesta === 'permesso' || tipoRichiesta === 'assenza' || tipoRichiesta === 'smart') && (
+                  {(tipoRichiesta === 'permesso' || tipoRichiesta === 'assenza' || tipoRichiesta === 'smart' || tipoRichiesta === 'ex_l104' || tipoRichiesta === 'studio') && (
                     <div className="bg-white/40 p-4 rounded-2xl border border-green-150 space-y-4 animate-in fade-in duration-200">
                       <label className="block text-xs font-black text-green-950 uppercase tracking-wider">
                         {tipoRichiesta === 'smart' ? 'Frazionamento Lavoro da Casa' : (tipoRichiesta === 'assenza' ? 'Frazionamento Assenza' : 'Frazionamento Permesso')}

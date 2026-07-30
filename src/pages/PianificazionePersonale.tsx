@@ -1335,10 +1335,14 @@ export default function PianificazionePersonale() {
           if (wDate >= curr && wDate <= last && !isItalianHoliday(wDateStr)) {
             const alreadyExists = leaveDaysFound.some(l => l.giorno === dayNames[idx]);
             if (!alreadyExists) {
-              let label = (leave.tipo === 'ferie' || leave.tipo === 'assenza') ? 'Ferie' : leave.tipo === 'malattia' ? 'Malattia' : leave.tipo === 'maternita' ? 'Maternità' : leave.tipo === 'smart' ? 'Smart' : leave.tipo;
+              let label = (leave.tipo === 'ferie' || leave.tipo === 'assenza') ? 'Ferie' : leave.tipo === 'malattia' ? 'Malattia' : leave.tipo === 'maternita' ? 'Maternità' : leave.tipo === 'smart' ? 'Smart' : leave.tipo === 'ex_l104' ? 'ex L.104' : leave.tipo === 'studio' ? 'Studio' : (leave.tipo || 'Assenza');
               if (leave.tipo === 'mattina' || leave.frazioneTipo === 'mattina') label = 'Ass. Matt.';
               if (leave.tipo === 'pomeriggio' || leave.frazioneTipo === 'pomeriggio') label = 'Ass. Pom.';
-              if (leave.tipo === 'permesso' || leave.frazioneTipo === 'orario') label = `Perm. (${leave.oraInizio || ''}-${leave.oraFine || ''})`;
+              if (leave.tipo === 'permesso' || leave.tipo === 'ex_l104' || leave.tipo === 'studio' || leave.frazioneTipo === 'orario') {
+                if (leave.oraInizio && leave.oraFine) {
+                  label = `${leave.tipo === 'ex_l104' ? 'L.104' : (leave.tipo === 'studio' ? 'Studio' : 'Perm.')} (${leave.oraInizio}-${leave.oraFine})`;
+                }
+              }
 
               leaveDaysFound.push({
                 giorno: dayNames[idx],
@@ -1367,7 +1371,7 @@ export default function PianificazionePersonale() {
       l.tipo === 'malattia' || 
       l.tipo === 'maternita' || 
       l.frazioneTipo === 'giornata' ||
-      (l.tipo !== 'smart' && l.tipo !== 'permesso' && l.tipo !== 'mattina' && l.tipo !== 'pomeriggio' && l.frazioneTipo !== 'orario' && l.frazioneTipo !== 'mattina' && l.frazioneTipo !== 'pomeriggio')
+      (l.tipo !== 'smart' && l.tipo !== 'permesso' && l.tipo !== 'ex_l104' && l.tipo !== 'studio' && l.tipo !== 'mattina' && l.tipo !== 'pomeriggio' && l.frazioneTipo !== 'orario' && l.frazioneTipo !== 'mattina' && l.frazioneTipo !== 'pomeriggio')
     );
     const uniqueDays = new Set(fullLeaveDays.map(l => l.giorno));
     return uniqueDays.size >= 5;
@@ -1383,7 +1387,7 @@ export default function PianificazionePersonale() {
           hrs = 0;
         } else if (l.frazioneTipo === 'mattina' || l.frazioneTipo === 'pomeriggio' || l.tipo === 'mattina' || l.tipo === 'pomeriggio') {
           hrs = dailyContractHours / 2;
-        } else if ((l.frazioneTipo === 'orario' || l.tipo === 'permesso' || (!l.frazioneTipo && l.oraInizio && l.oraFine)) && l.oraInizio && l.oraFine) {
+        } else if ((l.frazioneTipo === 'orario' || l.tipo === 'permesso' || l.tipo === 'ex_l104' || l.tipo === 'studio' || (!l.frazioneTipo && l.oraInizio && l.oraFine)) && l.oraInizio && l.oraFine) {
           const [hStart, mStart] = l.oraInizio.split(':').map(Number);
           const [hEnd, mEnd] = l.oraFine.split(':').map(Number);
           if (!isNaN(hStart) && !isNaN(hEnd)) {
@@ -1393,7 +1397,7 @@ export default function PianificazionePersonale() {
               hrs = Math.max(0, hrs - l.pausaPranzoOre);
             }
           }
-        } else if (l.tipo === 'permesso') {
+        } else if (l.tipo === 'permesso' || l.tipo === 'ex_l104' || l.tipo === 'studio') {
           hrs = dailyContractHours / 2;
         } else {
           // 'giornata', 'ferie', 'assenza', 'malattia', 'maternita'

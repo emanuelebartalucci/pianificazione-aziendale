@@ -75,7 +75,7 @@ export const getLeaveHoursForDay = (
   }
 
   if (
-    (l.frazioneTipo === 'orario' || l.tipo === 'permesso' || (!l.frazioneTipo && l.oraInizio && l.oraFine)) &&
+    (l.frazioneTipo === 'orario' || l.tipo === 'permesso' || l.tipo === 'ex_l104' || l.tipo === 'studio' || (!l.frazioneTipo && l.oraInizio && l.oraFine)) &&
     l.oraInizio &&
     l.oraFine
   ) {
@@ -91,7 +91,7 @@ export const getLeaveHoursForDay = (
     }
   }
 
-  if (l.tipo === 'permesso') {
+  if (l.tipo === 'permesso' || l.tipo === 'ex_l104' || l.tipo === 'studio') {
     return dailyContractHours / 2;
   }
 
@@ -979,7 +979,7 @@ export default function Commesse() {
       const isFullDay = leave.tipo === 'ferie' || 
                         leave.tipo === 'malattia' || 
                         leave.tipo === 'maternita' || 
-                        (leave.tipo !== 'smart' && leave.tipo !== 'permesso' && leave.tipo !== 'mattina' && leave.tipo !== 'pomeriggio');
+                        (leave.tipo !== 'smart' && leave.tipo !== 'permesso' && leave.tipo !== 'ex_l104' && leave.tipo !== 'studio' && leave.tipo !== 'mattina' && leave.tipo !== 'pomeriggio');
       if (!isFullDay) return;
 
       const start = typeof leave.dataInizio === 'string' ? leave.dataInizio : (typeof leave.data === 'string' ? leave.data : null);
@@ -1133,10 +1133,14 @@ export default function Commesse() {
           const [wY, wM, wD] = wDateStr.split('-').map(Number);
           const wTime = new Date(wY, wM - 1, wD).getTime();
           if (wTime >= curr && wTime <= last) {
-            let label = leave.tipo === 'ferie' ? 'Ferie' : leave.tipo === 'malattia' ? 'Malattia' : leave.tipo === 'maternita' ? 'Maternità' : leave.tipo === 'smart' ? 'Smart' : (leave.tipo || 'Assenza');
+            let label = leave.tipo === 'ferie' ? 'Ferie' : leave.tipo === 'malattia' ? 'Malattia' : leave.tipo === 'maternita' ? 'Maternità' : leave.tipo === 'smart' ? 'Smart' : leave.tipo === 'ex_l104' ? 'ex L.104' : leave.tipo === 'studio' ? 'Studio' : (leave.tipo || 'Assenza');
             if (leave.tipo === 'mattina' || leave.frazioneTipo === 'mattina') label = 'Ass. Matt.';
             if (leave.tipo === 'pomeriggio' || leave.frazioneTipo === 'pomeriggio') label = 'Ass. Pom.';
-            if (leave.tipo === 'permesso' || leave.frazioneTipo === 'orario') label = `Perm. (${leave.oraInizio || ''}-${leave.oraFine || ''})`;
+            if (leave.tipo === 'permesso' || leave.tipo === 'ex_l104' || leave.tipo === 'studio' || leave.frazioneTipo === 'orario') {
+              if (leave.oraInizio && leave.oraFine) {
+                label = `${leave.tipo === 'ex_l104' ? 'L.104' : (leave.tipo === 'studio' ? 'Studio' : 'Perm.')} (${leave.oraInizio}-${leave.oraFine})`;
+              }
+            }
 
             const mapKey = `${resKey}_${wkId}`;
             const existing = map.get(mapKey) || [];
