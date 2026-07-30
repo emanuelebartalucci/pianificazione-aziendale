@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { useAuth, type Dipendente } from '../contexts/AuthContext';
+import { useAuth, isTechnicalUser, type Dipendente } from '../contexts/AuthContext';
 import { 
   Users, 
   Crown, 
@@ -42,7 +42,7 @@ export const OrganigrammaView: React.FC = () => {
   // Dipendenti attivi (non cessati)
   const activeDipendenti = useMemo(() => {
     const todayStr = new Date().toISOString().split('T')[0];
-    return dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= todayStr) && (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it');
+    return dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= todayStr) && !isTechnicalUser(d));
   }, [dipendenti]);
 
   // Membri della Direzione (Soci / Direzione Generali)

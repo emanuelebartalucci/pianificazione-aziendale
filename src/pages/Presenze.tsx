@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, doc, setDoc, getDocs, query, where, addDoc, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
 import { FileText, Printer, Save, Send, CheckCircle, AlertCircle, Edit, Edit3, Trash2, MessageSquare, Clock, MapPin, Check, X, ShieldAlert, Download, RefreshCw, Plus } from 'lucide-react';
@@ -2727,6 +2727,7 @@ export default function Presenze() {
     }
     if (viewMode === 'hr') {
       const filtered = dipendenti.filter(dip => {
+        if (isTechnicalUser(dip)) return false;
         const firstDayOfMonthStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-01`;
         if (dip.dataCessazione && dip.dataCessazione < firstDayOfMonthStr) return false;
         const isCollab = isCollaboratore(dip.nome, dipendenti);
@@ -2945,7 +2946,7 @@ export default function Presenze() {
                 className="p-2.5 border-none bg-gray-100 rounded-xl font-bold text-gray-700 text-sm outline-none focus:ring-2 focus:ring-indigo-400 max-w-[200px]"
               >
                 <option value="">Tutti i dipendenti</option>
-                {filteredDipendenti.filter(d => !d.dataCessazione || d.dataCessazione >= `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-01`).map(d => (
+                {filteredDipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-01`) && !isTechnicalUser(d)).map(d => (
                   <option key={d.id} value={d.nome}>{d.nome}</option>
                 ))}
               </select>
@@ -3108,7 +3109,7 @@ export default function Presenze() {
                     className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-indigo-400 outline-none text-xs text-gray-750 font-semibold"
                   >
                     <option value="">Seleziona una risorsa...</option>
-                    {filteredDipendenti.filter(d => d.nome && (!d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE'))).map(d => (
+                    {filteredDipendenti.filter(d => d.nome && (!d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')) && !isTechnicalUser(d)).map(d => (
                       <option key={d.id} value={d.nome}>{d.nome}</option>
                     ))}
                   </select>

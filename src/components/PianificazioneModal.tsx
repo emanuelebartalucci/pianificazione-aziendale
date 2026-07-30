@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { doc, writeBatch } from 'firebase/firestore';
 import { getStartOfWeek, addDays, getWeekNumber } from '../utils/date';
@@ -226,7 +226,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
 
   // Dipendenti attivi
   const filteredDipendenti = useMemo(() => {
-    return dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione > new Date().toISOString().split('T')[0]) && (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it');
+    return dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione > new Date().toISOString().split('T')[0]) && !isTechnicalUser(d));
   }, [dipendenti]);
 
   const myDip = useMemo(() => {

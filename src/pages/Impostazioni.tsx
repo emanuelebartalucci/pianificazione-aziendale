@@ -1,13 +1,19 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, addDoc, doc, setDoc, deleteDoc, onSnapshot, updateDoc } from 'firebase/firestore';
-import { Shield, UserCheck, Star, Users, Plus, Trash2, Settings, Printer, Building2, Search, Pencil, X, MessageSquare, Edit, Mail, Eye, Send, Code } from 'lucide-react';
+import { Shield, UserCheck, Star, Users, Plus, Trash2, Settings, Printer, Building2, Search, Pencil, X, Mail, Eye, Send, Code } from 'lucide-react';
 import ConfirmModal from '../components/ConfirmModal';
 import { wrapMailTemplate } from '../utils/mailTemplate';
 import { queueMail } from '../utils/mailSender';
 import { getPrintFooterHtml } from '../config/version';
+import { 
+  EMAIL_TEMPLATES_LIST, 
+  loadSavedEmailTemplates, 
+  saveEmailTemplates, 
+  substitutePlaceholders 
+} from '../utils/emailTemplateManager';
 
 
 const COLLABORATORI = [
@@ -71,114 +77,61 @@ export const isSoci = (nome?: string | null): boolean => {
   return clean === 'corbellini matteo' || clean === 'profeti andrea' || clean === 'matteo corbellini' || clean === 'andrea profeti';
 };
 
-export const EMAIL_TEST_TEMPLATES = [
-  {
-    id: 'planning_update',
-    name: '[Pianificazione] Aggiornamento Calendario Commesse',
-    subject: '[Pianificazione] Aggiornamento Calendario Commesse',
-    getHtml: (name = 'Emanuele Bartalucci') => `
-      <p>Ciao <strong>${name}</strong>,</p>
-      <p>Ti comunichiamo che sono state apportate delle modifiche alla tua pianificazione delle commesse:</p>
-      <div style="margin-top: 15px; padding: 12px 16px; background-color: #f9fafb; border-left: 4px solid #4f46e5; border-radius: 8px; border: 1px solid #e5e7eb;">
-        <strong style="color: #111827; font-size: 14px;">Sett. 30 (20/07 - 24/07)</strong>
-        <ul style="margin: 8px 0 0 20px; padding: 0; color: #374151; font-size: 13px; line-height: 1.5;">
-          <li style="margin-bottom: 4px;">Assegnata commessa: P-2026-61A - GSK Modulo 4 (100%)</li>
-          <li style="margin-bottom: 4px;">Rimossa commessa: P-2026-12B - Novartis</li>
-        </ul>
-      </div>
-      <p style="margin-top: 20px;">Accedi alla piattaforma per visualizzare la tua pianificazione completa.</p>
-    `,
-    getPlainText: (name = 'Emanuele Bartalucci') => `Ciao ${name},\n\nTi comunichiamo che sono state apportate delle modifiche alla tua pianificazione delle commesse:\n\n* Sett. 30:\n  - Assegnata commessa: P-2026-61A (100%)\n\nAccedi alla piattaforma per verificare.`
-  },
-  {
-    id: 'resp_assigned',
-    name: '[Notifica] Abilitazione Responsabile Commessa',
-    subject: '[Notifica] Abilitazione Funzioni Responsabile - Commessa P-2026-61A',
-    getHtml: (name = 'Emanuele Bartalucci') => `
-      <p>Ciao <strong>${name}</strong>,</p>
-      <p>Sei stato assegnato come <strong>Responsabile</strong> per la commessa <strong>P-2026-61A - GSK Modulo 4</strong>.</p>
-      <p>Periodo previsto: dal <strong>01/09/2026</strong> al <strong>31/12/2026</strong>.</p>
-      <p>Puoi procedere all'assegnazione e pianificazione delle risorse per questa commessa direttamente dall'applicazione.</p>
-    `,
-    getPlainText: (name = 'Emanuele Bartalucci') => `Ciao ${name},\n\nSei stato assegnato come Responsabile per la commessa P-2026-61A.`
-  },
-  {
-    id: 'pm_assigned',
-    name: '[Notifica] Abilitazione PM Commessa',
-    subject: '[Notifica] Abilitazione Funzioni PM - Commessa P-2026-61A',
-    getHtml: (name = 'Emanuele Bartalucci') => `
-      <p>Ciao <strong>${name}</strong>,</p>
-      <p>Sei stato assegnato come <strong>Project Manager (PM)</strong> per la commessa <strong>P-2026-61A - GSK Modulo 4</strong>.</p>
-      <p>Periodo previsto: dal <strong>01/09/2026</strong> al <strong>31/12/2026</strong>.</p>
-      <p>Puoi procedere al monitoraggio e pianificazione delle risorse per questa commessa dall'applicazione.</p>
-    `,
-    getPlainText: (name = 'Emanuele Bartalucci') => `Ciao ${name},\n\nSei stato assegnato come Project Manager (PM) per la commessa P-2026-61A.`
-  },
-  {
-    id: 'ferie_status',
-    name: '[Notifica] Approvazione Richiesta Ferie / Assenza',
-    subject: '[Notifica] Richiesta Ferie Approvato',
-    getHtml: (name = 'Emanuele Bartalucci') => `
-      <p>Ciao <strong>${name}</strong>,</p>
-      <p>La tua richiesta di <strong>Ferie</strong> prevista <strong>dal 10/08/2026 al 21/08/2026</strong> è stata <strong>approvata</strong>.</p>
-      <p>Puoi consultare lo stato delle tue richieste direttamente nella tua area personale della webapp.</p>
-    `,
-    getPlainText: (name = 'Emanuele Bartalucci') => `Ciao ${name},\n\nLa tua richiesta di Ferie dal 10/08/2026 al 21/08/2026 è stata approvata.`
-  },
-  {
-    id: 'coord_request',
-    name: '[Richiesta Personale] Notifica Coordinatore',
-    subject: '[Richiesta Personale] Richiesta risorsa Disegnatori per commessa P-2026-61A',
-    getHtml: (_name = 'Coordinatore') => `
-      <p>Gentile Coordinatore,</p>
-      <p>È stata ricevuta una nuova richiesta di personale dall'area <strong>Disegnatori</strong>.</p>
-      <table border="0" cellpadding="6" cellspacing="0" style="font-size:13px;color:#374151;width:100%">
-        <tr><td style="font-weight:bold;width:180px">Commessa:</td><td>P-2026-61A - GSK Modulo 4</td></tr>
-        <tr><td style="font-weight:bold">Richiedente:</td><td>Mario Rossi (m.rossi@ingegno06.it)</td></tr>
-        <tr><td style="font-weight:bold">Periodo:</td><td>2026-09-01 → 2026-09-30</td></tr>
-        <tr><td style="font-weight:bold">Carico Richiesto:</td><td>100%</td></tr>
-        <tr><td style="font-weight:bold">Nota:</td><td><em>Necessaria figura Senior esperta Revit.</em></td></tr>
-      </table>
-      <p style="margin-top:16px">Accedi alla <strong>Pianificazione del Personale e Carichi</strong> per gestire questa richiesta e assegnare la risorsa più adeguata.</p>
-    `,
-    getPlainText: () => `Gentile Coordinatore,\n\nÈ stata ricevuta una nuova richiesta di personale per l'area Disegnatori.\n\nAccedi alla piattaforma per gestire la richiesta.`
-  },
-  {
-    id: 'weekend_unlock',
-    name: '[Notifica] Autorizzazione Lavoro Straordinario Weekend',
-    subject: '[Notifica] Autorizzazione lavoro straordinario Approvato',
-    getHtml: (name = 'Emanuele Bartalucci') => `
-      <p>Ciao <strong>${name}</strong>,</p>
-      <p>La tua richiesta di autorizzazione per lavorare il giorno <strong>Sabato 05/09/2026</strong> (Consegna urgente tavole cantiere) è stata <strong>approvata</strong>.</p>
-      <p>Puoi procedere all'inserimento delle ore sul tuo foglio presenze.</p>
-    `,
-    getPlainText: (name = 'Emanuele Bartalucci') => `Ciao ${name},\n\nLa tua richiesta di autorizzazione per lavorare il giorno Sabato 05/09/2026 è stata approvata.`
-  },
-  {
-    id: 'rapportino_feedback',
-    name: '[Pianificazione] Correzione Richiesta per Rapportino Presenze',
-    subject: '[Pianificazione] Correzione richiesta per il tuo Rapportino Presenze - Luglio 2026',
-    getHtml: (name = 'Emanuele Bartalucci') => `
-      <p>Ciao <strong>${name}</strong>,</p>
-      <p>L'amministrazione ha esaminato il tuo rapportino presenze per il mese di <strong>Luglio 2026</strong> e ha richiesto alcune <strong>correzioni</strong>.</p>
-      <p><strong>Nota dell'HR:</strong></p>
-      <blockquote style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 10px 15px; margin: 10px 0; font-style: italic;">
-        Verificare l'inserimento del rimborso chilometrico nel giorno 14 ed aggiungere la motivazione delle ore straordinarie prestati il giorno 22.
-      </blockquote>
-      <p>Accedi alla piattaforma per effettuare le modifiche richieste e inviarlo nuovamente.</p>
-    `,
-    getPlainText: (name = 'Emanuele Bartalucci') => `Ciao ${name},\n\nL'amministrazione ha richiesto correzioni al tuo rapportino presenze per Luglio 2026.`
-  }
-];
-
 export default function Impostazioni() {
   const navigate = useNavigate();
-  const { isDev, dipendenti, coordinatori, refreshData, userEmail, myAssociatedName } = useAuth();
+  const { isDev, dipendenti, coordinatori, refreshData, userEmail } = useAuth();
   
-  // Stato per il simulatore di e-mail sviluppatore
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('planning_update');
+  // Stato per l'Editor & Simulatore E-mail di Sistema
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('commessa_apertura');
+  const [customTemplates, setCustomTemplates] = useState<Record<string, { subject: string; body: string }>>({});
+  const [editSubject, setEditSubject] = useState<string>('');
+  const [editBody, setEditBody] = useState<string>('');
+  const [savingTemplate, setSavingTemplate] = useState<boolean>(false);
   const [isMailPreviewModalOpen, setIsMailPreviewModalOpen] = useState(false);
   const [sendingTestMail, setSendingTestMail] = useState(false);
+
+  // Caricamento dei template e-mail personalizzati salvati su Firestore
+  useEffect(() => {
+    loadSavedEmailTemplates().then(data => {
+      setCustomTemplates(data);
+    });
+  }, []);
+
+  const currentTmplDef = useMemo(() => {
+    return EMAIL_TEMPLATES_LIST.find(t => t.id === selectedTemplateId) || EMAIL_TEMPLATES_LIST[0];
+  }, [selectedTemplateId]);
+
+  useEffect(() => {
+    const custom = customTemplates[selectedTemplateId];
+    setEditSubject(custom?.subject ?? currentTmplDef.defaultSubject);
+    setEditBody(custom?.body ?? currentTmplDef.defaultBody);
+  }, [selectedTemplateId, customTemplates, currentTmplDef]);
+
+  const handleSaveCustomTemplate = async () => {
+    setSavingTemplate(true);
+    try {
+      const updated = {
+        ...customTemplates,
+        [selectedTemplateId]: {
+          subject: editSubject,
+          body: editBody
+        }
+      };
+      await saveEmailTemplates(updated);
+      setCustomTemplates(updated);
+      showToast("Template e-mail salvato con successo!", "success");
+    } catch (err) {
+      console.error("Errore salvataggio template e-mail:", err);
+      showToast("Errore durante il salvataggio del template.", "error");
+    } finally {
+      setSavingTemplate(false);
+    }
+  };
+
+  const handleResetTemplate = () => {
+    setEditSubject(currentTmplDef.defaultSubject);
+    setEditBody(currentTmplDef.defaultBody);
+  };
 
   // Stato per la modale di conferma personalizzata
   const [confirmConfig, setConfirmConfig] = useState<{
@@ -263,12 +216,6 @@ export default function Impostazioni() {
   const [editOrarioSettimanale, setEditOrarioSettimanale] = useState<Record<string, number | ''>>({ lun: 8, mar: 8, mer: 8, gio: 8, ven: 8 });
   const [emailSearchText, setEmailSearchText] = useState('');
 
-  // Stati per la gestione delle frasi di benvenuto in dashboard
-  const [greetingsList, setGreetingsList] = useState<{ id: string; testo: string }[]>([]);
-  const [newGreetingText, setNewGreetingText] = useState('');
-  const [editingGreetingId, setEditingGreetingId] = useState<string | null>(null);
-  const [editingGreetingText, setEditingGreetingText] = useState('');
-
   useEffect(() => {
     if (!isDev) return;
     const unsubA = onSnapshot(collection(db, 'admins'), (snap) => setAdminsList(snap.docs.map(d => ({id: d.id, email: d.data().email}))));
@@ -289,18 +236,6 @@ export default function Impostazioni() {
       setPmsList(snap.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
     });
     return () => { unsubA(); unsubH(); unsubD(); unsubC(); unsubPM(); };
-  }, [isDev]);
-
-  useEffect(() => {
-    if (!isDev) return;
-    const unsub = onSnapshot(collection(db, 'dashboard_greetings'), (snap) => {
-      const list: { id: string; testo: string }[] = [];
-      snap.forEach(docSnap => {
-        list.push({ id: docSnap.id, testo: docSnap.data().testo });
-      });
-      setGreetingsList(list);
-    });
-    return () => unsub();
   }, [isDev]);
 
   // Handlers
@@ -410,74 +345,7 @@ export default function Impostazioni() {
     }
   };
 
-  const handleAddGreeting = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newGreetingText.trim()) return;
-    try {
-      await addDoc(collection(db, 'dashboard_greetings'), {
-        testo: newGreetingText.trim()
-      });
-      setNewGreetingText('');
-      showToast("Frase aggiunta con successo!", "success");
-    } catch (err) {
-      console.error(err);
-      showToast("Errore durante l'aggiunta", "error");
-    }
-  };
 
-  const handlePopulateDefaultGreetings = async () => {
-    const defaultPhrases = [
-      "Felici di collaborare con te anche oggi.",
-      "Ti auguriamo una splendida giornata di lavoro.",
-      "Il tuo spazio di lavoro è pronto.",
-      "Ti diamo il benvenuto nel tuo portale aziendale.",
-      "Buon lavoro e buona giornata da parte nostra.",
-      "Felici di ritrovarti, ti auguriamo una buona giornata.",
-      "Ti auguriamo il meglio per le attività di oggi.",
-      "Grazie per il tuo prezioso contributo quotidiano."
-    ];
-    try {
-      for (const phrase of defaultPhrases) {
-        await addDoc(collection(db, 'dashboard_greetings'), {
-          testo: phrase
-        });
-      }
-      showToast("Frasi predefinite caricate con successo!", "success");
-    } catch (err) {
-      console.error(err);
-      showToast("Errore durante il caricamento delle frasi", "error");
-    }
-  };
-
-  const handleSaveEditGreeting = async (id: string) => {
-    if (!editingGreetingText.trim()) return;
-    try {
-      await setDoc(doc(db, 'dashboard_greetings', id), {
-        testo: editingGreetingText.trim()
-      });
-      setEditingGreetingId(null);
-      showToast("Frase modificata con successo!", "success");
-    } catch (err) {
-      console.error(err);
-      showToast("Errore durante il salvataggio", "error");
-    }
-  };
-
-  const handleDeleteGreeting = async (id: string) => {
-    triggerConfirm(
-      "Rimuovi Frase di Benvenuto",
-      "Sei sicuro di voler rimuovere questa frase di benvenuto?",
-      async () => {
-        try {
-          await deleteDoc(doc(db, 'dashboard_greetings', id));
-          showToast("Frase rimossa con successo!", "success");
-        } catch (err) {
-          console.error(err);
-          showToast("Errore durante la rimozione", "error");
-        }
-      }
-    );
-  };
 
   const handleAddDipendente = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -924,7 +792,7 @@ export default function Impostazioni() {
 
   const sortedDipendentiWithEmail = useMemo(() => {
     return [...(dipendenti || [])]
-      .filter(d => d && d.email && (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it')
+      .filter(d => d && d.email && !isTechnicalUser(d))
       .sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'it'));
   }, [dipendenti]);
 
@@ -1023,20 +891,6 @@ export default function Impostazioni() {
       
       {/* Menu a schede (Tabs) */}
       <div className="flex flex-wrap gap-2 mb-8 border-b border-gray-150 pb-4">
-        {isDev && (
-          <button
-            onClick={() => setActiveTab('clienti')}
-            className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm transition-all active:scale-95 cursor-pointer ${
-              activeTab === 'clienti'
-                ? 'bg-blue-600 text-white shadow-md shadow-blue-250'
-                : 'bg-gray-50 text-gray-650 hover:bg-gray-100'
-            }`}
-          >
-            <Building2 className="w-4 h-4" />
-            <span>Anagrafica Clienti</span>
-          </button>
-        )}
-
         <button
           onClick={() => setActiveTab('risorse')}
           className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm transition-all active:scale-95 cursor-pointer ${
@@ -1051,6 +905,18 @@ export default function Impostazioni() {
 
         {isDev && (
           <>
+            <button
+              onClick={() => setActiveTab('clienti')}
+              className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm transition-all active:scale-95 cursor-pointer ${
+                activeTab === 'clienti'
+                  ? 'bg-blue-600 text-white shadow-md shadow-blue-250'
+                  : 'bg-gray-50 text-gray-650 hover:bg-gray-100'
+              }`}
+            >
+              <Building2 className="w-4 h-4" />
+              <span>Anagrafica Clienti</span>
+            </button>
+
             <button
               onClick={() => setActiveTab('ruoli')}
               className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm transition-all active:scale-95 cursor-pointer ${
@@ -1075,20 +941,6 @@ export default function Impostazioni() {
               <span>Sistema</span>
             </button>
           </>
-        )}
-
-        {isDev && (
-          <button
-            onClick={() => setActiveTab('email_dev' as any)}
-            className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm transition-all active:scale-95 cursor-pointer ${
-              activeTab === ('email_dev' as any)
-                ? 'bg-indigo-700 text-white shadow-md shadow-indigo-250 font-black'
-                : 'bg-indigo-50 text-indigo-800 hover:bg-indigo-100 border border-indigo-200'
-            }`}
-          >
-            <Mail className="w-4 h-4 text-indigo-600" />
-            <span>Dev E-mail Simulator</span>
-          </button>
         )}
       </div>
 
@@ -1251,7 +1103,7 @@ export default function Impostazioni() {
                 </div>
               </form>
               <div className="max-h-[350px] overflow-y-auto bg-white/50 rounded-xl divide-y border border-indigo-100">
-                {dipendenti.filter(d => !isCollaboratore(d.nome, d.tipo) && !isSoci(d.nome) && (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it').map(d => (
+                {dipendenti.filter(d => !isCollaboratore(d.nome, d.tipo) && !isSoci(d.nome) && !isTechnicalUser(d)).map(d => (
                   <div key={d.id} className="p-4 flex justify-between items-center text-sm gap-2">
                     <div className="flex-1 min-w-0">
                       <div className="font-bold text-indigo-900 truncate">{d.nome}</div>
@@ -1304,7 +1156,7 @@ export default function Impostazioni() {
                 </div>
               </form>
               <div className="max-h-[350px] overflow-y-auto bg-white/50 rounded-xl divide-y border border-amber-100">
-                {dipendenti.filter(d => isCollaboratore(d.nome, d.tipo) && !isSoci(d.nome) && (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it').map(d => (
+                {dipendenti.filter(d => isCollaboratore(d.nome, d.tipo) && !isSoci(d.nome) && !isTechnicalUser(d)).map(d => (
                   <div key={d.id} className="p-4 flex justify-between items-center text-sm gap-2">
                     <div className="flex-1 min-w-0">
                       <div className="font-bold text-amber-900 truncate">{d.nome}</div>
@@ -1757,12 +1609,12 @@ export default function Impostazioni() {
 
         {/* TAB 5: SISTEMA */}
         {activeTab === 'sistema' && isDev && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch w-full">
-            {/* Configurazione Email */}
-            <section className="bg-gradient-to-br from-slate-50 to-zinc-100 p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col justify-between h-full gap-4">
+          <div className="space-y-8 w-full">
+            {/* Configurazione Email Risorse */}
+            <section className="bg-gradient-to-br from-slate-50 to-zinc-100 p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col justify-between gap-4">
               <div>
                 <h3 className="text-xl font-bold text-slate-800 mb-1 flex items-center gap-2">
-                  <Mail className="w-6 h-6 text-indigo-650" /> Notifiche Email
+                  <Mail className="w-6 h-6 text-indigo-650" /> Notifiche Email Risorse
                 </h3>
                 <p className="text-xs text-slate-500 leading-relaxed mb-4">
                   Abilita o disabilita singolarmente le risorse a ricevere e-mail automatiche dal sistema (notifiche ferie, weekend, invio e approvazione foglio ore/fatture, assegnazione commesse, ecc.).
@@ -1782,7 +1634,7 @@ export default function Impostazioni() {
               </div>
 
               {/* Lista delle Risorse con Scrollbar */}
-              <div className="h-64 overflow-y-auto border border-slate-200/60 rounded-2xl bg-white divide-y divide-slate-100 shadow-inner">
+              <div className="h-56 overflow-y-auto border border-slate-200/60 rounded-2xl bg-white divide-y divide-slate-100 shadow-inner">
                 {(() => {
                   const filtered = dipendenti.filter(dip => 
                     dip.nome.toLowerCase().includes(emailSearchText.toLowerCase()) || 
@@ -1801,7 +1653,7 @@ export default function Impostazioni() {
                     const isEmailEnabled = dip.notificheEmail === true;
 
                     return (
-                      <div key={dip.id} className="flex items-center justify-between p-3.5 hover:bg-slate-50/50 transition-colors">
+                      <div key={dip.id} className="flex items-center justify-between p-3 hover:bg-slate-50/50 transition-colors">
                         <div className="min-w-0 pr-4">
                           <div className="text-xs font-bold text-slate-800 truncate">{dip.nome}</div>
                           <div className="text-[10px] text-slate-400 font-semibold truncate mt-0.5">{dip.email}</div>
@@ -1826,99 +1678,136 @@ export default function Impostazioni() {
               </div>
             </section>
 
-            {/* Frasi di Benvenuto */}
-            <section className="bg-gradient-to-br from-indigo-50 to-indigo-100 p-6 rounded-3xl border border-indigo-200 shadow-sm flex flex-col justify-between h-full gap-4">
-              <div>
-                <h3 className="text-xl font-bold text-indigo-900 mb-1 flex items-center gap-2">
-                  <MessageSquare className="w-6 h-6 text-indigo-600" /> Frasi di Benvenuto Dashboard
-                </h3>
-                <p className="text-xs text-indigo-755 mb-4">
-                  Gestisci le frasi accoglienti visualizzate casualmente nella dashboard. Il sistema userà il formato: <em>"Ciao, Nome! [Frase]"</em>.
-                </p>
-                
-                {/* Form per aggiungere una nuova frase */}
-                <form onSubmit={handleAddGreeting} className="flex gap-2">
-                  <input 
-                    type="text"
-                    required
-                    placeholder="Es. Felici di collaborare con te anche oggi."
-                    value={newGreetingText}
-                    onChange={e => setNewGreetingText(e.target.value)}
-                    className="flex-1 p-3 border-none rounded-xl bg-white/80 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition shadow-inner font-semibold text-xs text-indigo-950"
-                  />
-                  <button 
-                    type="submit"
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold px-4 py-3 rounded-xl transition shadow active:scale-95 text-xs flex items-center gap-1 shrink-0 cursor-pointer"
+            {/* Editor & Simulatore E-mail di Sistema */}
+            <section className="bg-gradient-to-br from-indigo-50/80 to-slate-100 p-6 sm:p-8 rounded-3xl border border-indigo-200 shadow-sm space-y-6">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-indigo-200/60 pb-4">
+                <div>
+                  <h3 className="text-xl font-bold text-indigo-950 flex items-center gap-2">
+                    <Mail className="w-6 h-6 text-indigo-600" /> Editor & Simulatore E-mail di Sistema
+                  </h3>
+                  <p className="text-xs text-indigo-700/80 mt-1">
+                    Seleziona un evento automatizzato per personalizzare l'oggetto ed il testo principale delle mail inviate dal sistema.
+                  </p>
+                </div>
+
+                <div className="flex gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setIsMailPreviewModalOpen(true)}
+                    className="bg-white hover:bg-indigo-50 text-indigo-700 font-bold px-3.5 py-2 rounded-xl border border-indigo-300 transition flex items-center gap-1.5 text-xs shadow-sm active:scale-95 cursor-pointer"
                   >
-                    <Plus className="w-4 h-4" /> Aggiungi
+                    <Eye className="w-4 h-4" /> Anteprima HTML Live
                   </button>
-                </form>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const recipient = userEmail || 'ebartalucci@ingegno06.it';
+                      setSendingTestMail(true);
+                      try {
+                        const sampleVars: Record<string, string> = {};
+                        currentTmplDef.placeholders.forEach(p => { sampleVars[p.code] = p.sample; });
+                        const subj = substitutePlaceholders(editSubject, sampleVars);
+                        const body = substitutePlaceholders(editBody, sampleVars);
+                        await queueMail(recipient, subj, body);
+                        showToast(`E-mail di prova inviata a ${recipient}!`, "success");
+                      } catch (err) {
+                        console.error(err);
+                        showToast("Errore durante l'invio dell'e-mail di prova.", "error");
+                      } finally {
+                        setSendingTestMail(false);
+                      }
+                    }}
+                    disabled={sendingTestMail}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-xl shadow-sm transition flex items-center gap-1.5 text-xs active:scale-95 disabled:opacity-50 cursor-pointer"
+                  >
+                    <Send className="w-4 h-4" /> {sendingTestMail ? 'Invio...' : 'Invia Mail di Prova'}
+                  </button>
+                </div>
               </div>
 
-              {/* Lista delle frasi esistenti */}
-              <div className="h-64 overflow-y-auto space-y-2 pr-1 scrollbar-thin">
-                {greetingsList.length === 0 ? (
-                  <div className="text-center py-6 bg-white/40 border border-indigo-200/50 border-dashed rounded-2xl p-4 flex flex-col items-center gap-3">
-                    <p className="text-xs text-indigo-500 font-semibold italic">Nessuna frase di benvenuto caricata.</p>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="lg:col-span-1 space-y-4">
+                  <div>
+                    <label className="block text-xs font-extrabold text-indigo-900 uppercase tracking-wide mb-1.5">Tipologia / Evento E-mail</label>
+                    <select
+                      value={selectedTemplateId}
+                      onChange={e => setSelectedTemplateId(e.target.value)}
+                      className="w-full p-3 bg-white border border-indigo-200 rounded-xl font-bold text-xs text-indigo-950 focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm"
+                    >
+                      {['Commesse', 'Ferie & Assenze', 'Presenze'].map(cat => (
+                        <optgroup key={cat} label={`── ${cat} ──`}>
+                          {EMAIL_TEMPLATES_LIST.filter(t => t.category === cat).map(t => (
+                            <option key={t.id} value={t.id}>{t.label}</option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Segnaposto disponibili */}
+                  <div className="bg-white/80 p-4 rounded-2xl border border-indigo-150 shadow-inner space-y-2">
+                    <label className="block text-[11px] font-black text-indigo-900 uppercase tracking-wider flex items-center gap-1">
+                      <Code className="w-3.5 h-3.5 text-indigo-600" /> Segnaposto Dinamici (Placeholders)
+                    </label>
+                    <p className="text-[10px] text-gray-500">Clicca un tag per aggiungerlo al corpo della mail:</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {currentTmplDef.placeholders.map(p => (
+                        <button
+                          key={p.code}
+                          type="button"
+                          onClick={() => setEditBody(prev => prev + ' ' + p.code)}
+                          className="bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 text-[10px] font-bold px-2.5 py-1 rounded-lg transition cursor-pointer"
+                          title={`Valore d'esempio: ${p.sample}`}
+                        >
+                          {p.code}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Pulsanti Azione Template */}
+                  <div className="flex gap-2 pt-2">
                     <button
                       type="button"
-                      onClick={handlePopulateDefaultGreetings}
-                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-[10px] rounded-xl transition shadow active:scale-95 flex items-center gap-1 cursor-pointer"
+                      onClick={handleSaveCustomTemplate}
+                      disabled={savingTemplate}
+                      className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-2.5 rounded-xl shadow transition text-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
                     >
-                      <Plus className="w-3.5 h-3.5" /> Carica Frasi Predefinite
+                      {savingTemplate ? 'Salvataggio...' : '💾 Salva Modifiche'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleResetTemplate}
+                      className="bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold px-3 py-2.5 rounded-xl transition text-xs cursor-pointer"
+                      title="Ripristina testo predefinito"
+                    >
+                      Ripristina
                     </button>
                   </div>
-                ) : (
-                  greetingsList.map((g) => (
-                    <div key={g.id} className="flex items-center justify-between gap-3 bg-white/60 p-3 rounded-xl border border-indigo-200/30 text-xs">
-                      {editingGreetingId === g.id ? (
-                        <div className="flex-1 flex gap-2">
-                          <input 
-                            type="text"
-                            value={editingGreetingText}
-                            onChange={e => setEditingGreetingText(e.target.value)}
-                            className="flex-1 p-1.5 border border-indigo-300 rounded bg-white font-semibold text-xs text-indigo-950"
-                          />
-                          <button 
-                            onClick={() => handleSaveEditGreeting(g.id)}
-                            className="bg-emerald-600 text-white font-bold px-2.5 py-1 rounded hover:bg-emerald-700 transition cursor-pointer text-[10px]"
-                          >
-                            Salva
-                          </button>
-                          <button 
-                            onClick={() => setEditingGreetingId(null)}
-                            className="bg-gray-400 text-white font-bold px-2.5 py-1 rounded hover:bg-gray-500 transition cursor-pointer text-[10px]"
-                          >
-                            Annulla
-                          </button>
-                        </div>
-                      ) : (
-                        <>
-                          <span className="font-semibold text-indigo-950 flex-1 break-all leading-normal">{g.testo}</span>
-                          <div className="flex gap-1.5 shrink-0">
-                            <button 
-                              onClick={() => {
-                                setEditingGreetingId(g.id);
-                                setEditingGreetingText(g.testo);
-                              }}
-                              className="text-indigo-600 hover:text-indigo-800 p-1 hover:bg-indigo-50/50 rounded transition cursor-pointer"
-                              title="Modifica"
-                            >
-                              <Edit className="w-3.5 h-3.5" />
-                            </button>
-                            <button 
-                              onClick={() => handleDeleteGreeting(g.id)}
-                              className="text-red-500 hover:text-red-750 p-1 hover:bg-red-50/50 rounded transition cursor-pointer"
-                              title="Elimina"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  ))
-                )}
+                </div>
+
+                {/* Form di Editing Subject & Body */}
+                <div className="lg:col-span-2 space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Oggetto dell'E-mail</label>
+                    <input
+                      type="text"
+                      value={editSubject}
+                      onChange={e => setEditSubject(e.target.value)}
+                      className="w-full p-3 bg-white border border-gray-200 rounded-xl font-bold text-xs text-gray-900 focus:ring-2 focus:ring-indigo-400 outline-none shadow-sm"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Contenuto HTML del Messaggio (Corpo E-mail)</label>
+                    <textarea
+                      rows={9}
+                      value={editBody}
+                      onChange={e => setEditBody(e.target.value)}
+                      className="w-full p-3.5 bg-white border border-gray-200 rounded-xl font-mono text-xs text-gray-800 focus:ring-2 focus:ring-indigo-400 outline-none shadow-inner leading-relaxed"
+                    />
+                  </div>
+                </div>
               </div>
             </section>
           </div>
@@ -2176,148 +2065,73 @@ export default function Impostazioni() {
         </div>
       )}
 
-      {/* TAB DEV: EMAIL SIMULATOR */}
-      {activeTab === ('email_dev' as any) && isDev && (
-        <div className="space-y-6">
-          <div className="bg-gradient-to-r from-indigo-900 to-purple-900 text-white p-6 rounded-[2rem] shadow-lg flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <span className="bg-amber-400 text-indigo-950 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full">
-                  🛠️ Strumenti Sviluppatore
-                </span>
-                <span className="text-xs text-indigo-200 font-medium">Riservato a {userEmail}</span>
-              </div>
-              <h3 className="text-2xl font-extrabold">Simulatore & Anteprima E-mail</h3>
-              <p className="text-xs text-indigo-200 mt-1 font-medium max-w-2xl">
-                Seleziona uno qualsiasi dei modelli e-mail utilizzati dalla piattaforma per testare la resa grafica HTML live o inviare una mail di prova reale al tuo indirizzo.
-              </p>
+      {/* Modale di Anteprima Grafica HTML Live per Template E-mail */}
+      {isMailPreviewModalOpen && (
+        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2rem] shadow-2xl max-w-4xl w-full max-h-[90vh] border border-gray-100 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="p-5 bg-indigo-900 text-white flex justify-between items-center">
+              <h3 className="font-extrabold text-base flex items-center gap-2">
+                <Eye className="w-5 h-5 text-indigo-300" /> Anteprima Grafica HTML: {currentTmplDef.label}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsMailPreviewModalOpen(false)}
+                className="hover:bg-white/20 p-1.5 rounded-xl transition text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 bg-gray-100 flex-1 overflow-y-auto">
+              {(() => {
+                const sampleVars: Record<string, string> = {};
+                currentTmplDef.placeholders.forEach(p => { sampleVars[p.code] = p.sample; });
+                const renderedSubj = substitutePlaceholders(editSubject, sampleVars);
+                const renderedBody = substitutePlaceholders(editBody, sampleVars);
+                const fullWrappedHtml = wrapMailTemplate(renderedSubj, renderedBody);
+
+                return (
+                  <iframe
+                    title="Full Mail Preview"
+                    srcDoc={fullWrappedHtml}
+                    className="w-full h-[650px] bg-white rounded-xl border border-gray-200 shadow-sm"
+                  />
+                );
+              })()}
+            </div>
+            <div className="p-4 bg-white border-t flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setIsMailPreviewModalOpen(false)}
+                className="px-5 py-2.5 rounded-xl border text-xs font-bold text-gray-600 hover:bg-gray-50 transition cursor-pointer"
+              >
+                Chiudi
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  setIsMailPreviewModalOpen(false);
+                  const recipient = userEmail || 'ebartalucci@ingegno06.it';
+                  setSendingTestMail(true);
+                  try {
+                    const sampleVars: Record<string, string> = {};
+                    currentTmplDef.placeholders.forEach(p => { sampleVars[p.code] = p.sample; });
+                    const subj = substitutePlaceholders(editSubject, sampleVars);
+                    const body = substitutePlaceholders(editBody, sampleVars);
+                    await queueMail(recipient, subj, body);
+                    showToast(`E-mail di prova inviata a ${recipient}!`, "success");
+                  } catch (err) {
+                    console.error(err);
+                    showToast("Errore durante l'invio dell'e-mail di prova.", "error");
+                  } finally {
+                    setSendingTestMail(false);
+                  }
+                }}
+                className="px-5 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition flex items-center gap-2 shadow cursor-pointer"
+              >
+                <Send className="w-3.5 h-3.5" /> Invia Mail di Prova
+              </button>
             </div>
           </div>
-
-          {/* Controlli Simulatore */}
-          {(() => {
-            const currentTemplate = EMAIL_TEST_TEMPLATES.find(t => t.id === selectedTemplateId) || EMAIL_TEST_TEMPLATES[0];
-            const recipient = userEmail || 'ebartalucci@ingegno06.it';
-            const nameToUse = myAssociatedName || 'Emanuele Bartalucci';
-            const sampleHtml = currentTemplate.getHtml(nameToUse);
-            const fullWrappedHtml = wrapMailTemplate(currentTemplate.subject, sampleHtml);
-            const samplePlainText = currentTemplate.getPlainText(nameToUse);
-
-            const handleSendTestMail = async () => {
-              setSendingTestMail(true);
-              try {
-                await queueMail(recipient, currentTemplate.subject, sampleHtml, samplePlainText);
-                showToast(`E-mail di prova accodata per ${recipient}!`, "success");
-              } catch (err) {
-                console.error(err);
-                showToast("Errore durante l'invio dell'e-mail di prova.", "error");
-              } finally {
-                setSendingTestMail(false);
-              }
-            };
-
-            return (
-              <div className="bg-white rounded-[2rem] shadow-md border border-gray-100 p-6 space-y-6">
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b pb-4">
-                  <div className="w-full md:w-1/2">
-                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Seleziona Modello E-mail</label>
-                    <select
-                      value={selectedTemplateId}
-                      onChange={e => setSelectedTemplateId(e.target.value)}
-                      className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-xl font-bold text-sm text-gray-800 focus:ring-2 focus:ring-indigo-500 outline-none"
-                    >
-                      {EMAIL_TEST_TEMPLATES.map(tmpl => (
-                        <option key={tmpl.id} value={tmpl.id}>{tmpl.name}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="flex gap-3 w-full md:w-auto">
-                    <button
-                      onClick={() => setIsMailPreviewModalOpen(true)}
-                      className="flex-1 md:flex-initial bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold px-4 py-3.5 rounded-xl border border-indigo-200 transition flex items-center justify-center gap-2 text-xs active:scale-95 cursor-pointer"
-                    >
-                      <Eye className="w-4 h-4" /> Anteprima HTML Live
-                    </button>
-                    <button
-                      onClick={handleSendTestMail}
-                      disabled={sendingTestMail}
-                      className="flex-1 md:flex-initial bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-5 py-3.5 rounded-xl shadow-md transition flex items-center justify-center gap-2 text-xs active:scale-95 disabled:opacity-50 cursor-pointer"
-                    >
-                      <Send className="w-4 h-4" /> {sendingTestMail ? 'Invio in corso...' : 'Invia Mail di Prova'}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Informazioni E-mail */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-medium bg-gray-50 p-4 rounded-xl border">
-                  <div>
-                    <span className="font-bold text-gray-500">Oggetto:</span> <span className="font-bold text-gray-900">{currentTemplate.subject}</span>
-                  </div>
-                  <div>
-                    <span className="font-bold text-gray-500">Destinatario Prova:</span> <span className="font-bold text-indigo-600">{recipient}</span>
-                  </div>
-                </div>
-
-                {/* Anteprima Live Integrata nella scheda */}
-                <div>
-                  <h4 className="text-xs font-extrabold text-gray-700 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                    <Code className="w-4 h-4 text-indigo-600" /> Anteprima Layout E-mail Ufficiale
-                  </h4>
-                  <div className="border border-gray-200 rounded-2xl overflow-hidden shadow-inner bg-gray-100 p-4">
-                    <iframe
-                      title="Mail Preview"
-                      srcDoc={fullWrappedHtml}
-                      className="w-full min-h-[480px] bg-white rounded-xl border border-gray-200 shadow-sm"
-                    />
-                  </div>
-                </div>
-
-                {/* Modale di Anteprima a Schermo Intero */}
-                {isMailPreviewModalOpen && (
-                  <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
-                    <div className="bg-white rounded-[2rem] shadow-2xl max-w-4xl w-full max-h-[90vh] border border-gray-100 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                      <div className="p-5 bg-indigo-900 text-white flex justify-between items-center">
-                        <h3 className="font-extrabold text-base flex items-center gap-2">
-                          <Eye className="w-5 h-5" /> Anteprima Grafica HTML: {currentTemplate.name}
-                        </h3>
-                        <button
-                          onClick={() => setIsMailPreviewModalOpen(false)}
-                          className="hover:bg-white/20 p-1.5 rounded-xl transition text-white"
-                        >
-                          <X className="w-5 h-5" />
-                        </button>
-                      </div>
-                      <div className="p-4 bg-gray-100 flex-1 overflow-y-auto">
-                        <iframe
-                          title="Full Mail Preview"
-                          srcDoc={fullWrappedHtml}
-                          className="w-full h-[650px] bg-white rounded-xl border border-gray-200 shadow-sm"
-                        />
-                      </div>
-                      <div className="p-4 bg-white border-t flex justify-end gap-3">
-                        <button
-                          onClick={() => setIsMailPreviewModalOpen(false)}
-                          className="px-5 py-2.5 rounded-xl border text-xs font-bold text-gray-600 hover:bg-gray-50 transition"
-                        >
-                          Chiudi
-                        </button>
-                        <button
-                          onClick={() => {
-                            setIsMailPreviewModalOpen(false);
-                            handleSendTestMail();
-                          }}
-                          className="px-5 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition flex items-center gap-2 shadow"
-                        >
-                          <Send className="w-3.5 h-3.5" /> Invia Mail di Prova
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
         </div>
       )}
 

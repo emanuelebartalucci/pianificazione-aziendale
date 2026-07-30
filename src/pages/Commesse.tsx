@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, doc, setDoc, addDoc, deleteDoc, getDocs, runTransaction } from 'firebase/firestore';
 import { Briefcase, ChevronLeft, ChevronRight, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw, Printer, Plus, UserCheck, MoveVertical, Building2 } from 'lucide-react';
@@ -2977,7 +2977,7 @@ export default function Commesse() {
                               className="w-full p-2 border border-indigo-200 rounded-lg bg-indigo-50/40 focus:bg-white outline-none focus:ring-1 focus:ring-emerald-400 font-bold text-gray-700 text-xs h-[38px]"
                             >
                               <option value="">+ Seleziona Utente da Abilitare...</option>
-                              {dipendenti.filter(d => (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it' && !(progetto.utentiDaAbilitare || []).includes(d.nome)).map(d => (
+                              {dipendenti.filter(d => !isTechnicalUser(d) && !(progetto.utentiDaAbilitare || []).includes(d.nome)).map(d => (
                                 <option key={d.id} value={d.nome}>{d.nome} {d.macroArea ? `(${d.macroArea})` : ''}</option>
                               ))}
                             </select>
@@ -3063,7 +3063,7 @@ export default function Commesse() {
                                 className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
                               >
                                 <option value="">+ Aggiungi Validatore...</option>
-                                {dipendenti.filter(d => !progetto.verificatori.includes(d.nome)).map(d => (
+                                {dipendenti.filter(d => !isTechnicalUser(d) && !progetto.verificatori.includes(d.nome)).map(d => (
                                   <option key={d.id} value={d.nome}>{d.nome}</option>
                                 ))}
                               </select>
@@ -3077,7 +3077,7 @@ export default function Commesse() {
                                 className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
                               >
                                 <option value="">-- Nessuno --</option>
-                                {dipendenti.filter(d => (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it').map(d => (
+                                {dipendenti.filter(d => !isTechnicalUser(d)).map(d => (
                                   <option key={d.id} value={d.nome}>{d.nome}</option>
                                 ))}
                               </select>
@@ -3562,7 +3562,7 @@ export default function Commesse() {
                                   className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
                                 >
                                   <option value="">+ Aggiungi Validatore...</option>
-                                  {dipendenti.filter(d => !(progetto.verificatori || []).includes(d.nome)).map(d => (
+                                  {dipendenti.filter(d => !isTechnicalUser(d) && !(progetto.verificatori || []).includes(d.nome)).map(d => (
                                     <option key={d.id} value={d.nome}>{d.nome}</option>
                                   ))}
                                 </select>
@@ -3576,7 +3576,7 @@ export default function Commesse() {
                                   className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
                                 >
                                   <option value="">-- Nessuno --</option>
-                                  {dipendenti.filter(d => (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it').map(d => (
+                                  {dipendenti.filter(d => !isTechnicalUser(d)).map(d => (
                                     <option key={d.id} value={d.nome}>{d.nome}</option>
                                   ))}
                                 </select>

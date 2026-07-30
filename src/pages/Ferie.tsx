@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, memo } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, addDoc, doc, updateDoc, deleteDoc, query, where, getDocs, getDoc, onSnapshot } from 'firebase/firestore';
 import { Calendar, CheckCircle, XCircle, Clock, ChevronLeft, ChevronRight, RefreshCw, Pencil, Trash2, AlertTriangle, X, Search } from 'lucide-react';
@@ -622,6 +622,44 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       }
       
       await addDoc(collection(db, 'richieste_ferie'), payload);
+
+      // Se l'inserimento è stato fatto direttamente dall'HR/Admin per conto di un dipendente, invia notifica email di conferma al dipendente
+      if (isPowerUser && targetDipName !== myAssociatedName) {
+        const targetDip = dipendenti.find(d => d.nome === targetDipName);
+        if (targetDip && targetDip.email) {
+          let dateDesc = requestMode === 'range' && dataInizio !== dataFine 
+            ? `dal ${formatDate(dataInizio)} al ${formatDate(dataFine)}` 
+            : `il ${formatDate(dataRichiesta || dataInizio)}`;
+          
+          if (tipoRichiesta === 'permesso' || tipoRichiesta === 'assenza') {
+            if (frazioneTipo === 'mattina') dateDesc += ' (mattina)';
+            else if (frazioneTipo === 'pomeriggio') dateDesc += ' (pomeriggio)';
+            else if (frazioneTipo === 'giornata') dateDesc += ' (giornata intera)';
+            else if (oraInizio && oraFine) dateDesc += ` dalle ${oraInizio} alle ${oraFine}`;
+          }
+
+          const typeLabels: Record<string, string> = {
+            ferie: 'Ferie',
+            malattia: 'Malattia',
+            maternita: 'Maternità',
+            permesso: 'Permesso',
+            assenza: 'Assenza',
+            smart: 'Lavoro da Casa',
+            mattina: 'Assenza Mattina',
+            pomeriggio: 'Assenza Pomeriggio'
+          };
+          const typeDesc = typeLabels[tipoRichiesta] || tipoRichiesta;
+
+          const subject = `[Notifica] Assegnazione ${typeDesc} da parte dell'HR`;
+          const htmlBody = `
+            <p>Ciao <strong>${targetDipName}</strong>,</p>
+            <p>Ti informiamo che l'amministrazione / HR ha inserito a tuo nome la seguente assenza: <strong>${typeDesc}</strong> prevista <strong>${dateDesc}</strong>.</p>
+            <p>Il tuo calendario e il registro presenze sono stati aggiornati di conseguenza.</p>
+          `;
+          const plainText = `Ciao ${targetDipName},\n\nTi informiamo che l'amministrazione / HR ha inserito a tuo nome: ${typeDesc} per il periodo ${dateDesc}.\n\nQuesta è una notifica automatica.`;
+          await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+        }
+      }
       
       setDataRichiesta('');
       setDataInizio('');
@@ -833,10 +871,9 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         const subject = `[Notifica] Annullamento richiesta ${typeDesc}`;
         const htmlBody = `
           <p>Ciao <strong>${req.dipendenteName}</strong>,</p>
-          <p>Ti informiamo che la tua richiesta di <strong>${typeDesc}</strong> prevista <strong>${dateDesc}</strong> (in stato <em>${req.stato.toLowerCase()}</em>) è stata **annullata dall'amministrazione / HR**.</p>
+          <p>Ti informiamo che la tua richiesta di <strong>${typeDesc}</strong> prevista <strong>${dateDesc}</strong> (in stato <em>${req.stato.toLowerCase()}</em>) è stata <strong>annullata dall'amministrazione / HR</strong>.</p>
           ${cancellationReason.trim() ? `<p><strong>Motivazione dell'annullamento:</strong> ${cancellationReason.trim()}</p>` : ''}
           <p>Il calendario e il registro presenze sono stati aggiornati di conseguenza.</p>
-          <p>Questa è una notifica automatica inviata dal sistema Pianificazione Aziendale. Si prega di non rispondere a questo messaggio.</p>
         `;
         const plainText = `Ciao ${req.dipendenteName},\n\nTi informiamo che la tua richiesta di ${typeDesc} prevista ${dateDesc} (in stato ${req.stato.toLowerCase()}) è stata annullata dall'amministrazione / HR.\n\n${cancellationReason.trim() ? `Motivazione dell'annullamento: ${cancellationReason.trim()}\n\n` : ''}Questa è una notifica automatica.`;
 
@@ -1173,7 +1210,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
 
     const firstDayOfMonthStr = `${year}-${String(month + 1).padStart(2, '0')}-01`;
     const sortedDipendenti = dipendenti
-      .filter(d => (!d.dataCessazione || d.dataCessazione >= firstDayOfMonthStr) && (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it')
+      .filter(d => (!d.dataCessazione || d.dataCessazione >= firstDayOfMonthStr) && !isTechnicalUser(d))
       .sort((a, b) => a.nome.trim().localeCompare(b.nome.trim()));
 
     const statusMap: Record<string, Record<number, RichiestaFerie>> = {};
@@ -1486,7 +1523,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
             <div class="legend-items">
               <div class="legend-item">
                 <div class="color-block" style="background-color: #38bdf8 !important;"></div>
-                <span>FERIE (DIPENDENTI) / ASSENZA (COLLABORATORI P.IVA)</span>
+                <span>FERIE DIPENDENTI / ASSENZA COLLABORATORI</span>
               </div>
               <div class="legend-item">
                 <div class="color-block" style="background-color: #facc15 !important;"></div>
@@ -1826,7 +1863,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                         className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900"
                       >
                         <option value="">-- Seleziona Dipendente --</option>
-                        {dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')) && (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it').map(d => (
+                        {dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')) && !isTechnicalUser(d)).map(d => (
                           <option key={d.id} value={d.nome}>{d.nome}</option>
                         ))}
                       </select>
@@ -2288,7 +2325,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
 
             <div className="mt-8 flex flex-wrap gap-4 p-4 bg-gray-50 rounded-2xl border border-gray-100 justify-center">
               <div className="text-sm font-bold text-gray-500 mr-2">Legenda Colori:</div>
-              <div className="flex items-center gap-2 text-xs font-bold text-gray-700"><span className="w-3 h-3 rounded-full bg-sky-400 shadow-sm"></span> Ferie (Dipendenti)/Assenza (Collaboratori P.IVA)</div>
+              <div className="flex items-center gap-2 text-xs font-bold text-gray-700"><span className="w-3 h-3 rounded-full bg-sky-400 shadow-sm"></span> Ferie Dipendenti/Assenza Collaboratori</div>
               <div className="flex items-center gap-2 text-xs font-bold text-gray-700"><span className="w-3 h-3 rounded-full bg-amber-400 shadow-sm"></span> Permesso dipendenti/Assenza oraria Collaboratori</div>
               <div className="flex items-center gap-2 text-xs font-bold text-gray-700"><span className="w-3 h-3 rounded-full bg-red-400 shadow-sm"></span> Malattia/Maternità</div>
               <div className="flex items-center gap-2 text-xs font-bold text-gray-700"><span className="w-3 h-3 rounded-full bg-lime-500 shadow-sm"></span> Lavoro da Casa</div>
@@ -2339,7 +2376,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                   {(() => {
                     const firstDayOfMonthStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-01`;
                     const sortedDipendenti = dipendenti
-                      .filter(d => !d.dataCessazione || d.dataCessazione >= firstDayOfMonthStr)
+                      .filter(d => (!d.dataCessazione || d.dataCessazione >= firstDayOfMonthStr) && !isTechnicalUser(d))
                       .sort((a, b) => a.nome.trim().localeCompare(b.nome.trim()));
                     return sortedDipendenti.map(dip => {
                       return (
@@ -2492,7 +2529,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
             <div className="mt-6 flex flex-wrap gap-4 p-5 bg-gray-50 rounded-2xl border border-gray-100 justify-center">
               <div className="text-xs font-bold text-gray-500 mr-2 self-center">Legenda Colori (Approvati):</div>
               <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
-                <span className="w-6 h-4 rounded border border-sky-600 bg-sky-500"></span> Ferie (Dipendenti)/Assenza (Collaboratori P.IVA)
+                <span className="w-6 h-4 rounded border border-sky-600 bg-sky-500"></span> Ferie Dipendenti/Assenza Collaboratori
               </div>
               <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
                 <span className="w-6 h-4 rounded border border-amber-500 bg-amber-400"></span> Permesso dipendenti/Assenza oraria Collaboratori

@@ -22,6 +22,13 @@ export interface Dipendente {
   notificheEmail?: boolean;
 }
 
+export function isTechnicalUser(user?: { email?: string | null; nome?: string | null } | null): boolean {
+  if (!user) return false;
+  const email = (user.email || '').toLowerCase().trim();
+  const nome = (user.nome || '').toLowerCase().trim();
+  return email.includes('synergiesflow') || nome.includes('synergies flow') || nome.includes('synergiesflow');
+}
+
 export interface Commessa {
   id: string;
   nome: string;
@@ -168,31 +175,23 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
           // 4. Dipendenti
           unsubs.push(onSnapshot(collection(db, 'dipendenti'), (snap) => {
-            const hasSynergies = snap.docs.some(doc => (doc.data().email || '').toLowerCase().trim() === 'synergiesflow@ingegno06.it');
-            if (!hasSynergies) {
-              addDoc(collection(db, 'dipendenti'), {
-                nome: 'Synergies Flow (Apertura Commesse)',
-                email: 'synergiesflow@ingegno06.it',
-                notificheEmail: true,
-                tipo: 'collaboratore'
-              }).catch(err => console.error("Error auto-creating synergiesflow system record:", err));
-            }
-
-            const list = snap.docs.map(doc => ({
-              id: doc.id,
-              nome: doc.data().nome || '',
-              email: doc.data().email || '',
-              tipo: doc.data().tipo,
-              dailyRate: doc.data().dailyRate,
-              inpsRate: doc.data().inpsRate,
-              ivaRate: doc.data().ivaRate,
-              raRate: doc.data().raRate,
-              importoFissoMensile: doc.data().importoFissoMensile,
-              oreContratto: doc.data().oreContratto,
-              macroArea: doc.data().macroArea,
-              dataCessazione: doc.data().dataCessazione || '',
-              notificheEmail: doc.data().notificheEmail === true,
-            }));
+            const list = snap.docs
+              .map(doc => ({
+                id: doc.id,
+                nome: doc.data().nome || '',
+                email: doc.data().email || '',
+                tipo: doc.data().tipo,
+                dailyRate: doc.data().dailyRate,
+                inpsRate: doc.data().inpsRate,
+                ivaRate: doc.data().ivaRate,
+                raRate: doc.data().raRate,
+                importoFissoMensile: doc.data().importoFissoMensile,
+                oreContratto: doc.data().oreContratto,
+                macroArea: doc.data().macroArea,
+                dataCessazione: doc.data().dataCessazione || '',
+                notificheEmail: doc.data().notificheEmail === true,
+              }))
+              .filter(d => !isTechnicalUser(d));
             setDipendenti(list.sort((a, b) => a.nome.localeCompare(b.nome)));
           }));
 

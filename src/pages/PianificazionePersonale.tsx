@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { useAuth, type Dipendente } from '../contexts/AuthContext';
+import { useAuth, isTechnicalUser, type Dipendente } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, doc, writeBatch, addDoc, updateDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { Users, ChevronLeft, ChevronRight, Save, Download, ZoomIn, ZoomOut, Trash2, Plus, RefreshCw, CalendarDays, FileText, X, UserCheck, MoveVertical, Clock, Pencil } from 'lucide-react';
@@ -768,7 +768,7 @@ export default function PianificazionePersonale() {
 
   const filteredDipendenti = useMemo(() => {
     let list = dipendenti.filter(d => {
-      if ((d.email || '').toLowerCase().trim() === 'synergiesflow@ingegno06.it') return false;
+      if (isTechnicalUser(d)) return false;
       const clean = d.nome.toLowerCase().trim();
       const isSocio = clean === 'corbellini matteo' || clean === 'profeti andrea' || clean === 'matteo corbellini' || clean === 'andrea profeti';
       return !isSocio;
@@ -2189,7 +2189,7 @@ export default function PianificazionePersonale() {
     const timelineStart = timelineWeeks[0]?.dateObj;
     const timelineStartStr = timelineStart ? timelineStart.toLocaleDateString('sv-SE') : '';
     
-    let list = dipendenti.filter(d => (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it');
+    let list = dipendenti.filter(d => !isTechnicalUser(d));
     if (timelineStartStr) {
       list = list.filter(d => !d.dataCessazione || d.dataCessazione >= timelineStartStr);
     }
