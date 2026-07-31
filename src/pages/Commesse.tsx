@@ -1219,30 +1219,7 @@ export default function Commesse() {
     setEditStato(comm.stato || 'Aperta');
   };
 
-  const handleAddEditProgetto = () => {
-    setEditProgetti(prev => [
-      ...prev,
-      {
-        descrizione: '',
-        pm: '',
-        utentiDaAbilitare: [],
-        sgq: 'NO',
-        verificatori: [],
-        compilatore: '',
-        giornateSenior: 0,
-        giornateProject: 0,
-        giornateJunior: 0
-      }
-    ]);
-  };
 
-  const handleRemoveEditProgetto = (index: number) => {
-    if (editProgetti.length <= 1) {
-      showToast("La commessa deve contenere almeno un progetto.", "warning");
-      return;
-    }
-    setEditProgetti(prev => prev.filter((_, idx) => idx !== index));
-  };
 
   const handleSaveCommessaDetails = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -3686,33 +3663,15 @@ export default function Commesse() {
                   <div className="bg-gradient-to-br from-indigo-50/50 to-emerald-50/50 p-5 rounded-2xl border border-indigo-100/60 space-y-4">
                     <div className="flex justify-between items-center">
                       <h4 className="text-xs font-black text-indigo-950 uppercase tracking-wide flex items-center gap-1.5">
-                        🔀 Dettagli Progetto & SGQ ({editProgetti.length})
+                        🔀 Dettagli Progetto & SGQ
                       </h4>
-                      <button
-                        type="button"
-                        onClick={handleAddEditProgetto}
-                        className="bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-extrabold px-3 py-1.5 rounded-xl transition shadow-xs flex items-center gap-1 cursor-pointer"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>Aggiungi Progetto</span>
-                      </button>
                     </div>
 
                     <div className="space-y-4">
                       {editProgetti.map((progetto, idx) => (
                         <div key={idx} className="bg-white p-4 rounded-xl border border-gray-150 space-y-3 relative shadow-sm">
-                          {editProgetti.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveEditProgetto(idx)}
-                              className="absolute top-3 right-3 text-red-400 hover:text-red-600 transition p-1 cursor-pointer"
-                              title="Elimina questo progetto"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          )}
                           <div>
-                            <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Descrizione Progetto #{idx + 1}</label>
+                            <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Descrizione Progetto</label>
                             <textarea
                               required
                               rows={3}

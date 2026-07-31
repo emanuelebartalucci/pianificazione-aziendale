@@ -81,7 +81,7 @@ async function generateDocx() {
             bullet: { level: 0 },
             children: [
               new TextRun({ text: "Fix Modifica Commesse Storiche / Legacy: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
-              new TextRun({ text: "Risolto il problema di mancanza dei campi di compilazione nella modale di modifica per le commesse aperte precedentemente all'introduzione dello split progetti. Ora all'apertura viene generato automaticamente il progetto di default popolato con i dati esistenti (PM, descrizione e giornate stimate) ed aggiunto il pulsante '+ Aggiungi Progetto' con eliminazione riga.", color: "374151", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Risolto il problema di mancanza dei campi di compilazione nella modale di modifica per le commesse aperte precedentemente all'introduzione dello split progetti. Ora all'apertura viene generato automaticamente il progetto di default popolato con tutti i dati esistenti (Project Manager, utenti da abilitare, descrizione e giornate stimate) rendendoli subito modificabili.", color: "374151", font: "Calibri", size: 22 }),
             ],
           }),
           new Paragraph({
