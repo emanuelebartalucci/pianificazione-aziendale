@@ -159,7 +159,8 @@ export default function PianificazionePersonale() {
     userEmail = '',
     assegnazioni: globalAssignments = {},
     approvedLeaves = [],
-    richiesteDisegnatori = []
+    richiesteDisegnatori = [],
+    loadAssegnazioniForWeeks
   } = useAuth();
   const [commessaSearchText, setCommessaSearchText] = useState('');
   const [isCommessaDropdownOpen, setIsCommessaDropdownOpen] = useState(false);
@@ -265,7 +266,10 @@ export default function PianificazionePersonale() {
       setAllocDataInizio(startOpt.mondayStr);
       setAllocDataFine(endOpt.sundayStr);
     }
-  }, [selectedStartWeekId, selectedEndWeekId, selectableWeekOptions]);
+    if (loadAssegnazioniForWeeks && selectedStartWeekId && selectedEndWeekId) {
+      loadAssegnazioniForWeeks([selectedStartWeekId, selectedEndWeekId]);
+    }
+  }, [selectedStartWeekId, selectedEndWeekId, selectableWeekOptions, loadAssegnazioniForWeeks]);
 
   // Pre-selezione automatica dell'intervallo settimane quando viene selezionata una commessa
   useEffect(() => {

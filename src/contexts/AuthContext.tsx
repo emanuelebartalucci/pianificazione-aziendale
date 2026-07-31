@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { type User, onAuthStateChanged } from 'firebase/auth';
-import { collection, doc, addDoc, deleteDoc, getDoc, onSnapshot, query, where, type QuerySnapshot } from 'firebase/firestore';
+import { collection, doc, addDoc, deleteDoc, getDoc, getDocs, onSnapshot, query, where, type QuerySnapshot } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
 
 const DEFAULT_ADMINS = ['aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it'];
@@ -80,6 +80,7 @@ interface AuthContextType {
   isGestoreCommesse: boolean;
   prioritaCommesse: Record<string, 'Alta' | 'Standard' | 'Bassa'>;
   refreshData: () => Promise<void>;
+  loadAssegnazioniForWeeks?: (requestedWeekIds: string[]) => Promise<void>;
 
   // Impersonificazione
   impersonateUser: (email: string | null) => void;
@@ -259,13 +260,28 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             setClienti(list);
           }));
 
-          // 8. Assegnazioni
+          // 8. Assegnazioni (Filtro a Finestra Mobile 3 Mesi: Mese Scorso, Mese Corrente, Mese Prossimo)
+          const now = new Date();
+          const currentYear = now.getFullYear();
+          const prevMonthYear = now.getMonth() === 0 ? currentYear - 1 : currentYear;
+          const nextMonthYear = now.getMonth() === 11 ? currentYear + 1 : currentYear;
+
+          const allowedYearWeekPrefixes = [
+            `${currentYear}-W`,
+            `${prevMonthYear}-W`,
+            `${nextMonthYear}-W`
+          ];
+
           unsubs.push(onSnapshot(collection(db, 'assegnazioni'), (snap) => {
             const ass: Record<string, any[]> = {};
             snap.forEach(docSnap => {
-              ass[docSnap.id] = docSnap.data().lista || [];
+              const docId = docSnap.id;
+              // Carica se fa parte dell'anno corrente o dei mesi a cavallo
+              if (allowedYearWeekPrefixes.some(prefix => docId.includes(prefix))) {
+                ass[docId] = docSnap.data().lista || [];
+              }
             });
-            setAssegnazioni(ass);
+            setAssegnazioni(prev => ({ ...prev, ...ass }));
           }));
 
           // 9. Chiusure aziendali
@@ -290,8 +306,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             setDynamicCommerciali(snap.docs.map(d => (d.data().email || '').toLowerCase()).filter(Boolean));
           }));
 
-          // 12. Richieste ferie (approved leaves) - query filtrata alla fonte
-          unsubs.push(onSnapshot(query(collection(db, 'richieste_ferie'), where('stato', '==', 'Approvato')), (snap: QuerySnapshot) => {
+          // 12. Richieste ferie (approved leaves) - query filtrata per data recente (dall'anno scorso in poi)
+          const minDateStr = `${currentYear - 1}-01-01`;
+          unsubs.push(onSnapshot(query(
+            collection(db, 'richieste_ferie'),
+            where('stato', '==', 'Approvato'),
+            where('dataInizio', '>=', minDateStr)
+          ), (snap: QuerySnapshot) => {
             const list: any[] = snap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
             setApprovedLeaves(list);
           }));
@@ -386,6 +407,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   });
   const myAssociatedName = myDip ? myDip.nome : null;
 
+  const loadAssegnazioniForWeeks = async (requestedWeekIds: string[]) => {
+    try {
+      const snap = await getDocs(collection(db, 'assegnazioni'));
+      const assMap: Record<string, any[]> = {};
+      snap.forEach((docSnap: any) => {
+        const id = docSnap.id;
+        if (requestedWeekIds.some(wk => id.includes(wk))) {
+          assMap[id] = docSnap.data().lista || [];
+        }
+      });
+      setAssegnazioni(prev => ({ ...prev, ...assMap }));
+    } catch (err) {
+      console.error("Errore caricamento assegnazioni per settimane richieste:", err);
+    }
+  };
+
   return (
     <AuthContext.Provider value={{
       user,
@@ -410,6 +447,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       isGestoreCommesse,
       prioritaCommesse,
       refreshData,
+      loadAssegnazioniForWeeks,
       impersonateUser,
       isRealDev,
       impersonatedEmail,
