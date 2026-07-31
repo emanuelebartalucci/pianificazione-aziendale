@@ -80,6 +80,30 @@ async function generateDocx() {
             spacing: { before: 60, after: 60 },
             bullet: { level: 0 },
             children: [
+              new TextRun({ text: "Unificazione Nomi Clienti & Filtro Case-Insensitive: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Risolto il problema dei duplicati dovuti alle maiuscole/minuscole (es. TAKEDA vs Takeda): la tendine clienti raggruppa ora i clienti in modo unico preferendo il nome ufficiale dell'anagrafica, ed il filtro trova sempre tutte le commesse senza alcuna perdita di dati. Integrata la sincronizzazione automatica su Firestore.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 60, after: 60 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Inserimento & Aggiornamento 12 Commesse Chiuse: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Inserite ed aggiornate nel database catalogo commesse le 12 commesse (SF260260A, SF260181A, S260061B, PE260305A, M26P406A, CS260275A, CS260207A, CS260192A, CS260168A, CS260109A, CO260309A, A260061A) con lo stato impostato a CHIUSA.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 60, after: 60 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Rimozione Badge Numerico Pulsante Storico Richieste: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Rimosso il badge numerico dal pulsante 'Storico Mie Richieste Inviate' mantenendo il pulsante pulito ed uniforme.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 60, after: 60 },
+            bullet: { level: 0 },
+            children: [
               new TextRun({ text: "Super-Ottimizzazione Fluidità & Indicizzazione O(1) Ferie: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
               new TextRun({ text: "Indicizzate le ferie tramite Mappa Hash pre-calcolata in useMemo ed eliminata la stringificazione parassita ad ogni re-render, portando la fluidità e velocità di scroll ed interazione ai massimi livelli di risposta istantanea.", color: "374151", font: "Calibri", size: 22 }),
             ],

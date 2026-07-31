@@ -2691,11 +2691,6 @@ export default function PianificazionePersonale() {
               >
                 <Clock className="w-4 h-4 text-indigo-600" />
                 <span>Storico Mie Richieste Inviate</span>
-                {myRecentSentRequests.length > 0 && (
-                  <span className="bg-indigo-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full ml-1 shadow-2xs">
-                    {myRecentSentRequests.length}
-                  </span>
-                )}
               </button>
             )}
           </div>
