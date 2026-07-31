@@ -73,10 +73,10 @@ export function isCollaboratore(nome?: string | null, tipoOrList?: string | any[
   return COLLABORATORI.some(c => c.toLowerCase() === clean);
 }
 
-export const isSoci = (nome?: string | null): boolean => {
-  if (!nome) return false;
-  const clean = nome.trim().toLowerCase();
-  return clean === 'corbellini matteo' || clean === 'profeti andrea' || clean === 'matteo corbellini' || clean === 'andrea profeti';
+export const isSoci = (nomeOrEmail?: string | null): boolean => {
+  if (!nomeOrEmail) return false;
+  const clean = nomeOrEmail.trim().toLowerCase();
+  return clean.includes('corbellini') || clean.includes('profeti') || clean.includes('aprofeti') || clean.includes('mcorbellini');
 };
 
 export default function Impostazioni() {

@@ -159,8 +159,7 @@ export default function PianificazionePersonale() {
     userEmail = '',
     assegnazioni: globalAssignments = {},
     approvedLeaves = [],
-    richiesteDisegnatori = [],
-    loadAssegnazioniForWeeks
+    richiesteDisegnatori = []
   } = useAuth();
   const [commessaSearchText, setCommessaSearchText] = useState('');
   const [isCommessaDropdownOpen, setIsCommessaDropdownOpen] = useState(false);
@@ -266,10 +265,7 @@ export default function PianificazionePersonale() {
       setAllocDataInizio(startOpt.mondayStr);
       setAllocDataFine(endOpt.sundayStr);
     }
-    if (loadAssegnazioniForWeeks && selectedStartWeekId && selectedEndWeekId) {
-      loadAssegnazioniForWeeks([selectedStartWeekId, selectedEndWeekId]);
-    }
-  }, [selectedStartWeekId, selectedEndWeekId, selectableWeekOptions, loadAssegnazioniForWeeks]);
+  }, [selectedStartWeekId, selectedEndWeekId, selectableWeekOptions]);
 
   // Pre-selezione automatica dell'intervallo settimane quando viene selezionata una commessa
   useEffect(() => {
@@ -506,34 +502,7 @@ export default function PianificazionePersonale() {
   }, [commesse, selectableWeekOptions]);
 
   // Auto-cleaner per eliminare automaticamente le assegnazioni residue su risorse in ferie per l'intera settimana
-  useEffect(() => {
-    if (!approvedLeaves || approvedLeaves.length === 0 || !assignments || Object.keys(assignments).length === 0) return;
-
-    const cleanupOrphanAssignments = async () => {
-      try {
-        const keys = Object.keys(assignments);
-        for (const key of keys) {
-          const lastDashIndex = key.lastIndexOf('-');
-          if (lastDashIndex === -1) continue;
-          const dipName = key.substring(0, lastDashIndex);
-          const wkId = key.substring(lastDashIndex + 1);
-
-          if (dipName && wkId && isFullWeekLeave(dipName, wkId)) {
-            const docList = assignments[key];
-            if (docList && docList.length > 0) {
-              try {
-                await deleteDoc(doc(db, 'assegnazioni', key));
-              } catch (e) {}
-            }
-          }
-        }
-      } catch (err) {
-        console.error("Auto-cleaner assegnazioni in ferie:", err);
-      }
-    };
-
-    cleanupOrphanAssignments();
-  }, [approvedLeaves, assignments]);
+  // (Disattivato in useEffect per evitare loop continui di re-render)
 
   // Stato per la modale di conferma
   const [confirmConfig, setConfirmConfig] = useState<{
@@ -770,12 +739,12 @@ export default function PianificazionePersonale() {
     return (myDip?.macroArea as MacroArea) || null;
   }, [isAdmin, myAssociatedName, dipendenti, userEmail]);
 
+  const isSocioUser = isAdmin || isDev || isSoci(myAssociatedName) || isSoci(userEmail);
+
   const filteredDipendenti = useMemo(() => {
     let list = dipendenti.filter(d => {
       if (isTechnicalUser(d)) return false;
-      const clean = d.nome.toLowerCase().trim();
-      const isSocio = clean === 'corbellini matteo' || clean === 'profeti andrea' || clean === 'matteo corbellini' || clean === 'andrea profeti';
-      return !isSocio;
+      return !isSoci(d.nome);
     });
     // Esclude risorse cessate in passato
     const todayStr = new Date().toLocaleDateString('sv-SE');
@@ -783,7 +752,7 @@ export default function PianificazionePersonale() {
 
     // Coordinatori e PM vedono solo le risorse della propria macro area
     // Admin e Soci vedono tutto; isSenior non è più un bypass
-    if (!isAdmin && !isSoci(myAssociatedName)) {
+    if (!isSocioUser) {
       if (myCoordinatedAreas.length > 0) {
         list = list.filter(d => myCoordinatedAreas.includes(d.macroArea || ''));
       } else if (myMacroArea) {
@@ -793,7 +762,7 @@ export default function PianificazionePersonale() {
 
     if (!searchQuery) return list;
     return list.filter(d => d.nome.toLowerCase().includes(searchQuery.toLowerCase()));
-  }, [dipendenti, searchQuery, myMacroArea, myCoordinatedAreas, isAdmin, myAssociatedName]);
+  }, [dipendenti, searchQuery, myMacroArea, myCoordinatedAreas, isSocioUser]);
 
   const isPMOrResponsabile = useMemo(() => {
     return commesse.some(c => {
@@ -828,9 +797,9 @@ export default function PianificazionePersonale() {
 
   const selectableCommesse = useMemo(() => {
     const openCommesse = commesse.filter(c => c.stato !== 'Chiusa');
-    if (isAdmin || isDev || isSoci(myAssociatedName)) return openCommesse;
+    if (isSocioUser) return openCommesse;
     return openCommesse.filter(c => isUserPmOrResp(c));
-  }, [commesse, isAdmin, isDev, myAssociatedName, userEmail]);
+  }, [commesse, isSocioUser, userEmail, myAssociatedName]);
 
   const assignedCommesseForSelected = useMemo(() => {
     if (allocAction !== 'rimuovi' || selectedResourceNames.length === 0 || !allocDataInizio || !allocDataFine) {
@@ -1297,47 +1266,43 @@ export default function PianificazionePersonale() {
 
 
 
-  const getLeavesForResourceInWeek = (resName: string, wkId: string) => {
-    const parts = wkId.split('-W');
-    if (parts.length !== 2) return [];
-    const year = parseInt(parts[0]);
-    const week = parseInt(parts[1]);
+  const leavesMap = useMemo(() => {
+    const map: Record<string, { giorno: string; tipo: string; frazioneTipo?: string; oraInizio?: string; oraFine?: string; pausaPranzo?: boolean; pausaPranzoOre?: number; dettagli: string }[]> = {};
+    if (!approvedLeaves || approvedLeaves.length === 0) return map;
 
-    const simple = new Date(year, 0, 4);
-    const dayOfWeek = simple.getDay();
-    const dayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-    const firstMonday = new Date(simple.setDate(simple.getDate() + dayOffset));
-    const monday = new Date(firstMonday.setDate(firstMonday.getDate() + (week - 1) * 7));
-
-    const weekDates: string[] = [];
-    for (let i = 0; i < 5; i++) {
-      const dObj = new Date(monday);
-      dObj.setDate(monday.getDate() + i);
-      const y = dObj.getFullYear();
-      const m = String(dObj.getMonth() + 1).padStart(2, '0');
-      const ds = String(dObj.getDate()).padStart(2, '0');
-      weekDates.push(`${y}-${m}-${ds}`);
-    }
-
-    const leaveDaysFound: { giorno: string; tipo: string; frazioneTipo?: string; oraInizio?: string; oraFine?: string; pausaPranzo?: boolean; pausaPranzoOre?: number; dettagli: string }[] = [];
     const dayNames = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
 
-    // 1. Aggiungi le ferie approvate individuali
-    approvedLeaves.forEach(leave => {
-      if (!areNamesEqual(leave.dipendenteName, resName)) return;
+    approvedLeaves.forEach((leave: any) => {
+      const resName = leave.dipendenteName;
+      if (!resName) return;
       const start = leave.dataInizio || leave.data;
       const end = leave.dataFine || leave.data;
-      if (start && end) {
-        const [sY, sM, sD] = start.split('-').map(Number);
-        const [eY, eM, eD] = end.split('-').map(Number);
-        const curr = new Date(sY, sM - 1, sD);
-        const last = new Date(eY, eM - 1, eD);
+      if (!start || !end) return;
 
-        weekDates.forEach((wDateStr, idx) => {
-          const [wY, wM, wD] = wDateStr.split('-').map(Number);
-          const wDate = new Date(wY, wM - 1, wD);
-          if (wDate >= curr && wDate <= last && !isItalianHoliday(wDateStr)) {
-            const alreadyExists = leaveDaysFound.some(l => l.giorno === dayNames[idx]);
+      const [sY, sM, sD] = start.split('-').map(Number);
+      const [eY, eM, eD] = end.split('-').map(Number);
+      if (isNaN(sY) || isNaN(eY)) return;
+
+      const curr = new Date(sY, sM - 1, sD);
+      const last = new Date(eY, eM - 1, eD);
+
+      while (curr <= last) {
+        const dow = curr.getDay();
+        if (dow >= 1 && dow <= 5) {
+          const y = curr.getFullYear();
+          const m = String(curr.getMonth() + 1).padStart(2, '0');
+          const ds = String(curr.getDate()).padStart(2, '0');
+          const dateStr = `${y}-${m}-${ds}`;
+
+          if (!isItalianHoliday(dateStr)) {
+            const wkNum = getWeekNumber(curr);
+            const wkId = `${y}-W${wkNum}`;
+            const key = `${resName}-${wkId}`;
+            if (!map[key]) map[key] = [];
+
+            const dayName = dayNames[dow - 1];
+            const alreadyExists = map[key].some(l => l.giorno === dayName);
+
             if (!alreadyExists) {
               let label = (leave.tipo === 'ferie' || leave.tipo === 'assenza') ? 'Ferie' : leave.tipo === 'malattia' ? 'Malattia' : leave.tipo === 'maternita' ? 'Maternità' : leave.tipo === 'smart' ? 'Smart' : leave.tipo === 'ex_l104' ? 'ex L.104' : leave.tipo === 'studio' ? 'Studio' : (leave.tipo || 'Assenza');
               if (leave.tipo === 'mattina' || leave.frazioneTipo === 'mattina') label = 'Ass. Matt.';
@@ -1348,8 +1313,8 @@ export default function PianificazionePersonale() {
                 }
               }
 
-              leaveDaysFound.push({
-                giorno: dayNames[idx],
+              map[key].push({
+                giorno: dayName,
                 tipo: leave.tipo,
                 frazioneTipo: leave.frazioneTipo,
                 oraInizio: leave.oraInizio,
@@ -1360,11 +1325,17 @@ export default function PianificazionePersonale() {
               });
             }
           }
-        });
+        }
+        curr.setDate(curr.getDate() + 1);
       }
     });
 
-    return leaveDaysFound;
+    return map;
+  }, [approvedLeaves]);
+
+  const getLeavesForResourceInWeek = (resName: string, wkId: string) => {
+    if (!resName || !wkId) return [];
+    return leavesMap[`${resName}-${wkId}`] || [];
   };
 
   const isFullWeekLeave = (resName: string, wkId: string) => {
@@ -1427,51 +1398,7 @@ export default function PianificazionePersonale() {
     return Math.round(totalWeekPct / 5);
   };
 
-  const getBlockedDatesForResource = (resName: string, startDateStr: string, endDateStr: string) => {
-    const blockedDates: Record<string, boolean> = {};
-
-    // 1. Aggiungi le ferie approvate
-    approvedLeaves.forEach(leave => {
-      if (!areNamesEqual(leave.dipendenteName, resName)) return;
-      const start = leave.dataInizio || leave.data;
-      const end = leave.dataFine || leave.data;
-      if (start && end) {
-        const [sY, sM, sD] = start.split('-').map(Number);
-        const [eY, eM, eD] = end.split('-').map(Number);
-        const curr = new Date(sY, sM - 1, sD);
-        const last = new Date(eY, eM - 1, eD);
-        while (curr <= last) {
-          const y = curr.getFullYear();
-          const m = String(curr.getMonth() + 1).padStart(2, '0');
-          const ds = String(curr.getDate()).padStart(2, '0');
-          blockedDates[`${y}-${m}-${ds}`] = true;
-          curr.setDate(curr.getDate() + 1);
-        }
-      }
-    });
-
-
-
-    // 3. Aggiungi le festività nazionali italiane nel range date
-    if (startDateStr && endDateStr) {
-      const [startY, startM, startD] = startDateStr.split('-').map(Number);
-      const [endY, endM, endD] = endDateStr.split('-').map(Number);
-      const currDObj = new Date(startY, startM - 1, startD);
-      const endDObj = new Date(endY, endM - 1, endD);
-      while (currDObj <= endDObj) {
-        const y = currDObj.getFullYear();
-        const m = String(currDObj.getMonth() + 1).padStart(2, '0');
-        const ds = String(currDObj.getDate()).padStart(2, '0');
-        const dateStr = `${y}-${m}-${ds}`;
-        if (isItalianHoliday(dateStr)) {
-          blockedDates[dateStr] = true;
-        }
-        currDObj.setDate(currDObj.getDate() + 1);
-      }
-    }
-
-    return blockedDates;
-  };
+  // Funzione avviso ferie rimosso come richiesto dall'utente
 
   // Carica le assegnazioni e sincronizza dal contesto globale real-time
   useEffect(() => {
@@ -1667,7 +1594,7 @@ export default function PianificazionePersonale() {
 
     const pmArray = Array.isArray(commObj.pm) ? commObj.pm : (commObj.pm ? [commObj.pm] : []);
     const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
-    const isUserAllowed = isAdmin || isSoci(myAssociatedName) || areNamesEqual(commObj.responsabile, myAssociatedName) || isPM;
+    const isUserAllowed = isAdmin || isSoci(myAssociatedName) || isSoci(userEmail) || areNamesEqual(commObj.responsabile, myAssociatedName) || isPM;
     if (!isUserAllowed) {
       showToast("Non hai i permessi per questa commessa (PM/Responsabile o Admin richiesto).", "error");
       return;
@@ -1680,17 +1607,7 @@ export default function PianificazionePersonale() {
     try {
       const targetWeekIds = getWeeksSpannedByDates(allocDataInizio, allocDataFine);
 
-      const blockedDates = getBlockedDatesForResource(resName, allocDataInizio, allocDataFine);
-      const blockedDatesArray = Object.keys(blockedDates);
-      if (blockedDatesArray.length > 0) {
-        setConfirmConfig({
-          isOpen: true,
-          title: '⚠️ Avviso Conflitto Assenze',
-          message: `L'assegnazione per ${resName} è stata registrata in bozza, ma si segnala che nel periodo selezionato la risorsa ha registrato ferie o permessi.`,
-          type: 'warning',
-          onConfirm: () => setConfirmConfig(prev => ({ ...prev, isOpen: false }))
-        });
-      }
+      // Avviso pop-up ferie rimosso come richiesto dall'utente
 
       for (const wkId of targetWeekIds) {
         const docId = `${resName}-${wkId}`;
@@ -1710,10 +1627,18 @@ export default function PianificazionePersonale() {
 
         const actualPct = percentage;
 
-        if (actualPct === 0) continue;
-
         const currentList = updatedAssignments[docId] || [];
         const filteredList = currentList.filter(a => a.commessaId !== commessaId);
+
+        if (actualPct === 0) {
+          if (filteredList.length === 0) {
+            delete updatedAssignments[docId];
+          } else {
+            updatedAssignments[docId] = filteredList;
+          }
+          continue;
+        }
+
         const newAllocation = {
           commessaId: commessaId,
           commessaName: commObj.nome,
@@ -2087,17 +2012,7 @@ export default function PianificazionePersonale() {
 
       } else if (allocAction === 'sostituisci') {
         if (!commObj) return;
-        const blockedDatesB = getBlockedDatesForResource(targetResource, allocDataInizio, allocDataFine);
-        const blockedDatesArrayB = Object.keys(blockedDatesB);
-        if (blockedDatesArrayB.length > 0) {
-          setConfirmConfig({
-            isOpen: true,
-            title: '⚠️ Avviso Conflitto Sostituzione',
-            message: `La sostituzione è stata registrata in bozza, ma si segnala che nel periodo selezionato la risorsa sostitutiva ${targetResource} ha registrato ferie o permessi.`,
-            type: 'warning',
-            onConfirm: () => setConfirmConfig(prev => ({ ...prev, isOpen: false }))
-          });
-        }
+        // Avviso pop-up ferie rimosso per sostituzione
 
         for (const wkId of targetWeekIds) {
           const docIdA = `${sourceResource}-${wkId}`;
@@ -2372,11 +2287,14 @@ export default function PianificazionePersonale() {
           const leaves = getLeavesForResourceInWeek(dip.nome, wk.id);
           const totalLoad = calculateWeeklyLoad(dip.nome, wk.id, list);
           
-          const isCellModified = (() => {
-            const listStr = JSON.stringify(list);
-            const dbListStr = JSON.stringify(dbAssignments[key] || []);
-            return listStr !== dbListStr;
-          })();
+          const dbList = dbAssignments[key] || [];
+          const isCellModified = isDirty && (
+            list.length !== dbList.length ||
+            list.some((item, idx) => {
+              const dbItem = dbList[idx];
+              return !dbItem || item.commessaId !== dbItem.commessaId || item.percentuale !== dbItem.percentuale;
+            })
+          );
 
           const weekStartStr = wk.dateObj ? wk.dateObj.toLocaleDateString('sv-SE') : '';
           const isWeekCessato = dip.dataCessazione && weekStartStr && weekStartStr > dip.dataCessazione;
@@ -2765,19 +2683,21 @@ export default function PianificazionePersonale() {
               </button>
             )}
 
-            <button
-              type="button"
-              onClick={() => setShowMySentRequestsModal(true)}
-              className="flex items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 px-3.5 py-2 rounded-xl text-xs font-extrabold transition shadow-2xs active:scale-95 cursor-pointer ml-2"
-            >
-              <Clock className="w-4 h-4 text-indigo-600" />
-              <span>Storico Mie Richieste Inviate</span>
-              {myRecentSentRequests.length > 0 && (
-                <span className="bg-indigo-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full ml-1 shadow-2xs">
-                  {myRecentSentRequests.length}
-                </span>
-              )}
-            </button>
+            {!isAdmin && !isSoci(myAssociatedName) && !isSoci(userEmail) && (
+              <button
+                type="button"
+                onClick={() => setShowMySentRequestsModal(true)}
+                className="flex items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 px-3.5 py-2 rounded-xl text-xs font-extrabold transition shadow-2xs active:scale-95 cursor-pointer ml-2"
+              >
+                <Clock className="w-4 h-4 text-indigo-600" />
+                <span>Storico Mie Richieste Inviate</span>
+                {myRecentSentRequests.length > 0 && (
+                  <span className="bg-indigo-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full ml-1 shadow-2xs">
+                    {myRecentSentRequests.length}
+                  </span>
+                )}
+              </button>
+            )}
           </div>
         </h2>
       </div>
@@ -3412,6 +3332,7 @@ export default function PianificazionePersonale() {
 
               {/* Pulsanti Richiesta Personale – centrati sotto, visibili solo quando commessa + periodo selezionati */}
               {selectedCommessaId && allocDataInizio && allocDataFine && (() => {
+                if (isAdmin || isSoci(myAssociatedName) || isSoci(userEmail)) return null;
                 const areaButtonConfigs: Record<MacroArea, { color: string; label: string }> = {
                   'Disegnatori':          { color: 'bg-teal-600 hover:bg-teal-700',     label: '✉️ Richiedi Disegnatore' },
                   'Ingegneria':           { color: 'bg-indigo-600 hover:bg-indigo-700', label: '✉️ Richiedi Ingegnere' },

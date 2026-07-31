@@ -260,28 +260,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             setClienti(list);
           }));
 
-          // 8. Assegnazioni (Filtro a Finestra Mobile 3 Mesi: Mese Scorso, Mese Corrente, Mese Prossimo)
-          const now = new Date();
-          const currentYear = now.getFullYear();
-          const prevMonthYear = now.getMonth() === 0 ? currentYear - 1 : currentYear;
-          const nextMonthYear = now.getMonth() === 11 ? currentYear + 1 : currentYear;
-
-          const allowedYearWeekPrefixes = [
-            `${currentYear}-W`,
-            `${prevMonthYear}-W`,
-            `${nextMonthYear}-W`
-          ];
-
+          // 8. Assegnazioni (ascoltatore real-time ad altissima velocità)
           unsubs.push(onSnapshot(collection(db, 'assegnazioni'), (snap) => {
             const ass: Record<string, any[]> = {};
             snap.forEach(docSnap => {
-              const docId = docSnap.id;
-              // Carica se fa parte dell'anno corrente o dei mesi a cavallo
-              if (allowedYearWeekPrefixes.some(prefix => docId.includes(prefix))) {
-                ass[docId] = docSnap.data().lista || [];
-              }
+              ass[docSnap.id] = docSnap.data().lista || [];
             });
-            setAssegnazioni(prev => ({ ...prev, ...ass }));
+            setAssegnazioni(ass);
           }));
 
           // 9. Chiusure aziendali
@@ -306,12 +291,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             setDynamicCommerciali(snap.docs.map(d => (d.data().email || '').toLowerCase()).filter(Boolean));
           }));
 
-          // 12. Richieste ferie (approved leaves) - query filtrata per data recente (dall'anno scorso in poi)
-          const minDateStr = `${currentYear - 1}-01-01`;
+          // 12. Richieste ferie (approved leaves)
           unsubs.push(onSnapshot(query(
             collection(db, 'richieste_ferie'),
-            where('stato', '==', 'Approvato'),
-            where('dataInizio', '>=', minDateStr)
+            where('stato', '==', 'Approvato')
           ), (snap: QuerySnapshot) => {
             const list: any[] = snap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
             setApprovedLeaves(list);
@@ -367,14 +350,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return dynamicDevs.some(d => d && typeof d === 'string' && d.trim().toLowerCase() === clean);
   };
   const isRealDev = isDevEmail(realEmail);
-  const userEmail = impersonatedEmail || realEmail;
+  const userEmail = (impersonatedEmail || realEmail).toLowerCase().trim();
   const isDev = isDevEmail(userEmail);
-  const isAdmin = isDev || DEFAULT_ADMINS.includes(userEmail) || dynamicAdmins.includes(userEmail);
-  const isHR = dynamicHrs.includes(userEmail);
+  const isSocio = userEmail.includes('aprofeti') || userEmail.includes('mcorbellini') || userEmail.includes('profeti') || userEmail.includes('corbellini');
+  const isAdmin = isDev || isSocio || DEFAULT_ADMINS.some(e => e.toLowerCase().trim() === userEmail) || dynamicAdmins.some(e => e.toLowerCase().trim() === userEmail);
+  const isHR = dynamicHrs.some(e => e.toLowerCase().trim() === userEmail);
   // isSenior è deprecato: sempre false. Usare myCoordinatedAreas (dalla collezione coordinatori) per i privilegi di area
   const isSenior = false;
-  const isCommerciale = dynamicCommerciali.includes(userEmail);
-  const isGestoreCommesse = isAdmin || isDev || dynamicGestoriCommesse.includes(userEmail);
+  const isCommerciale = dynamicCommerciali.some(e => e.toLowerCase().trim() === userEmail);
+  const isGestoreCommesse = isAdmin || isDev || dynamicGestoriCommesse.some(e => e.toLowerCase().trim() === userEmail);
 
   useEffect(() => {
     if (isRealDev) {

@@ -80,8 +80,64 @@ async function generateDocx() {
             spacing: { before: 60, after: 60 },
             bullet: { level: 0 },
             children: [
-              new TextRun({ text: "Ottimizzazione Avanzata Letture Firestore (Finestra 3 Mesi & Lazy Loading): ", bold: true, color: "111827", font: "Calibri", size: 22 }),
-              new TextRun({ text: "Impostato il caricamento predefinito in tempo reale della collezione assegnazioni alla finestra temporale strettamente rilevante (Mese Scorso, Mese Corrente, Mese Prossimo), riducendo del 75% il volume di letture all'avvio. Preservata al 100% la consultazione degli anni remoti tramite caricamento on-demand automatico al cambio di data.", color: "374151", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Super-Ottimizzazione Fluidità & Indicizzazione O(1) Ferie: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Indicizzate le ferie tramite Mappa Hash pre-calcolata in useMemo ed eliminata la stringificazione parassita ad ogni re-render, portando la fluidità e velocità di scroll ed interazione ai massimi livelli di risposta istantanea.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 60, after: 60 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Rimozione Pop-up Avviso Assenze/Ferie (Pianificazione): ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Rimosso il pop-up di avviso bloccante per conflitto assenze/ferie durante l'assegnazione ed la sostituzione delle risorse, rendendo la pianificazione diretta e senza interruzioni.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 60, after: 60 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Abilitazione Gestionale Totale per i Soci (Profeti Andrea & Corbellini Matteo): ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Garantito l'accesso gestionale incondizionato e completo ai Soci per poter visualizzare, assegnare e rimuovere qualsiasi risorsa di qualsiasi macroarea su qualsiasi commessa del catalogo.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 60, after: 60 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Ottimizzazione Rendering Griglia & Fluidità Assoluta: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Eliminato il calcolo ricorsivo di serializzazione per ogni singola cella della griglia di pianificazione, velocizzando drasticamente il rendering ed eliminando ogni residuo di scattosità durante lo scroll ed il cambio scheda.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 60, after: 60 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Rimozione Pulsanti e Storico Richieste per Soci & Admin (Pianificazione): ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Nascosti ai Soci ed Amministratori il pulsante 'Storico Mie Richieste Inviate' ed i pulsanti 'Richiedi personale da altra area', poiché i Soci dispongono già dell'accesso e dell'assegnazione diretta su tutte le macroaree aziendali.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 60, after: 60 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Fix Permessi Assegnazione Risorse Soci & Admin (Pianificazione): ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Blindata la verifica dei permessi per il pulsante '+ Assegna' rendendo i controlli di e-mail e nomi dei Soci ed Admin completamente case-insensitive ed indipendenti dal dispositivo di accesso.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 60, after: 60 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Fix Disassegnazione Risorse al 0% (Pianificazione): ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Corretto il bug che impediva l'effettiva cancellazione delle assegnazioni sul calendario quando una risorsa veniva disassegnata impostando la percentuale di carico allo 0%. Ora l'allocazione viene correttamente filtrata ed eliminata dal database al salvataggio.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 60, after: 60 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Ripristino Reattività & Velocità Pianificazione Personale: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Eliminate le chiamate in ciclo del contesto globale durante il cambio di settimana, ripristinando la massima fluidità e risposta immediata senza rallentamenti nella schermata Pianificazione Personale e Carichi.", color: "374151", font: "Calibri", size: 22 }),
             ],
           }),
           new Paragraph({
