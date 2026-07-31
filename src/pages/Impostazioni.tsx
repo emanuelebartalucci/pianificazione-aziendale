@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, addDoc, doc, setDoc, deleteDoc, getDocs, updateDoc } from 'firebase/firestore';
-import { Shield, UserCheck, Star, Users, Plus, Trash2, Settings, Printer, Building2, Search, Pencil, X, Mail, Eye, Send, Code, Save } from 'lucide-react';
+import { Shield, UserCheck, Star, Users, Plus, Trash2, Settings, Printer, Building2, Search, Pencil, X, Mail, Eye, Send, Code, Save, Briefcase } from 'lucide-react';
 import ConfirmModal from '../components/ConfirmModal';
 import { wrapMailTemplate } from '../utils/mailTemplate';
 import { queueMail } from '../utils/mailSender';
@@ -197,6 +197,8 @@ export default function Impostazioni() {
   const [adminsList, setAdminsList] = useState<{id: string, email: string}[]>([]);
   const [newPmEmail, setNewPmEmail] = useState('');
   const [pmsList, setPmsList] = useState<{id: string, email: string}[]>([]);
+  const [newGestoreCommessaEmail, setNewGestoreCommessaEmail] = useState('');
+  const [gestoriCommesseList, setGestoriCommesseList] = useState<{id: string, email: string}[]>([]);
 
   const [editingEmployeeAreaId, setEditingEmployeeAreaId] = useState<string | null>(null);
   
@@ -228,12 +230,13 @@ export default function Impostazioni() {
   const loadImpostazioniLists = async () => {
     if (!isDev) return;
     try {
-      const [snapA, snapH, snapD, snapC, snapPM] = await Promise.all([
+      const [snapA, snapH, snapD, snapC, snapPM, snapGC] = await Promise.all([
         getDocs(collection(db, 'admins')),
         getDocs(collection(db, 'hr')),
         getDocs(collection(db, 'sviluppatori')),
         getDocs(collection(db, 'clienti')),
-        getDocs(collection(db, 'project_managers'))
+        getDocs(collection(db, 'project_managers')),
+        getDocs(collection(db, 'gestori_commesse'))
       ]);
 
       setAdminsList(snapA.docs.map(d => ({ id: d.id, email: d.data().email })));
@@ -245,6 +248,7 @@ export default function Impostazioni() {
         nome: d.data().nome
       })).sort((a, b) => Number(a.codice) - Number(b.codice)));
       setPmsList(snapPM.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
+      setGestoriCommesseList(snapGC.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
     } catch (err) {
       console.error("Errore caricamento liste impostazioni:", err);
     }
@@ -316,6 +320,28 @@ export default function Impostazioni() {
     await refreshData();
     await loadImpostazioniLists();
     showToast("Sviluppatore rimosso con successo!", "success");
+  };
+
+  const handleAddGestoreCommessa = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newGestoreCommessaEmail) {
+      if (gestoriCommesseList.some(g => g.email.toLowerCase().trim() === newGestoreCommessaEmail.toLowerCase().trim())) {
+        showToast("Questo utente è già un Gestore Commesse.", "warning");
+        return;
+      }
+      await addDoc(collection(db, 'gestori_commesse'), { email: newGestoreCommessaEmail.toLowerCase().trim() });
+      await refreshData();
+      await loadImpostazioniLists();
+      setNewGestoreCommessaEmail('');
+      showToast("Gestore Commesse aggiunto con successo!", "success");
+    }
+  };
+
+  const handleRemoveGestoreCommessa = async (id: string) => {
+    await deleteDoc(doc(db, 'gestori_commesse', id));
+    await refreshData();
+    await loadImpostazioniLists();
+    showToast("Gestore Commesse rimosso con successo!", "success");
   };
 
 
@@ -878,6 +904,16 @@ export default function Impostazioni() {
       .sort((a, b) => a.name.localeCompare(b.name, 'it'));
   }, [pmsList, dipendenti]);
 
+  const sortedGestoriCommesseList = useMemo(() => {
+    return gestoriCommesseList
+      .map(g => ({
+        id: g.id,
+        email: g.email,
+        name: getDipNomeFromEmail(g.email)
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'it'));
+  }, [gestoriCommesseList, dipendenti]);
+
   const maxCoordinatorsCount = useMemo(() => {
     const counts = (['Disegnatori', 'Ingegneria', 'Sicurezza Cantieri', 'Consulenza Sicurezza', 'Amministrazione'] as const).map(
       areaName => (coordinatori || []).filter((c: any) => c.area === areaName).length
@@ -1224,7 +1260,7 @@ export default function Impostazioni() {
         {/* TAB 4: RUOLI & PERMESSI */}
         {activeTab === 'ruoli' && isDev && (
           <div className="space-y-8">
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 items-stretch">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
               
               {/* Sviluppatori (Dev) */}
               <section className="bg-gradient-to-br from-cyan-50 to-slate-100 p-6 rounded-3xl border border-cyan-200 shadow-sm h-full flex flex-col justify-between">
@@ -1344,6 +1380,38 @@ export default function Impostazioni() {
                           <div className="text-xs text-blue-700/70">{p.email}</div>
                         </div>
                         <button onClick={() => handleRemovePM(p.id)} className="text-blue-405 hover:text-red-655 p-1 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </section>
+
+              {/* Gestori Commesse */}
+              <section className="bg-gradient-to-br from-emerald-50 to-teal-50 p-6 rounded-3xl border border-emerald-100 shadow-sm h-full flex flex-col justify-between">
+                <div>
+                  <h3 className="text-xl font-bold text-emerald-950 mb-1 flex items-center gap-2">
+                    <Briefcase className="w-6 h-6 text-emerald-600" /> Gestori Commesse
+                  </h3>
+                  <p className="text-xs text-emerald-800/80 mb-4">Abilitati ad aprire nuove commesse ed accedere al Catalogo Commesse.</p>
+                  <form onSubmit={handleAddGestoreCommessa} className="flex gap-2 mb-4">
+                    <select required value={newGestoreCommessaEmail} onChange={e => setNewGestoreCommessaEmail(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-emerald-400 transition shadow-inner font-medium text-emerald-950 text-xs">
+                      <option value="">Seleziona dipendente</option>
+                      {sortedDipendentiWithEmail.map((d: any) => <option key={d.id} value={d.email}>{d.nome}</option>)}
+                    </select>
+                    <button type="submit" className="bg-emerald-600 text-white px-4 py-3 rounded-xl hover:bg-emerald-700 transition font-bold shadow-md active:scale-95 text-xs cursor-pointer">Nomina</button>
+                  </form>
+                </div>
+                <div className="h-48 overflow-y-auto bg-white/50 rounded-xl divide-y border border-emerald-100">
+                  {sortedGestoriCommesseList.length === 0 ? (
+                    <p className="p-4 text-xs text-gray-400 italic font-bold">Nessun Gestore Commesse nominato.</p>
+                  ) : (
+                    sortedGestoriCommesseList.map((g: any) => (
+                      <div key={g.id} className="p-3 flex justify-between items-center text-sm">
+                        <div>
+                          <div className="font-bold text-emerald-950">{g.name}</div>
+                          <div className="text-xs text-emerald-700/70">{g.email}</div>
+                        </div>
+                        <button onClick={() => handleRemoveGestoreCommessa(g.id)} className="text-emerald-500 hover:text-red-600 p-1 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
                       </div>
                     ))
                   )}

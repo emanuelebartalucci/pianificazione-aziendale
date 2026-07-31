@@ -686,7 +686,7 @@ export default function Dashboard() {
               onClick={(e) => handleNav(e, '/commesse')} 
               onAuxClick={(e) => handleNav(e, '/commesse')} 
               onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
-              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
+              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col min-h-[200px] xl:min-h-[220px] h-auto w-full"
             >
               <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-colors relative mb-3">
                 <Briefcase className="w-6 h-6 sm:w-7 sm:h-7" />
@@ -694,7 +694,7 @@ export default function Dashboard() {
               <div className="h-11 xl:h-12 shrink-0 flex items-start overflow-hidden">
                 <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-900 leading-snug">Pianificazione Commesse</h2>
               </div>
-              <div className="hidden xl:block h-12 shrink-0 overflow-hidden mt-1">
+              <div className="hidden xl:block min-h-[48px] shrink-0 mt-1 pb-1">
                 <p className="text-xs font-semibold text-gray-500 leading-snug">Gestisci e visualizza i tuoi impegni settimanali e i progetti.</p>
               </div>
             </div>
@@ -704,7 +704,7 @@ export default function Dashboard() {
               onClick={(e) => handleNav(e, '/pianificazione-personale')} 
               onAuxClick={(e) => handleNav(e, '/pianificazione-personale')} 
               onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
-              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
+              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col min-h-[200px] xl:min-h-[220px] h-auto w-full"
             >
               <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-orange-100 text-orange-600 rounded-2xl flex items-center justify-center group-hover:bg-orange-600 group-hover:text-white transition-colors relative mb-3">
                 <Users className="w-6 h-6 sm:w-7 sm:h-7" />
@@ -728,7 +728,7 @@ export default function Dashboard() {
               <div className="h-11 xl:h-12 shrink-0 flex items-start overflow-hidden">
                 <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-900 leading-snug">Pianificazione Personale</h2>
               </div>
-              <div className="hidden xl:block h-12 shrink-0 overflow-hidden mt-1">
+              <div className="hidden xl:block min-h-[48px] shrink-0 mt-1 pb-1">
                 <p className="text-xs font-semibold text-gray-500 leading-snug">Pianifica il personale sulle commesse e controlla i carichi di lavoro.</p>
               </div>
             </div>
@@ -738,7 +738,7 @@ export default function Dashboard() {
               onClick={(e) => handleNav(e, '/ferie')} 
               onAuxClick={(e) => handleNav(e, '/ferie')} 
               onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
-              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
+              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col min-h-[200px] xl:min-h-[220px] h-auto w-full"
             >
               <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-green-100 text-green-600 rounded-2xl flex items-center justify-center group-hover:bg-green-600 group-hover:text-white transition-colors relative mb-3">
                 <Calendar className="w-6 h-6 sm:w-7 sm:h-7" />
@@ -754,7 +754,7 @@ export default function Dashboard() {
               <div className="h-11 xl:h-12 shrink-0 flex items-start overflow-hidden">
                 <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-900 leading-snug">Piano Ferie</h2>
               </div>
-              <div className="hidden xl:block h-12 shrink-0 overflow-hidden mt-1">
+              <div className="hidden xl:block min-h-[48px] shrink-0 mt-1 pb-1">
                 <p className="text-xs font-semibold text-gray-500 leading-snug">Richiedi giorni di ferie o assenze e controlla il calendario.</p>
               </div>
             </div>
@@ -764,7 +764,7 @@ export default function Dashboard() {
               onClick={(e) => handleNav(e, '/presenze')} 
               onAuxClick={(e) => handleNav(e, '/presenze')} 
               onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
-              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
+              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col min-h-[200px] xl:min-h-[220px] h-auto w-full"
             >
               <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center group-hover:bg-indigo-600 group-hover:text-white transition-colors relative mb-3">
                 <FileText className="w-6 h-6 sm:w-7 sm:h-7" />
@@ -780,7 +780,7 @@ export default function Dashboard() {
               <div className="h-11 xl:h-12 shrink-0 flex items-start overflow-hidden">
                 <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-900 leading-snug">Registro Presenze</h2>
               </div>
-              <div className="hidden xl:block h-12 shrink-0 overflow-hidden mt-1">
+              <div className="hidden xl:block min-h-[48px] shrink-0 mt-1 pb-1">
                 <p className="text-xs font-semibold text-gray-500 leading-snug">Compila il rapportino mensile delle ore e dei rimborsi trasferte.</p>
               </div>
             </div>
@@ -790,7 +790,7 @@ export default function Dashboard() {
               onClick={(e) => handleNav(e, '/prenotazioni')} 
               onAuxClick={(e) => handleNav(e, '/prenotazioni')} 
               onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
-              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
+              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col min-h-[200px] xl:min-h-[220px] h-auto w-full"
             >
               <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-teal-100 text-teal-600 rounded-2xl flex items-center justify-center group-hover:bg-teal-600 group-hover:text-white transition-colors mb-3">
                 <CalendarDays className="w-6 h-6 sm:w-7 sm:h-7" />
@@ -798,7 +798,7 @@ export default function Dashboard() {
               <div className="h-11 xl:h-12 shrink-0 flex items-start overflow-hidden">
                 <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-900 leading-snug">Prenotazioni</h2>
               </div>
-              <div className="hidden xl:block h-12 shrink-0 overflow-hidden mt-1">
+              <div className="hidden xl:block min-h-[48px] shrink-0 mt-1 pb-1">
                 <p className="text-xs font-semibold text-gray-500 leading-snug">Prenota sale riunioni, auto aziendali o gestisci i PC CAD condivisi.</p>
               </div>
             </div>
@@ -808,7 +808,7 @@ export default function Dashboard() {
               onClick={(e) => handleNav(e, '/organigramma')} 
               onAuxClick={(e) => handleNav(e, '/organigramma')} 
               onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
-              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
+              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col min-h-[200px] xl:min-h-[220px] h-auto w-full"
             >
               <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center group-hover:bg-amber-600 group-hover:text-white transition-colors mb-3">
                 <Network className="w-6 h-6 sm:w-7 sm:h-7" />
@@ -816,7 +816,7 @@ export default function Dashboard() {
               <div className="h-11 xl:h-12 shrink-0 flex items-start overflow-hidden">
                 <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-900 leading-snug">Organigramma</h2>
               </div>
-              <div className="hidden xl:block h-12 shrink-0 overflow-hidden mt-1">
+              <div className="hidden xl:block min-h-[48px] shrink-0 mt-1 pb-1">
                 <p className="text-xs font-semibold text-gray-500 leading-snug">Consulta la suddivisione delle macroaree ed i coordinatori di riferimento.</p>
               </div>
             </div>
@@ -826,7 +826,7 @@ export default function Dashboard() {
               onClick={(e) => handleNav(e, '/suggerimenti')} 
               onAuxClick={(e) => handleNav(e, '/suggerimenti')} 
               onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
-              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
+              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col min-h-[200px] xl:min-h-[220px] h-auto w-full"
             >
               <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-purple-100 text-purple-600 rounded-2xl flex items-center justify-center group-hover:bg-purple-600 group-hover:text-white transition-colors relative mb-3">
                 <MessageSquare className="w-6 h-6 sm:w-7 sm:h-7" />
@@ -842,7 +842,7 @@ export default function Dashboard() {
               <div className="h-11 xl:h-12 shrink-0 flex items-start overflow-hidden">
                 <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-900 leading-snug">Cassetta delle Idee</h2>
               </div>
-              <div className="hidden xl:block h-12 shrink-0 overflow-hidden mt-1">
+              <div className="hidden xl:block min-h-[48px] shrink-0 mt-1 pb-1">
                 <p className="text-xs font-semibold text-gray-500 leading-snug">Invia suggerimenti e partecipa alla valutazione del clima.</p>
               </div>
             </div>
@@ -853,7 +853,7 @@ export default function Dashboard() {
                 onClick={(e) => handleNav(e, '/gestione-hr')} 
                 onAuxClick={(e) => handleNav(e, '/gestione-hr')} 
                 onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
-                className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
+                className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col min-h-[200px] xl:min-h-[220px] h-auto w-full"
               >
                 <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-purple-100 text-purple-600 rounded-2xl flex items-center justify-center group-hover:bg-purple-600 group-hover:text-white transition-colors relative mb-3">
                   <HeartPulse className="w-6 h-6 sm:w-7 sm:h-7" />
@@ -869,7 +869,7 @@ export default function Dashboard() {
                 <div className="h-11 xl:h-12 shrink-0 flex items-start overflow-hidden">
                   <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-900 leading-snug">Gestione HR</h2>
                 </div>
-                <div className="hidden xl:block h-12 shrink-0 overflow-hidden mt-1">
+                <div className="hidden xl:block min-h-[48px] shrink-0 mt-1 pb-1">
                   <p className="text-xs font-semibold text-gray-500 leading-snug">Gestisci frasi di benvenuto, benessere, questionari e suggerimenti.</p>
                 </div>
               </div>
@@ -881,7 +881,7 @@ export default function Dashboard() {
                 onClick={(e) => handleNav(e, '/impostazioni')} 
                 onAuxClick={(e) => handleNav(e, '/impostazioni')} 
                 onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
-                className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col h-[200px] xl:h-[220px] w-full"
+                className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col min-h-[200px] xl:min-h-[220px] h-auto w-full"
               >
                 <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-gray-100 text-gray-600 rounded-2xl flex items-center justify-center group-hover:bg-gray-800 group-hover:text-white transition-colors mb-3">
                   <Settings className="w-6 h-6 sm:w-7 sm:h-7" />
@@ -889,7 +889,7 @@ export default function Dashboard() {
                 <div className="h-11 xl:h-12 shrink-0 flex items-start overflow-hidden">
                   <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-900 leading-snug">Impostazioni</h2>
                 </div>
-                <div className="hidden xl:block h-12 shrink-0 overflow-hidden mt-1">
+                <div className="hidden xl:block min-h-[48px] shrink-0 mt-1 pb-1">
                   <p className="text-xs font-semibold text-gray-500 leading-snug">Gestisci anagrafica risorse, clienti, ruoli e sistema.</p>
                 </div>
               </div>

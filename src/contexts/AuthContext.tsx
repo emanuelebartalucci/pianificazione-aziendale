@@ -45,6 +45,8 @@ export interface Commessa {
   giornateSeniorProject?: number;
   giornateProject?: number;
   giornateJuniorProject?: number;
+  apertaDa?: string;
+  progetti?: any[];
 }
 
 export interface Coordinatore {
@@ -72,9 +74,10 @@ interface AuthContextType {
   richiesteDisegnatori: any[];
   pmsEmails: string[];
   // seniorsEmails deprecato: la collezione Firestore 'seniors' è stata rimossa
-  seniorsEmails: string[];
   commercialiEmails: string[];
   isCommerciale: boolean;
+  gestoriCommesseEmails: string[];
+  isGestoreCommesse: boolean;
   prioritaCommesse: Record<string, 'Alta' | 'Standard' | 'Bassa'>;
   refreshData: () => Promise<void>;
 
@@ -112,8 +115,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [pmsEmails, setPmsEmails] = useState<string[]>([]);
   // seniorsEmails: rimosso il fetch Firestore, ora sempre array vuoto per retrocompatibilità
   const [dynamicCommerciali, setDynamicCommerciali] = useState<string[]>([]);
+  const [dynamicGestoriCommesse, setDynamicGestoriCommesse] = useState<string[]>([]);
   const [prioritaCommesse, setPrioritaCommesse] = useState<Record<string, 'Alta' | 'Standard' | 'Bassa'>>({});
-
 
   // Funzione mock retrocompatibile
   const refreshData = async () => {
@@ -145,6 +148,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setRichiesteDisegnatori([]);
         setPmsEmails([]);
         setDynamicCommerciali([]);
+        setDynamicGestoriCommesse([]);
         setPrioritaCommesse({});
         setLoading(false);
       } else {
@@ -171,6 +175,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
               list.push('ebartalucci@ingegno06.it');
             }
             setDynamicDevs(list);
+          }));
+
+          // 3.c Gestori Commesse
+          unsubs.push(onSnapshot(collection(db, 'gestori_commesse'), (snap) => {
+            const list = snap.docs.map(doc => (doc.data().email || '').toLowerCase().trim()).filter(Boolean);
+            setDynamicGestoriCommesse(list);
           }));
 
           // 4. Dipendenti
@@ -233,6 +243,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
               giornateSeniorProject: doc.data().giornateSeniorProject,
               giornateProject: doc.data().giornateProject,
               giornateJuniorProject: doc.data().giornateJuniorProject,
+              apertaDa: doc.data().apertaDa || '',
+              progetti: doc.data().progetti || []
             }));
             setCommesse(list.sort((a, b) => a.nome.localeCompare(b.nome)));
           }));
@@ -341,6 +353,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   // isSenior è deprecato: sempre false. Usare myCoordinatedAreas (dalla collezione coordinatori) per i privilegi di area
   const isSenior = false;
   const isCommerciale = dynamicCommerciali.includes(userEmail);
+  const isGestoreCommesse = isAdmin || isDev || dynamicGestoriCommesse.includes(userEmail);
 
   useEffect(() => {
     if (isRealDev) {
@@ -391,9 +404,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       approvedLeaves,
       richiesteDisegnatori,
       pmsEmails,
-      seniorsEmails: [], // deprecato: raccolta Firestore 'seniors' rimossa
       commercialiEmails: dynamicCommerciali,
       isCommerciale,
+      gestoriCommesseEmails: dynamicGestoriCommesse,
+      isGestoreCommesse,
       prioritaCommesse,
       refreshData,
       impersonateUser,

@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, doc, setDoc, addDoc, deleteDoc, getDocs, runTransaction } from 'firebase/firestore';
-import { Briefcase, ChevronLeft, ChevronRight, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw, Printer, Plus, UserCheck, MoveVertical, Building2 } from 'lucide-react';
+import { Briefcase, ChevronLeft, ChevronRight, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw, Printer, Plus, UserCheck, MoveVertical, Building2, Send } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays } from '../utils/date';
 import { queueMail } from '../utils/mailSender';
 import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
@@ -221,6 +221,7 @@ export default function Commesse() {
   const { 
     isAdmin = false, 
     isDev = false,
+    isGestoreCommesse = false,
     myAssociatedName = '', 
     userEmail = '',
     dipendenti = [], 
@@ -502,15 +503,16 @@ export default function Commesse() {
     });
   };
 
+
+  
   // Stati per la modifica dei dettagli della commessa (Responsabile, PM, Date)
   const [editingCommessa, setEditingCommessa] = useState<any | null>(null);
   const [editResponsabile, setEditResponsabile] = useState('');
-
   const [editDataInizio, setEditDataInizio] = useState('');
   const [editDataFine, setEditDataFine] = useState('');
   const [editStato, setEditStato] = useState('Aperta');
   const [savingEdit, setSavingEdit] = useState(false);
-  
+
   const [isCommessaDropdownOpen, setIsCommessaDropdownOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
 
@@ -1171,12 +1173,15 @@ export default function Commesse() {
     setEditResponsabile(respDip ? respDip.nome : (comm.responsabile || ''));
     
 
-    // Inizializzazione progetti split in modifica
+    // Inizializzazione progetti split in modifica (con fallback per commesse legacy)
     const defaultPm = Array.isArray(comm.pm) ? (comm.pm[0] || '') : (comm.pm || '');
-    const initialProgetti = (comm.progetti || [
+    const hasProgetti = Array.isArray(comm.progetti) && comm.progetti.length > 0;
+    const defaultTitolo = comm.titolo || (comm.nome && comm.nome.includes(' - ') ? comm.nome.split(' - ').slice(1).join(' - ') : comm.nome) || 'Progetto Commessa';
+    const initialProgetti = (hasProgetti ? comm.progetti : [
       {
-        descrizione: 'FORMAZIONE - Attività formative sulla commessa',
+        descrizione: 'ATTIVITÀ PRINCIPALE - ' + defaultTitolo,
         pm: defaultPm,
+        utentiDaAbilitare: [],
         sgq: 'NO',
         verificatori: [],
         compilatore: '',
@@ -1193,10 +1198,17 @@ export default function Commesse() {
           vArr = [p.verificatori];
         }
       }
+      let uArr: string[] = [];
+      if (p.utentiDaAbilitare) {
+        uArr = Array.isArray(p.utentiDaAbilitare) ? p.utentiDaAbilitare : [p.utentiDaAbilitare];
+      } else if (p.utentiAbilitati) {
+        uArr = Array.isArray(p.utentiAbilitati) ? p.utentiAbilitati : [p.utentiAbilitati];
+      }
       const pmDip = dipendenti.find(d => areNamesEqual(d.nome, p.pm));
       return {
         ...p,
         pm: pmDip ? pmDip.nome : (p.pm || ''),
+        utentiDaAbilitare: uArr,
         verificatori: vArr
       };
     });
@@ -1205,6 +1217,31 @@ export default function Commesse() {
     setEditDataInizio(comm.dataInizio || '');
     setEditDataFine(comm.dataFine || '');
     setEditStato(comm.stato || 'Aperta');
+  };
+
+  const handleAddEditProgetto = () => {
+    setEditProgetti(prev => [
+      ...prev,
+      {
+        descrizione: '',
+        pm: '',
+        utentiDaAbilitare: [],
+        sgq: 'NO',
+        verificatori: [],
+        compilatore: '',
+        giornateSenior: 0,
+        giornateProject: 0,
+        giornateJunior: 0
+      }
+    ]);
+  };
+
+  const handleRemoveEditProgetto = (index: number) => {
+    if (editProgetti.length <= 1) {
+      showToast("La commessa deve contenere almeno un progetto.", "warning");
+      return;
+    }
+    setEditProgetti(prev => prev.filter((_, idx) => idx !== index));
   };
 
   const handleSaveCommessaDetails = async (e: React.FormEvent) => {
@@ -1524,8 +1561,12 @@ export default function Commesse() {
   }, [userEmail, coordinatori]);
 
   const canAccessCatalogo = useMemo(() => {
-    return isAdmin || isDev || isSoci(myAssociatedName) || isCoordinatoreQualsiasi;
-  }, [isAdmin, isDev, myAssociatedName, isCoordinatoreQualsiasi]);
+    return isAdmin || isDev || isGestoreCommesse || isSoci(myAssociatedName) || isCoordinatoreQualsiasi;
+  }, [isAdmin, isDev, isGestoreCommesse, myAssociatedName, isCoordinatoreQualsiasi]);
+
+  const canManageCatalogo = useMemo(() => {
+    return isAdmin || isDev || isGestoreCommesse || isSoci(myAssociatedName);
+  }, [isAdmin, isDev, isGestoreCommesse, myAssociatedName]);
 
   const commesseGestibili = useMemo(() => {
     if (canAccessCatalogo) return commesse;
@@ -1904,6 +1945,127 @@ export default function Commesse() {
     } catch (err) {
       console.error("Errore salvataggio commessa:", err);
       showToast("Si è verificato un errore durante il salvataggio.", "error");
+    }
+  };
+
+  const handleResendOpeningEmail = async (targetCommessa: any, currentEditProgetti?: CommessaProgetto[]) => {
+    try {
+      showToast("Invio e-mail di apertura in corso...");
+      const c = targetCommessa;
+      const codiceCommessa = c.codiceCommessa || (c.nome ? c.nome.split(' - ')[0] : '');
+      const titoloCommessa = c.titolo || (c.nome && c.nome.includes(' - ') ? c.nome.split(' - ').slice(1).join(' - ') : c.nome);
+
+      const savedTemplates = await loadSavedEmailTemplates();
+      const customTpl = savedTemplates['commessa_apertura'];
+
+      let progettiHtml = '';
+      const progettiList = (currentEditProgetti && currentEditProgetti.length > 0)
+        ? currentEditProgetti
+        : (Array.isArray(c.progetti) ? c.progetti : []);
+
+      progettiList.forEach((p: any, index: number) => {
+        let sgqInfo = '';
+        if (p.sgq === 'SI' || p.isSGQ) {
+          const vList = Array.isArray(p.verificatori) ? p.verificatori.join(', ') : (p.verificatori || p.verificatoreValidatore || '-');
+          sgqInfo = `<strong>SGQ:</strong> Sì<br/><strong>Verif./Valid.:</strong> ${vList || '-'}<br/><strong>Compilatore:</strong> ${p.compilatore || p.compilatoreRDP || '-'}`;
+        } else {
+          sgqInfo = `<strong>SGQ:</strong> No<br/><strong>Giornate:</strong> Senior: ${p.giornateSenior || 0} gg | Project: ${p.giornateProject || 0} gg | Junior: ${p.giornateJunior || 0} gg`;
+        }
+        const formattedDesc = (p.descrizione || p.nome || '').replace(/\n/g, '<br/>');
+        const rawUtenti = p.utentiDaAbilitare || p.utentiAbilitati || p.utentiDaAbilitareCategoria || [];
+        const utentiList = Array.isArray(rawUtenti) ? rawUtenti : (typeof rawUtenti === 'string' ? rawUtenti.split(',') : []);
+        const utentiAbilitareList = utentiList.length > 0
+          ? utentiList.map((u: string) => u.trim()).filter(Boolean).join(', ')
+          : 'Nessuno specificato';
+
+        progettiHtml += `
+          <tr style="background-color: ${index % 2 === 0 ? '#f9fafb' : '#ffffff'}; border-bottom: 1px solid #e5e7eb;">
+            <td style="padding: 10px; font-weight: 600; font-size: 13px; line-height: 1.45; color: #1f2937;">${formattedDesc || '(Nessuna descrizione)'}</td>
+            <td style="padding: 10px; font-size: 13px; vertical-align: top; color: #374151;">${p.pm || p.responsabile || 'Non assegnato'}</td>
+            <td style="padding: 10px; font-size: 12px; line-height: 1.45; vertical-align: top; color: #047857; font-weight: 700; background-color: #ecfdf5;">${utentiAbilitareList}</td>
+            <td style="padding: 10px; font-size: 12px; line-height: 1.5; vertical-align: top; color: #374151;">${sgqInfo}</td>
+          </tr>
+        `;
+      });
+
+      const tabellaProgettiFullHtml = `
+        <table border="0" cellpadding="0" cellspacing="0" style="width: 100%; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; font-family: inherit;">
+          <thead style="background-color: #f3f4f6;">
+            <tr>
+              <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Descrizione Progetto</th>
+              <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Project Manager</th>
+              <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Utenti da Abilitare</th>
+              <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Configurazione / SGQ</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${progettiHtml || '<tr><td colspan="4" style="padding: 10px; text-align: center; color: #9ca3af;">Nessun progetto specificato</td></tr>'}
+          </tbody>
+        </table>
+      `;
+
+      let mailSubject = `[Nuova Commessa] Aperta commessa: ${c.nome || `${codiceCommessa} - ${titoloCommessa}`}`;
+      let finalMailBody = '';
+
+      const giornateSenior = c.giornateSeniorProject || 0;
+      const giornateProject = c.giornateProject || 0;
+      const giornateJunior = c.giornateJuniorProject || 0;
+
+      if (customTpl && customTpl.body) {
+        if (customTpl.subject) {
+          mailSubject = substitutePlaceholders(customTpl.subject, {
+            '{CODICE_COMMESSA}': codiceCommessa,
+            '{NOME_COMMESSA}': titoloCommessa
+          });
+        }
+        finalMailBody = substitutePlaceholders(customTpl.body, {
+          '{CODICE_COMMESSA}': codiceCommessa,
+          '{NOME_COMMESSA}': titoloCommessa,
+          '{CLIENTE}': c.cliente || 'Non specificato',
+          '{TIPOLOGIA}': TIPOLOGIE_COMMESSE[c.tipologia] || c.tipologia || 'Non specificata',
+          '{ANNO}': String(c.anno || ''),
+          '{APERTA_DA}': c.apertaDa || (myAssociatedName ? `${myAssociatedName} (${userEmail})` : userEmail),
+          '{DATA_INIZIO}': c.dataInizio ? formatDate(c.dataInizio) : 'Non specificata',
+          '{DATA_FINE}': c.dataFine ? formatDate(c.dataFine) : 'Non specificata',
+          '{RESPONSABILE}': c.responsabile || 'Non assegnato',
+          '{GIORNATE_STIMATE}': `Senior: ${giornateSenior} gg | Project: ${giornateProject} gg | Junior: ${giornateJunior} gg`,
+          '{TABELLA_PROGETTI}': tabellaProgettiFullHtml
+        });
+      } else {
+        finalMailBody = `
+          <p>Ciao,</p>
+          <p>Ti comunichiamo che è stata aperta una nuova commessa sulla piattaforma di pianificazione con i seguenti dettagli:</p>
+          <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 15px 0;" />
+          <table border="0" cellpadding="5" cellspacing="0" style="font-size: 14px; color: #374151; width: 100%;">
+            <tr><td style="font-weight: bold; width: 220px;">Codice Commessa:</td><td>${codiceCommessa}</td></tr>
+            <tr><td style="font-weight: bold;">Titolo:</td><td>${titoloCommessa}</td></tr>
+            <tr><td style="font-weight: bold;">Cliente:</td><td>${c.cliente || 'Non specificato'}</td></tr>
+            <tr><td style="font-weight: bold;">Tipologia:</td><td>${TIPOLOGIE_COMMESSE[c.tipologia] || c.tipologia || 'Non specificata'}</td></tr>
+            <tr><td style="font-weight: bold;">Anno:</td><td>${c.anno || 'Non specificato'}</td></tr>
+            <tr><td style="font-weight: bold;">Aperta da:</td><td><strong style="color: #047857;">${c.apertaDa || (myAssociatedName ? `${myAssociatedName} (${userEmail})` : userEmail)}</strong></td></tr>
+            <tr><td style="font-weight: bold;">Data Inizio:</td><td>${c.dataInizio ? formatDate(c.dataInizio) : 'Non specificata'}</td></tr>
+            <tr><td style="font-weight: bold;">Data Fine:</td><td>${c.dataFine ? formatDate(c.dataFine) : 'Non specificata'}</td></tr>
+            <tr><td style="font-weight: bold;">Responsabile Commessa:</td><td>${c.responsabile || 'Non assegnato'}</td></tr>
+            <tr><td style="font-weight: bold;">Giornate Totali Stimate (No SGQ):</td><td>Senior: ${giornateSenior} gg | Project: ${giornateProject} gg | Junior: ${giornateJunior} gg</td></tr>
+          </table>
+          
+          <h3 style="color: #065f46; font-size: 16px; margin-top: 25px; margin-bottom: 10px;">Dettagli Progetti & SGQ</h3>
+          ${tabellaProgettiFullHtml}
+
+          <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 25px 0;" />
+          <p>Puoi ora procedere all'apertura di questa commessa sul gestionale aziendale.</p>
+        `;
+      }
+
+      const creationRecipients = await getCommesseNotificationEmails();
+      for (const rec of creationRecipients) {
+        await queueMail(rec, mailSubject, finalMailBody, undefined, { isSystemNotification: true });
+      }
+
+      showToast(`Notifica e-mail di apertura commessa (${codiceCommessa}) inviata con successo!`, "success");
+    } catch (err) {
+      console.error("Errore reinvio mail apertura commessa:", err);
+      showToast("Errore durante il reinvio dell'e-mail di apertura.", "error");
     }
   };
 
@@ -3411,22 +3573,26 @@ export default function Commesse() {
                           <td className="p-2.5 truncate max-w-[100px]" title={getOfficialName(c.responsabile) || ''}>{getOfficialName(c.responsabile) || ''}</td>
                           <td className="p-2.5 truncate max-w-[120px]" title={formatPMField(c.pm) || ''}>{formatPMField(c.pm) || ''}</td>
                           <td className="p-2.5 text-center">
-                            <div className="flex items-center justify-center gap-1.5">
-                              <button 
-                                onClick={() => handleOpenEditModal(c)} 
-                                className="text-emerald-650 hover:text-blue-655 p-1 transition-colors cursor-pointer"
-                                title="Modifica commessa"
-                              >
-                                <Pencil className="w-3.5 h-3.5"/>
-                              </button>
-                              <button 
-                                onClick={() => handleRemoveCommessa(c.id, c.nome)} 
-                                className="text-emerald-650 hover:text-red-655 p-1 transition-colors cursor-pointer"
-                                title="Elimina commessa"
-                              >
-                                <Trash2 className="w-3.5 h-3.5"/>
-                              </button>
-                            </div>
+                            {canManageCatalogo ? (
+                              <div className="flex items-center justify-center gap-1.5">
+                                <button 
+                                  onClick={() => handleOpenEditModal(c)} 
+                                  className="text-emerald-650 hover:text-blue-655 p-1 transition-colors cursor-pointer"
+                                  title="Modifica commessa"
+                                >
+                                  <Pencil className="w-3.5 h-3.5"/>
+                                </button>
+                                <button 
+                                  onClick={() => handleRemoveCommessa(c.id, c.nome)} 
+                                  className="text-emerald-650 hover:text-red-655 p-1 transition-colors cursor-pointer"
+                                  title="Elimina commessa"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5"/>
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="text-gray-300 text-[10px] italic">-</span>
+                            )}
                           </td>
                         </tr>
                       );
@@ -3520,15 +3686,33 @@ export default function Commesse() {
                   <div className="bg-gradient-to-br from-indigo-50/50 to-emerald-50/50 p-5 rounded-2xl border border-indigo-100/60 space-y-4">
                     <div className="flex justify-between items-center">
                       <h4 className="text-xs font-black text-indigo-950 uppercase tracking-wide flex items-center gap-1.5">
-                        🔀 Dettagli Progetto & SGQ
+                        🔀 Dettagli Progetto & SGQ ({editProgetti.length})
                       </h4>
+                      <button
+                        type="button"
+                        onClick={handleAddEditProgetto}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-extrabold px-3 py-1.5 rounded-xl transition shadow-xs flex items-center gap-1 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Aggiungi Progetto</span>
+                      </button>
                     </div>
 
                     <div className="space-y-4">
                       {editProgetti.map((progetto, idx) => (
                         <div key={idx} className="bg-white p-4 rounded-xl border border-gray-150 space-y-3 relative shadow-sm">
+                          {editProgetti.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveEditProgetto(idx)}
+                              className="absolute top-3 right-3 text-red-400 hover:text-red-600 transition p-1 cursor-pointer"
+                              title="Elimina questo progetto"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                           <div>
-                            <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Descrizione Progetto</label>
+                            <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Descrizione Progetto #{idx + 1}</label>
                             <textarea
                               required
                               rows={3}
@@ -3539,13 +3723,15 @@ export default function Commesse() {
                             />
                           </div>
 
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {/* RIGA 2: PM | SELETTORE UTENTI DA ABILITARE | LISTA UTENTI SELEZIONATI */}
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
+                            {/* Colonna 1: Project Manager */}
                             <div>
                               <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Project Manager (Opzionale)</label>
                               <select
                                 value={progetto.pm}
                                 onChange={e => handleUpdateEditProgettoField(idx, { pm: e.target.value })}
-                                className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
+                                className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs h-[38px]"
                               >
                                 <option value="">-- Nessun PM --</option>
                                 {pmsList.map(pm => (
@@ -3554,12 +3740,64 @@ export default function Commesse() {
                               </select>
                             </div>
 
+                            {/* Colonna 2: Selettore Utenti da Abilitare */}
                             <div>
+                              <label className="block text-[9px] font-bold text-indigo-900 mb-1 ml-1">Utenti da Abilitare (Tutte le Categorie)</label>
+                              <select
+                                value=""
+                                onChange={e => {
+                                  const val = e.target.value;
+                                  const current = progetto.utentiDaAbilitare || [];
+                                  if (val && !current.includes(val)) {
+                                    handleUpdateEditProgettoField(idx, { utentiDaAbilitare: [...current, val] });
+                                  }
+                                }}
+                                className="w-full p-2 border border-indigo-200 rounded-lg bg-indigo-50/40 focus:bg-white outline-none focus:ring-1 focus:ring-emerald-400 font-bold text-gray-700 text-xs h-[38px]"
+                              >
+                                <option value="">+ Seleziona Utente da Abilitare...</option>
+                                {dipendenti.filter(d => !isTechnicalUser(d) && !(progetto.utentiDaAbilitare || []).includes(d.nome)).map(d => (
+                                  <option key={d.id} value={d.nome}>{d.nome} {d.macroArea ? `(${d.macroArea})` : ''}</option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Colonna 3: Lista Ordinata Utenti Selezionati */}
+                            <div>
+                              <label className="block text-[9px] font-bold text-emerald-950 mb-1 ml-1">
+                                Utenti Selezionati ({progetto.utentiDaAbilitare?.length || 0})
+                              </label>
+                              <div className="bg-emerald-50/50 p-2 border border-emerald-100 rounded-lg min-h-[38px] max-h-[120px] overflow-y-auto flex flex-wrap gap-1">
+                                {(!progetto.utentiDaAbilitare || progetto.utentiDaAbilitare.length === 0) ? (
+                                  <span className="text-[10px] text-gray-400 italic p-1">Nessun utente selezionato</span>
+                                ) : (
+                                  progetto.utentiDaAbilitare.map(uName => (
+                                    <div key={uName} className="flex items-center gap-1.5 bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-lg text-[10px] font-bold text-emerald-900 shadow-2xs">
+                                      <span>{uName}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const updatedList = (progetto.utentiDaAbilitare || []).filter(x => x !== uName);
+                                          handleUpdateEditProgettoField(idx, { utentiDaAbilitare: updatedList });
+                                        }}
+                                        className="text-emerald-600 hover:text-emerald-800 transition cursor-pointer font-black"
+                                      >
+                                        ✕
+                                      </button>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* RIGA 3: ABILITATO SGQ SOTTO */}
+                          <div className="pt-2 border-t border-gray-150/60 flex items-center gap-3">
+                            <div className="w-full sm:w-1/3">
                               <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Abilitato SGQ</label>
                               <select
                                 value={progetto.sgq}
                                 onChange={e => handleUpdateEditProgettoField(idx, { sgq: e.target.value as 'SI' | 'NO' })}
-                                className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
+                                className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs h-[38px]"
                               >
                                 <option value="NO">NO</option>
                                 <option value="SI">SI</option>
@@ -3668,18 +3906,27 @@ export default function Commesse() {
                 </div>
               </div>
 
-              <div className="flex gap-3 pt-4 border-t border-gray-150 shrink-0">
+              <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-gray-150 shrink-0">
                 <button 
                   type="button" 
                   onClick={() => setEditingCommessa(null)} 
-                  className="flex-1 py-3 px-4 rounded-xl border border-gray-200 text-xs font-bold text-gray-650 hover:bg-gray-50 transition"
+                  className="py-3 px-4 rounded-xl border border-gray-200 text-xs font-bold text-gray-650 hover:bg-gray-50 transition cursor-pointer"
                 >
                   Annulla
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleResendOpeningEmail(editingCommessa, editProgetti)}
+                  className="py-3 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                  title="Invia nuovamente l'e-mail ufficiale di notifica apertura commessa a synergieflow@ingegno06.it"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>Re-invia E-mail Apertura</span>
                 </button>
                 <button 
                   type="submit" 
                   disabled={savingEdit}
-                  className="flex-1 py-3 px-4 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 transition active:scale-95 disabled:opacity-50"
+                  className="py-3 px-4 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 transition active:scale-95 disabled:opacity-50 cursor-pointer"
                 >
                   {savingEdit ? 'Salvataggio...' : 'Salva Modifiche'}
                 </button>

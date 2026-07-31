@@ -92,6 +92,13 @@ interface RapportinoPresenze {
   approvedBy?: string;
   timestamp?: string;
   giorni: { [giorno: string]: GiornoPresenza };
+  richiestaSblocco?: {
+    richiestaAt: string;
+    notaDipendente: string;
+    stato: 'In attesa' | 'Accettata' | 'Rifiutata';
+    rispostaAt?: string;
+    noteHR?: string;
+  };
   collaboratoreData?: {
     giornate: number;
     dailyRate: number;
@@ -112,18 +119,67 @@ interface RapportinoPresenze {
     giornateOverride?: number;
     importoFissoMensile?: number;
   };
-  rimborsoSpeseData?: { // NEW
-    marcaAutomezzo: string;
-    modelloAutomezzo: string;
-    speseViaggio: number;
-    speseTaxiBus: number;
-    speseParcheggi: number;
-    speseVitto: number;
-    speseAlloggio: number;
-    spesePedaggi: number;
-    speseAltro: number;
-    altroSpecificare: string;
+  rimborsoSpeseData?: {
+    marcaAutomezzo?: string;
+    modelloAutomezzo?: string;
+    vociSpesa?: VoceSpesa[];
+    // Per retro-compatibilità:
+    speseViaggio?: number;
+    speseTaxiBus?: number;
+    speseParcheggi?: number;
+    speseVitto?: number;
+    speseAlloggio?: number;
+    spesePedaggi?: number;
+    speseAltro?: number;
+    altroSpecificare?: string;
   };
+}
+
+export interface VoceSpesa {
+  id: string;
+  descrizione: string;
+  importo: number;
+}
+
+export function getVociSpesaFromRimborsoData(rimborsoData?: any): VoceSpesa[] {
+  if (!rimborsoData) return [{ id: 'vs-1', descrizione: '', importo: 0 }];
+
+  if (Array.isArray(rimborsoData.vociSpesa) && rimborsoData.vociSpesa.length > 0) {
+    return rimborsoData.vociSpesa;
+  }
+
+  // Fallback / Migrazione da vecchi campi fissi
+  const legacy: VoceSpesa[] = [];
+  if (rimborsoData.speseViaggio && rimborsoData.speseViaggio > 0) {
+    legacy.push({ id: 'legacy-viaggio', descrizione: 'Viaggio (Treno/Aereo)', importo: Number(rimborsoData.speseViaggio) });
+  }
+  if (rimborsoData.speseTaxiBus && rimborsoData.speseTaxiBus > 0) {
+    legacy.push({ id: 'legacy-taxibus', descrizione: 'Taxi / Autobus', importo: Number(rimborsoData.speseTaxiBus) });
+  }
+  if (rimborsoData.speseParcheggi && rimborsoData.speseParcheggi > 0) {
+    legacy.push({ id: 'legacy-parcheggi', descrizione: 'Parcheggi', importo: Number(rimborsoData.speseParcheggi) });
+  }
+  if (rimborsoData.speseVitto && rimborsoData.speseVitto > 0) {
+    legacy.push({ id: 'legacy-vitto', descrizione: 'Vitto', importo: Number(rimborsoData.speseVitto) });
+  }
+  if (rimborsoData.speseAlloggio && rimborsoData.speseAlloggio > 0) {
+    legacy.push({ id: 'legacy-alloggio', descrizione: 'Alloggio', importo: Number(rimborsoData.speseAlloggio) });
+  }
+  if (rimborsoData.spesePedaggi && rimborsoData.spesePedaggi > 0) {
+    legacy.push({ id: 'legacy-pedaggi', descrizione: 'Pedaggi autostradali', importo: Number(rimborsoData.spesePedaggi) });
+  }
+  if (rimborsoData.speseAltro && rimborsoData.speseAltro > 0) {
+    legacy.push({ id: 'legacy-altro', descrizione: rimborsoData.altroSpecificare || 'Altro', importo: Number(rimborsoData.speseAltro) });
+  }
+
+  if (legacy.length > 0) return legacy;
+
+  return [{ id: `vs-${Date.now()}`, descrizione: '', importo: 0 }];
+}
+
+export function calculateTotaleSpeseVarie(rimborsoData?: any): number {
+  const list = getVociSpesaFromRimborsoData(rimborsoData);
+  return list.reduce((acc, item) => acc + (Number(item.importo) || 0), 0);
 }
 
 export function calculateDynamicGiornate(
@@ -339,6 +395,18 @@ export default function Presenze() {
   // Stati per badge notifica globali (solo per HR e non Admin)
   const [globalPendingInviatiCount, setGlobalPendingInviatiCount] = useState(0);
   const [globalPendingWeekendCount, setGlobalPendingWeekendCount] = useState(0);
+  const [globalPendingSbloccoCount, setGlobalPendingSbloccoCount] = useState(0);
+
+  // Stati per richiesta sblocco dipendente
+  const [isUnlockModalOpen, setIsUnlockModalOpen] = useState(false);
+  const [unlockNote, setUnlockNote] = useState('');
+  const [unlockSubmitting, setUnlockSubmitting] = useState(false);
+
+  // Stati per risposta HR alla richiesta di sblocco
+  const [isHRUnlockModalOpen, setIsHRUnlockModalOpen] = useState(false);
+  const [hrUnlockActionType, setHrUnlockActionType] = useState<'accept' | 'reject'>('accept');
+  const [hrUnlockNote, setHrUnlockNote] = useState('');
+  const [hrUnlockSubmitting, setHrUnlockSubmitting] = useState(false);
 
   // Stato per la modale di conferma personalizzata
   const [confirmConfig, setConfirmConfig] = useState<{
@@ -456,9 +524,12 @@ export default function Presenze() {
     const isCessato = profile?.dataCessazione && dateStr > profile.dataCessazione;
     if (isCessato) return true;
 
-    if (approvedLeaves[dateStr]) {
+    const currentRapportino = reviewingRapportino || rapportino;
+    const isUnlockedForUser = currentRapportino?.stato === 'Richiede Modifica' || !!reviewingRapportino;
+
+    if (!isUnlockedForUser && approvedLeaves[dateStr]) {
       const abs = approvedLeaves[dateStr];
-      // Blocca SOLO se è una assenza di giornata intera:
+      // Blocca SOLO se è una assenza di giornata intera in modalità standard:
       // ferie, malattia, maternità oppure permesso esplicitamente per 'giornata'
       const isFullDay =
         abs.tipo === 'ferie' ||
@@ -810,15 +881,18 @@ export default function Presenze() {
         setAllWeekendRequests(listWk.sort((a, b) => b.timestamp?.localeCompare(a.timestamp || '') || b.data.localeCompare(a.data)));
 
         if (isHR || isSocio) {
-          const [inviatiSnap, weekendSnap] = await Promise.all([
+          const [inviatiSnap, weekendSnap, sbloccoSnap] = await Promise.all([
             getDocs(query(collection(db, 'presenze'), where('stato', '==', 'Inviato'))),
-            getDocs(query(collection(db, 'richieste_weekend'), where('stato', '==', 'In attesa')))
+            getDocs(query(collection(db, 'richieste_weekend'), where('stato', '==', 'In attesa'))),
+            getDocs(query(collection(db, 'presenze'), where('richiestaSblocco.stato', '==', 'In attesa')))
           ]);
           setGlobalPendingInviatiCount(inviatiSnap.size);
           setGlobalPendingWeekendCount(weekendSnap.size);
+          setGlobalPendingSbloccoCount(sbloccoSnap.size);
         } else {
           setGlobalPendingInviatiCount(0);
           setGlobalPendingWeekendCount(0);
+          setGlobalPendingSbloccoCount(0);
         }
         setLoadingHR(false);
       }
@@ -1546,32 +1620,7 @@ export default function Presenze() {
     });
   };
 
-  const handleRimborsoFieldChange = (field: string, value: any) => {
-    if (!rapportino || rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato') return;
 
-    const currentRimborso = rapportino.rimborsoSpeseData || {
-      marcaAutomezzo: '',
-      modelloAutomezzo: '',
-      speseViaggio: 0,
-      speseTaxiBus: 0,
-      speseParcheggi: 0,
-      speseVitto: 0,
-      speseAlloggio: 0,
-      spesePedaggi: 0,
-      speseAltro: 0,
-      altroSpecificare: ''
-    };
-
-    const updatedRimborso = {
-      ...currentRimborso,
-      [field]: value
-    };
-
-    setRapportino({
-      ...rapportino,
-      rimborsoSpeseData: updatedRimborso
-    });
-  };
 
   const handleReviewRimborsoFieldChange = (field: string, value: any) => {
     if (!reviewingRapportino) return;
@@ -1681,6 +1730,151 @@ export default function Presenze() {
       },
       'info'
     );
+  };
+
+  const handleRequestUnlockSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!rapportino || !unlockNote.trim()) {
+      showToast("Inserisci la motivazione della richiesta di sblocco!", "warning");
+      return;
+    }
+
+    setUnlockSubmitting(true);
+    try {
+      const docRef = doc(db, 'presenze', rapportino.id);
+      const updated: RapportinoPresenze = {
+        ...rapportino,
+        richiestaSblocco: {
+          richiestaAt: new Date().toISOString(),
+          notaDipendente: unlockNote.trim(),
+          stato: 'In attesa'
+        }
+      };
+      await setDoc(docRef, updated);
+      setRapportino(updated);
+      setIsUnlockModalOpen(false);
+      setUnlockNote('');
+      showToast("Richiesta di sblocco inviata all'HR con successo!");
+      loadPresenzeData();
+    } catch (err) {
+      console.error("Errore invio richiesta sblocco:", err);
+      showToast("Errore durante l'invio della richiesta.", "error");
+    } finally {
+      setUnlockSubmitting(false);
+    }
+  };
+
+  const handleCancelUnlockRequest = () => {
+    if (!rapportino || !rapportino.richiestaSblocco) return;
+    triggerConfirm(
+      "Annulla Richiesta Sblocco",
+      "Sei sicuro di voler annullare la richiesta di sblocco inviata all'HR?",
+      async () => {
+        try {
+          const docRef = doc(db, 'presenze', rapportino.id);
+          const updated: RapportinoPresenze = {
+            ...rapportino,
+            richiestaSblocco: undefined
+          };
+          await setDoc(docRef, updated);
+          setRapportino(updated);
+          showToast("Richiesta di sblocco annullata con successo.");
+          loadPresenzeData();
+        } catch (err) {
+          console.error("Errore annullamento richiesta sblocco:", err);
+          showToast("Errore durante l'annullamento.", "error");
+        }
+      },
+      'warning'
+    );
+  };
+
+  const handleHRProcessUnlock = async (action: 'accept' | 'reject') => {
+    if (!reviewingRapportino || !reviewingRapportino.richiestaSblocco) return;
+
+    setHrUnlockSubmitting(true);
+    try {
+      const docRef = doc(db, 'presenze', reviewingRapportino.id);
+      const isCollab = isCollaboratore(reviewingRapportino.dipendenteNome, dipendenti);
+      const meseNome = MESI[reviewingRapportino.mese - 1];
+
+      if (action === 'accept') {
+        const updated: RapportinoPresenze = {
+          ...reviewingRapportino,
+          stato: 'Richiede Modifica',
+          richiestaSblocco: {
+            ...reviewingRapportino.richiestaSblocco,
+            stato: 'Accettata',
+            rispostaAt: new Date().toISOString(),
+            noteHR: hrUnlockNote.trim() || undefined
+          }
+        };
+        await setDoc(docRef, updated);
+        setReviewingRapportino(updated);
+        setIsHRUnlockModalOpen(false);
+        setHrUnlockNote('');
+        showToast("Richiesta di sblocco accettata. Il documento è stato sbloccato per il dipendente.");
+        loadPresenzeData();
+
+        // Invia email al dipendente
+        const targetEmail = updated.dipendenteEmail;
+        const isSelfTarget = (targetEmail?.toLowerCase() === userEmail?.toLowerCase()) || (myAssociatedName && updated.dipendenteNome === myAssociatedName);
+        if (targetEmail && !isSelfTarget) {
+          const subject = `[Pianificazione] Richiesta di Sblocco Accettata - ${meseNome} ${updated.anno}`;
+          const noteStr = hrUnlockNote.trim() 
+            ? `<p><strong>Nota dell'HR:</strong></p><blockquote style="background-color: #f0fdf4; border-left: 4px solid #16a34a; padding: 10px 15px; margin: 10px 0; font-style: italic;">"${hrUnlockNote.trim()}"</blockquote>`
+            : '';
+          const htmlBody = `
+            <p>Ciao <strong>${updated.dipendenteNome}</strong>,</p>
+            <p>La tua richiesta di sblocco della ${isCollab ? 'bozza fattura' : 'bozza presenze'} per <strong>${meseNome} ${updated.anno}</strong> è stata <strong>accettata</strong> dall'amministrazione.</p>
+            ${noteStr}
+            <p>Ora puoi accedere all'applicazione per apportare le modifiche necessarie e reinviarla all'HR.</p>
+          `;
+          const plainText = `Ciao ${updated.dipendenteNome},\n\nLa tua richiesta di sblocco del foglio presenze per ${meseNome} ${updated.anno} è stata accettata.\nOra puoi accedere all'applicazione per apportare le modifiche e reinviarla.`;
+          await queueMail(targetEmail.toLowerCase(), subject, htmlBody, plainText);
+        }
+      } else {
+        // Reject / Resolved by HR
+        const updated: RapportinoPresenze = {
+          ...reviewingRapportino,
+          richiestaSblocco: {
+            ...reviewingRapportino.richiestaSblocco,
+            stato: 'Rifiutata',
+            rispostaAt: new Date().toISOString(),
+            noteHR: hrUnlockNote.trim() || 'Modifiche gestite direttamente dall\'HR o non necessarie'
+          }
+        };
+        await setDoc(docRef, updated);
+        setReviewingRapportino(updated);
+        setIsHRUnlockModalOpen(false);
+        setHrUnlockNote('');
+        showToast("Richiesta di sblocco gestita/rifiutata.");
+        loadPresenzeData();
+
+        // Invia email al dipendente
+        const targetEmail = updated.dipendenteEmail;
+        const isSelfTarget = (targetEmail?.toLowerCase() === userEmail?.toLowerCase()) || (myAssociatedName && updated.dipendenteNome === myAssociatedName);
+        if (targetEmail && !isSelfTarget) {
+          const subject = `[Pianificazione] Aggiornamento Richiesta Sblocco - ${meseNome} ${updated.anno}`;
+          const noteStr = hrUnlockNote.trim()
+            ? `<p><strong>Nota dell'HR:</strong></p><blockquote style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 10px 15px; margin: 10px 0; font-style: italic;">"${hrUnlockNote.trim()}"</blockquote>`
+            : '<p>L\'HR ha preso in carico le eventuali correzioni direttamente o le ha ritenute non necessarie.</p>';
+          const htmlBody = `
+            <p>Ciao <strong>${updated.dipendenteNome}</strong>,</p>
+            <p>La tua richiesta di sblocco della ${isCollab ? 'bozza fattura' : 'bozza presenze'} per <strong>${meseNome} ${updated.anno}</strong> è stata processata dall'amministrazione.</p>
+            ${noteStr}
+            <p>Il documento rimane nello stato attuale (${updated.stato}).</p>
+          `;
+          const plainText = `Ciao ${updated.dipendenteNome},\n\nLa tua richiesta di sblocco per ${meseNome} ${updated.anno} è stata processata dall'amministrazione.`;
+          await queueMail(targetEmail.toLowerCase(), subject, htmlBody, plainText);
+        }
+      }
+    } catch (err) {
+      console.error("Errore elaborazione richiesta sblocco:", err);
+      showToast("Errore durante l'elaborazione della richiesta.", "error");
+    } finally {
+      setHrUnlockSubmitting(false);
+    }
   };
 
   const handleRequestWeekendSubmit = async (e: React.FormEvent) => {
@@ -2142,6 +2336,86 @@ export default function Presenze() {
       console.error("Errore salvataggio modifiche HR:", err);
       showToast("Errore durante il salvataggio.", "error");
     }
+  };
+
+  const handleAddVoceSpesa = () => {
+    if (!rapportino) return;
+    const currentList = getVociSpesaFromRimborsoData(rapportino.rimborsoSpeseData);
+    const newVoce: VoceSpesa = { id: `vs-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, descrizione: '', importo: 0 };
+    const updatedList = [...currentList, newVoce];
+    setRapportino({
+      ...rapportino,
+      rimborsoSpeseData: {
+        ...rapportino.rimborsoSpeseData,
+        vociSpesa: updatedList
+      }
+    });
+  };
+
+  const handleUpdateVoceSpesa = (id: string, field: 'descrizione' | 'importo', value: any) => {
+    if (!rapportino) return;
+    const currentList = getVociSpesaFromRimborsoData(rapportino.rimborsoSpeseData);
+    const updatedList = currentList.map(item => item.id === id ? { ...item, [field]: value } : item);
+    setRapportino({
+      ...rapportino,
+      rimborsoSpeseData: {
+        ...rapportino.rimborsoSpeseData,
+        vociSpesa: updatedList
+      }
+    });
+  };
+
+  const handleRemoveVoceSpesa = (id: string) => {
+    if (!rapportino) return;
+    const currentList = getVociSpesaFromRimborsoData(rapportino.rimborsoSpeseData);
+    const updatedList = currentList.filter(item => item.id !== id);
+    setRapportino({
+      ...rapportino,
+      rimborsoSpeseData: {
+        ...rapportino.rimborsoSpeseData,
+        vociSpesa: updatedList.length > 0 ? updatedList : [{ id: `vs-${Date.now()}`, descrizione: '', importo: 0 }]
+      }
+    });
+  };
+
+  const handleReviewAddVoceSpesa = () => {
+    if (!reviewingRapportino) return;
+    const currentList = getVociSpesaFromRimborsoData(reviewingRapportino.rimborsoSpeseData);
+    const newVoce: VoceSpesa = { id: `vs-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, descrizione: '', importo: 0 };
+    const updatedList = [...currentList, newVoce];
+    setReviewingRapportino({
+      ...reviewingRapportino,
+      rimborsoSpeseData: {
+        ...reviewingRapportino.rimborsoSpeseData,
+        vociSpesa: updatedList
+      }
+    });
+  };
+
+  const handleReviewUpdateVoceSpesa = (id: string, field: 'descrizione' | 'importo', value: any) => {
+    if (!reviewingRapportino) return;
+    const currentList = getVociSpesaFromRimborsoData(reviewingRapportino.rimborsoSpeseData);
+    const updatedList = currentList.map(item => item.id === id ? { ...item, [field]: value } : item);
+    setReviewingRapportino({
+      ...reviewingRapportino,
+      rimborsoSpeseData: {
+        ...reviewingRapportino.rimborsoSpeseData,
+        vociSpesa: updatedList
+      }
+    });
+  };
+
+  const handleReviewRemoveVoceSpesa = (id: string) => {
+    if (!reviewingRapportino) return;
+    const currentList = getVociSpesaFromRimborsoData(reviewingRapportino.rimborsoSpeseData);
+    const updatedList = currentList.filter(item => item.id !== id);
+    setReviewingRapportino({
+      ...reviewingRapportino,
+      rimborsoSpeseData: {
+        ...reviewingRapportino.rimborsoSpeseData,
+        vociSpesa: updatedList.length > 0 ? updatedList : [{ id: `vs-${Date.now()}`, descrizione: '', importo: 0 }]
+      }
+    });
   };
 
   // --- DECIMAL FORMATTING UTILITY (Italian Locale: "." for thousands, "," for decimals) ---
@@ -2920,9 +3194,9 @@ export default function Presenze() {
               className={`px-5 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-1.5 ${viewMode === 'hr' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
             >
               <span>Dashboard HR</span>
-              {isHR && (globalPendingInviatiCount + globalPendingWeekendCount) > 0 && (
+              {isHR && (globalPendingInviatiCount + globalPendingWeekendCount + globalPendingSbloccoCount) > 0 && (
                 <span className="bg-red-500 text-white text-[10px] font-extrabold px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center inline-block">
-                  {globalPendingInviatiCount + globalPendingWeekendCount}
+                  {globalPendingInviatiCount + globalPendingWeekendCount + globalPendingSbloccoCount}
                 </span>
               )}
             </button>
@@ -3290,7 +3564,14 @@ export default function Presenze() {
                             <div className="text-xs text-gray-500">{dip.email || 'Nessuna email'}</div>
                           </td>
                           <td className="p-4 text-center align-middle">
-                            <div className="flex justify-center">{getStatusBadge(status)}</div>
+                            <div className="flex flex-col items-center justify-center gap-1">
+                              {getStatusBadge(status)}
+                              {sheet?.richiestaSblocco?.stato === 'In attesa' && (
+                                <span className="flex items-center gap-1 text-[10px] font-extrabold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full animate-pulse shadow-2xs">
+                                  🔓 Req. Sblocco
+                                </span>
+                              )}
+                            </div>
                           </td>
                           {hrTab === 'dipendenti' ? (
                             <>
@@ -3537,18 +3818,73 @@ export default function Presenze() {
                 </div>
               )}
               
-              {/* Box Stato */}
-              <div className="bg-white/90 backdrop-blur-md p-6 rounded-[2rem] border flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shadow-sm no-print">
+              {/* Box Stato e Richiesta Sblocco */}
+              <div className="bg-white/90 backdrop-blur-md p-6 rounded-[2rem] border border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shadow-sm no-print">
                 <div className="space-y-1">
                   <div className="text-xs text-gray-500 font-bold uppercase tracking-wider">Mese in corso di visualizzazione</div>
                   <h3 className="font-extrabold text-xl text-gray-800 capitalize">{MESI[selectedMonth - 1]} {selectedYear} - {myAssociatedName}</h3>
                 </div>
                 
-                <div className="flex items-center gap-3">
-                  <span className="text-sm font-bold text-gray-600">Stato:</span>
-                  {getStatusBadge(rapportino.stato)}
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-gray-600">Stato:</span>
+                    {getStatusBadge(rapportino.stato)}
+                  </div>
+
+                  {/* Pulsante Richiedi Sblocco per stato Inviato o Approvato */}
+                  {(rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato') && (
+                    !rapportino.richiestaSblocco || rapportino.richiestaSblocco.stato !== 'In attesa' ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUnlockNote('');
+                          setIsUnlockModalOpen(true);
+                        }}
+                        className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white font-extrabold rounded-xl text-xs transition shadow active:scale-95 flex items-center gap-1.5 cursor-pointer ml-0 sm:ml-2"
+                        title="Invia una richiesta all'HR per sbloccare la modifica di questo foglio presenze"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                        <span>Richiedi Sblocco Modifica</span>
+                      </button>
+                    ) : null
+                  )}
                 </div>
               </div>
+
+              {/* Banner Richiesta Sblocco in Attesa */}
+              {(rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato') && rapportino.richiestaSblocco?.stato === 'In attesa' && (
+                <div className="bg-amber-50/90 border border-amber-200 p-5 rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shadow-sm no-print">
+                  <div className="flex items-start gap-3">
+                    <Clock className="w-5 h-5 text-amber-600 shrink-0 mt-0.5 animate-pulse" />
+                    <div>
+                      <h4 className="font-extrabold text-sm text-amber-950">Richiesta di sblocco inviata all'HR in attesa di valutazione</h4>
+                      <p className="text-xs text-amber-900/90 font-medium mt-0.5 italic">
+                        "{rapportino.richiestaSblocco.notaDipendente}"
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCancelUnlockRequest}
+                    className="px-3 py-1.5 bg-white hover:bg-amber-100/60 text-amber-900 border border-amber-300 font-bold rounded-xl text-xs transition shadow-2xs cursor-pointer shrink-0"
+                  >
+                    Annulla Richiesta
+                  </button>
+                </div>
+              )}
+
+              {/* Banner Risposta HR se sblocco rifiutato/gestito */}
+              {rapportino.richiestaSblocco?.stato === 'Rifiutata' && (
+                <div className="bg-slate-50 border border-slate-200 p-4 rounded-2xl flex items-start gap-3 shadow-2xs no-print">
+                  <AlertCircle className="w-5 h-5 text-slate-500 shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="font-extrabold text-xs text-slate-800">Esito Richiesta Sblocco:</h4>
+                    <p className="text-xs text-slate-600 font-medium mt-0.5 italic">
+                      "{rapportino.richiestaSblocco.noteHR || 'Richiesta gestita dall\'HR o non accolta'}"
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* Box Feedback HR se richiesto */}
               {rapportino.stato === 'Richiede Modifica' && (
@@ -3556,7 +3892,9 @@ export default function Presenze() {
                   <MessageSquare className="w-6 h-6 text-orange-600 shrink-0 mt-0.5" />
                   <div>
                     <h4 className="font-extrabold text-sm text-orange-950">Correzione richiesta da HR:</h4>
-                    <p className="text-sm text-orange-900/90 font-medium mt-1 italic">"{rapportino.noteHR}"</p>
+                    <p className="text-sm text-orange-900/90 font-medium mt-1 italic">
+                      "{rapportino.noteHR || rapportino.richiestaSblocco?.noteHR || 'Il foglio ore è stato sbloccato per le modifiche.'}"
+                    </p>
                   </div>
                 </div>
               )}
@@ -4574,119 +4912,64 @@ export default function Presenze() {
                     <div className="flex justify-between items-center">
                       <h4 className="font-extrabold text-sm text-gray-800 uppercase tracking-wider flex items-center gap-1.5">
                         <FileText className="w-4 h-4 text-indigo-600" />
-                        <span>Nota Spese Varie Sostenute (€)</span>
+                        <span>Nota Spese da Rimborsare (€)</span>
                       </h4>
-                      <div className="text-xs font-bold text-gray-600">
-                        Totale Spese: <span className="font-black text-indigo-700">{formatDec((
-                          (rapportino.rimborsoSpeseData?.speseViaggio || 0) +
-                          (rapportino.rimborsoSpeseData?.speseTaxiBus || 0) +
-                          (rapportino.rimborsoSpeseData?.speseParcheggi || 0) +
-                          (rapportino.rimborsoSpeseData?.speseVitto || 0) +
-                          (rapportino.rimborsoSpeseData?.speseAlloggio || 0) +
-                          (rapportino.rimborsoSpeseData?.spesePedaggi || 0) +
-                          (rapportino.rimborsoSpeseData?.speseAltro || 0)
-                        ).toFixed(2))} €</span>
+                      <div className="text-xs font-bold text-gray-600 bg-indigo-50 px-3 py-1 rounded-xl border border-indigo-100">
+                        Totale Spese: <span className="font-black text-indigo-700 text-sm">{formatDec(calculateTotaleSpeseVarie(rapportino.rimborsoSpeseData).toFixed(2))} €</span>
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 mb-1">Viaggio (Treno/Aereo)</label>
-                        <input 
-                          type="number"
-                          step="any"
-                          min="0"
-                          disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                          value={rapportino.rimborsoSpeseData?.speseViaggio === 0 ? '' : rapportino.rimborsoSpeseData?.speseViaggio || ''}
-                          onChange={e => handleRimborsoFieldChange('speseViaggio', e.target.value === '' ? 0 : Number(e.target.value))}
-                          className="w-full p-2 border rounded-xl text-xs text-right font-bold outline-none focus:border-indigo-400 bg-white"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 mb-1">Taxi / Autobus</label>
-                        <input 
-                          type="number"
-                          step="any"
-                          min="0"
-                          disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                          value={rapportino.rimborsoSpeseData?.speseTaxiBus === 0 ? '' : rapportino.rimborsoSpeseData?.speseTaxiBus || ''}
-                          onChange={e => handleRimborsoFieldChange('speseTaxiBus', e.target.value === '' ? 0 : Number(e.target.value))}
-                          className="w-full p-2 border rounded-xl text-xs text-right font-bold outline-none focus:border-indigo-400 bg-white"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 mb-1">Parcheggi</label>
-                        <input 
-                          type="number"
-                          step="any"
-                          min="0"
-                          disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                          value={rapportino.rimborsoSpeseData?.speseParcheggi === 0 ? '' : rapportino.rimborsoSpeseData?.speseParcheggi || ''}
-                          onChange={e => handleRimborsoFieldChange('speseParcheggi', e.target.value === '' ? 0 : Number(e.target.value))}
-                          className="w-full p-2 border rounded-xl text-xs text-right font-bold outline-none focus:border-indigo-400 bg-white"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 mb-1">Vitto</label>
-                        <input 
-                          type="number"
-                          step="any"
-                          min="0"
-                          disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                          value={rapportino.rimborsoSpeseData?.speseVitto === 0 ? '' : rapportino.rimborsoSpeseData?.speseVitto || ''}
-                          onChange={e => handleRimborsoFieldChange('speseVitto', e.target.value === '' ? 0 : Number(e.target.value))}
-                          className="w-full p-2 border rounded-xl text-xs text-right font-bold outline-none focus:border-indigo-400 bg-white"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 mb-1">Alloggio</label>
-                        <input 
-                          type="number"
-                          step="any"
-                          min="0"
-                          disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                          value={rapportino.rimborsoSpeseData?.speseAlloggio === 0 ? '' : rapportino.rimborsoSpeseData?.speseAlloggio || ''}
-                          onChange={e => handleRimborsoFieldChange('speseAlloggio', e.target.value === '' ? 0 : Number(e.target.value))}
-                          className="w-full p-2 border rounded-xl text-xs text-right font-bold outline-none focus:border-indigo-400 bg-white"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 mb-1">Pedaggi</label>
-                        <input 
-                          type="number"
-                          step="any"
-                          min="0"
-                          disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                          value={rapportino.rimborsoSpeseData?.spesePedaggi === 0 ? '' : rapportino.rimborsoSpeseData?.spesePedaggi || ''}
-                          onChange={e => handleRimborsoFieldChange('spesePedaggi', e.target.value === '' ? 0 : Number(e.target.value))}
-                          className="w-full p-2 border rounded-xl text-xs text-right font-bold outline-none focus:border-indigo-400 bg-white"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 mb-1">Altro</label>
-                        <input 
-                          type="number"
-                          step="any"
-                          min="0"
-                          disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                          value={rapportino.rimborsoSpeseData?.speseAltro === 0 ? '' : rapportino.rimborsoSpeseData?.speseAltro || ''}
-                          onChange={e => handleRimborsoFieldChange('speseAltro', e.target.value === '' ? 0 : Number(e.target.value))}
-                          className="w-full p-2 border rounded-xl text-xs text-right font-bold outline-none focus:border-indigo-400 bg-white"
-                        />
-                      </div>
+                    {/* LISTA DINAMICA DELLE VOCI DI SPESA */}
+                    <div className="space-y-2">
+                      {getVociSpesaFromRimborsoData(rapportino.rimborsoSpeseData).map((voce, index) => (
+                        <div key={voce.id || index} className="flex items-center gap-2 bg-gray-50/80 p-2 rounded-xl border border-gray-200">
+                          <div className="flex-1">
+                            <input
+                              type="text"
+                              placeholder="Descrizione spesa (es. Parcheggio stazione, Treno A/R Milano, Vitto...)"
+                              disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                              value={voce.descrizione}
+                              onChange={e => handleUpdateVoceSpesa(voce.id, 'descrizione', e.target.value)}
+                              className="w-full p-2 border border-gray-200 rounded-lg text-xs font-semibold text-gray-800 outline-none focus:border-indigo-400 bg-white"
+                            />
+                          </div>
+                          <div className="w-36 flex items-center gap-1 bg-white border border-gray-200 rounded-lg px-2 py-1">
+                            <span className="text-xs font-bold text-gray-400">€</span>
+                            <input
+                              type="number"
+                              step="any"
+                              min="0"
+                              placeholder="0.00"
+                              disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                              value={voce.importo === 0 ? '' : voce.importo}
+                              onChange={e => handleUpdateVoceSpesa(voce.id, 'importo', e.target.value === '' ? 0 : Number(e.target.value))}
+                              className="w-full text-right text-xs font-bold text-gray-900 outline-none"
+                            />
+                          </div>
+                          {(rapportino.stato !== 'Inviato' && rapportino.stato !== 'Approvato') && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveVoceSpesa(voce.id)}
+                              className="p-2 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                              title="Rimuovi voce di spesa"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
                     </div>
 
-                    <div className="pt-1">
-                      <label className="block text-xs font-bold text-gray-500 mb-1 ml-1">Specificare voce Altro (se valorizzata)</label>
-                      <input 
-                        type="text"
-                        placeholder="Es. Acquisto materiale ufficio urgente"
-                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                        value={rapportino.rimborsoSpeseData?.altroSpecificare || ''}
-                        onChange={e => handleRimborsoFieldChange('altroSpecificare', e.target.value)}
-                        className="w-full p-2.5 border rounded-xl text-xs outline-none focus:border-indigo-400 font-medium text-gray-800 bg-white"
-                      />
-                    </div>
+                    {(rapportino.stato !== 'Inviato' && rapportino.stato !== 'Approvato') && (
+                      <button
+                        type="button"
+                        onClick={handleAddVoceSpesa}
+                        className="flex items-center gap-1.5 text-xs font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-3 py-2 rounded-xl transition cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>+ Aggiungi Voce di Spesa</span>
+                      </button>
+                    )}
                   </div>
 
                   {/* 3. IN FONDO AL MODULO: CERTIFICATI E COMUNICAZIONI PER L'HR */}
@@ -4813,6 +5096,51 @@ export default function Presenze() {
                 </button>
               </div>
             </div>
+
+            {/* Box Richiesta Sblocco da parte del dipendente */}
+            {reviewingRapportino.richiestaSblocco?.stato === 'In attesa' && (
+              <div className="bg-amber-50 border-b border-amber-200 p-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shrink-0 no-print">
+                <div className="flex items-start gap-3">
+                  <Clock className="w-6 h-6 text-amber-600 shrink-0 mt-0.5 animate-pulse" />
+                  <div>
+                    <h4 className="font-extrabold text-sm text-amber-950 flex items-center gap-2">
+                      <span>Richiesta di Sblocco Modifica inviata dal Dipendente</span>
+                      <span className="text-[10px] font-black bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full uppercase">In Attesa</span>
+                    </h4>
+                    <p className="text-xs text-amber-900/90 font-semibold mt-1 italic">
+                      "{reviewingRapportino.richiestaSblocco.notaDipendente}"
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHrUnlockActionType('reject');
+                      setHrUnlockNote('');
+                      setIsHRUnlockModalOpen(true);
+                    }}
+                    className="px-4 py-2 bg-rose-100 hover:bg-rose-200 text-rose-800 border border-rose-300 font-extrabold rounded-xl text-xs transition shadow-2xs cursor-pointer flex items-center gap-1"
+                  >
+                    <X className="w-3.5 h-3.5 text-rose-700" />
+                    <span>Rifiuta / Risolta dall'HR</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHrUnlockActionType('accept');
+                      setHrUnlockNote('');
+                      setIsHRUnlockModalOpen(true);
+                    }}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs transition shadow-md active:scale-95 cursor-pointer flex items-center gap-1"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Accetta e Sblocca per il Dipendente</span>
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Corpo Modal */}
             <div className="p-6 overflow-y-auto flex-1 space-y-6">
@@ -5622,41 +5950,57 @@ export default function Presenze() {
 
                 {/* Spese Varie */}
                 <div className="space-y-3">
-                  <h5 className="text-[10px] font-extrabold text-gray-700 uppercase tracking-wider">Spese Varie Sostenute (€)</h5>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
-                    {[
-                      { label: 'Viaggio (Treno/Aereo)', field: 'speseViaggio' },
-                      { label: 'Taxi / Autobus', field: 'speseTaxiBus' },
-                      { label: 'Parcheggi', field: 'speseParcheggi' },
-                      { label: 'Vitto', field: 'speseVitto' },
-                      { label: 'Alloggio', field: 'speseAlloggio' },
-                      { label: 'Pedaggi', field: 'spesePedaggi' },
-                      { label: 'Altro', field: 'speseAltro' }
-                    ].map(({ label, field }) => (
-                      <div key={field}>
-                        <label className="block text-[9px] font-bold text-gray-400 mb-1">{label}</label>
-                        <input 
-                          type="number"
-                          step="any"
-                          min="0"
-                          value={reviewingRapportino.rimborsoSpeseData?.[field as keyof typeof reviewingRapportino.rimborsoSpeseData] === 0 ? '' : reviewingRapportino.rimborsoSpeseData?.[field as keyof typeof reviewingRapportino.rimborsoSpeseData] || ''}
-                          onChange={e => handleReviewRimborsoFieldChange(field, e.target.value === '' ? 0 : Number(e.target.value))}
-                          className="w-full p-1.5 border rounded-xl text-xs text-right font-bold outline-none focus:border-indigo-400"
-                        />
+                  <div className="flex justify-between items-center">
+                    <h5 className="text-[10px] font-extrabold text-gray-700 uppercase tracking-wider">Spese da Rimborsare (€)</h5>
+                    <span className="text-[10px] font-black text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-full border border-indigo-100">
+                      Totale: {formatDec(calculateTotaleSpeseVarie(reviewingRapportino.rimborsoSpeseData).toFixed(2))} €
+                    </span>
+                  </div>
+
+                  <div className="space-y-2">
+                    {getVociSpesaFromRimborsoData(reviewingRapportino.rimborsoSpeseData).map((voce, index) => (
+                      <div key={voce.id || index} className="flex items-center gap-2 bg-gray-50 p-2 rounded-xl border border-gray-200">
+                        <div className="flex-1">
+                          <input
+                            type="text"
+                            placeholder="Descrizione spesa..."
+                            value={voce.descrizione}
+                            onChange={e => handleReviewUpdateVoceSpesa(voce.id, 'descrizione', e.target.value)}
+                            className="w-full p-1.5 border border-gray-200 rounded-lg text-xs font-semibold text-gray-800 outline-none focus:border-indigo-400 bg-white"
+                          />
+                        </div>
+                        <div className="w-32 flex items-center gap-1 bg-white border border-gray-200 rounded-lg px-2 py-1">
+                          <span className="text-xs font-bold text-gray-400">€</span>
+                          <input
+                            type="number"
+                            step="any"
+                            min="0"
+                            placeholder="0.00"
+                            value={voce.importo === 0 ? '' : voce.importo}
+                            onChange={e => handleReviewUpdateVoceSpesa(voce.id, 'importo', e.target.value === '' ? 0 : Number(e.target.value))}
+                            className="w-full text-right text-xs font-bold text-gray-900 outline-none"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleReviewRemoveVoceSpesa(voce.id)}
+                          className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                          title="Rimuovi voce di spesa"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     ))}
                   </div>
-                  {/* Altro Specificare */}
-                  <div className="pt-1">
-                    <label className="block text-[10px] font-bold text-gray-500 mb-1">Specificare voce Altro (se valorizzata)</label>
-                    <input 
-                      type="text"
-                      placeholder="Es. Acquisto materiale ufficio"
-                      value={reviewingRapportino.rimborsoSpeseData?.altroSpecificare || ''}
-                      onChange={e => handleReviewRimborsoFieldChange('altroSpecificare', e.target.value)}
-                      className="w-full p-2 border rounded-xl text-xs outline-none focus:border-indigo-400 font-medium text-gray-800"
-                    />
-                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleReviewAddVoceSpesa}
+                    className="flex items-center gap-1.5 text-xs font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-3 py-1.5 rounded-xl transition cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>+ Aggiungi Voce di Spesa</span>
+                  </button>
                 </div>
 
                 {/* Dettaglio Spostamenti, Trasferte e Rimborso Km */}
@@ -5927,6 +6271,106 @@ export default function Presenze() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL RICHIESTA SBLOCCO DIPENDENTE */}
+      {isUnlockModalOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60] p-4 no-print">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden transform scale-100 transition-all">
+            <div className="bg-amber-600 p-4 text-white font-extrabold flex justify-between items-center">
+              <span className="flex items-center gap-2">
+                <Edit3 className="w-5 h-5" />
+                Richiesta Sblocco Foglio Presenze
+              </span>
+              <button onClick={() => setIsUnlockModalOpen(false)} className="hover:bg-white/20 p-1 rounded-full"><X className="w-5 h-5"/></button>
+            </div>
+            <form onSubmit={handleRequestUnlockSubmit} className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-2">
+                  Specifica la motivazione della richiesta di sblocco (es. errore nell'inserimento delle ore, aggiunta rimborsi, ecc.):
+                </label>
+                <textarea
+                  required
+                  rows={4}
+                  value={unlockNote}
+                  onChange={e => setUnlockNote(e.target.value)}
+                  placeholder="Es. Mi sono accorto di aver sbagliato l'inserimento delle ore di straordinario del giorno 15..."
+                  className="w-full p-3 text-xs border border-gray-300 rounded-xl outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 font-medium"
+                />
+              </div>
+              <div className="flex justify-end gap-2 text-xs font-bold">
+                <button 
+                  type="button" 
+                  onClick={() => setIsUnlockModalOpen(false)}
+                  className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-700 cursor-pointer"
+                >
+                  Annulla
+                </button>
+                <button 
+                  type="submit"
+                  disabled={unlockSubmitting}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg shadow cursor-pointer disabled:opacity-50"
+                >
+                  {unlockSubmitting ? 'Invio in corso...' : 'Invia Richiesta all\'HR'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL RISPOSTA HR RICHIESTA SBLOCCO */}
+      {isHRUnlockModalOpen && reviewingRapportino && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60] p-4 no-print">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden transform scale-100 transition-all">
+            <div className={`p-4 text-white font-extrabold flex justify-between items-center ${hrUnlockActionType === 'accept' ? 'bg-emerald-600' : 'bg-rose-600'}`}>
+              <span className="flex items-center gap-2">
+                {hrUnlockActionType === 'accept' ? <Check className="w-5 h-5" /> : <X className="w-5 h-5" />}
+                {hrUnlockActionType === 'accept' ? 'Accetta e Sblocca Foglio Ore' : 'Rifiuta / Risolta dall\'HR'}
+              </span>
+              <button onClick={() => setIsHRUnlockModalOpen(false)} className="hover:bg-white/20 p-1 rounded-full"><X className="w-5 h-5"/></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-2">
+                  {hrUnlockActionType === 'accept'
+                    ? 'Nota facoltativa per il dipendente (comunica che il foglio è stato sbloccato):'
+                    : 'Nota per il dipendente (spiega se hai già fatto le modifiche tu o perché non è necessario sbloccarlo):'}
+                </label>
+                <textarea
+                  rows={4}
+                  value={hrUnlockNote}
+                  onChange={e => setHrUnlockNote(e.target.value)}
+                  placeholder={
+                    hrUnlockActionType === 'accept'
+                      ? "Es. Foglio sbloccato. Effettua le modifiche e invia nuovamente."
+                      : "Es. Ho già apportato io le modifiche necessarie / Le ore risultano corrette da piano ferie."
+                  }
+                  className="w-full p-3 text-xs border border-gray-300 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-medium"
+                />
+              </div>
+              <div className="flex justify-end gap-2 text-xs font-bold">
+                <button 
+                  type="button" 
+                  onClick={() => setIsHRUnlockModalOpen(false)}
+                  className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-700 cursor-pointer"
+                >
+                  Annulla
+                </button>
+                <button 
+                  type="button"
+                  disabled={hrUnlockSubmitting}
+                  onClick={() => handleHRProcessUnlock(hrUnlockActionType)}
+                  className={`px-4 py-2 text-white rounded-lg shadow cursor-pointer disabled:opacity-50 ${
+                    hrUnlockActionType === 'accept' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'
+                  }`}
+                >
+                  {hrUnlockSubmitting ? 'Elaborazione...' : hrUnlockActionType === 'accept' ? 'Conferma ed Invia Email' : 'Conferma Rifiuto ed Invia Email'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -6275,80 +6719,62 @@ export default function Presenze() {
                       </div>
 
                       {/* Tabella Riepilogo Spese */}
-                      <table className="w-full text-left border border-gray-900 border-collapse text-[7.5px]">
-                        <thead>
-                          <tr className="bg-gray-100 border-b border-gray-900 font-bold text-gray-900 uppercase">
-                            <th className="p-1 border-r border-gray-900">Tipologia di spesa</th>
-                            <th className="p-1 border-r border-gray-900 text-right w-36">Importo Euro</th>
-                            <th className="p-1">Note</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-900 font-semibold text-gray-800">
-                          <tr>
-                            <td className="p-1 border-r border-gray-900">Spese di viaggio (aereo, nave, treno)</td>
-                            <td className="p-1 border-r border-gray-900 text-right">{formatDec((sheetToPrint.rimborsoSpeseData?.speseViaggio || 0).toFixed(2))} €</td>
-                            <td className="p-1">-</td>
-                          </tr>
-                          <tr>
-                            <td className="p-1 border-r border-gray-900">Taxi / autobus / noleggio auto</td>
-                            <td className="p-1 border-r border-gray-900 text-right">{formatDec((sheetToPrint.rimborsoSpeseData?.speseTaxiBus || 0).toFixed(2))} €</td>
-                            <td className="p-1">-</td>
-                          </tr>
-                          <tr>
-                            <td className="p-1 border-r border-gray-900">Parcheggi</td>
-                            <td className="p-1 border-r border-gray-900 text-right">{formatDec((sheetToPrint.rimborsoSpeseData?.speseParcheggi || 0).toFixed(2))} €</td>
-                            <td className="p-1">-</td>
-                          </tr>
-                          <tr>
-                            <td className="p-1 border-r border-gray-900">Vitto</td>
-                            <td className="p-1 border-r border-gray-900 text-right">{formatDec((sheetToPrint.rimborsoSpeseData?.speseVitto || 0).toFixed(2))} €</td>
-                            <td className="p-1">-</td>
-                          </tr>
-                          <tr>
-                            <td className="p-1 border-r border-gray-900">Alloggio</td>
-                            <td className="p-1 border-r border-gray-900 text-right">{formatDec((sheetToPrint.rimborsoSpeseData?.speseAlloggio || 0).toFixed(2))} €</td>
-                            <td className="p-1">-</td>
-                          </tr>
-                          <tr>
-                            <td className="p-1 border-r border-gray-900">Pedaggi autostradali</td>
-                            <td className="p-1 border-r border-gray-900 text-right">{formatDec((sheetToPrint.rimborsoSpeseData?.spesePedaggi || 0).toFixed(2))} €</td>
-                            <td className="p-1">-</td>
-                          </tr>
-                          <tr>
-                            <td className="p-1 border-r border-gray-900">Altro (specificare)</td>
-                            <td className="p-1 border-r border-gray-900 text-right">{formatDec((sheetToPrint.rimborsoSpeseData?.speseAltro || 0).toFixed(2))} €</td>
-                            <td className="p-1">{sheetToPrint.rimborsoSpeseData?.altroSpecificare || '-'}</td>
-                          </tr>
-                          <tr className="bg-gray-50 border-t-2 border-gray-900">
-                            <td className="p-1 border-r border-gray-900">
-                              Rimborso chilometrico per l'utilizzo del proprio automezzo
-                              <div className="text-[7.5px] text-gray-500 font-bold mt-0.5">
-                                Marca: {sheetToPrint.rimborsoSpeseData?.marcaAutomezzo || '_________________'} | 
-                                Modello: {sheetToPrint.rimborsoSpeseData?.modelloAutomezzo || '_________________'}
-                              </div>
-                            </td>
-                            <td className="p-1 border-r border-gray-900 text-right bg-gray-150 font-bold">
-                              {formatDec(Object.values(sheetToPrint.giorni).reduce((sum, g) => sum + (g.kmTrasferta || 0), 0))} Km totali
-                            </td>
-                            <td className="p-1 text-gray-500 italic text-[7.5px] align-middle">
-                              -
-                            </td>
-                          </tr>
-                          <tr className="bg-gray-100 font-bold border-t-2 border-gray-900 text-[8px]">
-                            <td className="p-1 border-r border-gray-900 uppercase">Totale altre spese sostenute (esclusi Km)</td>
-                            <td className="p-1 border-r border-gray-900 text-right">
-                              {formatDec(((sheetToPrint.rimborsoSpeseData?.speseViaggio || 0) +
-                                (sheetToPrint.rimborsoSpeseData?.speseTaxiBus || 0) +
-                                (sheetToPrint.rimborsoSpeseData?.speseParcheggi || 0) +
-                                (sheetToPrint.rimborsoSpeseData?.speseVitto || 0) +
-                                (sheetToPrint.rimborsoSpeseData?.speseAlloggio || 0) +
-                                (sheetToPrint.rimborsoSpeseData?.spesePedaggi || 0) +
-                                (sheetToPrint.rimborsoSpeseData?.speseAltro || 0)).toFixed(2))} €
-                            </td>
-                            <td className="p-1 text-[7.5px] font-medium text-gray-500 italic">Si allegano i relativi documenti di spesa.</td>
-                          </tr>
-                        </tbody>
-                      </table>
+                      {(() => {
+                        const listSpese = getVociSpesaFromRimborsoData(sheetToPrint.rimborsoSpeseData).filter(v => (Number(v.importo) || 0) > 0 || (v.descrizione || '').trim() !== '');
+                        const totSpese = calculateTotaleSpeseVarie(sheetToPrint.rimborsoSpeseData);
+                        const totKm = Object.values(sheetToPrint.giorni).reduce((sum, g) => sum + (g.kmTrasferta || 0), 0);
+
+                        return (
+                          <table className="w-full text-left border border-gray-900 border-collapse text-[7.5px]">
+                            <thead>
+                              <tr className="bg-gray-100 border-b border-gray-900 font-bold text-gray-900 uppercase">
+                                <th className="p-1 border-r border-gray-900">Voce di Spesa / Causale</th>
+                                <th className="p-1 border-r border-gray-900 text-right w-36">Importo (€)</th>
+                                <th className="p-1">Documentazione Allegata</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-900 font-semibold text-gray-800">
+                              {listSpese.length === 0 ? (
+                                <tr>
+                                  <td className="p-1 border-r border-gray-900 text-gray-500 italic">Nessuna spesa da rimborsare per il mese corrente.</td>
+                                  <td className="p-1 border-r border-gray-900 text-right font-bold">0,00 €</td>
+                                  <td className="p-1 text-gray-400 italic">-</td>
+                                </tr>
+                              ) : (
+                                listSpese.map((v, i) => (
+                                  <tr key={v.id || i}>
+                                    <td className="p-1 border-r border-gray-900">{v.descrizione || 'Spesa generica'}</td>
+                                    <td className="p-1 border-r border-gray-900 text-right font-bold">{formatDec((Number(v.importo) || 0).toFixed(2))} €</td>
+                                    <td className="p-1 text-gray-500 italic">Documento giustificativo allegato</td>
+                                  </tr>
+                                ))
+                              )}
+                              <tr className="bg-gray-50 border-t-2 border-gray-900">
+                                <td className="p-1 border-r border-gray-900">
+                                  Rimborso chilometrico per l'utilizzo del proprio automezzo
+                                  <div className="text-[7.5px] text-gray-500 font-bold mt-0.5">
+                                    Marca: {sheetToPrint.rimborsoSpeseData?.marcaAutomezzo || '_________________'} | 
+                                    Modello: {sheetToPrint.rimborsoSpeseData?.modelloAutomezzo || '_________________'}
+                                  </div>
+                                </td>
+                                <td className="p-1 border-r border-gray-900 text-right bg-gray-150 font-bold">
+                                  {formatDec(totKm)} Km totali
+                                </td>
+                                <td className="p-1 text-gray-500 italic text-[7.5px] align-middle">
+                                  -
+                                </td>
+                              </tr>
+                              <tr className="bg-gray-100 font-bold border-t-2 border-gray-900 text-[8px]">
+                                <td className="p-1 border-r border-gray-900 uppercase">Totale spese da rimborsare (esclusi Km)</td>
+                                <td className="p-1 border-r border-gray-900 text-right font-black text-gray-950">
+                                  {formatDec(totSpese.toFixed(2))} €
+                                </td>
+                                <td className="p-1 text-[7.5px] font-medium text-gray-500 italic">Si allegano i relativi documenti di spesa.</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        );
+                      })()}
 
                       {/* DETTAGLIO DELLE TRASFERTE E RIMBORSI KM EFFETTUATI */}
                       <div className="space-y-1.5 text-left">

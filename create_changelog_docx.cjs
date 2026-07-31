@@ -45,10 +45,74 @@ async function generateDocx() {
             ],
           }),
 
-          // --- VERSION 1.0.4 ---
+          // --- VERSION 1.0.5 ---
           new Paragraph({
             heading: HeadingLevel.HEADING_2,
             spacing: { before: 240, after: 180 },
+            children: [
+              new TextRun({
+                text: "Versione 1.0.5 — 31/07/2026",
+                bold: true,
+                size: 28,
+                color: "1E3A8A",
+                font: "Calibri",
+              }),
+            ],
+          }),
+          
+          new Paragraph({
+            spacing: { before: 60, after: 60 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Richiesta Sblocco Foglio Ore / Bozza Fattura (Registro Presenze): ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Aggiunto il pulsante 'Richiedi Sblocco Modifica' con modale per nota motivazionale, visibile al dipendente o collaboratore quando il foglio presenze o la bozza di fattura si trova in stato Inviato o Approvato.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 60, after: 60 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Fix Persistenza Progetti & Utenti da Abilitare (AuthContext): ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Risolto il problema di azzeramento dei progetti al re-open della modifica commessa includendo i campi 'progetti' ed 'apertaDa' nel mapper real-time delle commesse in AuthContext. Ora gli utenti da abilitare selezionati rimangono salvati e visibili a schermo e nelle e-mail di notifica.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 60, after: 60 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Fix Modifica Commesse Storiche / Legacy: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Risolto il problema di mancanza dei campi di compilazione nella modale di modifica per le commesse aperte precedentemente all'introduzione dello split progetti. Ora all'apertura viene generato automaticamente il progetto di default popolato con i dati esistenti (PM, descrizione e giornate stimate) ed aggiunto il pulsante '+ Aggiungi Progetto' con eliminazione riga.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 60, after: 60 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Nuovo Ruolo 'Gestori Commesse' & Layout Ruoli su 2 Righe (Impostazioni & Catalogo): ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Introdotto il ruolo dedicato 'Gestori Commesse' nella scheda Ruoli & Permessi delle Impostazioni. Le risorse a cui viene assegnato questo ruolo acquisiscono i permessi per accedere al Catalogo Commesse e creare o modificare commesse. Riorganizzato il layout della scheda Ruoli su 2 righe ampie e spaziose per evitare il sovraffollamento dei pulsanti di nomina ed i titoli su più righe.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 60, after: 60 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Fix Visualizzazione Testo Card Dashboard: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Risolto il problema di ritaglio della parte inferiore delle lettere (es. 'g' di suggerimenti) nelle card della Dashboard rimuovendo il vincolo rigido di altezza e l'overflow nascosto sui contenitori di descrizione.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 60, after: 60 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Compilazione Libera & Precedenza Modifiche HR: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Abilitata la compilazione senza blocchi per il dipendente su tutte le giornate quando il foglio presenze viene sbloccato (stato Richiede Modifica). Preservata l'integrità delle rettifiche apportate dall'HR evitando sovrascrizioni automatiche dal piano ferie (flag hrModified).", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+
+          // --- VERSION 1.0.4 ---
+          new Paragraph({
+            heading: HeadingLevel.HEADING_2,
+            spacing: { before: 360, after: 180 },
             children: [
               new TextRun({
                 text: "Versione 1.0.4 — 30/07/2026",
