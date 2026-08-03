@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { type User, onAuthStateChanged } from 'firebase/auth';
-import { collection, doc, addDoc, deleteDoc, getDoc, getDocs, query, where } from 'firebase/firestore';
+import { collection, doc, addDoc, deleteDoc, getDoc, getDocs, query, where, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
 
 const DEFAULT_ADMINS = ['aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it'];
@@ -136,8 +136,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         richiesteDisegnatoriSnap,
         pmsSnap,
         commercialiSnap,
-        leavesSnap,
-        prioritaSnap
+        leavesSnap
       ] = await Promise.all([
         getDocs(collection(db, 'admins')),
         getDocs(collection(db, 'hr')),
@@ -152,8 +151,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         getDocs(collection(db, 'richieste_disegnatori')),
         getDocs(collection(db, 'project_managers')),
         getDocs(collection(db, 'commerciali')),
-        getDocs(query(collection(db, 'richieste_ferie'), where('stato', '==', 'Approvato'))),
-        getDocs(collection(db, 'priorita_commesse'))
+        getDocs(query(collection(db, 'richieste_ferie'), where('stato', '==', 'Approvato')))
       ]);
 
       // 1. Admins
@@ -266,15 +264,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const leavesList: any[] = leavesSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
       setApprovedLeaves(leavesList);
 
-      // 15. Priorita commesse
-      const prioritaMap: Record<string, 'Alta' | 'Standard' | 'Bassa'> = {};
-      prioritaSnap.forEach(docSnap => {
-        const data = docSnap.data();
-        if (data.priorita) {
-          prioritaMap[docSnap.id] = data.priorita;
-        }
-      });
-      setPrioritaCommesse(prioritaMap);
+      // 15. Priorita commesse — gestita dal listener real-time (vedi useEffect sotto)
 
       // Migrazione automatica HR
       const legacyHrSnap = await getDoc(doc(db, 'configurazione_sistema', 'hr'));
@@ -329,6 +319,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       unsubscribeAuth();
     };
   }, []);
+
+  // Listener real-time per priorità commesse
+  useEffect(() => {
+    if (!user) return;
+    const unsubPriority = onSnapshot(collection(db, 'priorita_commesse'), (snap) => {
+      const prioritaMap: Record<string, 'Alta' | 'Standard' | 'Bassa'> = {};
+      snap.forEach(docSnap => {
+        const data = docSnap.data();
+        if (data.priorita) {
+          prioritaMap[docSnap.id] = data.priorita;
+        }
+      });
+      setPrioritaCommesse(prioritaMap);
+    });
+    return () => unsubPriority();
+  }, [user]);
 
   // Calcolo ruoli derivati
   const realEmail = user?.email?.toLowerCase().trim() || '';

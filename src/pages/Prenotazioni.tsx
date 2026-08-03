@@ -3,7 +3,6 @@ import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { 
   collection, 
-  getDocs,
   getDoc,
   doc, 
   addDoc, 
@@ -11,7 +10,8 @@ import {
   deleteDoc, 
   setDoc,
   query,
-  where
+  where,
+  onSnapshot
 } from 'firebase/firestore';
 import { 
   Laptop, 
@@ -334,30 +334,9 @@ export default function Prenotazioni() {
   };
 
   const loadBookingData = async () => {
-    setLoading(true);
+    // Carica solo la configurazione licenze (dato statico)
     try {
-      const sixtyDaysAgo = new Date();
-      sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
-      const limitDate = sixtyDaysAgo.toLocaleDateString('sv-SE');
-
-      const [resourcesSnap, bookingsSnap, licenseDocSnap] = await Promise.all([
-        getDocs(collection(db, 'risorse')),
-        getDocs(query(collection(db, 'prenotazioni_risorse'), where('dataFine', '>=', limitDate))),
-        getDoc(doc(db, 'configurazioni', 'licenze'))
-      ]);
-
-      const resList: Resource[] = resourcesSnap.docs.map((docSnap: any) => ({
-        docId: docSnap.id,
-        ...docSnap.data()
-      } as unknown as Resource));
-      setResources(resList);
-
-      const bookList: Booking[] = bookingsSnap.docs.map((docSnap: any) => ({
-        id: docSnap.id,
-        ...docSnap.data()
-      } as Booking));
-      setBookings(bookList);
-
+      const licenseDocSnap = await getDoc(doc(db, 'configurazioni', 'licenze'));
       if (licenseDocSnap.exists()) {
         const data = licenseDocSnap.data();
         const revit = Number(data.revitTotali) || 6;
@@ -373,15 +352,50 @@ export default function Prenotazioni() {
         setAutocadLtInput(autocadLt);
       }
     } catch (err) {
-      console.error("Error loading bookings data:", err);
-      showToast("Errore nel caricamento dei dati delle prenotazioni.", "error");
-    } finally {
-      setLoading(false);
+      console.error("Error loading license config:", err);
     }
   };
 
   useEffect(() => {
     loadBookingData();
+
+    // Listener real-time per le risorse (PC, auto, ecc.)
+    const unsubResources = onSnapshot(collection(db, 'risorse'), (snap) => {
+      const resList: Resource[] = snap.docs.map((docSnap: any) => ({
+        docId: docSnap.id,
+        ...docSnap.data()
+      } as unknown as Resource));
+      setResources(resList);
+      setLoading(false);
+    }, (err) => {
+      console.error("Error listening to risorse:", err);
+      showToast("Errore nel caricamento delle risorse.", "error");
+      setLoading(false);
+    });
+
+    // Listener real-time per le prenotazioni (ultimi 60 giorni + future)
+    const sixtyDaysAgo = new Date();
+    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+    const limitDate = sixtyDaysAgo.toLocaleDateString('sv-SE');
+    const unsubBookings = onSnapshot(
+      query(collection(db, 'prenotazioni_risorse'), where('dataFine', '>=', limitDate)),
+      (snap) => {
+        const bookList: Booking[] = snap.docs.map((docSnap: any) => ({
+          id: docSnap.id,
+          ...docSnap.data()
+        } as Booking));
+        setBookings(bookList);
+      },
+      (err) => {
+        console.error("Error listening to prenotazioni_risorse:", err);
+        showToast("Errore nel caricamento delle prenotazioni.", "error");
+      }
+    );
+
+    return () => {
+      unsubResources();
+      unsubBookings();
+    };
   }, []);
 
   // Filtered lists of resources

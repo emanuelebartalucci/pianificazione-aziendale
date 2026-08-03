@@ -2396,7 +2396,22 @@ export default function Presenze() {
   // --- DECIMAL FORMATTING UTILITY (Italian Locale: "." for thousands, "," for decimals) ---
   const formatDec = (val: number | string | undefined | null): string => {
     if (val === undefined || val === null || val === '') return '';
-    const num = typeof val === 'number' ? val : parseFloat(val.toString().replace(/\./g, '').replace(',', '.'));
+    let num: number;
+    if (typeof val === 'number') {
+      num = val;
+    } else {
+      const str = val.toString().trim();
+      // Se la stringa è già in formato anglosassone (es. "2100.00" da toFixed), parsala direttamente.
+      // È in formato anglosassone se non contiene virgola E il punto è il separatore decimale.
+      // È in formato italiano se contiene la virgola come decimale (es. "2.100,00").
+      if (str.includes(',')) {
+        // Formato italiano: "2.100,00" → rimuove punti migliaia, sostituisce virgola con punto
+        num = parseFloat(str.replace(/\./g, '').replace(',', '.'));
+      } else {
+        // Formato anglosassone o intero: "2100.00" o "2100" → parsata direttamente
+        num = parseFloat(str);
+      }
+    }
     if (isNaN(num)) return val.toString();
     return num.toLocaleString('it-IT', {
       maximumFractionDigits: 2
@@ -3996,202 +4011,258 @@ export default function Presenze() {
 
                     {rapportino.collaboratoreData ? (
                       <div className="w-full overflow-x-auto scrollbar-thin">
-                        <table className="w-full text-left border-collapse min-w-[700px] text-xs">
+                        <table className="w-full text-left border-collapse border border-gray-300 min-w-[650px] text-xs shadow-sm rounded-lg overflow-hidden">
                           <thead>
-                            <tr className="bg-gray-100 border-b border-gray-200 uppercase font-bold text-gray-655 text-[10px]">
-                              <th className="p-3 w-1/3">Voce / Descrizione</th>
-                              <th className="p-3 w-1/3 text-right">Aliquota / Parametro</th>
-                              <th className="p-3 w-1/3 text-right">Importo (€)</th>
+                            <tr className="bg-gray-200 border-b-2 border-gray-300 uppercase font-bold text-gray-700 text-[10px]">
+                              <th className="p-3 border-r border-gray-300 w-1/2">Voce / Descrizione</th>
+                              <th className="p-3 border-r border-gray-300 w-1/4 text-center">Aliquota / Parametro</th>
+                              <th className="p-3 w-1/4 text-right">Importo (€)</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-200 font-medium text-gray-700">
                             {/* COMPENSO MENSILE */}
-                            {/* COMPENSO MENSILE */}
                             {rapportino.collaboratoreData.importoFissoMensile && Number(rapportino.collaboratoreData.importoFissoMensile) > 0 ? (
-                              <tr className="bg-blue-50/30">
-                                <td className="p-3 font-semibold text-blue-900">
+                              <tr className="bg-blue-50/40">
+                                <td className="p-3 border-r border-gray-200 font-semibold text-blue-900">
                                   Compenso Mensile Fisso
-                                  <span className="ml-1 text-[9px] text-blue-500 font-normal">(accordo a canone fisso · modificabile)</span>
+                                  <span className="ml-1 text-[9px] text-blue-600 font-normal block sm:inline">(accordo a canone fisso · modificabile)</span>
                                 </td>
-                                <td className="p-3 text-right">
-                                  <input 
-                                    type="number"
-                                    step="any"
-                                    min="0"
-                                    disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                                    value={rapportino.collaboratoreData.importoFissoMensile}
-                                    onChange={e => handleCollabFieldChange('importoFissoMensile', Number(e.target.value))}
-                                    className="w-24 p-1.5 text-xs text-right border rounded bg-white font-bold outline-none focus:border-blue-400"
-                                  /> €
+                                <td className="p-3 border-r border-gray-200 text-center">
+                                  <div className="flex items-center justify-center w-full">
+                                    <div className="flex items-center gap-1.5 w-32 justify-start">
+                                      <input 
+                                        type="number"
+                                        step="any"
+                                        min="0"
+                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                        value={rapportino.collaboratoreData.importoFissoMensile || ''}
+                                        onChange={e => handleCollabFieldChange('importoFissoMensile', e.target.value === '' ? 0 : Number(e.target.value))}
+                                        style={{ border: '1.5px solid #60a5fa', width: '65px' }}
+                                        className="p-1 text-xs text-right bg-blue-50 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-blue-300"
+                                      />
+                                      <span className="text-xs font-bold text-blue-900 w-10 text-left">€</span>
+                                    </div>
+                                  </div>
                                 </td>
-                                <td className="p-3 text-right font-semibold text-blue-900">
+                                <td className="p-3 text-right font-bold text-blue-900">
                                   {formatDec((Number(rapportino.collaboratoreData.importoFissoMensile)).toFixed(2))} €
                                 </td>
                               </tr>
                             ) : (
                               <>
-                                <tr>
-                                  <td className="p-3 font-semibold">
+                                <tr className="hover:bg-amber-50/20">
+                                  <td className="p-3 border-r border-gray-200 font-semibold">
                                     Giornate Lavorate
-                                    <span className="ml-1 text-[9px] text-gray-400 font-normal">(calcolate auto · modificabili)</span>
+                                    <span className="ml-1 text-[9px] text-gray-400 font-normal block sm:inline">(calcolate auto · modificabili)</span>
                                   </td>
-                                  <td className="p-3 text-right">
-                                    <input 
-                                      type="number"
-                                      step="0.5"
-                                      min="0"
-                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                                      value={rapportino.collaboratoreData.giornateOverride ?? rapportino.collaboratoreData.giornate}
-                                      onChange={e => handleCollabFieldChange('giornateOverride', Number(e.target.value))}
-                                      className="w-24 p-1.5 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
-                                    />
+                                  <td className="p-3 border-r border-gray-200 text-center">
+                                    <div className="flex items-center justify-center w-full">
+                                      <div className="flex items-center gap-1.5 w-32 justify-start">
+                                        <input 
+                                          type="number"
+                                          step="0.5"
+                                          min="0"
+                                          disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                          value={(rapportino.collaboratoreData.giornateOverride ?? rapportino.collaboratoreData.giornate) || ''}
+                                          onChange={e => handleCollabFieldChange('giornateOverride', e.target.value === '' ? 0 : Number(e.target.value))}
+                                          style={{ border: '1.5px solid #cbd5e1', width: '65px' }}
+                                          className="p-1 text-xs text-right bg-amber-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
+                                        />
+                                        <span className="text-xs text-gray-600 font-medium w-10 text-left">gg</span>
+                                      </div>
+                                    </div>
                                   </td>
-                                  <td className="p-3 text-right">-</td>
+                                  <td className="p-3 text-right text-gray-400">-</td>
                                 </tr>
-                                <tr>
-                                  <td className="p-3 font-semibold">Compenso Giornaliero (Contratto)</td>
-                                  <td className="p-3 text-right">
-                                    <input 
-                                      type="number"
-                                      step="any"
-                                      min="0"
-                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                                      value={rapportino.collaboratoreData.dailyRate}
-                                      onChange={e => handleCollabFieldChange('dailyRate', Number(e.target.value))}
-                                      className="w-24 p-1.5 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
-                                    /> €/gg
+                                <tr className="hover:bg-amber-50/20">
+                                  <td className="p-3 border-r border-gray-200 font-semibold">Compenso Giornaliero (Contratto)</td>
+                                  <td className="p-3 border-r border-gray-200 text-center">
+                                    <div className="flex items-center justify-center w-full">
+                                      <div className="flex items-center gap-1.5 w-32 justify-start">
+                                        <input 
+                                          type="number"
+                                          step="any"
+                                          min="0"
+                                          disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                          value={rapportino.collaboratoreData.dailyRate || ''}
+                                          onChange={e => handleCollabFieldChange('dailyRate', e.target.value === '' ? 0 : Number(e.target.value))}
+                                          style={{ border: '1.5px solid #cbd5e1', width: '65px' }}
+                                          className="p-1 text-xs text-right bg-amber-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
+                                        />
+                                        <span className="text-xs text-gray-600 font-medium w-10 text-left">€/gg</span>
+                                      </div>
+                                    </div>
                                   </td>
-                                  <td className="p-3 text-right">-</td>
+                                  <td className="p-3 text-right text-gray-400">-</td>
                                 </tr>
-                                <tr className="bg-amber-50/20 font-bold">
-                                  <td className="p-3">Compenso Mensile (Giornate × Tariffa)</td>
-                                  <td className="p-3 text-right">-</td>
-                                  <td className="p-3 text-right text-gray-900">{formatDec(rapportino.collaboratoreData.compensoMensile.toFixed(2))} €</td>
+                                <tr className="bg-amber-50/30 font-bold">
+                                  <td className="p-3 border-r border-gray-200">Compenso Mensile (Giornate × Tariffa)</td>
+                                  <td className="p-3 border-r border-gray-200 text-center text-gray-400">-</td>
+                                  <td className="p-3 text-right font-bold text-gray-900">{formatDec(rapportino.collaboratoreData.compensoMensile.toFixed(2))} €</td>
                                 </tr>
                               </>
                             )}
 
                             {/* SPESE & KM */}
-                            <tr>
-                              <td className="p-3 font-semibold">Spese (Vitto, alloggio, ecc.)</td>
-                              <td className="p-3 text-right">
-                                <input 
-                                  type="number"
-                                  step="any"
-                                  min="0"
-                                  disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                                  value={rapportino.collaboratoreData.spese}
-                                  onChange={e => handleCollabFieldChange('spese', Number(e.target.value))}
-                                  className="w-24 p-1.5 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
-                                />
+                            <tr className="hover:bg-amber-50/20">
+                              <td className="p-3 border-r border-gray-200 font-semibold">Spese (Vitto, alloggio, ecc.)</td>
+                              <td className="p-3 border-r border-gray-200 text-center">
+                                <div className="flex items-center justify-center w-full">
+                                  <div className="flex items-center gap-1.5 w-32 justify-start">
+                                    <input 
+                                      type="number"
+                                      step="any"
+                                      min="0"
+                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                      value={rapportino.collaboratoreData.spese || ''}
+                                      onChange={e => handleCollabFieldChange('spese', e.target.value === '' ? 0 : Number(e.target.value))}
+                                      style={{ border: '1.5px solid #cbd5e1', width: '65px' }}
+                                      className="p-1 text-xs text-right bg-amber-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
+                                    />
+                                    <span className="text-xs text-gray-600 font-medium w-10 text-left">€</span>
+                                  </div>
+                                </div>
                               </td>
-                              <td className="p-3 text-right text-gray-900">{formatDec(rapportino.collaboratoreData.spese.toFixed(2))} €</td>
+                              <td className="p-3 text-right font-bold text-gray-900">{formatDec(rapportino.collaboratoreData.spese.toFixed(2))} €</td>
                             </tr>
-                            <tr>
-                              <td className="p-3 font-semibold">Chilometri Percorsi</td>
-                              <td className="p-3 text-right">
-                                <input 
-                                  type="number"
-                                  step="any"
-                                  min="0"
-                                  disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                                  value={rapportino.collaboratoreData.km}
-                                  onChange={e => handleCollabFieldChange('km', Number(e.target.value))}
-                                  className="w-24 p-1.5 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
-                                />
+                            <tr className="hover:bg-amber-50/20">
+                              <td className="p-3 border-r border-gray-200 font-semibold">Chilometri Percorsi</td>
+                              <td className="p-3 border-r border-gray-200 text-center">
+                                <div className="flex items-center justify-center w-full">
+                                  <div className="flex items-center gap-1.5 w-32 justify-start">
+                                    <input 
+                                      type="number"
+                                      step="any"
+                                      min="0"
+                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                      value={rapportino.collaboratoreData.km || ''}
+                                      onChange={e => handleCollabFieldChange('km', e.target.value === '' ? 0 : Number(e.target.value))}
+                                      style={{ border: '1.5px solid #cbd5e1', width: '65px' }}
+                                      className="p-1 text-xs text-right bg-amber-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
+                                    />
+                                    <span className="text-xs text-gray-600 font-medium w-10 text-left">km</span>
+                                  </div>
+                                </div>
                               </td>
-                              <td className="p-3 text-right">-</td>
+                              <td className="p-3 text-right text-gray-400">-</td>
                             </tr>
-                            <tr>
-                              <td className="p-3 font-semibold">Tariffa Chilometrica (€/km)</td>
-                              <td className="p-3 text-right">
-                                <input 
-                                  type="number"
-                                  step="any"
-                                  min="0"
-                                  disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                                  value={rapportino.collaboratoreData.kmRate}
-                                  onChange={e => handleCollabFieldChange('kmRate', Number(e.target.value))}
-                                  className="w-24 p-1.5 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
-                                />
+                            <tr className="hover:bg-amber-50/20">
+                              <td className="p-3 border-r border-gray-200 font-semibold">Tariffa Chilometrica (€/km)</td>
+                              <td className="p-3 border-r border-gray-200 text-center">
+                                <div className="flex items-center justify-center w-full">
+                                  <div className="flex items-center gap-1.5 w-32 justify-start">
+                                    <input 
+                                      type="number"
+                                      step="any"
+                                      min="0"
+                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                      value={rapportino.collaboratoreData.kmRate || ''}
+                                      onChange={e => handleCollabFieldChange('kmRate', e.target.value === '' ? 0 : Number(e.target.value))}
+                                      style={{ border: '1.5px solid #cbd5e1', width: '65px' }}
+                                      className="p-1 text-xs text-right bg-amber-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
+                                    />
+                                    <span className="text-xs text-gray-600 font-medium w-10 text-left">€/km</span>
+                                  </div>
+                                </div>
                               </td>
-                              <td className="p-3 text-right">-</td>
+                              <td className="p-3 text-right text-gray-400">-</td>
                             </tr>
-                            <tr className="bg-amber-50/20 font-bold">
-                              <td className="p-3">Rimborso Chilometricico (Km × Tariffa)</td>
-                              <td className="p-3 text-right">-</td>
-                              <td className="p-3 text-right text-gray-900">{formatDec(rapportino.collaboratoreData.rimborsoKm.toFixed(2))} €</td>
+                            <tr className="bg-amber-50/30 font-bold">
+                              <td className="p-3 border-r border-gray-200">Rimborso Chilometrico (Km × Tariffa)</td>
+                              <td className="p-3 border-r border-gray-200 text-center text-gray-400">-</td>
+                              <td className="p-3 text-right font-bold text-gray-900">{formatDec(rapportino.collaboratoreData.rimborsoKm.toFixed(2))} €</td>
                             </tr>
 
                             {/* TOTAL COMPENSO */}
-                            <tr className="bg-amber-100/30 text-sm font-extrabold border-y border-amber-200">
-                              <td className="p-3 uppercase">Totale Compenso (Imponibile)</td>
-                              <td className="p-3 text-right">-</td>
-                              <td className="p-3 text-right text-amber-900">{formatDec(rapportino.collaboratoreData.totaleCompenso.toFixed(2))} €</td>
+                            <tr className="bg-amber-100/70 text-sm font-extrabold border-y-2 border-amber-300">
+                              <td className="p-3 border-r border-amber-300 uppercase text-amber-950">TOTALE COMPENSO (IMPONIBILE)</td>
+                              <td className="p-3 border-r border-amber-300 text-center text-amber-800">-</td>
+                              <td className="p-3 text-right text-amber-950 text-base font-black">{formatDec(rapportino.collaboratoreData.totaleCompenso.toFixed(2))} €</td>
                             </tr>
 
                             {/* TAX RATES */}
-                            <tr>
-                              <td className="p-3 font-semibold">
-                                <input
-                                  type="text"
-                                  placeholder="Contributo cassa previdenziale"
-                                  disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                                  value={rapportino.collaboratoreData.cassaLabel ?? 'Contributo cassa previdenziale'}
-                                  onChange={e => handleCollabFieldChange('cassaLabel', e.target.value)}
-                                  className="!px-0 !mx-0 !text-left border-b border-dashed border-gray-300 bg-transparent outline-none font-semibold text-xs text-gray-700 w-full focus:border-amber-400"
-                                />
-                                <span className="text-[9px] text-gray-400 block mt-0.5">(es. INPS, Inarcassa, Cassa Geometri - clicca per modificare)</span>
+                            <tr className="hover:bg-amber-50/20">
+                              <td className="p-3 border-r border-gray-200 font-semibold">
+                                <div className="flex flex-col gap-0.5">
+                                  <input
+                                    type="text"
+                                    placeholder="Contributo cassa previdenziale"
+                                    disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                    value={rapportino.collaboratoreData.cassaLabel ?? 'Contributo cassa previdenziale'}
+                                    onChange={e => handleCollabFieldChange('cassaLabel', e.target.value)}
+                                    style={{ borderBottom: '1.5px dashed #94a3b8' }}
+                                    className="bg-transparent outline-none font-bold text-xs text-gray-800 w-full max-w-[280px] focus:border-amber-500"
+                                  />
+                                  <span className="text-[9px] text-gray-400 font-normal">(es. INPS, Inarcassa, Cassa Geometri - clicca per modificare)</span>
+                                </div>
                               </td>
-                              <td className="p-3 text-right">
-                                <input 
-                                  type="number"
-                                  step="any"
-                                  min="0"
-                                  disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                                  value={rapportino.collaboratoreData.inpsRate}
-                                  onChange={e => handleCollabFieldChange('inpsRate', Number(e.target.value))}
-                                  className="w-24 p-1.5 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
-                                /> %
+                              <td className="p-3 border-r border-gray-200 text-center">
+                                <div className="flex items-center justify-center w-full">
+                                  <div className="flex items-center gap-1.5 w-32 justify-start">
+                                    <input 
+                                      type="number"
+                                      step="any"
+                                      min="0"
+                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                      value={rapportino.collaboratoreData.inpsRate || ''}
+                                      onChange={e => handleCollabFieldChange('inpsRate', e.target.value === '' ? 0 : Number(e.target.value))}
+                                      style={{ border: '1.5px solid #cbd5e1', width: '65px' }}
+                                      className="p-1 text-xs text-right bg-amber-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
+                                    />
+                                    <span className="text-xs text-gray-600 font-bold w-10 text-left">%</span>
+                                  </div>
+                                </div>
                               </td>
-                              <td className="p-3 text-right text-gray-900">{formatDec(rapportino.collaboratoreData.inps.toFixed(2))} €</td>
+                              <td className="p-3 text-right font-bold text-gray-900">{formatDec(rapportino.collaboratoreData.inps.toFixed(2))} €</td>
                             </tr>
-                            <tr>
-                              <td className="p-3 font-semibold">IVA</td>
-                              <td className="p-3 text-right">
-                                <input 
-                                  type="number"
-                                  step="any"
-                                  min="0"
-                                  disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                                  value={rapportino.collaboratoreData.ivaRate}
-                                  onChange={e => handleCollabFieldChange('ivaRate', Number(e.target.value))}
-                                  className="w-24 p-1.5 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
-                                /> %
+                            <tr className="hover:bg-amber-50/20">
+                              <td className="p-3 border-r border-gray-200 font-semibold">IVA</td>
+                              <td className="p-3 border-r border-gray-200 text-center">
+                                <div className="flex items-center justify-center w-full">
+                                  <div className="flex items-center gap-1.5 w-32 justify-start">
+                                    <input 
+                                      type="number"
+                                      step="any"
+                                      min="0"
+                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                      value={rapportino.collaboratoreData.ivaRate || ''}
+                                      onChange={e => handleCollabFieldChange('ivaRate', e.target.value === '' ? 0 : Number(e.target.value))}
+                                      style={{ border: '1.5px solid #cbd5e1', width: '65px' }}
+                                      className="p-1 text-xs text-right bg-amber-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
+                                    />
+                                    <span className="text-xs text-gray-600 font-bold w-10 text-left">%</span>
+                                  </div>
+                                </div>
                               </td>
-                              <td className="p-3 text-right text-gray-900">{formatDec(rapportino.collaboratoreData.iva.toFixed(2))} €</td>
+                              <td className="p-3 text-right font-bold text-gray-900">{formatDec(rapportino.collaboratoreData.iva.toFixed(2))} €</td>
                             </tr>
-                            <tr>
-                              <td className="p-3 font-semibold">Ritenuta d'Acconto</td>
-                              <td className="p-3 text-right">
-                                <input 
-                                  type="number"
-                                  step="any"
-                                  min="0"
-                                  disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                                  value={rapportino.collaboratoreData.raRate}
-                                  onChange={e => handleCollabFieldChange('raRate', Number(e.target.value))}
-                                  className="w-24 p-1.5 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
-                                /> %
+                            <tr className="hover:bg-amber-50/20">
+                              <td className="p-3 border-r border-gray-200 font-semibold">Ritenuta d'Acconto</td>
+                              <td className="p-3 border-r border-gray-200 text-center">
+                                <div className="flex items-center justify-center w-full">
+                                  <div className="flex items-center gap-1.5 w-32 justify-start">
+                                    <input 
+                                      type="number"
+                                      step="any"
+                                      min="0"
+                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                      value={rapportino.collaboratoreData.raRate || ''}
+                                      onChange={e => handleCollabFieldChange('raRate', e.target.value === '' ? 0 : Number(e.target.value))}
+                                      style={{ border: '1.5px solid #cbd5e1', width: '65px' }}
+                                      className="p-1 text-xs text-right bg-amber-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
+                                    />
+                                    <span className="text-xs text-gray-600 font-bold w-10 text-left">%</span>
+                                  </div>
+                                </div>
                               </td>
-                              <td className="p-3 text-right text-red-655">- {formatDec(rapportino.collaboratoreData.ra.toFixed(2))} €</td>
+                              <td className="p-3 text-right font-bold text-red-600">- {formatDec(rapportino.collaboratoreData.ra.toFixed(2))} €</td>
                             </tr>
 
                             {/* TOTAL DUE */}
-                            <tr className="bg-amber-600/10 text-base font-black border-t-2 border-amber-600">
-                              <td className="p-4 uppercase text-amber-950">TOTALE DOVUTO (A PAGARE)</td>
-                              <td className="p-4 text-right">-</td>
-                              <td className="p-4 text-right text-amber-900 text-lg font-black">{formatDec(rapportino.collaboratoreData.totaleDovuto.toFixed(2))} €</td>
+                            <tr className="bg-amber-500 text-white font-black text-base border-t-2 border-amber-600">
+                              <td className="p-3.5 border-r border-amber-400 uppercase tracking-wide">TOTALE DOVUTO (A PAGARE)</td>
+                              <td className="p-3.5 border-r border-amber-400 text-center text-amber-100">-</td>
+                              <td className="p-3.5 text-right text-white text-lg font-black">{formatDec(rapportino.collaboratoreData.totaleDovuto.toFixed(2))} €</td>
                             </tr>
                           </tbody>
                         </table>
@@ -5193,216 +5264,279 @@ export default function Presenze() {
                   </div>
 
                   {reviewingRapportino.collaboratoreData ? (
-                    <table className="w-full text-left border-collapse text-xs">
+                    <table className="w-full text-left border-collapse border border-gray-300 min-w-[650px] text-xs shadow-sm rounded-lg overflow-hidden">
                       <thead>
-                        <tr className="bg-gray-100 border-b border-gray-200 uppercase font-bold text-gray-655 text-[9px]">
-                          <th className="p-2.5 w-1/3">Voce / Descrizione</th>
-                          <th className="p-2.5 w-1/3 text-right">Aliquota / Parametro</th>
-                          <th className="p-2.5 w-1/3 text-right">Importo (€)</th>
+                        <tr className="bg-gray-200 border-b-2 border-gray-300 uppercase font-bold text-gray-700 text-[9px]">
+                          <th className="p-2.5 border-r border-gray-300 w-1/2">Voce / Descrizione</th>
+                          <th className="p-2.5 border-r border-gray-300 w-1/4 text-center">Aliquota / Parametro</th>
+                          <th className="p-2.5 w-1/4 text-right">Importo (€)</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-200 font-medium text-gray-700">
                         {/* COMPENSO MENSILE */}
                         {reviewingRapportino.collaboratoreData.importoFissoMensile && Number(reviewingRapportino.collaboratoreData.importoFissoMensile) > 0 ? (
                           <>
-                            <tr className="bg-blue-50/30">
-                              <td className="p-2.5 font-semibold text-blue-900">
+                            <tr className="bg-blue-50/40">
+                              <td className="p-2.5 border-r border-gray-200 font-semibold text-blue-900">
                                 Compenso Mensile Fisso
-                                <span className="ml-1 text-[9px] text-blue-500 font-normal">(accordo a canone fisso · modificabile)</span>
+                                <span className="ml-1 text-[9px] text-blue-600 font-normal block sm:inline">(accordo a canone fisso · modificabile)</span>
                               </td>
-                              <td className="p-2.5 text-right">
-                                <input 
-                                  type="number"
-                                  step="any"
-                                  min="0"
-                                  disabled={reviewingRapportino.stato === 'Approvato'}
-                                  value={reviewingRapportino.collaboratoreData.importoFissoMensile}
-                                  onChange={e => handleReviewCollabFieldChange('importoFissoMensile', Number(e.target.value))}
-                                  className="w-20 p-1 text-xs text-right border rounded bg-white font-bold outline-none focus:border-blue-400"
-                                /> €
+                              <td className="p-2.5 border-r border-gray-200 text-center">
+                                <div className="flex items-center justify-center w-full">
+                                  <div className="flex items-center gap-1.5 w-32 justify-start">
+                                    <input 
+                                      type="number"
+                                      step="any"
+                                      min="0"
+                                      disabled={reviewingRapportino.stato === 'Approvato'}
+                                      value={reviewingRapportino.collaboratoreData.importoFissoMensile || ''}
+                                      onChange={e => handleReviewCollabFieldChange('importoFissoMensile', e.target.value === '' ? 0 : Number(e.target.value))}
+                                      style={{ border: '1.5px solid #60a5fa', width: '65px' }}
+                                      className="p-1 text-xs text-right bg-blue-50 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-blue-300"
+                                    />
+                                    <span className="text-xs font-bold text-blue-900 w-10 text-left">€</span>
+                                  </div>
+                                </div>
                               </td>
-                              <td className="p-2.5 text-right font-semibold text-blue-900">
+                              <td className="p-2.5 text-right font-bold text-blue-900">
                                 {formatDec((Number(reviewingRapportino.collaboratoreData.importoFissoMensile)).toFixed(2))} €
                               </td>
                             </tr>
                           </>
                         ) : (
                           <>
-                            <tr>
-                              <td className="p-2.5 font-semibold">
+                            <tr className="hover:bg-amber-50/20">
+                              <td className="p-2.5 border-r border-gray-200 font-semibold">
                                 Giornate Lavorate
-                                <span className="ml-1 text-[9px] text-gray-400 font-normal">(calcolate auto · modificabili)</span>
+                                <span className="ml-1 text-[9px] text-gray-400 font-normal block sm:inline">(calcolate auto · modificabili)</span>
                               </td>
-                              <td className="p-2.5 text-right">
-                                <input 
-                                  type="number"
-                                  step="0.5"
-                                  min="0"
-                                  disabled={reviewingRapportino.stato === 'Approvato'}
-                                  value={reviewingRapportino.collaboratoreData.giornateOverride ?? reviewingRapportino.collaboratoreData.giornate}
-                                  onChange={e => handleReviewCollabFieldChange('giornateOverride', Number(e.target.value))}
-                                  className="w-20 p-1 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
-                                />
+                              <td className="p-2.5 border-r border-gray-200 text-center">
+                                <div className="flex items-center justify-center w-full">
+                                  <div className="flex items-center gap-1.5 w-32 justify-start">
+                                    <input 
+                                      type="number"
+                                      step="0.5"
+                                      min="0"
+                                      disabled={reviewingRapportino.stato === 'Approvato'}
+                                      value={(reviewingRapportino.collaboratoreData.giornateOverride ?? reviewingRapportino.collaboratoreData.giornate) || ''}
+                                      onChange={e => handleReviewCollabFieldChange('giornateOverride', e.target.value === '' ? 0 : Number(e.target.value))}
+                                      style={{ border: '1.5px solid #cbd5e1', width: '65px' }}
+                                      className="p-1 text-xs text-right bg-amber-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
+                                    />
+                                    <span className="text-xs text-gray-600 font-medium w-10 text-left">gg</span>
+                                  </div>
+                                </div>
                               </td>
-                              <td className="p-2.5 text-right">-</td>
+                              <td className="p-2.5 text-right text-gray-400">-</td>
                             </tr>
-                            <tr>
-                              <td className="p-2.5 font-semibold">Compenso Giornaliero (Contratto)</td>
-                              <td className="p-2.5 text-right">
-                                <input 
-                                  type="number"
-                                  step="any"
-                                  min="0"
-                                  disabled={reviewingRapportino.stato === 'Approvato'}
-                                  value={reviewingRapportino.collaboratoreData.dailyRate}
-                                  onChange={e => handleReviewCollabFieldChange('dailyRate', Number(e.target.value))}
-                                  className="w-20 p-1 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
-                                /> €/gg
+                            <tr className="hover:bg-amber-50/20">
+                              <td className="p-2.5 border-r border-gray-200 font-semibold">Compenso Giornaliero (Contratto)</td>
+                              <td className="p-2.5 border-r border-gray-200 text-center">
+                                <div className="flex items-center justify-center w-full">
+                                  <div className="flex items-center gap-1.5 w-32 justify-start">
+                                    <input 
+                                      type="number"
+                                      step="any"
+                                      min="0"
+                                      disabled={reviewingRapportino.stato === 'Approvato'}
+                                      value={reviewingRapportino.collaboratoreData.dailyRate || ''}
+                                      onChange={e => handleReviewCollabFieldChange('dailyRate', e.target.value === '' ? 0 : Number(e.target.value))}
+                                      style={{ border: '1.5px solid #cbd5e1', width: '65px' }}
+                                      className="p-1 text-xs text-right bg-amber-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
+                                    />
+                                    <span className="text-xs text-gray-600 font-medium w-10 text-left">€/gg</span>
+                                  </div>
+                                </div>
                               </td>
-                              <td className="p-2.5 text-right">-</td>
+                              <td className="p-2.5 text-right text-gray-400">-</td>
                             </tr>
-                            <tr className="bg-amber-50/20 font-bold">
-                              <td className="p-2.5">Compenso Mensile (Giornate × Tariffa)</td>
-                              <td className="p-2.5 text-right">-</td>
-                              <td className="p-2.5 text-right text-gray-900">{formatDec(reviewingRapportino.collaboratoreData.compensoMensile.toFixed(2))} €</td>
+                            <tr className="bg-amber-50/30 font-bold">
+                              <td className="p-2.5 border-r border-gray-200">Compenso Mensile (Giornate × Tariffa)</td>
+                              <td className="p-2.5 border-r border-gray-200 text-center text-gray-400">-</td>
+                              <td className="p-2.5 text-right font-bold text-gray-900">{formatDec(reviewingRapportino.collaboratoreData.compensoMensile.toFixed(2))} €</td>
                             </tr>
                             
                             {/* HR can input a flat rate here to enable it */}
-                            <tr className="bg-gray-50">
-                              <td className="p-2.5 font-semibold text-gray-600">
+                            <tr className="bg-gray-50/80">
+                              <td className="p-2.5 border-r border-gray-200 font-semibold text-gray-600">
                                 Importo Fisso Mensile
-                                <span className="ml-1 text-[9px] text-gray-400 font-normal">(0 = disabilitato)</span>
+                                <span className="ml-1 text-[9px] text-gray-400 font-normal block sm:inline">(0 = disabilitato)</span>
                               </td>
-                              <td className="p-2.5 text-right">
-                                <input 
-                                  type="number"
-                                  step="any"
-                                  min="0"
-                                  disabled={reviewingRapportino.stato === 'Approvato'}
-                                  value={reviewingRapportino.collaboratoreData.importoFissoMensile ?? 0}
-                                  onChange={e => handleReviewCollabFieldChange('importoFissoMensile', Number(e.target.value))}
-                                  className="w-20 p-1 text-xs text-right border rounded bg-white font-bold outline-none focus:border-blue-400"
-                                /> €
+                              <td className="p-2.5 border-r border-gray-200 text-center">
+                                <div className="flex items-center justify-center w-full">
+                                  <div className="flex items-center gap-1.5 w-32 justify-start">
+                                    <input 
+                                      type="number"
+                                      step="any"
+                                      min="0"
+                                      disabled={reviewingRapportino.stato === 'Approvato'}
+                                      value={reviewingRapportino.collaboratoreData.importoFissoMensile || ''}
+                                      onChange={e => handleReviewCollabFieldChange('importoFissoMensile', e.target.value === '' ? 0 : Number(e.target.value))}
+                                      style={{ border: '1.5px solid #60a5fa', width: '65px' }}
+                                      className="p-1 text-xs text-right bg-blue-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-blue-300"
+                                    />
+                                    <span className="text-xs text-gray-500 font-medium w-10 text-left">€</span>
+                                  </div>
+                                </div>
                               </td>
-                              <td className="p-2.5 text-right text-gray-450">-</td>
+                              <td className="p-2.5 text-right text-gray-400">-</td>
                             </tr>
                           </>
                         )}
 
                         {/* SPESE & KM */}
-                        <tr>
-                          <td className="p-2.5 font-semibold">Spese (Vitto, alloggio, ecc.)</td>
-                          <td className="p-2.5 text-right">
-                            <input 
-                              type="number"
-                              step="any"
-                              min="0"
-                              disabled={reviewingRapportino.stato === 'Approvato'}
-                              value={reviewingRapportino.collaboratoreData.spese}
-                              onChange={e => handleReviewCollabFieldChange('spese', Number(e.target.value))}
-                              className="w-20 p-1 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
-                            />
+                        <tr className="hover:bg-amber-50/20">
+                          <td className="p-2.5 border-r border-gray-200 font-semibold">Spese (Vitto, alloggio, ecc.)</td>
+                          <td className="p-2.5 border-r border-gray-200 text-center">
+                            <div className="flex items-center justify-center w-full">
+                              <div className="flex items-center gap-1.5 w-32 justify-start">
+                                <input 
+                                  type="number"
+                                  step="any"
+                                  min="0"
+                                  disabled={reviewingRapportino.stato === 'Approvato'}
+                                  value={reviewingRapportino.collaboratoreData.spese || ''}
+                                  onChange={e => handleReviewCollabFieldChange('spese', e.target.value === '' ? 0 : Number(e.target.value))}
+                                  style={{ border: '1.5px solid #cbd5e1', width: '65px' }}
+                                  className="p-1 text-xs text-right bg-amber-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
+                                />
+                                <span className="text-xs text-gray-600 font-medium w-10 text-left">€</span>
+                              </div>
+                            </div>
                           </td>
-                          <td className="p-2.5 text-right text-gray-900">{formatDec(reviewingRapportino.collaboratoreData.spese.toFixed(2))} €</td>
+                          <td className="p-2.5 text-right font-bold text-gray-900">{formatDec(reviewingRapportino.collaboratoreData.spese.toFixed(2))} €</td>
                         </tr>
-                        <tr>
-                          <td className="p-2.5 font-semibold">Chilometri Percorsi</td>
-                          <td className="p-2.5 text-right">
-                            <input 
-                              type="number"
-                              step="any"
-                              min="0"
-                              disabled={reviewingRapportino.stato === 'Approvato'}
-                              value={reviewingRapportino.collaboratoreData.km}
-                              onChange={e => handleReviewCollabFieldChange('km', Number(e.target.value))}
-                              className="w-20 p-1 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
-                            />
+                        <tr className="hover:bg-amber-50/20">
+                          <td className="p-2.5 border-r border-gray-200 font-semibold">Chilometri Percorsi</td>
+                          <td className="p-2.5 border-r border-gray-200 text-center">
+                            <div className="flex items-center justify-center w-full">
+                              <div className="flex items-center gap-1.5 w-32 justify-start">
+                                <input 
+                                  type="number"
+                                  step="any"
+                                  min="0"
+                                  disabled={reviewingRapportino.stato === 'Approvato'}
+                                  value={reviewingRapportino.collaboratoreData.km || ''}
+                                  onChange={e => handleReviewCollabFieldChange('km', e.target.value === '' ? 0 : Number(e.target.value))}
+                                  style={{ border: '1.5px solid #cbd5e1', width: '65px' }}
+                                  className="p-1 text-xs text-right bg-amber-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
+                                />
+                                <span className="text-xs text-gray-600 font-medium w-10 text-left">km</span>
+                              </div>
+                            </div>
                           </td>
-                          <td className="p-2.5 text-right">-</td>
+                          <td className="p-2.5 text-right text-gray-400">-</td>
                         </tr>
-                        <tr>
-                          <td className="p-2.5 font-semibold">Tariffa Chilometrica (€/km)</td>
-                          <td className="p-2.5 text-right">
-                            <input 
-                              type="number"
-                              step="any"
-                              min="0"
-                              disabled={reviewingRapportino.stato === 'Approvato'}
-                              value={reviewingRapportino.collaboratoreData.kmRate}
-                              onChange={e => handleReviewCollabFieldChange('kmRate', Number(e.target.value))}
-                              className="w-20 p-1 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
-                            />
+                        <tr className="hover:bg-amber-50/20">
+                          <td className="p-2.5 border-r border-gray-200 font-semibold">Tariffa Chilometrica (€/km)</td>
+                          <td className="p-2.5 border-r border-gray-200 text-center">
+                            <div className="flex items-center justify-center w-full">
+                              <div className="flex items-center gap-1.5 w-32 justify-start">
+                                <input 
+                                  type="number"
+                                  step="any"
+                                  min="0"
+                                  disabled={reviewingRapportino.stato === 'Approvato'}
+                                  value={reviewingRapportino.collaboratoreData.kmRate || ''}
+                                  onChange={e => handleReviewCollabFieldChange('kmRate', e.target.value === '' ? 0 : Number(e.target.value))}
+                                  style={{ border: '1.5px solid #cbd5e1', width: '65px' }}
+                                  className="p-1 text-xs text-right bg-amber-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
+                                />
+                                <span className="text-xs text-gray-600 font-medium w-10 text-left">€/km</span>
+                              </div>
+                            </div>
                           </td>
-                          <td className="p-2.5 text-right">-</td>
+                          <td className="p-2.5 text-right text-gray-400">-</td>
                         </tr>
-                        <tr className="bg-amber-50/20 font-bold">
-                          <td className="p-2.5">Rimborso Chilometrico (Km × Tariffa)</td>
-                          <td className="p-2.5 text-right">-</td>
-                          <td className="p-2.5 text-right text-gray-900">{formatDec(reviewingRapportino.collaboratoreData.rimborsoKm.toFixed(2))} €</td>
+                        <tr className="bg-amber-50/30 font-bold">
+                          <td className="p-2.5 border-r border-gray-200">Rimborso Chilometrico (Km × Tariffa)</td>
+                          <td className="p-2.5 border-r border-gray-200 text-center text-gray-400">-</td>
+                          <td className="p-2.5 text-right font-bold text-gray-900">{formatDec(reviewingRapportino.collaboratoreData.rimborsoKm.toFixed(2))} €</td>
                         </tr>
 
                         {/* TOTAL COMPENSO */}
-                        <tr className="bg-amber-100/30 text-xs font-extrabold border-y border-amber-200">
-                          <td className="p-2.5 uppercase">Totale Compenso (Imponibile)</td>
-                          <td className="p-2.5 text-right">-</td>
-                          <td className="p-2.5 text-right text-amber-900">{formatDec(reviewingRapportino.collaboratoreData.totaleCompenso.toFixed(2))} €</td>
+                        <tr className="bg-amber-100/70 text-xs font-extrabold border-y-2 border-amber-300">
+                          <td className="p-2.5 border-r border-amber-300 uppercase text-amber-950">TOTALE COMPENSO (IMPONIBILE)</td>
+                          <td className="p-2.5 border-r border-amber-300 text-center text-amber-800">-</td>
+                          <td className="p-2.5 text-right text-amber-950 text-sm font-black">{formatDec(reviewingRapportino.collaboratoreData.totaleCompenso.toFixed(2))} €</td>
                         </tr>
 
                         {/* TAX RATES */}
-                        <tr>
-                          <td className="p-2.5 font-semibold">
-                            <input
-                              type="text"
-                              placeholder="Contributo cassa previdenziale"
-                              disabled={reviewingRapportino.stato === 'Approvato'}
-                              value={reviewingRapportino.collaboratoreData.cassaLabel ?? 'Contributo cassa previdenziale'}
-                              onChange={e => handleReviewCollabFieldChange('cassaLabel', e.target.value)}
-                              className="!px-0 !mx-0 !text-left border-b border-dashed border-gray-300 bg-transparent outline-none font-semibold text-xs text-gray-700 w-full focus:border-amber-400"
-                            />
-                            <span className="text-[9px] text-gray-400 block mt-0.5">(es. INPS, Inarcassa, Cassa Geometri - clicca per modificare)</span>
+                        <tr className="hover:bg-amber-50/20">
+                          <td className="p-2.5 border-r border-gray-200 font-semibold">
+                            <div className="flex flex-col gap-0.5">
+                              <input
+                                type="text"
+                                placeholder="Contributo cassa previdenziale"
+                                disabled={reviewingRapportino.stato === 'Approvato'}
+                                value={reviewingRapportino.collaboratoreData.cassaLabel ?? 'Contributo cassa previdenziale'}
+                                onChange={e => handleReviewCollabFieldChange('cassaLabel', e.target.value)}
+                                style={{ borderBottom: '1.5px dashed #94a3b8' }}
+                                className="bg-transparent outline-none font-bold text-xs text-gray-800 w-full max-w-[280px] focus:border-amber-500"
+                              />
+                              <span className="text-[9px] text-gray-400 font-normal">(es. INPS, Inarcassa, Cassa Geometri - clicca per modificare)</span>
+                            </div>
                           </td>
-                          <td className="p-2.5 text-right">
-                            <input 
-                              type="number"
-                              step="any"
-                              min="0"
-                              disabled={reviewingRapportino.stato === 'Approvato'}
-                              value={reviewingRapportino.collaboratoreData.inpsRate}
-                              onChange={e => handleReviewCollabFieldChange('inpsRate', Number(e.target.value))}
-                              className="w-20 p-1 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
-                            /> %
+                          <td className="p-2.5 border-r border-gray-200 text-center">
+                            <div className="flex items-center justify-center w-full">
+                              <div className="flex items-center gap-1.5 w-32 justify-start">
+                                <input 
+                                  type="number"
+                                  step="any"
+                                  min="0"
+                                  disabled={reviewingRapportino.stato === 'Approvato'}
+                                  value={reviewingRapportino.collaboratoreData.inpsRate || ''}
+                                  onChange={e => handleReviewCollabFieldChange('inpsRate', e.target.value === '' ? 0 : Number(e.target.value))}
+                                  style={{ border: '1.5px solid #cbd5e1', width: '65px' }}
+                                  className="p-1 text-xs text-right bg-amber-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
+                                />
+                                <span className="text-xs text-gray-600 font-bold w-10 text-left">%</span>
+                              </div>
+                            </div>
                           </td>
-                          <td className="p-2.5 text-right text-gray-900">{formatDec(reviewingRapportino.collaboratoreData.inps.toFixed(2))} €</td>
+                          <td className="p-2.5 text-right font-bold text-gray-900">{formatDec(reviewingRapportino.collaboratoreData.inps.toFixed(2))} €</td>
                         </tr>
-                        <tr>
-                          <td className="p-2.5 font-semibold">IVA</td>
-                          <td className="p-2.5 text-right">
-                            <input 
-                              type="number"
-                              step="any"
-                              min="0"
-                              disabled={reviewingRapportino.stato === 'Approvato'}
-                              value={reviewingRapportino.collaboratoreData.ivaRate}
-                              onChange={e => handleReviewCollabFieldChange('ivaRate', Number(e.target.value))}
-                              className="w-20 p-1 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
-                            /> %
+                        <tr className="hover:bg-amber-50/20">
+                          <td className="p-2.5 border-r border-gray-200 font-semibold">IVA</td>
+                          <td className="p-2.5 border-r border-gray-200 text-center">
+                            <div className="flex items-center justify-center w-full">
+                              <div className="flex items-center gap-1.5 w-32 justify-start">
+                                <input 
+                                  type="number"
+                                  step="any"
+                                  min="0"
+                                  disabled={reviewingRapportino.stato === 'Approvato'}
+                                  value={reviewingRapportino.collaboratoreData.ivaRate || ''}
+                                  onChange={e => handleReviewCollabFieldChange('ivaRate', e.target.value === '' ? 0 : Number(e.target.value))}
+                                  style={{ border: '1.5px solid #cbd5e1', width: '65px' }}
+                                  className="p-1 text-xs text-right bg-amber-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
+                                />
+                                <span className="text-xs text-gray-600 font-bold w-10 text-left">%</span>
+                              </div>
+                            </div>
                           </td>
-                          <td className="p-2.5 text-right text-gray-900">{formatDec(reviewingRapportino.collaboratoreData.iva.toFixed(2))} €</td>
+                          <td className="p-2.5 text-right font-bold text-gray-900">{formatDec(reviewingRapportino.collaboratoreData.iva.toFixed(2))} €</td>
                         </tr>
-                        <tr>
-                          <td className="p-2.5 font-semibold">Ritenuta d'Acconto</td>
-                          <td className="p-2.5 text-right">
-                            <input 
-                              type="number"
-                              step="any"
-                              min="0"
-                              disabled={reviewingRapportino.stato === 'Approvato'}
-                              value={reviewingRapportino.collaboratoreData.raRate}
-                              onChange={e => handleReviewCollabFieldChange('raRate', Number(e.target.value))}
-                              className="w-20 p-1 text-xs text-right border rounded bg-white font-bold outline-none focus:border-amber-400"
-                            /> %
+                        <tr className="hover:bg-amber-50/20">
+                          <td className="p-2.5 border-r border-gray-200 font-semibold">Ritenuta d'Acconto</td>
+                          <td className="p-2.5 border-r border-gray-200 text-center">
+                            <div className="flex items-center justify-center w-full">
+                              <div className="flex items-center gap-1.5 w-32 justify-start">
+                                <input 
+                                  type="number"
+                                  step="any"
+                                  min="0"
+                                  disabled={reviewingRapportino.stato === 'Approvato'}
+                                  value={reviewingRapportino.collaboratoreData.raRate || ''}
+                                  onChange={e => handleReviewCollabFieldChange('raRate', e.target.value === '' ? 0 : Number(e.target.value))}
+                                  style={{ border: '1.5px solid #cbd5e1', width: '65px' }}
+                                  className="p-1 text-xs text-right bg-amber-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
+                                />
+                                <span className="text-xs text-gray-600 font-bold w-10 text-left">%</span>
+                              </div>
+                            </div>
                           </td>
-                          <td className="p-2.5 text-right text-red-655">- {formatDec(reviewingRapportino.collaboratoreData.ra.toFixed(2))} €</td>
+                          <td className="p-2.5 text-right font-bold text-red-600">- {formatDec(reviewingRapportino.collaboratoreData.ra.toFixed(2))} €</td>
                         </tr>
 
                         {/* TOTAL DUE */}
