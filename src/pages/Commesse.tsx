@@ -9,7 +9,7 @@ import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
 import ConfirmModal from '../components/ConfirmModal';
 import { PianificazioneModal } from '../components/PianificazioneModal';
 import { ResourceAvailabilityModal } from '../components/ResourceAvailabilityModal';
-import { getPrintFooterHtml } from '../config/version';
+import { getPrintDateString, APP_VERSION } from '../config/version';
 import { TIPOLOGIE_COMMESSE, isSoci } from './Impostazioni';
 import { loadSavedEmailTemplates, substitutePlaceholders, getCommesseNotificationEmails } from '../utils/emailTemplateManager';
 
@@ -1602,11 +1602,14 @@ export default function Commesse() {
         const chiusuraDate = new Date(todayIso);
         chiusuraDate.setHours(0, 0, 0, 0);
 
-        const assSnap = await getDocs(collection(db, 'assegnazioni'));
         let settimaneRipulite = 0;
+        const targetDocIds: string[] = [];
 
-        for (const assDocSnap of assSnap.docs) {
-          const docId = assDocSnap.id; // formato: {dipName}-{YYYY-Www}
+        // Filtra in memoria le chiavi interessate senza fare full-scan Firestore
+        for (const [docId, lista] of Object.entries(assignments)) {
+          if (!Array.isArray(lista)) continue;
+          if (!lista.some((ass: any) => ass.commessaId === editingCommessa.id)) continue;
+
           const match = docId.match(/^(.+)-(\d{4}-W\d{1,2})$/);
           if (!match) continue;
 
@@ -1623,14 +1626,18 @@ export default function Commesse() {
           weekStart.setHours(0, 0, 0, 0);
 
           // Mantieni la settimana corrente, rimuovi solo quelle strettamente future
-          if (weekStart <= chiusuraDate) continue;
+          if (weekStart > chiusuraDate) {
+            targetDocIds.push(docId);
+          }
+        }
 
-          const currentLista: any[] = assDocSnap.data().lista || [];
+        for (const docId of targetDocIds) {
+          const currentLista: any[] = assignments[docId] || [];
           const updatedLista = currentLista.filter(
             (ass: any) => ass.commessaId !== editingCommessa.id
           );
 
-          if (updatedLista.length === currentLista.length) continue; // Nessuna entry per questa commessa
+          if (updatedLista.length === currentLista.length) continue;
 
           settimaneRipulite++;
           if (updatedLista.length === 0) {
@@ -2443,19 +2450,16 @@ export default function Commesse() {
           // 1. Elimina la commessa dal catalogo
           await deleteDoc(doc(db, 'catalogo_commesse', id));
           
-          // 2. Elimina a cascata le assegnazioni
-          const querySnapshot = await getDocs(collection(db, 'assegnazioni'));
-          for (const docSnap of querySnapshot.docs) {
-            const data = docSnap.data();
-            const currentList = data.lista || [];
+          // 2. Elimina a cascata le assegnazioni (solo sui documenti interessati identificati in memoria)
+          for (const [docId, currentList] of Object.entries(assignments)) {
+            if (!Array.isArray(currentList)) continue;
+            if (!currentList.some((a: any) => a.commessaId === id)) continue;
+
             const updatedList = currentList.filter((a: any) => a.commessaId !== id);
-            
-            if (currentList.length !== updatedList.length) {
-              if (updatedList.length === 0) {
-                await deleteDoc(doc(db, 'assegnazioni', docSnap.id));
-              } else {
-                await setDoc(doc(db, 'assegnazioni', docSnap.id), { lista: updatedList });
-              }
+            if (updatedList.length === 0) {
+              await deleteDoc(doc(db, 'assegnazioni', docId));
+            } else {
+              await setDoc(doc(db, 'assegnazioni', docId), { lista: updatedList });
             }
           }
 
@@ -2474,101 +2478,139 @@ export default function Commesse() {
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
 
+    const commesseMapped = filteredAndSortedCatalogoCommesse.map(c => {
+      const cod = (c as any).codiceCommessa || c.nome.split(' - ')[0] || '';
+      const tit = (c as any).titolo || c.nome.split(' - ').slice(1).join(' - ') || c.nome;
+      const cli = (c as any).cliente || '-';
+      const sta = (c as any).stato || 'Aperta';
+      return { ...c, cod, tit, cli, sta };
+    });
+
+    const commesseOrd = [...commesseMapped].sort((a, b) => b.cod.localeCompare(a.cod));
+
+    const rowsHtml = commesseOrd.length === 0 ? `
+      <tr>
+        <td colspan="5" style="text-align: center; padding: 20px; color: #9ca3af; font-weight: 700;">
+          Nessuna commessa censita.
+        </td>
+      </tr>
+    ` : commesseOrd.map((c, idx) => {
+      const rowBg = idx % 2 === 1 ? 'background-color: #f9fafb;' : 'background-color: #ffffff;';
+      let statusColor = '#6b7280';
+      if (c.sta === 'Aperta') statusColor = '#10b981';
+      if (c.sta === 'Chiusa') statusColor = '#ef4444';
+      if (c.sta === 'In Attesa') statusColor = '#f59e0b';
+      if (c.sta === 'Sospesa') statusColor = '#6366f1';
+
+      return `
+        <tr style="${rowBg}">
+          <td style="padding: 4px 6px; border: 1px solid #d1d5db; text-align: center; font-weight: 800;">${idx + 1}</td>
+          <td style="padding: 4px 6px; border: 1px solid #d1d5db; font-weight: 800; color: #111827;">${c.cod}</td>
+          <td style="padding: 4px 6px; border: 1px solid #d1d5db; font-weight: 600; color: #374151;">${c.tit}</td>
+          <td style="padding: 4px 6px; border: 1px solid #d1d5db; font-weight: 600; color: #4b5563;">${c.cli}</td>
+          <td style="padding: 4px 6px; border: 1px solid #d1d5db; text-align: center; font-weight: 700; color: ${statusColor};">${c.sta}</td>
+        </tr>
+      `;
+    }).join('');
+
     const htmlContent = `
-      <html>
-        <head>
-          <title>Catalogo Commesse</title>
-          <style>
-            body {
-              font-family: Arial, sans-serif;
-              margin: 30px;
-              color: #333;
-            }
-            h1 {
-              text-align: center;
-              margin-bottom: 30px;
-              font-size: 24px;
-            }
-            table {
-              width: 100%;
-              border-collapse: collapse;
-              margin-top: 20px;
-              font-size: 12px;
-            }
-            th, td {
-              border: 1px solid #ccc;
-              padding: 10px 12px;
-              text-align: left;
-            }
-            th {
-              background-color: #f3f4f6;
-              font-weight: bold;
-            }
-            tr:nth-child(even) {
-              background-color: #fcfcfc;
-            }
-          </style>
-        </head>
-        <body>
-          <h1>Catalogo Commesse ${catalogoStatoFilter === 'Aperta' ? 'Aperte' : catalogoStatoFilter === 'Chiusa' ? 'Chiuse' : ''}</h1>
-          <table>
-            <thead>
-              <tr>
-                <th style="width: 5%;">#</th>
-                <th style="width: 12%;">Codice</th>
-                <th style="width: 30%;">Titolo</th>
-                <th style="width: 20%;">Cliente</th>
-                <th style="width: 8%;">Tipologia</th>
-                <th style="width: 5%;">Anno</th>
-                <th style="width: 10%;">Stato</th>
-                <th style="width: 10%;">Responsabile</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${filteredAndSortedCatalogoCommesse.map((c, index) => {
-                const cod = (c as any).codiceCommessa || c.nome.split(' - ')[0] || '';
-                const tit = (c as any).titolo || c.nome.split(' - ').slice(1).join(' - ') || c.nome;
-                const cli = (c as any).cliente || '-';
-                const tip = c.tipologia ? (TIPOLOGIE_COMMESSE[c.tipologia] || c.tipologia) : '-';
-                const ann = c.anno || '-';
-                const sta = (c as any).stato || 'Aperta';
-                const resp = getOfficialName(c.responsabile) || '-';
-                return `
-                  <tr>
-                    <td>${index + 1}</td>
-                    <td><strong>${cod}</strong></td>
-                    <td>${tit}</td>
-                    <td>${cli}</td>
-                    <td>${tip}</td>
-                    <td>${ann}</td>
-                    <td>${sta}</td>
-                    <td>${resp}</td>
-                  </tr>
-                `;
-              }).join('')}
-            </tbody>
-          </table>
-          ${getPrintFooterHtml()}
-          <script>
-            function closeWindow() {
-              try { window.close(); } catch(e) {}
-            }
-            window.onafterprint = closeWindow;
-            window.onload = function() {
-              setTimeout(function() {
-                window.print();
-                closeWindow();
-                setTimeout(closeWindow, 500);
-              }, 250);
-            };
-            window.onfocus = function() {
-              setTimeout(closeWindow, 300);
-            };
-          </script>
-        </body>
+      <!DOCTYPE html>
+      <html lang="it">
+      <head>
+        <meta charset="UTF-8">
+        <title>Catalogo Commesse Aziendali</title>
+        <style>
+          @page { size: A4 portrait; margin: 10mm; }
+          * { box-sizing: border-box !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+          html, body { margin: 0 !important; padding: 0 !important; background: #ffffff !important; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 9.5px; color: #111827; }
+          
+          table.main-layout { width: 100%; border-collapse: collapse; border: none; }
+          table.main-layout > thead > tr > td { padding: 0; border: none; }
+          table.main-layout > tbody > tr > td { padding: 0; border: none; }
+          table.main-layout > tfoot > tr > td { padding: 0; border: none; }
+
+          .header-bar { display: flex; justify-content: space-between; align-items: flex-end; padding-bottom: 6px; margin-bottom: 8px; border-bottom: 2px solid #1f2937; }
+          .header-logo { height: 36px; width: auto; }
+          .header-title-right { text-align: right; font-size: 8.5px; font-weight: 800; color: #4b5563; text-transform: uppercase; letter-spacing: 0.5px; }
+          
+          .title-banner { background-color: #1f2937; color: #ffffff; padding: 6px 10px; border-radius: 5px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+          .title-banner-text { font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; }
+          .count-badge { background-color: rgba(255, 255, 255, 0.2); padding: 2px 7px; border-radius: 4px; font-size: 9.5px; font-weight: 900; }
+          
+          .filter-box { border: 1px solid #9ca3af; background-color: #f9fafb; padding: 6px 10px; border-radius: 5px; margin-bottom: 10px; font-size: 9px; font-weight: 600; color: #374151; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px; }
+          
+          table.report-table { width: 100% !important; border-collapse: collapse !important; border: 1.5px solid #4b5563 !important; font-size: 9px !important; }
+          table.report-table th { background-color: #f3f4f6 !important; color: #111827 !important; font-size: 8.5px !important; font-weight: 800 !important; text-transform: uppercase !important; letter-spacing: 0.5px !important; padding: 4.5px 6px !important; border: 1px solid #6b7280 !important; }
+          table.report-table td { padding: 4px 6px !important; border: 1px solid #d1d5db !important; vertical-align: middle !important; }
+          table.report-table tr { page-break-inside: avoid !important; break-inside: avoid !important; }
+          
+          .print-footer-static { margin-top: 10px; padding-top: 6px; padding-bottom: 4px; border-top: 1px solid #9ca3af; display: flex; justify-content: space-between; align-items: center; font-size: 8.5px; font-weight: 600; color: #4b5563; font-family: monospace; }
+          .page-number::after { content: counter(page); }
+        </style>
+      </head>
+      <body>
+        <table class="main-layout">
+          <thead>
+            <tr>
+              <td>
+                <div class="header-bar">
+                  <img src="/Logo.png" alt="Logo Ingegno" class="header-logo" />
+                  <div class="header-title-right">INGEGNO P&C S.R.L. · CATALOGO COMMESSE</div>
+                </div>
+                <div class="title-banner">
+                  <span class="title-banner-text">CATALOGO COMMESSE AZIENDALI</span>
+                  <span class="count-badge">${commesseOrd.length} COMMESSE</span>
+                </div>
+              </td>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <div class="filter-box">
+                  <span><strong>Data Stampa:</strong> ${getPrintDateString()}</span>
+                  <span><strong>Totale Commesse Censite:</strong> ${commesseOrd.length}</span>
+                </div>
+
+                <table class="report-table">
+                  <thead>
+                    <tr>
+                      <th style="width: 7%; text-align: center;">#</th>
+                      <th style="width: 18%; text-align: left;">Codice Commessa</th>
+                      <th style="width: 35%; text-align: left;">Descrizione Attività</th>
+                      <th style="width: 25%; text-align: left;">Cliente</th>
+                      <th style="width: 15%; text-align: center;">Stato Commessa</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${rowsHtml}
+                  </tbody>
+                </table>
+              </td>
+            </tr>
+          </tbody>
+          <tfoot>
+            <tr>
+              <td>
+                <div class="print-footer-static">
+                  <span>Piattaforma Pianificazione Aziendale</span>
+                  <span>${APP_VERSION} — Data Stampa: ${getPrintDateString()}</span>
+                </div>
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+
+        <script>
+          function closeWindow() { try { window.close(); } catch(e) {} }
+          window.onafterprint = closeWindow;
+          window.onload = function() { setTimeout(function() { window.print(); closeWindow(); setTimeout(closeWindow, 500); }, 250); };
+        </script>
+      </body>
       </html>
     `;
 
+    printWindow.document.open();
     printWindow.document.write(htmlContent);
     printWindow.document.close();
   };
@@ -3166,20 +3208,22 @@ export default function Commesse() {
                                        weeklyContractHours,
                                        leaves.reduce((acc, l) => acc + getLeaveHoursForDay(l, dailyContractHours), 0)
                                      );
-                                     const leavePctInWeek = Math.round((totalLeaveHoursInWeek / weeklyContractHours) * 100);
+                                     const leavePctRaw = (totalLeaveHoursInWeek / weeklyContractHours) * 100;
+                                     const leavePctInWeek = Math.round(leavePctRaw * 10) / 10;
 
                                      const availableContractHours = Math.max(0, weeklyContractHours - totalLeaveHoursInWeek);
                                      const fullLeaveDaysCount = leaves.filter(l => l.tipo === 'ferie' || l.tipo === 'malattia' || l.tipo === 'maternita' || l.frazioneTipo === 'giornata').length;
                                      const isAllWeekOnLeave = availableContractHours <= 0 || fullLeaveDaysCount >= 5;
                                      const hasLeaves = leaves.length > 0 && totalLeaveHoursInWeek > 0;
 
-                                     const hours = Math.round((person.pct * weeklyContractHours) / 100);
+                                     const hours = Math.round(((person.pct * weeklyContractHours) / 100) * 10) / 10;
                                      const personDocId = `${person.name}-${wk.id}`;
                                      const totalPctInWeek = totalPctInWeekMap.get(personDocId.toLowerCase().trim()) || 0;
                                      const totalAssignedHoursInWeek = Math.round((totalPctInWeek * weeklyContractHours) / 100);
 
                                      const freeHoursInWeek = Math.max(0, weeklyContractHours - totalLeaveHoursInWeek - totalAssignedHoursInWeek);
-                                     const freePctInWeek = Math.max(0, Math.round((freeHoursInWeek / weeklyContractHours) * 100));
+                                     const freePctRaw = Math.max(0, (freeHoursInWeek / weeklyContractHours) * 100);
+                                     const freePctInWeek = Math.round(freePctRaw * 10) / 10;
 
                                      const leaveDaysStr = leaves.map(l => l.giorno).join(', ');
                                      const leavesFormatted = hasLeaves
@@ -3544,7 +3588,7 @@ export default function Commesse() {
                               className="w-full p-2 border border-indigo-200 rounded-lg bg-indigo-50/40 focus:bg-white outline-none focus:ring-1 focus:ring-emerald-400 font-bold text-gray-700 text-xs h-[38px]"
                             >
                               <option value="">+ Seleziona Utente da Abilitare...</option>
-                              {dipendenti.filter(d => !isTechnicalUser(d) && !(progetto.utentiDaAbilitare || []).includes(d.nome)).map(d => (
+                              {dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')) && !isTechnicalUser(d) && !(progetto.utentiDaAbilitare || []).includes(d.nome)).map(d => (
                                 <option key={d.id} value={d.nome}>{d.nome} {d.macroArea ? `(${d.macroArea})` : ''}</option>
                               ))}
                             </select>
@@ -3630,7 +3674,7 @@ export default function Commesse() {
                                 className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
                               >
                                 <option value="">+ Aggiungi Validatore...</option>
-                                {dipendenti.filter(d => !isTechnicalUser(d) && !progetto.verificatori.includes(d.nome)).map(d => (
+                                {dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')) && !isTechnicalUser(d) && !progetto.verificatori.includes(d.nome)).map(d => (
                                   <option key={d.id} value={d.nome}>{d.nome}</option>
                                 ))}
                               </select>
@@ -3644,7 +3688,7 @@ export default function Commesse() {
                                 className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
                               >
                                 <option value="">-- Nessuno --</option>
-                                {dipendenti.filter(d => !isTechnicalUser(d)).map(d => (
+                                {dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')) && !isTechnicalUser(d)).map(d => (
                                   <option key={d.id} value={d.nome}>{d.nome}</option>
                                 ))}
                               </select>
@@ -4100,7 +4144,7 @@ export default function Commesse() {
                                 className="w-full p-2 border border-indigo-200 rounded-lg bg-indigo-50/40 focus:bg-white outline-none focus:ring-1 focus:ring-emerald-400 font-bold text-gray-700 text-xs h-[38px]"
                               >
                                 <option value="">+ Seleziona Utente da Abilitare...</option>
-                                {dipendenti.filter(d => !isTechnicalUser(d) && !(progetto.utentiDaAbilitare || []).includes(d.nome)).map(d => (
+                                {dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')) && !isTechnicalUser(d) && !(progetto.utentiDaAbilitare || []).includes(d.nome)).map(d => (
                                   <option key={d.id} value={d.nome}>{d.nome} {d.macroArea ? `(${d.macroArea})` : ''}</option>
                                 ))}
                               </select>
@@ -4187,7 +4231,7 @@ export default function Commesse() {
                                   className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
                                 >
                                   <option value="">+ Aggiungi Validatore...</option>
-                                  {dipendenti.filter(d => !isTechnicalUser(d) && !(progetto.verificatori || []).includes(d.nome)).map(d => (
+                                  {dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')) && !isTechnicalUser(d) && !(progetto.verificatori || []).includes(d.nome)).map(d => (
                                     <option key={d.id} value={d.nome}>{d.nome}</option>
                                   ))}
                                 </select>
@@ -4201,7 +4245,7 @@ export default function Commesse() {
                                   className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
                                 >
                                   <option value="">-- Nessuno --</option>
-                                  {dipendenti.filter(d => !isTechnicalUser(d)).map(d => (
+                                  {dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')) && !isTechnicalUser(d)).map(d => (
                                     <option key={d.id} value={d.nome}>{d.nome}</option>
                                   ))}
                                 </select>
@@ -4263,7 +4307,7 @@ export default function Commesse() {
                   type="button"
                   onClick={() => handleResendOpeningEmail(editingCommessa, editProgetti)}
                   className="py-3 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
-                  title="Invia nuovamente l'e-mail ufficiale di notifica apertura commessa a synergieflow@ingegno06.it"
+                  title="Invia nuovamente l'e-mail ufficiale di notifica apertura commessa agli indirizzi configurati nelle Impostazioni"
                 >
                   <Send className="w-3.5 h-3.5" />
                   <span>Re-invia E-mail Apertura</span>

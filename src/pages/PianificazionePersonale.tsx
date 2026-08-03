@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth, isTechnicalUser, type Dipendente } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, doc, writeBatch, addDoc, updateDoc, deleteDoc, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, doc, writeBatch, addDoc, updateDoc, deleteDoc, query, where, getDocs } from 'firebase/firestore';
 import { Users, ChevronLeft, ChevronRight, Save, Download, ZoomIn, ZoomOut, Trash2, Plus, RefreshCw, CalendarDays, FileText, X, UserCheck, MoveVertical, Clock, Pencil } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays, isItalianHoliday } from '../utils/date';
 
@@ -952,22 +952,29 @@ export default function PianificazionePersonale() {
   const [isAvailabilityModalOpen, setIsAvailabilityModalOpen] = useState(false);
   const [segnalazioniDisponibilita, setSegnalazioniDisponibilita] = useState<any[]>([]);
 
-  useEffect(() => {
-    const qDisp = query(collection(db, 'segnalazioni_disponibilita'), where('stato', '==', 'in_attesa'));
-    const unsub = onSnapshot(qDisp, (snap) => {
+  const fetchSegnalazioni = async () => {
+    try {
+      const qDisp = query(collection(db, 'segnalazioni_disponibilita'), where('stato', '==', 'in_attesa'));
+      const snap = await getDocs(qDisp);
       const list: any[] = [];
       snap.forEach(docSnap => {
         list.push({ id: docSnap.id, ...docSnap.data() });
       });
       setSegnalazioniDisponibilita(list);
-    });
-    return () => unsub();
+    } catch (err) {
+      console.error("Errore caricamento segnalazioni:", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchSegnalazioni();
   }, []);
 
   const handleMarkSegnalazioneGestita = async (id: string) => {
     try {
       await updateDoc(doc(db, 'segnalazioni_disponibilita', id), { stato: 'gestita' });
       showToast("Segnalazione segnata come gestita.", "success");
+      await fetchSegnalazioni();
     } catch (err) {
       console.error("Errore aggiornamento segnalazione:", err);
     }

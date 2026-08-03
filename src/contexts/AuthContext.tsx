@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { type User, onAuthStateChanged } from 'firebase/auth';
-import { collection, doc, addDoc, deleteDoc, getDoc, getDocs, onSnapshot, query, where, type QuerySnapshot } from 'firebase/firestore';
+import { collection, doc, addDoc, deleteDoc, getDoc, getDocs, query, where } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
 
 const DEFAULT_ADMINS = ['aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it'];
@@ -18,6 +18,7 @@ export interface Dipendente {
   importoFissoMensile?: number;
   macroArea?: 'Disegnatori' | 'Ingegneria' | 'Sicurezza Cantieri' | 'Consulenza Sicurezza' | 'Amministrazione';
   dataCessazione?: string;
+  dataNascita?: string;
   orarioSettimanale?: { lun: number; mar: number; mer: number; gio: number; ven: number };
   notificheEmail?: boolean;
 }
@@ -119,22 +120,188 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [dynamicGestoriCommesse, setDynamicGestoriCommesse] = useState<string[]>([]);
   const [prioritaCommesse, setPrioritaCommesse] = useState<Record<string, 'Alta' | 'Standard' | 'Bassa'>>({});
 
-  // Funzione mock retrocompatibile
-  const refreshData = async () => {
-    return Promise.resolve();
+  const fetchAuthData = async () => {
+    try {
+      const [
+        adminsSnap,
+        hrsSnap,
+        devsSnap,
+        gestoriSnap,
+        dipendentiSnap,
+        coordinatoriSnap,
+        commesseSnap,
+        clientiSnap,
+        assegnazioniSnap,
+        chiusureSnap,
+        richiesteDisegnatoriSnap,
+        pmsSnap,
+        commercialiSnap,
+        leavesSnap,
+        prioritaSnap
+      ] = await Promise.all([
+        getDocs(collection(db, 'admins')),
+        getDocs(collection(db, 'hr')),
+        getDocs(collection(db, 'sviluppatori')),
+        getDocs(collection(db, 'gestori_commesse')),
+        getDocs(collection(db, 'dipendenti')),
+        getDocs(collection(db, 'coordinatori')),
+        getDocs(collection(db, 'catalogo_commesse')),
+        getDocs(collection(db, 'clienti')),
+        getDocs(collection(db, 'assegnazioni')),
+        getDocs(collection(db, 'chiusure_aziendali')),
+        getDocs(collection(db, 'richieste_disegnatori')),
+        getDocs(collection(db, 'project_managers')),
+        getDocs(collection(db, 'commerciali')),
+        getDocs(query(collection(db, 'richieste_ferie'), where('stato', '==', 'Approvato'))),
+        getDocs(collection(db, 'priorita_commesse'))
+      ]);
+
+      // 1. Admins
+      const adminsList = adminsSnap.docs.map(doc => doc.data().email?.toLowerCase()).filter(Boolean);
+      setDynamicAdmins(adminsList);
+
+      // 2. HR
+      const hrsList = hrsSnap.docs.map(doc => doc.data().email?.toLowerCase()).filter(Boolean);
+      setDynamicHrs(hrsList);
+
+      // 3. Sviluppatori
+      const devsList = devsSnap.docs.map(doc => (doc.data().email || '').toLowerCase().trim()).filter(Boolean);
+      if (!devsList.includes('ebartalucci@ingegno06.it')) {
+        devsList.push('ebartalucci@ingegno06.it');
+      }
+      setDynamicDevs(devsList);
+
+      // 4. Gestori commesse
+      const gestoriList = gestoriSnap.docs.map(doc => (doc.data().email || '').toLowerCase().trim()).filter(Boolean);
+      setDynamicGestoriCommesse(gestoriList);
+
+      // 5. Dipendenti
+      const dipList = dipendentiSnap.docs
+        .map(doc => ({
+          id: doc.id,
+          nome: doc.data().nome || '',
+          email: doc.data().email || '',
+          tipo: doc.data().tipo,
+          dailyRate: doc.data().dailyRate,
+          inpsRate: doc.data().inpsRate,
+          ivaRate: doc.data().ivaRate,
+          raRate: doc.data().raRate,
+          importoFissoMensile: doc.data().importoFissoMensile,
+          oreContratto: doc.data().oreContratto,
+          macroArea: doc.data().macroArea,
+          dataCessazione: doc.data().dataCessazione || '',
+          dataNascita: doc.data().dataNascita || '',
+          notificheEmail: doc.data().notificheEmail === true,
+        }))
+        .filter(d => !isTechnicalUser(d));
+      setDipendenti(dipList.sort((a, b) => a.nome.localeCompare(b.nome)));
+
+      // 6. Coordinatori
+      const coordList = coordinatoriSnap.docs.map(doc => ({
+        id: doc.id,
+        email: doc.data().email || '',
+        area: doc.data().area || ''
+      }));
+      if (!coordList.some(c => c.email?.toLowerCase().trim() === 'mcorbellini@ingegno06.it' && c.area === 'Amministrazione')) {
+        coordList.push({
+          id: 'default-mcorbellini-amministrazione',
+          email: 'mcorbellini@ingegno06.it',
+          area: 'Amministrazione'
+        });
+      }
+      setCoordinatori(coordList);
+
+      // 7. Commesse
+      const commesseList = commesseSnap.docs.map(doc => ({
+        id: doc.id,
+        nome: doc.data().nome || '',
+        colore: doc.data().colore || '#3b82f6',
+        dataInizio: doc.data().dataInizio || '',
+        dataFine: doc.data().dataFine || '',
+        responsabile: doc.data().responsabile || '',
+        pm: doc.data().pm || '',
+        codiceCommessa: doc.data().codiceCommessa || '',
+        anno: doc.data().anno || '',
+        tipologia: doc.data().tipologia || '',
+        cliente: doc.data().cliente || '',
+        stato: doc.data().stato || 'Aperta',
+        giornateSeniorProject: doc.data().giornateSeniorProject,
+        giornateProject: doc.data().giornateProject,
+        giornateJuniorProject: doc.data().giornateJuniorProject,
+        apertaDa: doc.data().apertaDa || '',
+        progetti: doc.data().progetti || []
+      }));
+      setCommesse(commesseList.sort((a, b) => a.nome.localeCompare(b.nome)));
+
+      // 8. Clienti
+      const clientiList = clientiSnap.docs.map(doc => ({
+        id: doc.id,
+        codice: doc.data().codice || '',
+        nome: doc.data().nome || ''
+      })).sort((a, b) => Number(a.codice) - Number(b.codice));
+      setClienti(clientiList);
+
+      // 9. Assegnazioni
+      const ass: Record<string, any[]> = {};
+      assegnazioniSnap.forEach(docSnap => {
+        ass[docSnap.id] = docSnap.data().lista || [];
+      });
+      setAssegnazioni(ass);
+
+      // 10. Chiusure aziendali
+      const chiusureList = chiusureSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setChiusureAziendali(chiusureList);
+
+      // 11. Richieste disegnatori
+      const richiesteDisList = richiesteDisegnatoriSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setRichiesteDisegnatori(richiesteDisList);
+
+      // 12. PMs
+      setPmsEmails(pmsSnap.docs.map(d => (d.data().email || '').toLowerCase()));
+
+      // 13. Commerciali
+      setDynamicCommerciali(commercialiSnap.docs.map(d => (d.data().email || '').toLowerCase()).filter(Boolean));
+
+      // 14. Approved Leaves
+      const leavesList: any[] = leavesSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+      setApprovedLeaves(leavesList);
+
+      // 15. Priorita commesse
+      const prioritaMap: Record<string, 'Alta' | 'Standard' | 'Bassa'> = {};
+      prioritaSnap.forEach(docSnap => {
+        const data = docSnap.data();
+        if (data.priorita) {
+          prioritaMap[docSnap.id] = data.priorita;
+        }
+      });
+      setPrioritaCommesse(prioritaMap);
+
+      // Migrazione automatica HR
+      const legacyHrSnap = await getDoc(doc(db, 'configurazione_sistema', 'hr'));
+      if (legacyHrSnap.exists()) {
+        const legacyEmail = legacyHrSnap.data().email?.toLowerCase();
+        if (legacyEmail) {
+          try {
+            await addDoc(collection(db, 'hr'), { email: legacyEmail });
+            await deleteDoc(doc(db, 'configurazione_sistema', 'hr'));
+          } catch (err) {
+            console.error("Migration error:", err);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Errore nel caricamento dei dati di AuthContext:", err);
+    }
   };
 
-  // Gestione ascoltatori real-time persistenti
-  useEffect(() => {
-    let unsubs: (() => void)[] = [];
+  const refreshData = async () => {
+    await fetchAuthData();
+  };
 
+  // Gestione caricamento iniziale on demand
+  useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
-      
-      // Pulisci ascoltatori precedenti
-      unsubs.forEach(unsub => unsub());
-      unsubs = [];
-
       if (!currentUser) {
         setDynamicAdmins([]);
         setDynamicHrs([]);
@@ -153,190 +320,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setPrioritaCommesse({});
         setLoading(false);
       } else {
-        try {
-          // 1. Admins
-          unsubs.push(onSnapshot(collection(db, 'admins'), (snap) => {
-            const list = snap.docs.map(doc => doc.data().email?.toLowerCase()).filter(Boolean);
-            setDynamicAdmins(list);
-          }));
-
-          // 2. Seniors — RIMOSSO: la raccolta Firestore 'seniors' è deprecata
-          // isSenior è sempre false; usare la collezione 'coordinatori' per i privilegi di area
-
-          // 3. HR
-          unsubs.push(onSnapshot(collection(db, 'hr'), (snap) => {
-            const list = snap.docs.map(doc => doc.data().email?.toLowerCase()).filter(Boolean);
-            setDynamicHrs(list);
-          }));
-
-          // 3.b Sviluppatori (Dev)
-          unsubs.push(onSnapshot(collection(db, 'sviluppatori'), (snap) => {
-            const list = snap.docs.map(doc => (doc.data().email || '').toLowerCase().trim()).filter(Boolean);
-            if (!list.includes('ebartalucci@ingegno06.it')) {
-              list.push('ebartalucci@ingegno06.it');
-            }
-            setDynamicDevs(list);
-          }));
-
-          // 3.c Gestori Commesse
-          unsubs.push(onSnapshot(collection(db, 'gestori_commesse'), (snap) => {
-            const list = snap.docs.map(doc => (doc.data().email || '').toLowerCase().trim()).filter(Boolean);
-            setDynamicGestoriCommesse(list);
-          }));
-
-          // 4. Dipendenti
-          unsubs.push(onSnapshot(collection(db, 'dipendenti'), (snap) => {
-            const list = snap.docs
-              .map(doc => ({
-                id: doc.id,
-                nome: doc.data().nome || '',
-                email: doc.data().email || '',
-                tipo: doc.data().tipo,
-                dailyRate: doc.data().dailyRate,
-                inpsRate: doc.data().inpsRate,
-                ivaRate: doc.data().ivaRate,
-                raRate: doc.data().raRate,
-                importoFissoMensile: doc.data().importoFissoMensile,
-                oreContratto: doc.data().oreContratto,
-                macroArea: doc.data().macroArea,
-                dataCessazione: doc.data().dataCessazione || '',
-                notificheEmail: doc.data().notificheEmail === true,
-              }))
-              .filter(d => !isTechnicalUser(d));
-            setDipendenti(list.sort((a, b) => a.nome.localeCompare(b.nome)));
-          }));
-
-          // 5. Coordinatori
-          unsubs.push(onSnapshot(collection(db, 'coordinatori'), (snap) => {
-            const list = snap.docs.map(doc => ({
-              id: doc.id,
-              email: doc.data().email || '',
-              area: doc.data().area || ''
-            }));
-            
-            // Eccezione esplicita per Corbellini Matteo (mcorbellini@ingegno06.it) per l'area Amministrazione
-            if (!list.some(c => c.email?.toLowerCase().trim() === 'mcorbellini@ingegno06.it' && c.area === 'Amministrazione')) {
-              list.push({
-                id: 'default-mcorbellini-amministrazione',
-                email: 'mcorbellini@ingegno06.it',
-                area: 'Amministrazione'
-              });
-            }
-
-            setCoordinatori(list);
-          }));
-
-          // 6. Commesse
-          unsubs.push(onSnapshot(collection(db, 'catalogo_commesse'), (snap) => {
-            const list = snap.docs.map(doc => ({
-              id: doc.id,
-              nome: doc.data().nome || '',
-              colore: doc.data().colore || '#3b82f6',
-              dataInizio: doc.data().dataInizio || '',
-              dataFine: doc.data().dataFine || '',
-              responsabile: doc.data().responsabile || '',
-              pm: doc.data().pm || '',
-              codiceCommessa: doc.data().codiceCommessa || '',
-              anno: doc.data().anno || '',
-              tipologia: doc.data().tipologia || '',
-              cliente: doc.data().cliente || '',
-              stato: doc.data().stato || 'Aperta',
-              giornateSeniorProject: doc.data().giornateSeniorProject,
-              giornateProject: doc.data().giornateProject,
-              giornateJuniorProject: doc.data().giornateJuniorProject,
-              apertaDa: doc.data().apertaDa || '',
-              progetti: doc.data().progetti || []
-            }));
-            setCommesse(list.sort((a, b) => a.nome.localeCompare(b.nome)));
-          }));
-
-          // 7. Clienti
-          unsubs.push(onSnapshot(collection(db, 'clienti'), (snap) => {
-            const list = snap.docs.map(doc => ({
-              id: doc.id,
-              codice: doc.data().codice || '',
-              nome: doc.data().nome || ''
-            })).sort((a, b) => Number(a.codice) - Number(b.codice));
-            setClienti(list);
-          }));
-
-          // 8. Assegnazioni (ascoltatore real-time ad altissima velocità)
-          unsubs.push(onSnapshot(collection(db, 'assegnazioni'), (snap) => {
-            const ass: Record<string, any[]> = {};
-            snap.forEach(docSnap => {
-              ass[docSnap.id] = docSnap.data().lista || [];
-            });
-            setAssegnazioni(ass);
-          }));
-
-          // 9. Chiusure aziendali
-          unsubs.push(onSnapshot(collection(db, 'chiusure_aziendali'), (snap) => {
-            const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            setChiusureAziendali(list);
-          }));
-
-          // 10. Richieste disegnatori
-          unsubs.push(onSnapshot(collection(db, 'richieste_disegnatori'), (snap) => {
-            const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            setRichiesteDisegnatori(list);
-          }));
-
-          // 11. Project Managers
-          unsubs.push(onSnapshot(collection(db, 'project_managers'), (snap) => {
-            setPmsEmails(snap.docs.map(d => (d.data().email || '').toLowerCase()));
-          }));
-
-          // 13. Commerciali
-          unsubs.push(onSnapshot(collection(db, 'commerciali'), (snap) => {
-            setDynamicCommerciali(snap.docs.map(d => (d.data().email || '').toLowerCase()).filter(Boolean));
-          }));
-
-          // 12. Richieste ferie (approved leaves)
-          unsubs.push(onSnapshot(query(
-            collection(db, 'richieste_ferie'),
-            where('stato', '==', 'Approvato')
-          ), (snap: QuerySnapshot) => {
-            const list: any[] = snap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
-            setApprovedLeaves(list);
-          }));
-
-          // 14. Priorità commesse settimanali
-          unsubs.push(onSnapshot(collection(db, 'priorita_commesse'), (snap) => {
-            const map: Record<string, 'Alta' | 'Standard' | 'Bassa'> = {};
-            snap.forEach(docSnap => {
-              const data = docSnap.data();
-              if (data.priorita) {
-                map[docSnap.id] = data.priorita;
-              }
-            });
-            setPrioritaCommesse(map);
-          }));
-
-          // Migrazione automatica HR
-          const legacyHrSnap = await getDoc(doc(db, 'configurazione_sistema', 'hr'));
-          if (legacyHrSnap.exists()) {
-            const legacyEmail = legacyHrSnap.data().email?.toLowerCase();
-            if (legacyEmail) {
-              try {
-                await addDoc(collection(db, 'hr'), { email: legacyEmail });
-                await deleteDoc(doc(db, 'configurazione_sistema', 'hr'));
-              } catch (err) {
-                console.error("Migration error:", err);
-              }
-            }
-          }
-
-        } catch (err) {
-          console.error("Error setting up real-time onSnapshot listeners:", err);
-        } finally {
-          setLoading(false);
-        }
+        await fetchAuthData();
+        setLoading(false);
       }
     });
 
     return () => {
       unsubscribeAuth();
-      unsubs.forEach(unsub => unsub());
     };
   }, []);
 
@@ -367,6 +357,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setImpersonatedEmailState(null);
     }
   }, [user, isRealDev]);
+
+  useEffect(() => {
+    if (user && dipendenti.length > 0 && !isRealDev) {
+      const cleanEmail = (user.email || '').toLowerCase().trim();
+      const dipObj = dipendenti.find(d => (d.email || '').toLowerCase().trim() === cleanEmail);
+      const todayISO = new Date().toLocaleDateString('sv-SE');
+      if (dipObj && dipObj.dataCessazione && dipObj.dataCessazione < todayISO) {
+        const dateFormatted = dipObj.dataCessazione.split('-').reverse().join('/');
+        alert(`Accesso negato: l'account per ${dipObj.nome} risulta inattivo o cessato il ${dateFormatted}. Impossibile accedere alla piattaforma.`);
+        auth.signOut();
+      }
+    }
+  }, [user, dipendenti, isRealDev]);
 
   const impersonateUser = (email: string | null) => {
     if (!isRealDev) return;

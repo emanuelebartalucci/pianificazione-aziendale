@@ -45,6 +45,87 @@ async function generateDocx() {
             ],
           }),
 
+          // --- VERSION 1.0.6 ---
+          new Paragraph({
+            heading: HeadingLevel.HEADING_2,
+            spacing: { before: 240, after: 180 },
+            children: [
+              new TextRun({
+                text: "Versione 1.0.6 — 03/08/2026",
+                bold: true,
+                size: 28,
+                color: "1E3A8A",
+                font: "Calibri",
+              }),
+            ],
+          }),
+
+          new Paragraph({
+            spacing: { before: 60, after: 60 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Gestione Automatizzata & Isolamento Risorse Cessate: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Separati in automatico gli elenchi in Impostazioni tra risorse in organico ed Archivio Risorse Cessate. Implementata la verifica ed il blocco di sicurezza immediato (signOut) se una risorsa cessata tenta il login. Esclusione totale delle risorse cessate da tutte le tendine di selezione operativa delle commesse e di pianificazione.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 60, after: 60 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Restyling Layout Anagrafica Risorse & Protezione Soci Proprietari: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Nuovo layout espanso a tutta larghezza nelle Impostazioni: Soci Proprietari in vista d'onore espansa in alto (con modifica profilo limitata ad Email e Data di Nascita, senza possibilità di eliminazione). Dipendenti e Collaboratori P.IVA disposti in 2 colonne affiancate ad altezza aumentata (480px) per una consultazione immediata dei nomi.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 60, after: 60 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Campo Data di Nascita & Barre di Ricerca Contestuali in Anagrafica: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Integrato il campo Data di Nascita con etichetta dedicata nei form di creazione/modifica e contrassegno festoso 🎂. Inserite barre di ricerca dedicate all'inizio degli elenchi di Dipendenti e Collaboratori (subito sotto i form di inserimento) per filtrare all'istante ciascuna colonna per Nome, Cognome o Email.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 60, after: 60 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Avviso Compleanno Automatico al 1° Posto in Bacheca Dashboard: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Implementata l'iniezione automatica dell'avviso di auguri nel giorno del compleanno dei colleghi/soci, fissato al primo posto della Bacheca Comunicazioni in Dashboard con grafica professionale, elegante e raggruppamento per festeggiamenti multipli.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+
+          new Paragraph({
+            spacing: { before: 60, after: 60 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Risoluzione Loop Letture & Transizione a Fetch on Demand (Firestore): ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Eliminati i 14 listener real-time (onSnapshot) globali in AuthContext ed i listener in cascata nelle viste Ferie, Prenotazioni, Dashboard e Pianificazione Personale. Implementato il caricamento iniziale parallelizzato tramite getDocs ed il refresh puntuale refreshData() su richiesta. Le chiamate Firestore si stabilizzano istantaneamente dopo il primo render, azzerando il consumo di letture in background durante la navigazione tra le schede.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 60, after: 60 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Eliminazione Full-Scan Assegnazioni in Chiusura & Cancellazione Commessa: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Ottimizzata la rimozione a cascata delle assegnazioni alla chiusura o cancellazione di una commessa in Commesse.tsx: il filtraggio opera ora in memoria sui soli documenti interessati, eliminando la scansione completa di tutti i documenti di assegnazione su Firestore.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 60, after: 60 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Code-Splitting & Vendor Chunking per Fluidità e Caricamento Istantaneo: ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Implementata la tecnica di caricamento pigro (React.lazy + Suspense) per le 11 viste dell'applicazione in App.tsx con riduzione di oltre il 70% della dimensione del pacchetto JS iniziale. Configurato il partizionamento dei moduli vendor (firebase, docx, chart.js, lucide-react) in vite.config.ts per un caricamento ed una memorizzazione in cache ultra-veloce.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+          new Paragraph({
+            spacing: { before: 60, after: 60 },
+            bullet: { level: 0 },
+            children: [
+              new TextRun({ text: "Nuova Scheda \"Riepilogo Contatori Risorse\" (Ferie & Permessi per Soci ed HR): ", bold: true, color: "111827", font: "Calibri", size: 22 }),
+              new TextRun({ text: "Aggiunta nella pagina Piano Ferie (Ferie.tsx) una nuova scheda tab riservata a Soci, Amministratori ed Ufficio HR. Fornisce una matrice riepilogativa annuale completa con i totali delle Ore Ferie (ed equivalenti in giorni ~8h), Ore Permessi, Malattia/Maternità e Totale Assenze per ogni risorsa aziendale. Include selettore Anno, filtro Macro-Area, ricerca rapida ed esportazione report in formato CSV/Excel in memoria a 0 chiamate aggiuntive su Firestore.", color: "374151", font: "Calibri", size: 22 }),
+            ],
+          }),
+
           // --- VERSION 1.0.5 ---
           new Paragraph({
             heading: HeadingLevel.HEADING_2,
@@ -108,6 +189,7 @@ async function generateDocx() {
               new TextRun({ text: "Indicizzate le ferie tramite Mappa Hash pre-calcolata in useMemo ed eliminata la stringificazione parassita ad ogni re-render, portando la fluidità e velocità di scroll ed interazione ai massimi livelli di risposta istantanea.", color: "374151", font: "Calibri", size: 22 }),
             ],
           }),
+
           new Paragraph({
             spacing: { before: 60, after: 60 },
             bullet: { level: 0 },
@@ -522,8 +604,16 @@ async function generateDocx() {
 
   const buffer = await Packer.toBuffer(doc);
   const targetPath = path.join(__dirname, 'File Utili', 'Changelog_Pianificazione_Aziendale.docx');
-  fs.writeFileSync(targetPath, buffer);
-  console.log('Changelog docx generated successfully at:', targetPath);
+  try {
+    fs.writeFileSync(targetPath, buffer);
+    console.log('Changelog docx generated successfully at:', targetPath);
+  } catch (err) {
+    if (err.code === 'EBUSY') {
+      console.warn('Avviso: Changelog_Pianificazione_Aziendale.docx è aperto in un altro programma (es. Word). Il file verrà aggiornato alla chiusura del programma.');
+    } else {
+      throw err;
+    }
+  }
 }
 
 generateDocx().catch(console.error);

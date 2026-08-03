@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Briefcase, Calendar, Settings, FileText, MessageSquare, Plus, Trash2, Megaphone, X, Users, CalendarDays, Edit, Network, AlertCircle, ChevronRight, HeartPulse } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, addDoc, doc, deleteDoc, query, orderBy, where, getDoc, getDocs, updateDoc, onSnapshot } from 'firebase/firestore';
+import { collection, addDoc, doc, deleteDoc, query, orderBy, where, getDoc, getDocs, updateDoc } from 'firebase/firestore';
 import ConfirmModal from '../components/ConfirmModal';
 import ClimaModal from '../components/ClimaModal';
 import QuestionnaireModal from '../components/QuestionnaireModal';
@@ -453,6 +453,42 @@ export default function Dashboard() {
 
     const list = [...announcements];
 
+    // 0. Birthday Announcement (Top priority for all active users & partners)
+    const todayISO = new Date().toLocaleDateString('sv-SE');
+    const todayMMDD = todayISO.substring(5); // 'MM-DD'
+    
+    // Filter active resources & partners with birthdays today
+    const birthdayPeople = (dipendenti || []).filter(dip => {
+      if (isTechnicalUser(dip)) return false;
+      if (dip.dataCessazione && dip.dataCessazione < todayISO) return false;
+      if (!dip.dataNascita) return false;
+      const dipMMDD = dip.dataNascita.substring(5);
+      return dipMMDD === todayMMDD;
+    });
+
+    if (birthdayPeople.length > 0) {
+      const namesList = birthdayPeople.map(b => b.nome);
+      let namesText = '';
+      if (namesList.length === 1) {
+        namesText = namesList[0];
+      } else if (namesList.length === 2) {
+        namesText = `${namesList[0]} e ${namesList[1]}`;
+      } else {
+        const copy = [...namesList];
+        const last = copy.pop();
+        namesText = `${copy.join(', ')} e ${last}`;
+      }
+
+      list.unshift({
+        id: `system-birthday-${todayISO}`,
+        titolo: '🎂 Oggi festeggiamo insieme!',
+        contenuto: `Tanti auguri di buon compleanno a ${namesText} da parte di tutto il team di Ingegno P&C! 🎉`,
+        autore: 'Direzione',
+        data: `${String(d).padStart(2, '0')}/${String(m + 1).padStart(2, '0')}/${y}`,
+        tipo: 'compleanno' as any
+      });
+    }
+
     // Reminders are not visible to partners (soci)
     if (isUserSocio) {
       return list;
@@ -605,7 +641,7 @@ export default function Dashboard() {
       return;
     }
     const qDisp = query(collection(db, 'segnalazioni_disponibilita'), where('stato', '==', 'in_attesa'));
-    const unsub = onSnapshot(qDisp, (snap) => {
+    getDocs(qDisp).then((snap) => {
       let count = 0;
       snap.forEach(docSnap => {
         const data = docSnap.data();
@@ -614,8 +650,9 @@ export default function Dashboard() {
         }
       });
       setPendingAvailabilityCount(count);
+    }).catch(err => {
+      console.error("Errore conteggio disponibilita:", err);
     });
-    return () => unsub();
   }, [userEmail, myCoordinatedAreas]);
 
   const canPublish = isAdmin || isHR;
@@ -927,32 +964,39 @@ export default function Dashboard() {
                 displayAnnouncements.map(ann => {
                   const isHRAuthor = ann.autore === 'HR';
                   const isReminder = ann.id.startsWith('system-reminder-');
+                  const isBirthday = ann.id.startsWith('system-birthday-');
                   return (
                     <div 
                       key={ann.id} 
                       className={`p-5 rounded-2xl shadow-sm hover:shadow-md transition flex flex-col justify-between gap-3 relative group/item ${
-                        isReminder 
-                          ? 'bg-amber-50/80 border-l-4 border-l-amber-500 border-y border-r border-amber-200/70' 
-                          : 'bg-white/60 border border-gray-100'
+                        isBirthday
+                          ? 'bg-gradient-to-br from-amber-500/10 via-amber-400/5 to-indigo-500/10 border-2 border-amber-400/80 shadow-md'
+                          : isReminder 
+                            ? 'bg-amber-50/80 border-l-4 border-l-amber-500 border-y border-r border-amber-200/70' 
+                            : 'bg-white/60 border border-gray-100'
                       }`}
                     >
                       <div>
                         <div className="flex justify-between items-center gap-2 pr-16">
-                          <span className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full ${
-                            isReminder 
-                              ? 'bg-amber-100 text-amber-700 border border-amber-200' 
-                              : isHRAuthor 
-                                ? 'bg-purple-100 text-purple-700 border border-purple-200' 
-                                : 'bg-indigo-100 text-indigo-700 border border-indigo-200'
+                          <span className={`text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full ${
+                            isBirthday
+                              ? 'bg-amber-500 text-white shadow-xs tracking-wider'
+                              : isReminder 
+                                ? 'bg-amber-100 text-amber-700 border border-amber-200' 
+                                : isHRAuthor 
+                                  ? 'bg-purple-100 text-purple-700 border border-purple-200' 
+                                  : 'bg-indigo-100 text-indigo-700 border border-indigo-200'
                           }`}>
-                            {ann.autore}
+                            {isBirthday ? '🎉 Compleanno' : ann.autore}
                           </span>
                         </div>
                         <h4 className="text-base font-extrabold text-gray-900 mt-2 pr-16">{ann.titolo}</h4>
-                        <p className="text-sm text-gray-600 leading-relaxed font-medium whitespace-pre-wrap mt-1.5">{ann.contenuto}</p>
+                        <p className={`text-sm leading-relaxed whitespace-pre-wrap mt-1.5 ${isBirthday ? 'font-bold text-amber-950' : 'text-gray-600 font-medium'}`}>
+                          {ann.contenuto}
+                        </p>
                       </div>
 
-                      {canPublish && !isReminder && (
+                      {canPublish && !isReminder && !isBirthday && (
                         <div className="absolute top-4 right-4 flex gap-1">
                           <button
                             onClick={() => handleEditNotice(ann)}
@@ -972,7 +1016,7 @@ export default function Dashboard() {
                       )}
 
                       {!isReminder && ann.tipo !== 'chiusure' && (
-                        <span className={`absolute text-[10px] font-bold text-gray-400 right-5 ${canPublish ? 'top-[2.75rem]' : 'top-5'}`}>
+                        <span className={`absolute text-[10px] font-bold text-gray-400 right-5 ${canPublish && !isBirthday ? 'top-[2.75rem]' : 'top-5'}`}>
                           {ann.data}
                         </span>
                       )}

@@ -1622,32 +1622,7 @@ export default function Presenze() {
 
 
 
-  const handleReviewRimborsoFieldChange = (field: string, value: any) => {
-    if (!reviewingRapportino) return;
 
-    const currentRimborso = reviewingRapportino.rimborsoSpeseData || {
-      marcaAutomezzo: '',
-      modelloAutomezzo: '',
-      speseViaggio: 0,
-      speseTaxiBus: 0,
-      speseParcheggi: 0,
-      speseVitto: 0,
-      speseAlloggio: 0,
-      spesePedaggi: 0,
-      speseAltro: 0,
-      altroSpecificare: ''
-    };
-
-    const updatedRimborso = {
-      ...currentRimborso,
-      [field]: value
-    };
-
-    setReviewingRapportino({
-      ...reviewingRapportino,
-      rimborsoSpeseData: updatedRimborso
-    });
-  };
 
   const saveCollabProfileRates = async (collabData: any, targetName?: string) => {
     try {
@@ -5921,31 +5896,7 @@ export default function Presenze() {
               <div className="bg-white rounded-xl border p-5 space-y-6">
                 <div className="border-b pb-3">
                   <h4 className="font-extrabold text-sm text-gray-900 uppercase">Nota Spese e Rimborso Trasferte</h4>
-                  <p className="text-[10px] text-gray-500 font-semibold">Verifica e modifica i dati dell'automezzo, le spese trasferta e i chilometri percorsi.</p>
-                </div>
-
-                {/* Dati Veicolo */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-[10px] font-bold text-gray-500 mb-1">Marca Automezzo</label>
-                    <input 
-                      type="text"
-                      placeholder="Es. Fiat"
-                      value={reviewingRapportino.rimborsoSpeseData?.marcaAutomezzo || ''}
-                      onChange={e => handleReviewRimborsoFieldChange('marcaAutomezzo', e.target.value)}
-                      className="w-full p-2 border rounded-xl text-xs font-bold text-gray-800 outline-none focus:border-indigo-400"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-gray-500 mb-1">Modello Automezzo</label>
-                    <input 
-                      type="text"
-                      placeholder="Es. Panda"
-                      value={reviewingRapportino.rimborsoSpeseData?.modelloAutomezzo || ''}
-                      onChange={e => handleReviewRimborsoFieldChange('modelloAutomezzo', e.target.value)}
-                      className="w-full p-2 border rounded-xl text-xs font-bold text-gray-800 outline-none focus:border-indigo-400"
-                    />
-                  </div>
+                  <p className="text-[10px] text-gray-500 font-semibold">Verifica e modifica le spese trasferta e i chilometri percorsi.</p>
                 </div>
 
                 {/* Spese Varie */}
@@ -6452,14 +6403,14 @@ export default function Presenze() {
                       </div>
                     </div>
 
-                    <table className="w-full text-center border border-gray-955 table-fixed text-[7px]">
+                    <table className="w-full text-center border border-gray-955 table-fixed text-[8.5px]">
                       <thead>
-                        <tr className="bg-gray-150 border-b border-gray-955 font-bold text-gray-900 text-[7px]">
-                          <th className="p-1 border-r border-gray-905 text-left w-[12%] font-extrabold">RIGA/GIORNO</th>
+                        <tr className="bg-gray-150 border-b border-gray-955 font-bold text-gray-900 text-[8.5px]">
+                          <th className="py-1 px-1.5 border-r border-gray-905 text-left w-[12%] font-extrabold">RIGA/GIORNO</th>
                           {Array.from({ length: 31 }).map((_, i) => (
-                            <th key={i} className="p-0.5 border-r border-gray-905 w-[2.6%] font-extrabold">{i + 1}</th>
+                            <th key={i} className="py-1 px-0.5 border-r border-gray-905 w-[2.6%] font-extrabold">{i + 1}</th>
                           ))}
-                          <th className="p-1 border-l border-gray-905 w-[6%] font-extrabold">TOT</th>
+                          <th className="py-1 px-1 border-l border-gray-905 w-[6%] font-extrabold">TOT</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-955 font-semibold text-gray-900">
@@ -6663,16 +6614,16 @@ export default function Presenze() {
                     </table>
 
                     {/* Dettagli in basso per Stampa */}
-                    <div className="grid grid-cols-3 gap-3 pt-1.5 text-left text-[7px]">
+                    <div className="grid grid-cols-3 gap-3 pt-2 text-left text-[8px]">
                       {/* Note */}
                       <div className="border border-gray-400 p-2 rounded bg-gray-50">
-                        <div className="font-extrabold text-[7.5px] border-b pb-1 text-gray-800 uppercase">Note Mensili:</div>
+                        <div className="font-extrabold text-[8.5px] border-b pb-1 text-gray-800 uppercase">Note Mensili:</div>
                         {sheetToPrint.noteDipendente ? (
-                          <p className="mt-1 text-gray-800 whitespace-pre-line italic leading-normal">
+                          <p className="mt-1 text-gray-800 whitespace-pre-line italic leading-normal text-[8px]">
                             "{sheetToPrint.noteDipendente}"
                           </p>
                         ) : (
-                          <p className="mt-1 italic text-gray-500">
+                          <p className="mt-1 italic text-gray-500 text-[8px]">
                             Nessuna nota mensile inserita.
                           </p>
                         )}
@@ -6680,11 +6631,11 @@ export default function Presenze() {
 
                       {/* Elenco Trasferte */}
                       <div className="border border-gray-400 p-2 rounded bg-gray-50">
-                        <div className="font-extrabold text-[7.5px] border-b pb-1 text-gray-800 uppercase">Dettaglio Località Trasferte (T):</div>
+                        <div className="font-extrabold text-[8.5px] border-b pb-1 text-gray-800 uppercase">Dettaglio Località Trasferte (T):</div>
                         {trasferte.length === 0 ? (
-                          <p className="text-[6.5px] mt-1 italic text-gray-500">Nessuna trasferta effettuata nel mese.</p>
+                          <p className="text-[8px] mt-1 italic text-gray-500">Nessuna trasferta effettuata nel mese.</p>
                         ) : (
-                          <div className="grid grid-cols-1 gap-0.5 mt-1 text-[6.5px]">
+                          <div className="grid grid-cols-1 gap-0.5 mt-1 text-[8px]">
                             {trasferte.map(tr => (
                               <div key={tr.giorno}>
                                 <span className="font-bold">Giorno {tr.giorno}:</span> {tr.luogo || 'Località non specificata'}
@@ -6696,11 +6647,11 @@ export default function Presenze() {
 
                       {/* Giustificativi e Note Giornaliere */}
                       <div className="border border-gray-400 p-2 rounded bg-gray-50">
-                        <div className="font-extrabold text-[7.5px] border-b pb-1 text-gray-800 uppercase">Giustificativi e Note Giornaliere:</div>
+                        <div className="font-extrabold text-[8.5px] border-b pb-1 text-gray-800 uppercase">Giustificativi e Note Giornaliere:</div>
                         {dailyNotes.length === 0 ? (
-                          <p className="text-[6.5px] mt-1 italic text-gray-500">Nessuna nota giornaliera inserita.</p>
+                          <p className="text-[8px] mt-1 italic text-gray-500">Nessuna nota giornaliera inserita.</p>
                         ) : (
-                          <div className="space-y-0.5 mt-1 text-[6.5px]">
+                          <div className="space-y-0.5 mt-1 text-[8px]">
                             {dailyNotes.map(n => (
                               <div key={n.giorno}>
                                 <span className="font-bold">Giorno {n.giorno}:</span> {n.note}
@@ -6712,9 +6663,9 @@ export default function Presenze() {
                     </div>
 
                     <div className="border-t border-dashed border-gray-400 pt-3 mt-3 space-y-2">
-                      <div className="text-[10px] font-extrabold uppercase border-b border-gray-900 pb-1 text-left">DICHIARAZIONE SPESE TRASFERTA E RIMBORSI</div>
+                      <div className="text-[11px] font-extrabold uppercase border-b border-gray-900 pb-1 text-left">DICHIARAZIONE SPESE TRASFERTA E RIMBORSI</div>
 
-                      <div className="text-[7.5px] font-semibold text-gray-955 leading-tight text-left">
+                      <div className="text-[8.5px] font-semibold text-gray-955 leading-tight text-left">
                         DICHIARO di aver sostenuto le seguenti spese per trasferta nel periodo dal 01/{String(selectedMonth).padStart(2, '0')}/{selectedYear} al {daysInMonth}/{String(selectedMonth).padStart(2, '0')}/{selectedYear} per conto della società INGEGNO P&C S.R.L.
                       </div>
 
@@ -6725,51 +6676,47 @@ export default function Presenze() {
                         const totKm = Object.values(sheetToPrint.giorni).reduce((sum, g) => sum + (g.kmTrasferta || 0), 0);
 
                         return (
-                          <table className="w-full text-left border border-gray-900 border-collapse text-[7.5px]">
+                          <table className="w-full text-left border border-gray-900 border-collapse text-[8.5px]">
                             <thead>
                               <tr className="bg-gray-100 border-b border-gray-900 font-bold text-gray-900 uppercase">
-                                <th className="p-1 border-r border-gray-900">Voce di Spesa / Causale</th>
-                                <th className="p-1 border-r border-gray-900 text-right w-36">Importo (€)</th>
-                                <th className="p-1">Documentazione Allegata</th>
+                                <th className="p-1.5 border-r border-gray-900">Voce di Spesa / Causale</th>
+                                <th className="p-1.5 border-r border-gray-900 text-right w-36">Importo (€)</th>
+                                <th className="p-1.5">Documentazione Allegata</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-900 font-semibold text-gray-800">
                               {listSpese.length === 0 ? (
                                 <tr>
-                                  <td className="p-1 border-r border-gray-900 text-gray-500 italic">Nessuna spesa da rimborsare per il mese corrente.</td>
-                                  <td className="p-1 border-r border-gray-900 text-right font-bold">0,00 €</td>
-                                  <td className="p-1 text-gray-400 italic">-</td>
+                                  <td className="p-1.5 border-r border-gray-900 text-gray-500 italic">Nessuna spesa da rimborsare per il mese corrente.</td>
+                                  <td className="p-1.5 border-r border-gray-900 text-right font-bold">0,00 €</td>
+                                  <td className="p-1.5 text-gray-400 italic">-</td>
                                 </tr>
                               ) : (
                                 listSpese.map((v, i) => (
                                   <tr key={v.id || i}>
-                                    <td className="p-1 border-r border-gray-900">{v.descrizione || 'Spesa generica'}</td>
-                                    <td className="p-1 border-r border-gray-900 text-right font-bold">{formatDec((Number(v.importo) || 0).toFixed(2))} €</td>
-                                    <td className="p-1 text-gray-500 italic">Documento giustificativo allegato</td>
+                                    <td className="p-1.5 border-r border-gray-900">{v.descrizione || 'Spesa generica'}</td>
+                                    <td className="p-1.5 border-r border-gray-900 text-right font-bold">{formatDec((Number(v.importo) || 0).toFixed(2))} €</td>
+                                    <td className="p-1.5 text-gray-500 italic">Documento giustificativo allegato</td>
                                   </tr>
                                 ))
                               )}
                               <tr className="bg-gray-50 border-t-2 border-gray-900">
-                                <td className="p-1 border-r border-gray-900">
+                                <td className="p-1.5 border-r border-gray-900">
                                   Rimborso chilometrico per l'utilizzo del proprio automezzo
-                                  <div className="text-[7.5px] text-gray-500 font-bold mt-0.5">
-                                    Marca: {sheetToPrint.rimborsoSpeseData?.marcaAutomezzo || '_________________'} | 
-                                    Modello: {sheetToPrint.rimborsoSpeseData?.modelloAutomezzo || '_________________'}
-                                  </div>
                                 </td>
-                                <td className="p-1 border-r border-gray-900 text-right bg-gray-150 font-bold">
+                                <td className="p-1.5 border-r border-gray-900 text-right bg-gray-150 font-bold">
                                   {formatDec(totKm)} Km totali
                                 </td>
-                                <td className="p-1 text-gray-500 italic text-[7.5px] align-middle">
+                                <td className="p-1.5 text-gray-500 italic text-[8.5px] align-middle">
                                   -
                                 </td>
                               </tr>
-                              <tr className="bg-gray-100 font-bold border-t-2 border-gray-900 text-[8px]">
-                                <td className="p-1 border-r border-gray-900 uppercase">Totale spese da rimborsare (esclusi Km)</td>
-                                <td className="p-1 border-r border-gray-900 text-right font-black text-gray-950">
+                              <tr className="bg-gray-100 font-bold border-t-2 border-gray-900 text-[9px]">
+                                <td className="p-1.5 border-r border-gray-900 uppercase">Totale spese da rimborsare (esclusi Km)</td>
+                                <td className="p-1.5 border-r border-gray-900 text-right font-black text-gray-950">
                                   {formatDec(totSpese.toFixed(2))} €
                                 </td>
-                                <td className="p-1 text-[7.5px] font-medium text-gray-500 italic">Si allegano i relativi documenti di spesa.</td>
+                                <td className="p-1.5 text-[8.5px] font-medium text-gray-500 italic">Si allegano i relativi documenti di spesa.</td>
                               </tr>
                             </tbody>
                           </table>
@@ -6778,18 +6725,18 @@ export default function Presenze() {
 
                       {/* DETTAGLIO DELLE TRASFERTE E RIMBORSI KM EFFETTUATI */}
                       <div className="space-y-1.5 text-left">
-                        <div className="text-[8px] font-extrabold uppercase border-b border-gray-300 pb-0.5">DETTAGLIO SPOSTAMENTI, TRASFERTE E RIMBORSI KM</div>
+                        <div className="text-[9.5px] font-extrabold uppercase border-b border-gray-300 pb-0.5">DETTAGLIO SPOSTAMENTI, TRASFERTE E RIMBORSI KM</div>
                         {trasferte.length === 0 ? (
-                          <p className="text-[7px] text-gray-400 italic">Nessun giorno di trasferta o rimborso km segnato.</p>
+                          <p className="text-[8.5px] text-gray-400 italic">Nessun giorno di trasferta o rimborso km segnato.</p>
                         ) : (
-                          <table className="w-full text-left border border-gray-900 border-collapse text-[7px]">
+                          <table className="w-full text-left border border-gray-900 border-collapse text-[8.5px]">
                             <thead>
                               <tr className="bg-gray-100 border-b border-gray-900 font-bold text-gray-900 uppercase">
-                                <th className="p-1 border-r border-gray-900 w-16">Data</th>
-                                <th className="p-1 border-r border-gray-900 w-24">Tipo</th>
-                                <th className="p-1 border-r border-gray-900">Tratte Spostamento (Partenza → Arrivo)</th>
-                                <th className="p-1 border-r border-gray-900 w-32">Automezzo</th>
-                                <th className="p-1 text-right w-16">Km Percorsi</th>
+                                <th className="p-1.5 border-r border-gray-900 w-16">Data</th>
+                                <th className="p-1.5 border-r border-gray-900 w-24">Tipo</th>
+                                <th className="p-1.5 border-r border-gray-900">Tratte Spostamento (Partenza → Arrivo)</th>
+                                <th className="p-1.5 border-r border-gray-900 w-32">Automezzo</th>
+                                <th className="p-1.5 text-right w-16">Km Percorsi</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-900 font-semibold">
@@ -6802,13 +6749,13 @@ export default function Presenze() {
                                   : '-';
                                 return (
                                   <tr key={tr.giorno}>
-                                    <td className="p-1 border-r border-gray-900">{String(tr.giorno).padStart(2, '0')}/{String(selectedMonth).padStart(2, '0')}/{selectedYear}</td>
-                                    <td className="p-1 border-r border-gray-900 font-bold">
+                                    <td className="p-1.5 border-r border-gray-900">{String(tr.giorno).padStart(2, '0')}/{String(selectedMonth).padStart(2, '0')}/{selectedYear}</td>
+                                    <td className="p-1.5 border-r border-gray-900 font-bold">
                                       {tr.trasferta ? 'Trasferta (T)' : 'Rimborso Km (K)'}
                                     </td>
-                                    <td className="p-1 border-r border-gray-900">{tratteStr}</td>
-                                    <td className="p-1 border-r border-gray-900">{autoStr}</td>
-                                    <td className="p-1 text-right font-bold">{formatDec(gPresenza.kmTrasferta || 0)} km</td>
+                                    <td className="p-1.5 border-r border-gray-900">{tratteStr}</td>
+                                    <td className="p-1.5 border-r border-gray-900">{autoStr}</td>
+                                    <td className="p-1.5 text-right font-bold">{formatDec(gPresenza.kmTrasferta || 0)} km</td>
                                   </tr>
                                 );
                               })}
@@ -6905,7 +6852,7 @@ export default function Presenze() {
                               <td className="p-2.5 border-r border-gray-300 text-left">
                                 <span className="font-bold text-gray-900 block">Rimborso spese chilometriche</span>
                                 <span className="text-[8px] text-gray-400 block mt-0.5">
-                                  Utilizzo automezzo proprio per trasferte ({sheetToPrint.rimborsoSpeseData?.marcaAutomezzo || ''} {sheetToPrint.rimborsoSpeseData?.modelloAutomezzo || ''})
+                                  Utilizzo automezzo proprio per trasferte
                                 </span>
                               </td>
                               <td className="p-2.5 border-r border-gray-300 text-right font-mono text-gray-500">

@@ -202,7 +202,7 @@ export async function getCommesseNotificationEmails(): Promise<string[]> {
   } catch (err) {
     console.error("Errore lettura destinatari notifiche commesse:", err);
   }
-  return ['synergieflow@ingegno06.it'];
+  return [];
 }
 
 export async function saveCommesseNotificationEmails(emails: string[]): Promise<void> {

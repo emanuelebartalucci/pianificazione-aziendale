@@ -1,11 +1,11 @@
 import { useState, useEffect, useMemo, memo } from 'react';
 import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, addDoc, doc, updateDoc, deleteDoc, query, where, getDocs, getDoc, onSnapshot } from 'firebase/firestore';
-import { Calendar, CheckCircle, XCircle, Clock, ChevronLeft, ChevronRight, RefreshCw, Pencil, Trash2, AlertTriangle, X, Search } from 'lucide-react';
+import { collection, addDoc, doc, updateDoc, deleteDoc, query, where, getDocs, getDoc } from 'firebase/firestore';
+import { Calendar, CheckCircle, XCircle, Clock, ChevronLeft, ChevronRight, RefreshCw, Pencil, Trash2, AlertTriangle, X, Search, BarChart2, Download, Users, Printer } from 'lucide-react';
 import { queueMail } from '../utils/mailSender';
 import { isItalianHoliday, isWeekend, getWeekNumber } from '../utils/date';
-import { getPrintFooterHtml } from '../config/version';
+import { getPrintFooterHtml, getPrintDateString, APP_VERSION } from '../config/version';
 import { isCollaboratore, isSoci } from './Impostazioni';
 
 const formatDate = (dateStr: string) => {
@@ -64,7 +64,7 @@ interface FerieContentProps {
 }
 
 const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: FerieContentProps) => {
-  const { userEmail, coordinatori = [], commesse = [] } = useAuth();
+  const { userEmail, coordinatori = [], commesse = [], isDev } = useAuth();
   const [viewMode, setViewMode] = useState<'calendario' | 'tabella'>('calendario');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' | 'info' } | null>(null);
   const [chiusureAziendali, setChiusureAziendali] = useState<Array<{ dataInizio: string; dataFine: string }>>([]);
@@ -293,18 +293,6 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
 
   useEffect(() => {
     loadFerieData();
-
-    // Listener real-time filtrato per aggiornamento automatico dei contatori all'approvazione delle richieste
-    const twoYearsAgo = new Date();
-    twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
-    const startLimit = twoYearsAgo.toLocaleDateString('sv-SE');
-    const qUnsub = query(collection(db, 'richieste_ferie'), where('dataFine', '>=', startLimit));
-    
-    const unsubFerie = onSnapshot(qUnsub, () => {
-      loadFerieData();
-    });
-
-    return () => unsubFerie();
   }, [myAssociatedName, isHR, isAdmin]);
 
   // Union list for regular users
@@ -407,6 +395,329 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       assenzeGenericheHours: Math.round(assenzeGenericheHours * 100) / 100
     };
   }, [isHR, hrRichieste, requestsList, targetDipName, currentYear, approvedWeekends]);
+
+  // States per la scheda Riepilogo Contatori Risorse (Soci & HR)
+  const [mainTab, setMainTab] = useState<'piano' | 'contatori_risorse'>('piano');
+  const [counterYear, setCounterYear] = useState<number>(currentYear);
+  const [counterMacroArea, setCounterMacroArea] = useState<string>('tutte');
+  const [counterSearchText, setCounterSearchText] = useState<string>('');
+  const [isResourceDropdownOpen, setIsResourceDropdownOpen] = useState<boolean>(false);
+  const [selectedResource, setSelectedResource] = useState<any | null>(null);
+
+  // Aggregazione contatori per tutte le risorse per l'anno selezionato
+  const allResourcesStats = useMemo(() => {
+    if (!isHR && !isAdmin) return [];
+
+    const approvedTarget = hrRichieste.filter(r => 
+      r.stato === 'Approvato' && 
+      r.note !== 'Chiusure Aziendali'
+    );
+
+    return dipendenti.map(dip => {
+      const dipName = dip.nome || '';
+      const isCollab = isCollaboratore(dipName, dipendenti) || isSoci(dipName);
+
+      const userApprovedReqs = approvedTarget.filter(r => 
+        r.dipendenteName?.trim().toLowerCase() === dipName.trim().toLowerCase()
+      );
+
+      let ferieHours = 0;
+      let permessoHours = 0;
+      let malattiaHours = 0;
+      let assenzeGenericheHours = 0;
+
+      userApprovedReqs.forEach(req => {
+        const dates: string[] = [];
+        if (req.dataInizio && req.dataFine) {
+          const [sY, sM, sD] = req.dataInizio.split('-').map(Number);
+          const [eY, eM, eD] = req.dataFine.split('-').map(Number);
+          if (!isNaN(sY) && !isNaN(eY)) {
+            const curr = new Date(sY, sM - 1, sD);
+            const end = new Date(eY, eM - 1, eD);
+            while (curr <= end) {
+              const y = curr.getFullYear();
+              const m = String(curr.getMonth() + 1).padStart(2, '0');
+              const d = String(curr.getDate()).padStart(2, '0');
+              dates.push(`${y}-${m}-${d}`);
+              curr.setDate(curr.getDate() + 1);
+            }
+          }
+        } else if (req.data) {
+          dates.push(req.data);
+        } else if (req.dataInizio) {
+          dates.push(req.dataInizio);
+        }
+
+        let reqTotalHrs = 0;
+
+        for (const dateStr of dates) {
+          if (!dateStr || !dateStr.startsWith(`${counterYear}-`)) continue;
+
+          const isWk = isWeekend(dateStr);
+          const isHol = isItalianHoliday(dateStr);
+          const isWkApproved = approvedWeekends[`${req.dipendenteName}_${dateStr}`];
+
+          if ((isWk || isHol) && !isWkApproved) {
+            continue;
+          }
+
+          const frazione = req.frazioneTipo;
+          const tipo = req.tipo;
+
+          if (frazione === 'mattina' || frazione === 'pomeriggio' || tipo === 'mattina' || tipo === 'pomeriggio') {
+            reqTotalHrs += 4;
+          } else if ((frazione === 'orario' || tipo === 'orario' || tipo === 'permesso' || tipo === 'assenza') && req.oraInizio && req.oraFine) {
+            const [hStart, mStart] = req.oraInizio.split(':').map(Number);
+            const [hEnd, mEnd] = req.oraFine.split(':').map(Number);
+            const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
+            let hrs = Math.max(0, Math.round((diffMs / 3600000) * 100) / 100);
+            if (req.pausaPranzo && req.pausaPranzoOre) {
+              const pOre = parseFloat(req.pausaPranzoOre.toString()) || 0;
+              hrs = Math.max(0, hrs - pOre);
+            }
+            reqTotalHrs += hrs;
+          } else {
+            reqTotalHrs += 8;
+          }
+        }
+
+        const t = (req.tipo || '').toLowerCase();
+        if (isCollab) {
+          assenzeGenericheHours += reqTotalHrs;
+        } else {
+          if (t === 'ferie') {
+            ferieHours += reqTotalHrs;
+          } else if (t === 'malattia' || t === 'maternita' || t === 'maternità') {
+            malattiaHours += reqTotalHrs;
+          } else {
+            permessoHours += reqTotalHrs;
+          }
+        }
+      });
+
+      const totaleOreAssenze = isCollab
+        ? Math.round(assenzeGenericheHours * 100) / 100
+        : Math.round((ferieHours + permessoHours + malattiaHours) * 100) / 100;
+
+      return {
+        dip,
+        dipName,
+        email: dip.email || '',
+        macroArea: dip.macroArea || 'Non specificata',
+        isCollab,
+        ferieHours: Math.round(ferieHours * 100) / 100,
+        permessoHours: Math.round(permessoHours * 100) / 100,
+        malattiaHours: Math.round(malattiaHours * 100) / 100,
+        assenzeGenericheHours: Math.round(assenzeGenericheHours * 100) / 100,
+        totaleOreAssenze
+      };
+    }).sort((a, b) => a.dipName.localeCompare(b.dipName));
+  }, [isHR, isAdmin, hrRichieste, dipendenti, counterYear, approvedWeekends]);
+
+  // Filtro per ricerca e macro-area
+  const filteredResourceStats = useMemo(() => {
+    return allResourcesStats.filter(stat => {
+      if (counterMacroArea !== 'tutte' && stat.macroArea !== counterMacroArea) {
+        return false;
+      }
+      if (counterSearchText) {
+        const queryStr = counterSearchText.toLowerCase().trim();
+        const matchName = stat.dipName.toLowerCase().includes(queryStr);
+        const matchEmail = stat.email.toLowerCase().includes(queryStr);
+        const matchArea = stat.macroArea.toLowerCase().includes(queryStr);
+        if (!matchName && !matchEmail && !matchArea) return false;
+      }
+      return true;
+    });
+  }, [allResourcesStats, counterMacroArea, counterSearchText]);
+
+  // Esportazione CSV
+  const handleExportCSV = () => {
+    const headers = [
+      "Risorsa",
+      "Tipo Profilo",
+      "Macro Area",
+      "Ore Ferie",
+      "Giorni Ferie Equivalenti (~8h)",
+      "Ore Permesso",
+      "Ore Malattia/Maternita",
+      "Assenze Collaboratore P.IVA",
+      "Totale Ore Assenze"
+    ];
+
+    const rows = filteredResourceStats.map(stat => [
+      `"${stat.dipName.replace(/"/g, '""')}"`,
+      stat.isCollab ? "Collaboratore (P.IVA)" : "Dipendente",
+      `"${stat.macroArea.replace(/"/g, '""')}"`,
+      stat.ferieHours,
+      (stat.ferieHours / 8).toFixed(1).replace('.', ','),
+      stat.permessoHours,
+      stat.malattiaHours,
+      stat.assenzeGenericheHours,
+      stat.totaleOreAssenze
+    ]);
+
+    const csvContent = "\uFEFF" + [headers.join(";"), ...rows.map(r => r.join(";"))].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Report_Contatori_Assenze_${counterYear}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Stampa / PDF Report Contatori Risorse (Finestra di Stampa Dedicata)
+  const handlePrintContatoriReport = () => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      showToast("Consenti i pop-up per stampare il report contatori.", "warning");
+      return;
+    }
+
+    const rowsHtml = filteredResourceStats.length === 0 ? `
+      <tr>
+        <td colspan="6" style="text-align: center; padding: 20px; color: #9ca3af; font-weight: 700;">
+          Nessun dato disponibile per i filtri selezionati.
+        </td>
+      </tr>
+    ` : filteredResourceStats.map((stat, idx) => {
+      const ferieText = stat.isCollab ? '—' : `<strong>${stat.ferieHours} h</strong> <span class="days-sub">(~${(stat.ferieHours / 8).toFixed(1).replace('.0', '')} gg)</span>`;
+      const permessioniText = stat.isCollab ? '—' : `<strong>${stat.permessoHours} h</strong> <span class="days-sub">(~${(stat.permessoHours / 8).toFixed(1).replace('.0', '')} gg)</span>`;
+      const malattiaText = stat.isCollab ? '—' : `<strong>${stat.malattiaHours} h</strong> <span class="days-sub">(~${(stat.malattiaHours / 8).toFixed(1).replace('.0', '')} gg)</span>`;
+      const totaleText = `<strong>${stat.totaleOreAssenze} h</strong> <span class="days-sub">(~${(stat.totaleOreAssenze / 8).toFixed(1).replace('.0', '')} gg)</span>`;
+      const rowBg = idx % 2 === 1 ? 'background-color: #f9fafb;' : 'background-color: #ffffff;';
+
+      return `
+        <tr style="${rowBg}">
+          <td style="padding: 5px 8px; border: 1px solid #d1d5db;">
+            <div style="font-size: 10.5px; font-weight: 800; color: #111827;">${stat.dipName}</div>
+            <div style="font-size: 8.5px; font-weight: 600; color: #6b7280;">${stat.isCollab ? 'Collaboratore P.IVA' : 'Dipendente'}</div>
+          </td>
+          <td style="padding: 5px 8px; border: 1px solid #d1d5db; font-size: 10px; font-weight: 600; color: #374151;">
+            ${stat.macroArea}
+          </td>
+          <td style="padding: 5px 8px; border: 1px solid #d1d5db; text-align: center; font-size: 10px;">
+            ${ferieText}
+          </td>
+          <td style="padding: 5px 8px; border: 1px solid #d1d5db; text-align: center; font-size: 10px;">
+            ${permessioniText}
+          </td>
+          <td style="padding: 5px 8px; border: 1px solid #d1d5db; text-align: center; font-size: 10px;">
+            ${malattiaText}
+          </td>
+          <td style="padding: 5px 8px; border: 1px solid #d1d5db; text-align: center; font-size: 10px; color: #dc2626;">
+            ${totaleText}
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html lang="it">
+      <head>
+        <meta charset="UTF-8">
+        <title>Report Contatori Assenze</title>
+        <style>
+          @page { size: A4 portrait; margin: 10mm; }
+          * { box-sizing: border-box !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+          html, body { margin: 0 !important; padding: 0 !important; background: #ffffff !important; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 10px; color: #111827; }
+          
+          table.main-layout { width: 100%; border-collapse: collapse; border: none; }
+          table.main-layout > thead > tr > td { padding: 0; border: none; }
+          table.main-layout > tbody > tr > td { padding: 0; border: none; }
+          table.main-layout > tfoot > tr > td { padding: 0; border: none; }
+
+          .header-bar { display: flex; justify-content: space-between; align-items: flex-end; padding-bottom: 6px; margin-bottom: 8px; border-bottom: 2px solid #1f2937; }
+          .header-logo { height: 36px; width: auto; }
+          .header-title-right { text-align: right; font-size: 8.5px; font-weight: 800; color: #4b5563; text-transform: uppercase; letter-spacing: 0.5px; }
+          
+          .title-banner { background-color: #1f2937; color: #ffffff; padding: 6px 10px; border-radius: 5px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+          .title-banner-text { font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; }
+          .count-badge { background-color: rgba(255, 255, 255, 0.2); padding: 2px 7px; border-radius: 4px; font-size: 9.5px; font-weight: 900; }
+          
+          .filter-box { border: 1px solid #9ca3af; background-color: #f9fafb; padding: 6px 10px; border-radius: 5px; margin-bottom: 10px; font-size: 9px; font-weight: 600; color: #374151; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px; }
+          
+          table.report-table { width: 100% !important; border-collapse: collapse !important; border: 1.5px solid #4b5563 !important; }
+          table.report-table th { background-color: #f3f4f6 !important; color: #111827 !important; font-size: 9px !important; font-weight: 800 !important; text-transform: uppercase !important; letter-spacing: 0.5px !important; padding: 6px 8px !important; border: 1px solid #6b7280 !important; }
+          table.report-table td { border: 1px solid #d1d5db !important; vertical-align: middle !important; }
+          table.report-table tr { page-break-inside: avoid !important; break-inside: avoid !important; }
+          .days-sub { font-size: 8.5px; color: #6b7280; font-weight: 500; margin-left: 4px; }
+          
+          .print-footer-static { margin-top: 10px; padding-top: 6px; padding-bottom: 4px; border-top: 1px solid #9ca3af; display: flex; justify-content: space-between; align-items: center; font-size: 8.5px; font-weight: 600; color: #4b5563; font-family: monospace; }
+          .page-number::after { content: counter(page); }
+        </style>
+      </head>
+      <body>
+        <table class="main-layout">
+          <thead>
+            <tr>
+              <td>
+                <div class="header-bar">
+                  <img src="/Logo.png" alt="Logo Ingegno" class="header-logo" />
+                  <div class="header-title-right">INGEGNO P&C S.R.L. · REPORT ASSENZE</div>
+                </div>
+                <div class="title-banner">
+                  <span class="title-banner-text">CONTATORI FERIE E PERMESSI (CONSUNTIVO)</span>
+                  <span class="count-badge">ANNO ${counterYear}</span>
+                </div>
+              </td>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <div class="filter-box">
+                  <span><strong>Ricerca:</strong> ${counterSearchText || 'Nessuna'}</span>
+                  <span><strong>Macro Area:</strong> ${counterMacroArea === 'tutte' ? 'Tutte' : counterMacroArea}</span>
+                  <span><strong>Data Stampa:</strong> ${getPrintDateString()}</span>
+                  <span><strong>Totale Risorse:</strong> ${filteredResourceStats.length}</span>
+                </div>
+
+                <table class="report-table">
+                  <thead>
+                    <tr>
+                      <th style="width: 25%; text-align: left;">Risorsa</th>
+                      <th style="width: 25%; text-align: left;">Macro Area / Ruolo</th>
+                      <th style="width: 12.5%; text-align: center;">Ferie Godute</th>
+                      <th style="width: 12.5%; text-align: center;">Permessi Usufruiti</th>
+                      <th style="width: 12.5%; text-align: center;">Malattia / Maternità</th>
+                      <th style="width: 12.5%; text-align: center;">Totale Assenze</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${rowsHtml}
+                  </tbody>
+                </table>
+              </td>
+            </tr>
+          </tbody>
+          <tfoot>
+            <tr>
+              <td>
+                <div class="print-footer-static">
+                  <span>Piattaforma Pianificazione Aziendale</span>
+                  <span>${APP_VERSION} — Data Stampa: ${getPrintDateString()}</span>
+                </div>
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+
+        <script>
+          function closeWindow() { try { window.close(); } catch(e) {} }
+          window.onafterprint = closeWindow;
+          window.onload = function() { setTimeout(function() { window.print(); closeWindow(); setTimeout(closeWindow, 500); }, 250); };
+        </script>
+      </body>
+      </html>
+    `;
+
+    printWindow.document.open();
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
+  };
 
   // Sorted full list depending on role
   const richieste = useMemo(() => {
@@ -1417,6 +1728,13 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
               height: 32px;
               object-fit: contain;
             }
+            thead {
+              display: table-header-group !important;
+            }
+            tr {
+              page-break-inside: avoid !important;
+              break-inside: avoid !important;
+            }
             table {
               width: 100%;
               border-collapse: collapse;
@@ -1734,6 +2052,335 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
             </div>
           </h2>
         </div>
+
+        {/* TAB SWITCHER PER HR / ADMIN / SOCI */}
+        {(isHR || isAdmin || isDev) && (
+          <div className="flex flex-wrap items-center gap-2 mb-6 bg-slate-100/80 p-1.5 rounded-2xl border border-slate-200/80 w-fit">
+            <button
+              type="button"
+              onClick={() => setMainTab('piano')}
+              className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
+                mainTab === 'piano'
+                  ? 'bg-white text-emerald-950 shadow-sm border border-emerald-100'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+              }`}
+            >
+              <Calendar className="w-4 h-4 text-emerald-600" />
+              <span>Piano Ferie & Richieste</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setMainTab('contatori_risorse')}
+              className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
+                mainTab === 'contatori_risorse'
+                  ? 'bg-white text-indigo-950 shadow-sm border border-indigo-100'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+              }`}
+            >
+              <BarChart2 className="w-4 h-4 text-indigo-600" />
+              <span>Riepilogo Contatori Risorse (Soci & HR)</span>
+            </button>
+          </div>
+        )}
+
+        {mainTab === 'contatori_risorse' && (isHR || isAdmin || isDev) ? (
+          /* VISTA CONTATORI RISORSE (SOCI & HR) */
+          <div className="space-y-6 animate-in fade-in duration-200">
+            {/* Header KPI Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-gradient-to-br from-indigo-50 to-slate-50 p-4 rounded-2xl border border-indigo-100 shadow-2xs flex items-center gap-3">
+                <div className="p-3 bg-indigo-600 text-white rounded-xl shadow-xs">
+                  <Users className="w-5 h-5" />
+                </div>
+                <div>
+                  <span className="block text-[11px] font-extrabold text-indigo-900 uppercase tracking-wider">Risorse Censite</span>
+                  <span className="text-2xl font-black text-indigo-950">{filteredResourceStats.length} <span className="text-xs text-gray-500 font-bold">risorse</span></span>
+                </div>
+              </div>
+
+              <div className="bg-gradient-to-br from-emerald-50 to-teal-50 p-4 rounded-2xl border border-emerald-100 shadow-2xs flex items-center gap-3">
+                <div className="p-3 bg-emerald-600 text-white rounded-xl shadow-xs">
+                  <span className="text-lg">🌴</span>
+                </div>
+                <div>
+                  <span className="block text-[11px] font-extrabold text-emerald-900 uppercase tracking-wider">Totale Ore Ferie ({counterYear})</span>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-2xl font-black text-emerald-950">{filteredResourceStats.reduce((sum, r) => sum + r.ferieHours, 0)}</span>
+                    <span className="text-xs font-bold text-emerald-800">ore</span>
+                    <span className="text-[10px] text-gray-500 font-bold">
+                      (~{(filteredResourceStats.reduce((sum, r) => sum + r.ferieHours, 0) / 8).toFixed(1).replace('.0', '')} gg)
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-gradient-to-br from-amber-50 to-orange-50 p-4 rounded-2xl border border-amber-100 shadow-2xs flex items-center gap-3">
+                <div className="p-3 bg-amber-600 text-white rounded-xl shadow-xs">
+                  <span className="text-lg">⏱️</span>
+                </div>
+                <div>
+                  <span className="block text-[11px] font-extrabold text-amber-900 uppercase tracking-wider">Totale Permessi ({counterYear})</span>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-2xl font-black text-amber-950">{filteredResourceStats.reduce((sum, r) => sum + r.permessoHours, 0)}</span>
+                    <span className="text-xs font-bold text-amber-800">ore</span>
+                    <span className="text-[10px] text-gray-500 font-bold">
+                      (~{(filteredResourceStats.reduce((sum, r) => sum + r.permessoHours, 0) / 8).toFixed(1).replace('.0', '')} gg)
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-gradient-to-br from-rose-50 to-slate-50 p-4 rounded-2xl border border-rose-100 shadow-2xs flex items-center gap-3">
+                <div className="p-3 bg-rose-600 text-white rounded-xl shadow-xs">
+                  <Clock className="w-5 h-5" />
+                </div>
+                <div>
+                  <span className="block text-[11px] font-extrabold text-rose-900 uppercase tracking-wider">Totale Assenze Complessive</span>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-2xl font-black text-rose-950">{filteredResourceStats.reduce((sum, r) => sum + r.totaleOreAssenze, 0)}</span>
+                    <span className="text-xs font-bold text-rose-800">ore</span>
+                    <span className="text-[10px] text-gray-500 font-bold ml-1">
+                      (~{(filteredResourceStats.reduce((sum, r) => sum + r.totaleOreAssenze, 0) / 8).toFixed(1).replace('.0', '')} gg)
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Filtri della Tabella */}
+            <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200 flex flex-wrap items-end justify-between gap-4">
+              <div className="flex flex-wrap items-end gap-3 flex-1 min-w-[280px]">
+                {/* Anno */}
+                <div className="flex flex-col gap-1">
+                  <label className="block text-[10px] font-extrabold text-indigo-950 uppercase tracking-wider ml-0.5">Anno:</label>
+                  <select
+                    value={counterYear}
+                    onChange={(e) => setCounterYear(Number(e.target.value))}
+                    className="bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-extrabold text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 shadow-2xs cursor-pointer"
+                  >
+                    {[currentYear, currentYear - 1, currentYear - 2].map(y => (
+                      <option key={y} value={y}>{y}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Macro Area */}
+                <div className="flex flex-col gap-1">
+                  <label className="block text-[10px] font-extrabold text-indigo-950 uppercase tracking-wider ml-0.5">Area:</label>
+                  <select
+                    value={counterMacroArea}
+                    onChange={(e) => setCounterMacroArea(e.target.value)}
+                    className="bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 shadow-2xs cursor-pointer"
+                  >
+                    <option value="tutte">Tutte le Macro-Aree</option>
+                    <option value="Disegnatori">Disegnatori</option>
+                    <option value="Ingegneria">Ingegneria</option>
+                    <option value="Sicurezza Cantieri">Sicurezza Cantieri</option>
+                    <option value="Consulenza Sicurezza">Consulenza Sicurezza</option>
+                    <option value="Amministrazione">Amministrazione</option>
+                  </select>
+                </div>
+
+                {/* Selettore Risorsa (Cerca e Seleziona) - Componente Unificato con Dropdown Floattante */}
+                <div className="relative flex-1 min-w-[280px]">
+                  <label className="block text-[10px] font-extrabold text-indigo-950 uppercase tracking-wider mb-1 ml-0.5">
+                    Risorsa (Cerca e Seleziona)
+                  </label>
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 z-10" />
+                    <input
+                      type="text"
+                      autoComplete="new-password"
+                      name="risorsa-search-counter"
+                      placeholder="Digita per cercare una risorsa per nome, e-mail o area..."
+                      value={selectedResource ? selectedResource.nome : counterSearchText}
+                      onChange={e => {
+                        setCounterSearchText(e.target.value);
+                        if (selectedResource) setSelectedResource(null);
+                        setIsResourceDropdownOpen(true);
+                      }}
+                      onFocus={() => setIsResourceDropdownOpen(true)}
+                      className="w-full pl-8 pr-16 py-2 border border-slate-200 rounded-xl bg-white shadow-2xs focus:ring-2 focus:ring-indigo-400 outline-none font-bold text-gray-800 text-xs transition-all placeholder:font-normal placeholder:text-gray-400"
+                    />
+                    {selectedResource || counterSearchText ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedResource(null);
+                          setCounterSearchText('');
+                        }}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-rose-600 hover:text-rose-800 font-extrabold text-[10px] bg-rose-50 hover:bg-rose-100 px-2 py-0.5 rounded-lg border border-rose-200 transition cursor-pointer z-10"
+                      >
+                        Rimuovi
+                      </button>
+                    ) : null}
+                  </div>
+
+                  {isResourceDropdownOpen && (
+                    <>
+                      <div className="fixed inset-0 z-10" onClick={() => setIsResourceDropdownOpen(false)}></div>
+                      <div className="absolute left-0 right-0 z-20 mt-1 max-h-60 overflow-y-auto bg-white border border-slate-200 rounded-2xl shadow-2xl divide-y divide-slate-100 animate-in fade-in zoom-in-95 duration-150 custom-scrollbar">
+                        {(() => {
+                          const searchStr = counterSearchText.toLowerCase().trim();
+                          const filteredDip = dipendenti
+                            .slice()
+                            .sort((a, b) => (a.nome || '').localeCompare(b.nome || ''))
+                            .filter(d => {
+                              const n = (d.nome || '').toLowerCase();
+                              const e = (d.email || '').toLowerCase();
+                              const a = (d.macroArea || '').toLowerCase();
+                              return n.includes(searchStr) || e.includes(searchStr) || a.includes(searchStr);
+                            });
+
+                          if (filteredDip.length === 0) {
+                            return (
+                              <div className="p-3 text-xs text-gray-400 italic font-bold text-center">
+                                Nessuna risorsa trovata per "{counterSearchText}"
+                              </div>
+                            );
+                          }
+
+                          return filteredDip.map(d => (
+                            <button
+                              key={d.id || d.nome}
+                              type="button"
+                              onClick={() => {
+                                setSelectedResource(d);
+                                setCounterSearchText(d.nome);
+                                setIsResourceDropdownOpen(false);
+                              }}
+                              className="w-full text-left px-3.5 py-2.5 hover:bg-indigo-50/80 text-xs font-semibold text-gray-800 transition-colors flex items-center justify-between gap-2 cursor-pointer"
+                            >
+                              <div className="flex flex-col min-w-0">
+                                <span className="font-extrabold text-sm text-gray-900 truncate">{d.nome}</span>
+                                <span className="text-[10.5px] text-gray-400 font-normal truncate">{d.email || 'Nessuna email'}</span>
+                              </div>
+                              <span className="text-[10px] font-extrabold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-100 shrink-0">
+                                {d.macroArea || 'Generico'}
+                              </span>
+                            </button>
+                          ));
+                        })()}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Pulsanti Azione: Export CSV e Stampa/PDF */}
+              <div className="flex items-end gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleExportCSV}
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-2 shadow-xs transition-all cursor-pointer"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Esporta CSV</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handlePrintContatoriReport}
+                  className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-2 shadow-xs transition-all cursor-pointer"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Stampa / PDF</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Tabella Risorse */}
+            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-xs">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-100/80 border-b border-slate-200 text-slate-700 font-extrabold uppercase tracking-wider">
+                    <th className="p-3.5">Risorsa</th>
+                    <th className="p-3.5">Macro Area</th>
+                    <th className="p-3.5 text-center">Ore Ferie ({counterYear})</th>
+                    <th className="p-3.5 text-center">Ore Permesso ({counterYear})</th>
+                    <th className="p-3.5 text-center">Malattia / Maternità</th>
+                    <th className="p-3.5 text-center">Totale Assenze ({counterYear})</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredResourceStats.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="text-center py-8 text-gray-400 font-medium">
+                        Nessuna risorsa trovata per i filtri selezionati.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredResourceStats.map((stat, idx) => (
+                      <tr key={stat.dip.id || idx} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="p-3.5 font-bold text-gray-900">
+                          <div className="flex flex-col">
+                            <span className="text-sm font-extrabold text-gray-900">{stat.dipName}</span>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <span className={`px-1.5 py-0.2 rounded text-[9.5px] font-extrabold uppercase ${
+                                stat.isCollab ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'
+                              }`}>
+                                {stat.isCollab ? 'Collaboratore P.IVA' : 'Dipendente'}
+                              </span>
+                              {stat.email && <span className="text-[10.5px] text-gray-400 font-normal">{stat.email}</span>}
+                            </div>
+                          </div>
+                        </td>
+
+                        <td className="p-3.5 font-semibold text-gray-700">
+                          <span className="px-2.5 py-1 bg-slate-100 text-slate-800 rounded-lg border border-slate-200/60 font-extrabold text-[11px]">
+                            {stat.macroArea}
+                          </span>
+                        </td>
+
+                        <td className="p-3.5 text-center">
+                          {stat.isCollab ? (
+                            <span className="text-gray-400 font-medium">—</span>
+                          ) : (
+                            <div className="inline-flex flex-col items-center">
+                              <span className="text-sm font-black text-emerald-700">{stat.ferieHours} h</span>
+                              <span className="text-[10px] font-bold text-gray-500">~{(stat.ferieHours / 8).toFixed(1).replace('.0', '')} gg</span>
+                            </div>
+                          )}
+                        </td>
+
+                        <td className="p-3.5 text-center">
+                          {stat.isCollab ? (
+                            <span className="text-gray-400 font-medium">—</span>
+                          ) : (
+                            <div className="inline-flex flex-col items-center">
+                              <span className="text-sm font-black text-amber-700">{stat.permessoHours} h</span>
+                              <span className="text-[10px] font-bold text-gray-500">~{(stat.permessoHours / 8).toFixed(1).replace('.0', '')} gg</span>
+                            </div>
+                          )}
+                        </td>
+
+                        <td className="p-3.5 text-center">
+                          {stat.isCollab ? (
+                            <span className="text-gray-400 font-medium">—</span>
+                          ) : (
+                            <div className="inline-flex flex-col items-center">
+                              <span className="text-sm font-black text-rose-700">{stat.malattiaHours} h</span>
+                              <span className="text-[10px] font-bold text-gray-500">~{(stat.malattiaHours / 8).toFixed(1).replace('.0', '')} gg</span>
+                            </div>
+                          )}
+                        </td>
+
+                        <td className="p-3.5 text-center">
+                          <div className="inline-flex flex-col items-center bg-rose-50/80 px-3.5 py-1.5 rounded-xl border border-rose-200/80">
+                            <span className="text-sm font-black text-rose-950">{stat.totaleOreAssenze} h</span>
+                            <span className="text-[10px] font-extrabold text-rose-800">~{(stat.totaleOreAssenze / 8).toFixed(1).replace('.0', '')} gg</span>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-8 animate-in fade-in duration-200">
 
         {/* Contatori Assenze Anno Corrente */}
         <div className="mb-8 bg-gradient-to-r from-emerald-50/80 via-teal-50/60 to-indigo-50/80 p-5 rounded-3xl border border-emerald-100/90 shadow-sm animate-in fade-in zoom-in-95 duration-200">
@@ -2274,9 +2921,12 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         </div>
       </div>
     </div>
+  )}
+</div>
 
       {/* CALENDARIO VIEW */}
-      <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl p-6 sm:p-10 border border-white/50 no-print">
+      {mainTab === 'piano' && (
+        <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl p-6 sm:p-10 border border-white/50 no-print">
         <div className="flex justify-between items-center mb-6">
           <h3 className="font-extrabold text-2xl text-gray-900 capitalize">{monthName}</h3>
           <div className="flex flex-wrap items-center gap-3">
@@ -2560,6 +3210,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
           </>
         )}
       </div>
+    )}
 
       {/* MODALE RICHIESTA MODIFICA / ANNULLAMENTO FERIE APPROVATE PER DIPENDENTE */}
       {modifyingRequest && (

@@ -216,46 +216,55 @@ export const OrganigrammaView: React.FC = () => {
         <style>
           @page {
             size: A4 portrait;
-            margin: 1.2cm 1cm 1.5cm 1cm;
+            margin: 10mm;
           }
-          body {
+          * {
+            box-sizing: border-box !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          html, body {
+            margin: 0 !important;
+            padding: 0 !important;
+            background: #ffffff !important;
             font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            font-size: 9.5px;
             color: #0f172a;
-            margin: 0;
-            padding: 0;
-            background: #fff;
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
           }
+          
+          table.main-layout { width: 100%; border-collapse: collapse; border: none; }
+          table.main-layout > thead > tr > td { padding: 0; border: none; }
+          table.main-layout > tbody > tr > td { padding: 0; border: none; }
+          table.main-layout > tfoot > tr > td { padding: 0; border: none; }
+
           .header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             border-bottom: 2px solid #0f172a;
-            padding-bottom: 10px;
-            margin-bottom: 14px;
+            padding-bottom: 8px;
+            margin-bottom: 8px;
           }
           .logo {
-            height: 44px;
+            height: 38px;
             object-fit: contain;
           }
           .title-container {
             text-align: right;
           }
           .company-name {
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 900;
             color: #0f172a;
             letter-spacing: 0.05em;
             text-transform: uppercase;
           }
           .doc-title {
-            font-size: 16px;
+            font-size: 15px;
             font-weight: 900;
             color: #2563eb;
             margin-top: 2px;
             text-transform: uppercase;
-            letter-spacing: -0.01em;
           }
           .filter-info {
             display: flex;
@@ -263,10 +272,10 @@ export const OrganigrammaView: React.FC = () => {
             align-items: center;
             background-color: #f8fafc;
             border: 1px solid #e2e8f0;
-            border-radius: 8px;
-            padding: 8px 12px;
-            margin-bottom: 14px;
-            font-size: 10px;
+            border-radius: 6px;
+            padding: 6px 10px;
+            margin-bottom: 10px;
+            font-size: 9px;
             color: #475569;
             font-weight: 600;
           }
@@ -274,83 +283,105 @@ export const OrganigrammaView: React.FC = () => {
             font-weight: 800;
             color: #1e293b;
           }
-          table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 11px;
+
+          table.report-table {
+            width: 100% !important;
+            border-collapse: collapse !important;
+            border: 1.5px solid #0f172a !important;
+            font-size: 9.5px !important;
           }
-          th {
+          table.report-table th {
             background-color: #1e293b !important;
             color: #ffffff !important;
-            font-size: 10px;
-            font-weight: 800;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            padding: 8px 10px;
-            border: 1px solid #0f172a;
+            font-size: 9px !important;
+            font-weight: 800 !important;
+            text-transform: uppercase !important;
+            letter-spacing: 0.05em !important;
+            padding: 6px 8px !important;
+            border: 1px solid #0f172a !important;
           }
-          td {
-            padding: 7px 10px;
-            border: 1px solid #cbd5e1;
-            vertical-align: middle;
+          table.report-table td {
+            padding: 5.5px 8px !important;
+            border: 1px solid #cbd5e1 !important;
+            vertical-align: middle !important;
           }
-          tr:nth-child(even) td {
+          table.report-table tr {
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+          }
+          table.report-table tr:nth-child(even) td {
             background-color: #f8fafc !important;
           }
-          .footer-fixed {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
+
+          .footer-static {
+            margin-top: 10px;
+            padding-top: 6px;
+            padding-bottom: 4px;
+            border-top: 1px solid #cbd5e1;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            font-size: 8pt;
+            font-size: 8.5px;
+            font-weight: 600;
             color: #64748b;
-            border-top: 1px solid #e2e8f0;
-            padding-top: 6px;
-            font-family: system-ui, -apple-system, sans-serif;
-            background-color: #ffffff;
+            font-family: monospace;
           }
         </style>
       </head>
       <body>
-        <div class="header">
-          <img src="${logoUrl}" alt="INGEGNO Logo" class="logo" />
-          <div class="title-container">
-            <div class="company-name">INGEGNO P&C S.R.L.</div>
-            <div class="doc-title">Elenco Risorse Umane</div>
-          </div>
-        </div>
-
-        <div class="filter-info">
-          <div>
-            <span>Filtro Inquadramento: </span><span class="filter-pill">${tipoLabel}</span>
-            <span style="margin: 0 8px; color: #cbd5e1;">|</span>
-            <span>Macroarea: </span><span class="filter-pill">${areaLabel}</span>
-          </div>
-          <div>Totale Risorse Stampate: <strong style="color: #0f172a; font-size: 11px;">${filteredPrintResources.length}</strong></div>
-        </div>
-
-        <table>
+        <table class="main-layout">
           <thead>
             <tr>
-              <th style="width: 40px; text-align: center;">#</th>
-              <th style="text-align: left;">Cognome e Nome</th>
-              <th style="text-align: left;">Macroarea</th>
-              <th style="text-align: center; width: 120px;">Inquadramento</th>
-              <th style="text-align: left;">E-mail Aziendale</th>
+              <td>
+                <div class="header">
+                  <img src="${logoUrl}" alt="INGEGNO Logo" class="logo" />
+                  <div class="title-container">
+                    <div class="company-name">INGEGNO P&C S.R.L.</div>
+                    <div class="doc-title">Elenco Risorse Umane</div>
+                  </div>
+                </div>
+                <div class="filter-info">
+                  <div>
+                    <span>Filtro Inquadramento: </span><span class="filter-pill">${tipoLabel}</span>
+                    <span style="margin: 0 8px; color: #cbd5e1;">|</span>
+                    <span>Macroarea: </span><span class="filter-pill">${areaLabel}</span>
+                  </div>
+                  <div>Totale Risorse Stampate: <strong style="color: #0f172a; font-size: 10px;">${filteredPrintResources.length}</strong></div>
+                </div>
+              </td>
             </tr>
           </thead>
+          <tfoot>
+            <tr>
+              <td>
+                <div class="footer-static">
+                  <span>INGEGNO P&C S.R.L. · Documento Ufficiale Risorse Umane</span>
+                  <span>${APP_VERSION} — Data Stampa: ${printDate}</span>
+                </div>
+              </td>
+            </tr>
+          </tfoot>
           <tbody>
-            ${rowsHtml}
+            <tr>
+              <td>
+                <table class="report-table">
+                  <thead>
+                    <tr>
+                      <th style="width: 35px; text-align: center;">#</th>
+                      <th style="text-align: left;">Cognome e Nome</th>
+                      <th style="text-align: left;">Macroarea</th>
+                      <th style="text-align: center; width: 120px;">Inquadramento</th>
+                      <th style="text-align: left;">E-mail Aziendale</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${rowsHtml}
+                  </tbody>
+                </table>
+              </td>
+            </tr>
           </tbody>
         </table>
-
-        <div class="footer-fixed">
-          <span>INGEGNO P&C S.R.L. · Documento Ufficiale Risorse Umane</span>
-          <span>${APP_VERSION} — Data Stampa: ${printDate}</span>
-        </div>
 
         <script>
           window.onload = function() {

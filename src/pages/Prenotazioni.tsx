@@ -3,7 +3,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { 
   collection, 
-  onSnapshot, 
+  getDocs,
+  getDoc,
   doc, 
   addDoc, 
   updateDoc, 
@@ -332,47 +333,33 @@ export default function Prenotazioni() {
     });
   };
 
-  // Real-time Firestore subscriptions
-  useEffect(() => {
+  const loadBookingData = async () => {
     setLoading(true);
-    // 1. Listen for resources
-    const unsubResources = onSnapshot(collection(db, 'risorse'), (snapshot) => {
-      const resList: Resource[] = snapshot.docs.map(docSnap => ({
+    try {
+      const sixtyDaysAgo = new Date();
+      sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+      const limitDate = sixtyDaysAgo.toLocaleDateString('sv-SE');
+
+      const [resourcesSnap, bookingsSnap, licenseDocSnap] = await Promise.all([
+        getDocs(collection(db, 'risorse')),
+        getDocs(query(collection(db, 'prenotazioni_risorse'), where('dataFine', '>=', limitDate))),
+        getDoc(doc(db, 'configurazioni', 'licenze'))
+      ]);
+
+      const resList: Resource[] = resourcesSnap.docs.map((docSnap: any) => ({
         docId: docSnap.id,
         ...docSnap.data()
       } as unknown as Resource));
       setResources(resList);
-    }, (err) => {
-      console.error("Error loading resources:", err);
-      showToast("Errore nel caricamento delle risorse.", "error");
-    });
 
-    // 2. Listen for bookings (last 60 days to prevent infinite data load)
-    const sixtyDaysAgo = new Date();
-    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
-    const limitDate = sixtyDaysAgo.toLocaleDateString('sv-SE');
-
-    const bookingsQuery = query(
-      collection(db, 'prenotazioni_risorse'),
-      where('dataFine', '>=', limitDate)
-    );
-
-    const unsubBookings = onSnapshot(bookingsQuery, (snapshot) => {
-      const bookList: Booking[] = snapshot.docs.map(docSnap => ({
+      const bookList: Booking[] = bookingsSnap.docs.map((docSnap: any) => ({
         id: docSnap.id,
         ...docSnap.data()
       } as Booking));
       setBookings(bookList);
-      setLoading(false);
-    }, (err) => {
-      console.error("Error loading bookings:", err);
-      showToast("Errore nel caricamento delle prenotazioni.", "error");
-    });
 
-    // 3. Listen for license limits
-    const unsubLimits = onSnapshot(doc(db, 'configurazioni', 'licenze'), (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
+      if (licenseDocSnap.exists()) {
+        const data = licenseDocSnap.data();
         const revit = Number(data.revitTotali) || 6;
         const autocadCompleto = Number(data.autocadCompletoTotali) || Number(data.autocadTotali) || 6;
         const autocadLt = Number(data.autocadLtTotali) || 7;
@@ -385,15 +372,16 @@ export default function Prenotazioni() {
         setAutocadCompletoInput(autocadCompleto);
         setAutocadLtInput(autocadLt);
       }
-    }, (err) => {
-      console.error("Error loading license limits:", err);
-    });
+    } catch (err) {
+      console.error("Error loading bookings data:", err);
+      showToast("Errore nel caricamento dei dati delle prenotazioni.", "error");
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    return () => {
-      unsubResources();
-      unsubBookings();
-      unsubLimits();
-    };
+  useEffect(() => {
+    loadBookingData();
   }, []);
 
   // Filtered lists of resources
