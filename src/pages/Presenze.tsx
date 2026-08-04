@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, doc, setDoc, getDocs, query, where, addDoc, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
+import { collection, doc, setDoc, getDocs, query, where, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
 import { FileText, Printer, Save, Send, CheckCircle, AlertCircle, Edit, Edit3, Trash2, MessageSquare, Clock, MapPin, Check, X, ShieldAlert, Download, RefreshCw, Plus, Bell, ChevronRight } from 'lucide-react';
 import { queueMail } from '../utils/mailSender';
 import ConfirmModal from '../components/ConfirmModal';
@@ -402,10 +402,6 @@ export default function Presenze() {
   const [approvedWeekends, setApprovedWeekends] = useState<Record<string, boolean>>({});
   const [approvedLeaves, setApprovedLeaves] = useState<Record<string, { tipo: string; frazioneTipo?: string; oraInizio?: string; oraFine?: string; pausaPranzo?: boolean; pausaPranzoOre?: number }>>({});
   const [allWeekendRequests, setAllWeekendRequests] = useState<any[]>([]);
-  const [directAuthDipNome, setDirectAuthDipNome] = useState('');
-  const [directAuthData, setDirectAuthData] = useState('');
-  const [directAuthMotivo, setDirectAuthMotivo] = useState('');
-  const [directAuthLoading, setDirectAuthLoading] = useState(false);
 
   // Modifica / Annullamento richieste weekend dipendenti
   const [modifyingWeekendReq, setModifyingWeekendReq] = useState<any | null>(null);
@@ -1875,55 +1871,7 @@ export default function Presenze() {
 
 
 
-  const handleWeekendDecision = async (id: string, action: 'Approvato' | 'Rifiutato' | 'Revocato' | 'Annullato') => {
-    try {
-      const req = allWeekendRequests.find(r => r.id === id);
-      if (!req) return;
-      
-      const updates: Record<string, any> = { stato: action };
 
-      // Se accetta una modifica e la richiesta aveva una nuovaData
-      if (action === 'Approvato' && req.nuovaData) {
-        updates.data = req.nuovaData;
-        if (req.nuovoMotivo) updates.motivo = req.nuovoMotivo;
-        updates.nuovaData = null;
-        updates.nuovoMotivo = null;
-      }
-
-      if (action === 'Annullato' || action === 'Revocato' || action === 'Rifiutato') {
-        await deleteDoc(doc(db, 'richieste_weekend', id));
-      } else {
-        await updateDoc(doc(db, 'richieste_weekend', id), updates);
-      }
-      loadPresenzeData();
-
-      // Invia email al dipendente
-      const targetDip = dipendenti.find(d => d.nome === req.dipendenteName);
-      if (targetDip && targetDip.email) {
-        const isSelfTarget = (targetDip.email.toLowerCase() === userEmail?.toLowerCase()) || (myAssociatedName && req.dipendenteName === myAssociatedName);
-        if (!isSelfTarget) {
-          let actionText = 'aggiornata';
-          if (action === 'Approvato') actionText = 'approvata';
-          else if (action === 'Rifiutato') actionText = 'rifiutata';
-          else if (action === 'Revocato') actionText = 'revocata dall\'HR';
-          else if (action === 'Annullato') actionText = 'annullata';
-
-          const subject = `[Notifica] Autorizzazione lavoro festivo ${actionText}`;
-          const htmlBody = `
-            <p>Ciao <strong>${req.dipendenteName}</strong>,</p>
-            <p>La tua richiesta di autorizzazione per il lavoro festivo del giorno <strong>${formatDate(req.data)}</strong> (${req.motivo}) è stata <strong>${actionText}</strong>.</p>
-            ${action === 'Approvato' ? '<p>Puoi procedere all\'inserimento delle ore sul tuo foglio presenze.</p>' : ''}
-          `;
-          const plainText = `Ciao ${req.dipendenteName},\n\nLa tua richiesta di autorizzazione per il lavoro festivo del giorno ${formatDate(req.data)} (${req.motivo}) è stata ${actionText}.\n\nQuesta è una notifica automatica.`;
-          await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
-        }
-      }
-      showToast(`Richiesta ${action.toLowerCase()} con successo!`);
-    } catch (e) {
-      console.error("Errore decisione weekend:", e);
-      showToast("Errore durante l'aggiornamento della richiesta.", "error");
-    }
-  };
 
 
 
@@ -1964,42 +1912,7 @@ export default function Presenze() {
     }
   };
 
-  const handleDirectWeekendAuthSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!directAuthDipNome) {
-      showToast("Seleziona una risorsa!", "warning");
-      return;
-    }
-    if (!directAuthData) {
-      showToast("Seleziona una data!", "warning");
-      return;
-    }
 
-    const selectedDip = dipendenti.find(d => d.nome === directAuthDipNome);
-    const email = selectedDip?.email || '';
-
-    setDirectAuthLoading(true);
-    try {
-      await addDoc(collection(db, 'richieste_weekend'), {
-        dipendenteName: directAuthDipNome,
-        dipendenteEmail: email.toLowerCase(),
-        data: directAuthData,
-        motivo: directAuthMotivo || 'Autorizzazione d\'ufficio dall\'HR',
-        stato: 'Approvato',
-        timestamp: new Date().toISOString()
-      });
-      setDirectAuthDipNome('');
-      setDirectAuthData('');
-      setDirectAuthMotivo('');
-      showToast("Autorizzazione registrata ed approvata con successo!");
-      loadPresenzeData();
-    } catch (err) {
-      console.error("Errore invio autorizzazione diretta:", err);
-      showToast("Errore durante la registrazione dell'autorizzazione.", "error");
-    } finally {
-      setDirectAuthLoading(false);
-    }
-  };
 
   // --- ACTIONS FOR HR / ADMIN ---
   const handleReviewCellChange = (day: string, field: keyof GiornoPresenza, value: any) => {
@@ -3220,7 +3133,7 @@ export default function Presenze() {
             </div>
             <p className="text-xs text-gray-500 font-semibold mt-0.5">
               {isCollaboratore(myAssociatedName, dipendenti) || isSocio
-                ? 'Gestione bozza fattura mensile, rimborsi spese e richieste festivi'
+                ? 'Gestione bozza fattura mensile e rimborsi spese'
                 : 'Gestione foglio ore e riepilogo mensile per amministrazione'}
             </p>
           </div>
@@ -3390,166 +3303,7 @@ export default function Presenze() {
       {/* ========================================== */}
       {viewMode === 'hr' && (
         <>
-          {/* TABELLA RICHIESTE WEEKEND / CHIUSURE PENDENTI LATO HR */}
-          <div className={`bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl p-6 sm:p-8 border border-white/50 flex flex-col mb-10 overflow-hidden ${(printTargetSheet || reviewingRapportino) ? 'no-print' : ''}`}>
-            <h3 className="font-extrabold text-xl text-gray-900 mb-2 flex items-center gap-2">
-              <ShieldAlert className="w-6 h-6 text-indigo-600" />
-              <span>Richieste Autorizzazione Weekend / Festività</span>
-              {(isHR || isSocio) && globalPendingWeekendCount > 0 && (
-                <span className="bg-red-500 text-white text-xs font-extrabold px-2 py-0.5 rounded-full">
-                  {globalPendingWeekendCount}
-                </span>
-              )}
-            </h3>
-            <p className="text-xs text-gray-500 font-semibold mb-6">
-              Elenco delle richieste di dipendenti e collaboratori per lavorare nei giorni di weekend o festività.
-            </p>
 
-            <div className="w-full overflow-x-auto">
-              {allWeekendRequests.length === 0 ? (
-                <p className="text-center text-gray-400 py-6 font-medium italic">Nessuna richiesta di autorizzazione presente.</p>
-              ) : (
-                <table className="w-full text-left border-collapse min-w-[700px] text-xs">
-                  <thead className="bg-gray-50 border-b border-gray-100">
-                    <tr className="font-bold text-gray-700">
-                      <th className="p-3">Dipendente</th>
-                      <th className="p-3">Data</th>
-                      <th className="p-3">Motivazione</th>
-                      <th className="p-3 text-center">Stato</th>
-                      <th className="p-3 text-center no-print">Azioni</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {allWeekendRequests.map(req => (
-                      <tr key={req.id} className="hover:bg-indigo-50/10 transition-colors">
-                        <td className="p-3 font-bold text-gray-800">{req.dipendenteName}</td>
-                        <td className="p-3 font-bold text-indigo-600">{formatDate(req.data)}</td>
-                        <td className="p-3 text-gray-600 max-w-[300px] truncate" title={req.motivo}>{req.motivo}</td>
-                        <td className="p-3 text-center align-middle">{getStatusBadge(req.stato)}</td>
-                        <td className="p-3 text-center align-middle no-print">
-                          {req.stato === 'In attesa' ? (
-                            <div className="flex justify-center gap-2">
-                              <button 
-                                onClick={() => handleWeekendDecision(req.id, 'Approvato')} 
-                                className="px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white font-bold rounded-lg text-[10px] shadow active:scale-95 cursor-pointer"
-                              >
-                                Approva
-                              </button>
-                              <button 
-                                onClick={() => handleWeekendDecision(req.id, 'Rifiutato')} 
-                                className="px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white font-bold rounded-lg text-[10px] shadow active:scale-95 cursor-pointer"
-                              >
-                                Rifiuta
-                              </button>
-                            </div>
-                          ) : req.stato === 'Approvato' ? (
-                            <button 
-                              onClick={() => handleWeekendDecision(req.id, 'Revocato')} 
-                              className="px-2.5 py-1 bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 font-bold rounded-lg text-[10px] transition cursor-pointer"
-                              title="Revoca l'autorizzazione concessa"
-                            >
-                              Revoca Autorizzazione
-                            </button>
-                          ) : req.stato === 'Richiesta Annullamento' ? (
-                            <div className="flex justify-center gap-1.5">
-                              <button 
-                                onClick={() => handleWeekendDecision(req.id, 'Annullato')} 
-                                className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg text-[10px] transition cursor-pointer"
-                                title="Conferma l'annullamento richiesto dal dipendente"
-                              >
-                                Conferma Annullamento
-                              </button>
-                              <button 
-                                onClick={() => handleWeekendDecision(req.id, 'Approvato')} 
-                                className="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-lg text-[10px] transition cursor-pointer"
-                                title="Rigetta l'annullamento e mantieni approvato"
-                              >
-                                Mantieni Approvato
-                              </button>
-                            </div>
-                          ) : req.stato === 'Richiesta Modifica' ? (
-                            <div className="flex justify-center gap-1.5">
-                              <button 
-                                onClick={() => handleWeekendDecision(req.id, 'Approvato')} 
-                                className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-[10px] transition cursor-pointer"
-                                title="Accetta nuova data o motivo"
-                              >
-                                Accetta Modifica
-                              </button>
-                              <button 
-                                onClick={() => handleWeekendDecision(req.id, 'Approvato')} 
-                                className="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-lg text-[10px] transition cursor-pointer"
-                                title="Rifiuta la modifica e mantieni la data originale"
-                              >
-                                Mantieni Originale
-                              </button>
-                            </div>
-                          ) : (
-                            <span className="text-[10px] text-gray-400 italic">Nessuna azione</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-
-            {/* Form per l'autorizzazione diretta da parte dell'HR */}
-            <div className="mt-8 pt-6 border-t border-gray-100 no-print">
-              <h4 className="font-bold text-sm text-gray-900 mb-2 flex items-center gap-1.5">
-                <CheckCircle className="w-4 h-4 text-emerald-500" />
-                <span>Autorizza Direttamente un Dipendente / Collaboratore</span>
-              </h4>
-              <p className="text-[11px] text-gray-500 mb-4">
-                Sblocca direttamente una specifica data di weekend o chiusura aziendale per una risorsa, senza che questa debba inviare una richiesta preventiva.
-              </p>
-              
-              <form onSubmit={handleDirectWeekendAuthSubmit} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end bg-gray-50/50 p-4 rounded-2xl border border-gray-100">
-                <div>
-                  <label className="block text-[10px] font-bold text-gray-500 mb-1 ml-1">Risorsa</label>
-                  <select
-                    required
-                    value={directAuthDipNome}
-                    onChange={e => setDirectAuthDipNome(e.target.value)}
-                    className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-indigo-400 outline-none text-xs text-gray-750 font-semibold"
-                  >
-                    <option value="">Seleziona una risorsa...</option>
-                    {filteredDipendenti.filter(d => d.nome && (!d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')) && !isTechnicalUser(d)).map(d => (
-                      <option key={d.id} value={d.nome}>{d.nome}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-gray-500 mb-1 ml-1">Data da Sbloccare</label>
-                  <input
-                    required
-                    type="date"
-                    value={directAuthData}
-                    onChange={e => setDirectAuthData(e.target.value)}
-                    className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-indigo-400 outline-none text-xs text-gray-750 font-semibold"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-gray-500 mb-1 ml-1">Motivazione (Opzionale)</label>
-                  <input
-                    type="text"
-                    placeholder="Es. Lavoro straordinario commessa X"
-                    value={directAuthMotivo}
-                    onChange={e => setDirectAuthMotivo(e.target.value)}
-                    className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-indigo-400 outline-none text-xs text-gray-755 font-semibold"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  disabled={directAuthLoading}
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-4 rounded-xl transition shadow active:scale-95 text-xs flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  {directAuthLoading ? 'Registrazione...' : 'Concedi Autorizzazione'}
-                </button>
-              </form>
-            </div>
-          </div>
 
           <div className={`bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-xl border border-white/50 flex flex-col mb-10 overflow-hidden ${(printTargetSheet || reviewingRapportino) ? 'no-print' : ''}`}>
           

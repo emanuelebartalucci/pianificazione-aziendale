@@ -822,7 +822,7 @@ export default function Dashboard() {
               <div className="hidden xl:block min-h-[48px] shrink-0 mt-1 pb-1">
                 <p className="text-xs font-semibold text-gray-500 leading-snug">
                   {isCollaboratore(myAssociatedName, dipendenti) || isSoci(myAssociatedName)
-                    ? 'Gestisci la bozza fattura mensile, i rimborsi e le richieste festivi.'
+                    ? 'Gestisci la bozza fattura mensile ed i rimborsi spese.'
                     : 'Compila il rapportino mensile delle ore e dei rimborsi trasferte.'}
                 </p>
               </div>
