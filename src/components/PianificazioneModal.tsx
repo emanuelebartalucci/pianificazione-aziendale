@@ -134,7 +134,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     let currentMonday = getStartOfWeek(addDays(today, -84)); // 12 settimane fa
     const months = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
 
-    for (let i = 0; i < 80; i++) {
+    for (let i = 0; i < 260; i++) {
       const sunday = addDays(currentMonday, 6);
       const wkNum = getWeekNumber(currentMonday);
       const y = currentMonday.getFullYear();

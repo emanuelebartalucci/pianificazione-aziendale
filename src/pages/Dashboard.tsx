@@ -815,10 +815,16 @@ export default function Dashboard() {
                 )}
               </div>
               <div className="h-11 xl:h-12 shrink-0 flex items-start overflow-hidden">
-                <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-900 leading-snug">Registro Presenze</h2>
+                <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-900 leading-snug">
+                  {isCollaboratore(myAssociatedName, dipendenti) || isSoci(myAssociatedName) ? 'Bozza Fattura' : 'Registro Presenze'}
+                </h2>
               </div>
               <div className="hidden xl:block min-h-[48px] shrink-0 mt-1 pb-1">
-                <p className="text-xs font-semibold text-gray-500 leading-snug">Compila il rapportino mensile delle ore e dei rimborsi trasferte.</p>
+                <p className="text-xs font-semibold text-gray-500 leading-snug">
+                  {isCollaboratore(myAssociatedName, dipendenti) || isSoci(myAssociatedName)
+                    ? 'Gestisci la bozza fattura mensile, i rimborsi e le richieste festivi.'
+                    : 'Compila il rapportino mensile delle ore e dei rimborsi trasferte.'}
+                </p>
               </div>
             </div>
 

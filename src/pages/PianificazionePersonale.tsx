@@ -207,7 +207,7 @@ export default function PianificazionePersonale() {
 
     const months = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
 
-    for (let i = 0; i < 80; i++) {
+    for (let i = 0; i < 260; i++) {
       const sunday = addDays(currentMonday, 6);
       const wkNum = getWeekNumber(currentMonday);
       const y = currentMonday.getFullYear();
@@ -240,6 +240,8 @@ export default function PianificazionePersonale() {
     return options;
   }, []);
 
+
+
   const currentWeekOpt = useMemo(() => {
     const todayMon = getStartOfWeek(new Date());
     const todayMonStr = `${todayMon.getFullYear()}-${String(todayMon.getMonth()+1).padStart(2,'0')}-${String(todayMon.getDate()).padStart(2,'0')}`;
@@ -255,6 +257,37 @@ export default function PianificazionePersonale() {
 
   const [allocDataInizio, setAllocDataInizio] = useState('');
   const [allocDataFine, setAllocDataFine] = useState('');
+
+  // Handler per cambio data da Input Calendario (<input type="date">)
+  const handleDateInputChange = (dateStr: string, isStart: boolean) => {
+    if (!dateStr) return;
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return;
+    const monday = getStartOfWeek(d);
+    const mY = monday.getFullYear();
+    const mM = String(monday.getMonth() + 1).padStart(2, '0');
+    const mD = String(monday.getDate()).padStart(2, '0');
+    const monStr = `${mY}-${mM}-${mD}`;
+
+    const matchedOpt = selectableWeekOptions.find(o => o.mondayStr === monStr);
+    if (matchedOpt) {
+      if (isStart) {
+        setSelectedStartWeekId(matchedOpt.id);
+        const startIdx = selectableWeekOptions.findIndex(o => o.id === matchedOpt.id);
+        const endIdx = selectableWeekOptions.findIndex(o => o.id === selectedEndWeekId);
+        if (startIdx > endIdx) {
+          setSelectedEndWeekId(matchedOpt.id);
+        }
+      } else {
+        const startIdx = selectableWeekOptions.findIndex(o => o.id === selectedStartWeekId);
+        const endIdx = selectableWeekOptions.findIndex(o => o.id === matchedOpt.id);
+        if (endIdx < startIdx) {
+          setSelectedStartWeekId(matchedOpt.id);
+        }
+        setSelectedEndWeekId(matchedOpt.id);
+      }
+    }
+  };
 
   // Sincronizza allocDataInizio e allocDataFine con le settimane selezionate
   useEffect(() => {
@@ -640,59 +673,54 @@ export default function PianificazionePersonale() {
               Prossime 8 Sett.
             </button>
           </div>
+
+          <div className="text-[11px] font-bold text-indigo-700 bg-indigo-50/80 px-2.5 py-1 rounded-lg border border-indigo-100 flex items-center gap-1.5 shrink-0">
+            <span>💡 Scegliendo qualsiasi giorno, viene considerata l'intera settimana</span>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {/* Settimana Inizio */}
+        {/* SELEZIONE DA CALENDARIO DATE CON EVIDENZA SETTIMANA */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-white/90 p-4 rounded-2xl border border-indigo-100 shadow-xs">
           <div>
-            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 ml-0.5">
-              Settimana di Inizio
+            <label className="block text-[10px] font-black text-indigo-900 uppercase tracking-wider mb-1.5 ml-0.5">
+              📅 Data Inizio (Scegli da Calendario)
             </label>
-            <select
-              value={selectedStartWeekId}
-              onChange={e => {
-                const newStartId = e.target.value;
-                setSelectedStartWeekId(newStartId);
-                const startIdx = selectableWeekOptions.findIndex(o => o.id === newStartId);
-                const endIdx = selectableWeekOptions.findIndex(o => o.id === selectedEndWeekId);
-                if (startIdx > endIdx) {
-                  setSelectedEndWeekId(newStartId);
-                }
-              }}
-              className="w-full p-2.5 border border-indigo-100 bg-white rounded-xl text-xs font-extrabold text-indigo-950 outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm cursor-pointer"
-            >
-              {selectableWeekOptions.map(opt => (
-                <option key={`start-${opt.id}`} value={opt.id}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
+            <input
+              type="date"
+              value={allocDataInizio}
+              onChange={e => handleDateInputChange(e.target.value, true)}
+              className="w-full p-2.5 border border-indigo-200 bg-indigo-50/30 rounded-xl text-xs font-black text-indigo-950 outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs cursor-pointer"
+            />
+            {startOpt && (
+              <div className="mt-2 p-2 bg-indigo-50/80 rounded-xl border border-indigo-100 flex items-center gap-2">
+                <span className="text-xs">📌</span>
+                <div className="flex flex-col">
+                  <span className="text-[9.5px] font-black text-indigo-600 uppercase tracking-wider">Settimana di Inizio Riferimento</span>
+                  <span className="text-xs font-black text-indigo-950">{startOpt.label}</span>
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Settimana Fine */}
           <div>
-            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 ml-0.5">
-              Settimana di Fine
+            <label className="block text-[10px] font-black text-indigo-900 uppercase tracking-wider mb-1.5 ml-0.5">
+              📅 Data Fine (Scegli da Calendario)
             </label>
-            <select
-              value={selectedEndWeekId}
-              onChange={e => {
-                const newEndId = e.target.value;
-                const startIdx = selectableWeekOptions.findIndex(o => o.id === selectedStartWeekId);
-                const endIdx = selectableWeekOptions.findIndex(o => o.id === newEndId);
-                if (endIdx < startIdx) {
-                  setSelectedStartWeekId(newEndId);
-                }
-                setSelectedEndWeekId(newEndId);
-              }}
-              className="w-full p-2.5 border border-indigo-100 bg-white rounded-xl text-xs font-extrabold text-indigo-950 outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm cursor-pointer"
-            >
-              {selectableWeekOptions.map(opt => (
-                <option key={`end-${opt.id}`} value={opt.id}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
+            <input
+              type="date"
+              value={allocDataFine}
+              onChange={e => handleDateInputChange(e.target.value, false)}
+              className="w-full p-2.5 border border-indigo-200 bg-indigo-50/30 rounded-xl text-xs font-black text-indigo-950 outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs cursor-pointer"
+            />
+            {endOpt && (
+              <div className="mt-2 p-2 bg-indigo-50/80 rounded-xl border border-indigo-100 flex items-center gap-2">
+                <span className="text-xs">📌</span>
+                <div className="flex flex-col">
+                  <span className="text-[9.5px] font-black text-indigo-600 uppercase tracking-wider">Settimana di Fine Riferimento</span>
+                  <span className="text-xs font-black text-indigo-950">{endOpt.label}</span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -2346,6 +2374,9 @@ export default function PianificazionePersonale() {
             backgroundImage: 'repeating-linear-gradient(45deg, #dbeafe 0px, #dbeafe 10px, #eff6ff 10px, #eff6ff 20px)'
           } : undefined;
 
+          const isNearRight = wIndex >= Math.floor(timelineWeeks.length / 2);
+          const popoverHorizontalClass = isNearRight ? "right-0 left-auto" : "left-0 right-auto";
+
           return (
             <td 
               key={wIndex} 
@@ -2434,21 +2465,24 @@ export default function PianificazionePersonale() {
                     )}
                     
                     {((!isFullWeekLeave(dip.nome, wk.id) && list.length > 0) || leaves.length > 0) && (
-                      <div className={`hidden group-hover/cell:flex absolute ${popoverPositionClass} bg-gray-900 text-white text-[11px] rounded-lg p-2.5 flex-col gap-1 z-50 shadow-md min-w-[170px] pointer-events-none text-left`}>
-                        <div className="font-bold text-[10px] text-indigo-300 border-b border-gray-800 pb-0.5 mb-1">{dip.nome} ({wk.label})</div>
+                      <div className={`hidden group-hover/cell:flex absolute ${popoverPositionClass} ${popoverHorizontalClass} bg-slate-900 text-white text-[11px] rounded-xl p-3 flex-col gap-1 z-50 shadow-2xl min-w-[200px] max-w-[280px] sm:max-w-[320px] pointer-events-none text-left border border-slate-700/80`}>
+                        <div className="font-extrabold text-[10.5px] text-indigo-300 border-b border-slate-700/80 pb-1 mb-1 flex items-center justify-between gap-2">
+                          <span className="truncate">{dip.nome}</span>
+                          <span className="bg-indigo-900/80 text-indigo-200 px-1.5 py-0.5 rounded text-[9.5px] shrink-0">{wk.label}</span>
+                        </div>
                         {!isFullWeekLeave(dip.nome, wk.id) && list.map((a, idx) => (
-                          <div key={idx} className="flex justify-between items-center gap-2 border-b border-gray-800 pb-1 last:border-none last:pb-0">
-                            <span className="truncate">{a.commessaName}</span>
-                            <span className="font-extrabold text-indigo-400">{a.percentuale}%</span>
+                          <div key={idx} className="flex justify-between items-start gap-2.5 border-b border-slate-800/80 pb-1 last:border-none last:pb-0">
+                            <span className="font-semibold text-gray-200 leading-snug break-words flex-1">{a.commessaName}</span>
+                            <span className="font-black text-indigo-400 shrink-0">{a.percentuale}%</span>
                           </div>
                         ))}
                         {leaves.length > 0 && (
-                          <div className="border-t border-gray-700 pt-1.5 mt-1 flex flex-col gap-1">
-                            <span className="text-[9.5px] font-bold text-orange-400">Assenze/Ferie:</span>
+                          <div className="border-t border-slate-700/80 pt-1.5 mt-1 flex flex-col gap-1">
+                            <span className="text-[9.5px] font-black text-amber-400 uppercase tracking-wider">Assenze / Ferie:</span>
                             {leaves.map((l, idx) => (
                               <div key={idx} className="flex justify-between items-center text-[9.5px] gap-2">
-                                <span>{l.giorno}</span>
-                                <span className="font-bold text-gray-300">{l.dettagli}</span>
+                                <span className="font-semibold text-gray-300">{l.giorno}</span>
+                                <span className="font-black text-amber-200">{l.dettagli}</span>
                               </div>
                             ))}
                           </div>

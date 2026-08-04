@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, doc, setDoc, getDocs, query, where, addDoc, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
-import { FileText, Printer, Save, Send, CheckCircle, AlertCircle, Edit, Edit3, Trash2, MessageSquare, Clock, MapPin, Check, X, ShieldAlert, Download, RefreshCw, Plus } from 'lucide-react';
+import { FileText, Printer, Save, Send, CheckCircle, AlertCircle, Edit, Edit3, Trash2, MessageSquare, Clock, MapPin, Check, X, ShieldAlert, Download, RefreshCw, Plus, Bell, ChevronRight } from 'lucide-react';
 import { queueMail } from '../utils/mailSender';
 import ConfirmModal from '../components/ConfirmModal';
 import { isItalianHoliday, isWeekend as isWeekendGlobal } from '../utils/date';
@@ -118,6 +118,7 @@ interface RapportinoPresenze {
     cassaLabel?: string;
     giornateOverride?: number;
     importoFissoMensile?: number;
+    bollo?: number;
   };
   rimborsoSpeseData?: {
     marcaAutomezzo?: string;
@@ -239,7 +240,8 @@ export function recalculateCollabData(
     : giornate * (collabData.dailyRate || 0);
 
   const rimborsoKm = (collabData.km || 0) * (collabData.kmRate || 0);
-  const totaleCompenso = compensoMensile + (collabData.spese || 0) + rimborsoKm;
+  const bollo = (collabData.bollo !== undefined && collabData.bollo !== null) ? Number(collabData.bollo) : 0;
+  const totaleCompenso = compensoMensile + (collabData.spese || 0) + rimborsoKm + bollo;
   const inps = (compensoMensile + rimborsoKm) * ((collabData.inpsRate || 0) / 100);
   const iva = (compensoMensile + rimborsoKm + inps) * ((collabData.ivaRate || 0) / 100);
   const ra = (compensoMensile + rimborsoKm) * ((collabData.raRate || 0) / 100);
@@ -250,6 +252,7 @@ export function recalculateCollabData(
     giornate,
     compensoMensile,
     rimborsoKm,
+    bollo,
     totaleCompenso,
     inps,
     iva,
@@ -330,6 +333,30 @@ export default function Presenze() {
     return (isHR || isAdmin || socio) ? 'hr' : 'compila';
   });
 
+  // Impostazione automatica del mese/anno per i collaboratori (nei primi 15 giorni del mese apre il mese precedente)
+  const [hasSetDefaultDate, setHasSetDefaultDate] = useState(false);
+
+  useEffect(() => {
+    if (hasSetDefaultDate) return;
+    if (!myAssociatedName || !dipendenti || dipendenti.length === 0) return;
+
+    const isCollab = isCollaboratore(myAssociatedName, dipendenti);
+    if (isCollab) {
+      const now = new Date();
+      if (now.getDate() <= 15) {
+        let prevM = now.getMonth(); // if August (7 in 0-indexed), prevM = 7 (July in 1-indexed)
+        let prevY = now.getFullYear();
+        if (prevM === 0) {
+          prevM = 12;
+          prevY = prevY - 1;
+        }
+        setSelectedMonth(prevM);
+        setSelectedYear(prevY);
+      }
+    }
+    setHasSetDefaultDate(true);
+  }, [myAssociatedName, dipendenti, hasSetDefaultDate]);
+
   useEffect(() => {
     if (isSocio && viewMode !== 'hr') {
       setViewMode('hr');
@@ -352,7 +379,6 @@ export default function Presenze() {
       setLocalOrarioSettimanale({ lun: h, mar: h, mer: h, gio: h, ven: h });
     }
   }, [profile]);
-  const [activeTab, setActiveTab] = useState<'ore' | 'weekend'>('ore');
   const [chiusureAziendali, setChiusureAziendali] = useState<Array<{ dataInizio: string; dataFine: string }>>([]);
 
   const isInChiusuraAziendaleLocal = (dateStr: string) => {
@@ -375,10 +401,6 @@ export default function Presenze() {
   // Stati per autorizzazione weekend/chiusure
   const [approvedWeekends, setApprovedWeekends] = useState<Record<string, boolean>>({});
   const [approvedLeaves, setApprovedLeaves] = useState<Record<string, { tipo: string; frazioneTipo?: string; oraInizio?: string; oraFine?: string; pausaPranzo?: boolean; pausaPranzoOre?: number }>>({});
-  const [reqWeekendData, setReqWeekendData] = useState('');
-  const [reqWeekendMotivo, setReqWeekendMotivo] = useState('');
-  const [reqWeekendLoading, setReqWeekendLoading] = useState(false);
-  const [myWeekendRequests, setMyWeekendRequests] = useState<any[]>([]);
   const [allWeekendRequests, setAllWeekendRequests] = useState<any[]>([]);
   const [directAuthDipNome, setDirectAuthDipNome] = useState('');
   const [directAuthData, setDirectAuthData] = useState('');
@@ -777,7 +799,8 @@ export default function Presenze() {
             iva: 0,
             ra: 0,
             totaleDovuto: 0,
-            importoFissoMensile: profile?.importoFissoMensile ?? 0
+            importoFissoMensile: profile?.importoFissoMensile ?? 0,
+            bollo: (profile as any)?.bollo ?? 0
           },
           profile?.oreContratto ?? 8
         );
@@ -826,13 +849,17 @@ export default function Presenze() {
         sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
         const sixtyDaysAgoIso = `${sixtyDaysAgo.getFullYear()}-${String(sixtyDaysAgo.getMonth() + 1).padStart(2, '0')}-${String(sixtyDaysAgo.getDate()).padStart(2, '0')}`;
 
-        const [presSnap, wkSnap] = await Promise.all([
+        const [presSnap, wkSnap, inviatiSnap, sbloccoSnap, weekendSnap] = await Promise.all([
           getDocs(query(collection(db, 'presenze'), where('mese', '==', selectedMonth), where('anno', '==', selectedYear))),
-          getDocs(query(collection(db, 'richieste_weekend'), where('data', '>=', sixtyDaysAgoIso)))
+          getDocs(query(collection(db, 'richieste_weekend'), where('data', '>=', sixtyDaysAgoIso))),
+          getDocs(query(collection(db, 'presenze'), where('stato', '==', 'Inviato'))),
+          getDocs(query(collection(db, 'presenze'), where('richiestaSblocco.stato', '==', 'In attesa'))),
+          getDocs(query(collection(db, 'richieste_weekend'), where('stato', '==', 'In attesa')))
         ]);
 
         const dataMap: Record<string, RapportinoPresenze> = {};
-        presSnap.forEach(docSnap => {
+        
+        const processDoc = (docSnap: any) => {
           const docData = { id: docSnap.id, ...docSnap.data() } as RapportinoPresenze;
           const isCollab = isCollaboratore(docData.dipendenteNome, dipendenti);
           if (isCollab && docData.collaboratoreData) {
@@ -854,7 +881,12 @@ export default function Presenze() {
             }
           }
           dataMap[docSnap.id] = docData;
-        });
+        };
+
+        presSnap.forEach(processDoc);
+        inviatiSnap.forEach(processDoc);
+        sbloccoSnap.forEach(processDoc);
+
         setAllRapportini(dataMap);
 
         if (reviewingRapportino) {
@@ -863,8 +895,6 @@ export default function Presenze() {
             setReviewingRapportino(updated);
           }
         }
-
-
 
         const listWk: any[] = [];
         wkSnap.forEach(docSnap => {
@@ -880,20 +910,9 @@ export default function Presenze() {
         });
         setAllWeekendRequests(listWk.sort((a, b) => b.timestamp?.localeCompare(a.timestamp || '') || b.data.localeCompare(a.data)));
 
-        if (isHR || isSocio) {
-          const [inviatiSnap, weekendSnap, sbloccoSnap] = await Promise.all([
-            getDocs(query(collection(db, 'presenze'), where('stato', '==', 'Inviato'))),
-            getDocs(query(collection(db, 'richieste_weekend'), where('stato', '==', 'In attesa'))),
-            getDocs(query(collection(db, 'presenze'), where('richiestaSblocco.stato', '==', 'In attesa')))
-          ]);
-          setGlobalPendingInviatiCount(inviatiSnap.size);
-          setGlobalPendingWeekendCount(weekendSnap.size);
-          setGlobalPendingSbloccoCount(sbloccoSnap.size);
-        } else {
-          setGlobalPendingInviatiCount(0);
-          setGlobalPendingWeekendCount(0);
-          setGlobalPendingSbloccoCount(0);
-        }
+        setGlobalPendingInviatiCount(inviatiSnap.size);
+        setGlobalPendingWeekendCount(weekendSnap.size);
+        setGlobalPendingSbloccoCount(sbloccoSnap.size);
         setLoadingHR(false);
       }
 
@@ -983,7 +1002,7 @@ export default function Presenze() {
             }
           });
         }
-        setMyWeekendRequests(myWkList.sort((a, b) => b.data.localeCompare(a.data)));
+        setAllWeekendRequests(myWkList.sort((a, b) => b.data.localeCompare(a.data)));
 
         if (docSnap.exists()) {
           const data = docSnap.data() as RapportinoPresenze;
@@ -1015,7 +1034,8 @@ export default function Presenze() {
                 inps: 0,
                 iva: 0,
                 ra: 0,
-                totaleDovuto: 0
+                totaleDovuto: 0,
+                bollo: (profile as any)?.bollo ?? 0
               },
               profile?.oreContratto ?? 8
             );
@@ -1635,7 +1655,8 @@ export default function Presenze() {
           inpsRate: collabData.inpsRate,
           ivaRate: collabData.ivaRate,
           raRate: collabData.raRate,
-          importoFissoMensile: collabData.importoFissoMensile !== undefined && collabData.importoFissoMensile !== null ? Number(collabData.importoFissoMensile) : null
+          importoFissoMensile: collabData.importoFissoMensile !== undefined && collabData.importoFissoMensile !== null ? Number(collabData.importoFissoMensile) : null,
+          bollo: collabData.bollo !== undefined && collabData.bollo !== null ? Number(collabData.bollo) : 0
         });
         await refreshData();
       }
@@ -1852,42 +1873,7 @@ export default function Presenze() {
     }
   };
 
-  const handleRequestWeekendSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!myAssociatedName || !userEmail) return;
-    if (!reqWeekendData) {
-      showToast("Seleziona una data!", "warning");
-      return;
-    }
 
-    const todayObj = new Date();
-    const todayStr = `${todayObj.getFullYear()}-${String(todayObj.getMonth() + 1).padStart(2, '0')}-${String(todayObj.getDate()).padStart(2, '0')}`;
-    if (reqWeekendData <= todayStr) {
-      showToast("Le richieste di autorizzazione per lavoro festivo/straordinario devono essere inviate con almeno 1 giorno di anticipo (entro la mezzanotte del giorno precedente).", "warning");
-      return;
-    }
-
-    setReqWeekendLoading(true);
-    try {
-      await addDoc(collection(db, 'richieste_weekend'), {
-        dipendenteName: myAssociatedName,
-        dipendenteEmail: userEmail,
-        data: reqWeekendData,
-        motivo: reqWeekendMotivo,
-        stato: 'In attesa',
-        timestamp: new Date().toISOString()
-      });
-      setReqWeekendData('');
-      setReqWeekendMotivo('');
-      showToast("Richiesta inviata con successo!");
-      loadPresenzeData();
-    } catch (err) {
-      console.error("Errore invio richiesta:", err);
-      showToast("Errore nell'invio della richiesta.", "error");
-    } finally {
-      setReqWeekendLoading(false);
-    }
-  };
 
   const handleWeekendDecision = async (id: string, action: 'Approvato' | 'Rifiutato' | 'Revocato' | 'Annullato') => {
     try {
@@ -1939,22 +1925,7 @@ export default function Presenze() {
     }
   };
 
-  const handleCancelPendingWeekendRequest = async (id: string) => {
-    triggerConfirm(
-      "Annulla Richiesta",
-      "Sei sicuro di voler eliminare questa richiesta di lavoro festivo in attesa?",
-      async () => {
-        try {
-          await deleteDoc(doc(db, 'richieste_weekend', id));
-          showToast("Richiesta eliminata con successo!");
-          loadPresenzeData();
-        } catch (err) {
-          console.error("Errore eliminazione richiesta:", err);
-          showToast("Errore durante l'eliminazione della richiesta.", "error");
-        }
-      }
-    );
-  };
+
 
   const handleRequestWeekendModificationSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2394,28 +2365,28 @@ export default function Presenze() {
   };
 
   // --- DECIMAL FORMATTING UTILITY (Italian Locale: "." for thousands, "," for decimals) ---
-  const formatDec = (val: number | string | undefined | null): string => {
+  const formatDec = (val: number | string | undefined | null, minDec: number = 0): string => {
     if (val === undefined || val === null || val === '') return '';
     let num: number;
     if (typeof val === 'number') {
       num = val;
     } else {
       const str = val.toString().trim();
-      // Se la stringa è già in formato anglosassone (es. "2100.00" da toFixed), parsala direttamente.
-      // È in formato anglosassone se non contiene virgola E il punto è il separatore decimale.
-      // È in formato italiano se contiene la virgola come decimale (es. "2.100,00").
       if (str.includes(',')) {
-        // Formato italiano: "2.100,00" → rimuove punti migliaia, sostituisce virgola con punto
         num = parseFloat(str.replace(/\./g, '').replace(',', '.'));
       } else {
-        // Formato anglosassone o intero: "2100.00" o "2100" → parsata direttamente
         num = parseFloat(str);
       }
     }
     if (isNaN(num)) return val.toString();
     return num.toLocaleString('it-IT', {
+      minimumFractionDigits: minDec,
       maximumFractionDigits: 2
     });
+  };
+
+  const formatMoney = (val: number | string | undefined | null): string => {
+    return formatDec(val, 2);
   };
 
   // --- CALCULATION TOTALS FOR A SINGLE SHEET ---
@@ -3152,6 +3123,79 @@ export default function Presenze() {
     }).length;
   }, [filteredDipendenti, allRapportini, selectedYear, selectedMonth]);
 
+  // Riepilogo mesi con pratiche in attesa di approvazione (per banner smart HR / Soci)
+  const pendingMonthsSummary = useMemo(() => {
+    if (!isHR && !isSocio) return [];
+
+    const map = new Map<string, { mese: number; anno: number; count: number; dipCount: number; collabCount: number }>();
+
+    // 1. Rapportini presenze e richieste sblocco in attesa
+    Object.values(allRapportini).forEach(sheet => {
+      if (!sheet) return;
+      const isInviato = sheet.stato === 'Inviato';
+      const isSblocco = sheet.richiestaSblocco?.stato === 'In attesa';
+
+      if (isInviato || isSblocco) {
+        const isCollab = isCollaboratore(sheet.dipendenteNome, dipendenti);
+        const key = `${sheet.anno}-${String(sheet.mese).padStart(2, '0')}`;
+        
+        if (!map.has(key)) {
+          map.set(key, {
+            mese: sheet.mese,
+            anno: sheet.anno,
+            count: 0,
+            dipCount: 0,
+            collabCount: 0
+          });
+        }
+
+        const group = map.get(key)!;
+        group.count += 1;
+        if (isCollab) {
+          group.collabCount += 1;
+        } else {
+          group.dipCount += 1;
+        }
+      }
+    });
+
+    // 2. Richieste weekend in attesa
+    allWeekendRequests.forEach(req => {
+      if (!req || req.stato !== 'In attesa') return;
+      if (!req.data) return;
+      const parts = req.data.split('-'); // "YYYY-MM-DD"
+      if (parts.length >= 2) {
+        const anno = Number(parts[0]);
+        const mese = Number(parts[1]);
+        const isCollab = isCollaboratore(req.dipendenteName, dipendenti);
+        const key = `${anno}-${String(mese).padStart(2, '0')}`;
+
+        if (!map.has(key)) {
+          map.set(key, {
+            mese,
+            anno,
+            count: 0,
+            dipCount: 0,
+            collabCount: 0
+          });
+        }
+
+        const group = map.get(key)!;
+        group.count += 1;
+        if (isCollab) {
+          group.collabCount += 1;
+        } else {
+          group.dipCount += 1;
+        }
+      }
+    });
+
+    return Array.from(map.values()).sort((a, b) => {
+      if (a.anno !== b.anno) return b.anno - a.anno;
+      return b.mese - a.mese;
+    });
+  }, [allRapportini, allWeekendRequests, dipendenti, isHR, isSocio]);
+
   return (
     <div className="flex flex-col gap-6">
       {/* Contenitore schermate UI - Nascosto in Stampa */}
@@ -3163,7 +3207,9 @@ export default function Presenze() {
           <div className="p-3 bg-indigo-100 rounded-2xl"><FileText className="text-indigo-600 w-8 h-8" /></div>
           <div>
             <div className="flex items-center gap-3">
-              <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">Registro Presenze</h2>
+              <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">
+                {isCollaboratore(myAssociatedName, dipendenti) || isSocio ? 'Bozza Fattura' : 'Registro Presenze'}
+              </h2>
               <button 
                 onClick={loadPresenzeData}
                 title="Aggiorna Dati"
@@ -3172,7 +3218,11 @@ export default function Presenze() {
                 <RefreshCw className="w-4 h-4" />
               </button>
             </div>
-            <p className="text-xs text-gray-500 font-semibold mt-0.5">Gestione foglio ore / bozze fattura e riepilogo mensile per amministrazione</p>
+            <p className="text-xs text-gray-500 font-semibold mt-0.5">
+              {isCollaboratore(myAssociatedName, dipendenti) || isSocio
+                ? 'Gestione bozza fattura mensile, rimborsi spese e richieste festivi'
+                : 'Gestione foglio ore e riepilogo mensile per amministrazione'}
+            </p>
           </div>
         </div>
 
@@ -3199,6 +3249,64 @@ export default function Presenze() {
           </div>
         )}
       </div>
+
+      {/* BANNER NOTIFICHE INTELLIGENTE PER HR / SOCI (A LARGHEZZA INTERA SOTTO L'HEADER) */}
+      {(isHR || isSocio) && pendingMonthsSummary.length > 0 && (
+        <div className="w-full bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 text-white rounded-[2rem] p-4 sm:p-6 shadow-xl border border-amber-400/40 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 animate-in fade-in slide-in-from-top-4 duration-300">
+          <div className="flex items-center gap-3.5">
+            <div className="p-3 bg-white/20 backdrop-blur-md rounded-2xl shrink-0 text-amber-100">
+              <Bell className="w-6 h-6 animate-bounce" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2.5">
+                <h4 className="font-extrabold text-base tracking-tight">Pratiche in attesa di approvazione</h4>
+                <span className="bg-white/25 px-2.5 py-0.5 rounded-full text-xs font-black text-white">
+                  {pendingMonthsSummary.reduce((acc, curr) => acc + curr.count, 0)} totali
+                </span>
+              </div>
+              <p className="text-xs text-amber-100 font-medium mt-0.5">
+                Fogli ore o bozze fattura inviate in sospeso. Clicca su un mese per accedere direttamente:
+              </p>
+            </div>
+          </div>
+
+          {/* LISTA MESI / PULSANTI DI AZIONE RAPIDA */}
+          <div className="flex items-center gap-2.5 flex-wrap w-full md:w-auto justify-start md:justify-end">
+            {pendingMonthsSummary.map(item => {
+              const isCurrentMonthSelected = item.mese === selectedMonth && item.anno === selectedYear;
+              return (
+                <button
+                  key={`${item.anno}-${item.mese}`}
+                  type="button"
+                  onClick={() => {
+                    setSelectedMonth(item.mese);
+                    setSelectedYear(item.anno);
+                    setViewMode('hr');
+                    if (item.collabCount > 0 && item.dipCount === 0) {
+                      setHrTab('collaboratori');
+                    } else if (item.dipCount > 0 && item.collabCount === 0) {
+                      setHrTab('dipendenti');
+                    }
+                    showToast(`Selezionato ${MESI[item.mese - 1]} ${item.anno}!`, 'success');
+                  }}
+                  className={`px-4 py-2.5 rounded-2xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer shadow-md active:scale-95 ${
+                    isCurrentMonthSelected 
+                      ? 'bg-white text-amber-950 ring-2 ring-white/80 font-black' 
+                      : 'bg-amber-900/60 hover:bg-white hover:text-amber-950 text-white'
+                  }`}
+                  title={`Clicca per andare direttamente al mese di ${MESI[item.mese - 1]} ${item.anno}`}
+                >
+                  <span>{MESI[item.mese - 1]} {item.anno}</span>
+                  <span className="bg-red-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full">
+                    {item.count}
+                  </span>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* FILTRI MESE/ANNO */}
       <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-sm p-5 border border-white/50 no-print flex flex-wrap items-center justify-between gap-4">
@@ -3234,25 +3342,6 @@ export default function Presenze() {
             })()}
           </select>
 
-          {viewMode === 'compila' && myAssociatedName && (
-            <div className="flex bg-gray-100 p-1 rounded-xl shadow-inner border border-gray-200/50 flex-wrap gap-1 ml-0 sm:ml-4">
-              <button
-                type="button"
-                onClick={() => setActiveTab('ore')}
-                className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'ore' ? 'bg-white text-indigo-600 shadow-sm font-extrabold' : 'text-gray-500 hover:text-gray-700'}`}
-              >
-                📋 {isCollaboratore(myAssociatedName, dipendenti) ? 'Bozza Fattura' : 'Foglio Ore'}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setActiveTab('weekend')}
-                className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'weekend' ? 'bg-white text-indigo-600 shadow-sm font-extrabold' : 'text-gray-500 hover:text-gray-700'}`}
-              >
-                🛡️ Weekend/Festività
-              </button>
-            </div>
-          )}
 
           {/* Selettore Dipendente (Filtro / Esportazione Singolo) */}
           {viewMode === 'hr' && (
@@ -3889,112 +3978,7 @@ export default function Presenze() {
                 </div>
               )}
 
-              {activeTab === 'weekend' ? (
-                <div className="bg-gradient-to-br from-indigo-50 to-blue-50 p-6 rounded-3xl border border-indigo-100 shadow-sm no-print animate-in fade-in slide-in-from-bottom-4 duration-350">
-                  <h3 className="font-extrabold text-xl mb-4 text-indigo-950 flex items-center gap-2">
-                    <ShieldAlert className="w-5 h-5 text-indigo-600" />
-                    Autorizzazione Lavoro Weekend e Festività
-                  </h3>
-                  <p className="text-xs text-indigo-900/80 mb-5 leading-relaxed">
-                    Per poter registrare ore di lavoro il sabato, la domenica o nei giorni festivi, devi inviare una richiesta preventiva all'HR <strong>entro la mezzanotte del giorno precedente</strong> (almeno 1 giorno di anticipo). Una volta approvata, i giorni corrispondenti saranno sbloccati nel tuo tabellone presenze.
-                  </p>
-
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                    {/* Form */}
-                    <form onSubmit={handleRequestWeekendSubmit} className="space-y-4 bg-white/60 p-5 rounded-2xl border border-indigo-100">
-                      <h4 className="text-sm font-bold text-indigo-900">Invia Nuova Richiesta</h4>
-                      <div>
-                        <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Giorno (con almeno 1 giorno di anticipo)</label>
-                        <input 
-                          type="date"
-                          required
-                          min={(() => {
-                            const d = new Date();
-                            d.setDate(d.getDate() + 1);
-                            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-                          })()}
-                          value={reqWeekendData}
-                          onChange={e => setReqWeekendData(e.target.value)}
-                          className="w-full p-2.5 border-none bg-white rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Motivazione</label>
-                        <textarea
-                          required
-                          rows={2}
-                          value={reqWeekendMotivo}
-                          onChange={e => setReqWeekendMotivo(e.target.value)}
-                          placeholder="Es. Straordinari urgenti commessa GSK, trasferta cliente..."
-                          className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm"
-                        />
-                      </div>
-                      <button 
-                        type="submit"
-                        disabled={reqWeekendLoading}
-                        className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow transition active:scale-95 disabled:opacity-50"
-                      >
-                        {reqWeekendLoading ? 'Invio in corso...' : 'Invia Richiesta'}
-                      </button>
-                    </form>
-
-                    {/* Storico Richieste Utente */}
-                    <div className="space-y-3">
-                      <h4 className="text-sm font-bold text-indigo-900">Storico delle tue Richieste</h4>
-                      <div className="max-h-[220px] overflow-y-auto pr-1 space-y-2.5 custom-scrollbar">
-                        {myWeekendRequests.length === 0 ? (
-                          <p className="text-xs text-gray-400 italic p-2 bg-white/30 rounded-xl">Nessuna richiesta inviata.</p>
-                        ) : (
-                          myWeekendRequests.map(req => (
-                            <div key={req.id} className="bg-white p-3 rounded-xl border border-gray-100 shadow-sm flex justify-between items-center gap-3">
-                              <div className="min-w-0 flex-1">
-                                <div className="text-xs font-bold text-gray-900 flex items-center gap-2">
-                                  <span>{formatDate(req.data)}</span>
-                                  {req.nuovaData && (
-                                    <span className="text-[10px] text-indigo-600 font-extrabold">(Richiesta sposta a {formatDate(req.nuovaData)})</span>
-                                  )}
-                                </div>
-                                <div className="text-[10px] text-gray-500 truncate" title={req.motivo}>{req.motivo}</div>
-                                {req.noteModifica && (
-                                  <div className="text-[9px] text-purple-700 font-semibold italic truncate">Nota: {req.noteModifica}</div>
-                                )}
-                              </div>
-                              <div className="shrink-0 flex items-center gap-2">
-                                {getStatusBadge(req.stato)}
-                                {req.stato === 'In attesa' && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleCancelPendingWeekendRequest(req.id)}
-                                    className="p-1 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 transition cursor-pointer"
-                                    title="Elimina richiesta in attesa"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                )}
-                                {req.stato === 'Approvato' && (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setModifyingWeekendReq(req);
-                                      setModWeekendTipo('annullamento');
-                                      setModWeekendMotivo('');
-                                      setModWeekendNuovaData('');
-                                    }}
-                                    className="px-2 py-1 text-[10px] font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition cursor-pointer flex items-center gap-1"
-                                    title="Richiedi modifica o annullamento all'HR"
-                                  >
-                                    <Edit3 className="w-3 h-3" /> Modifica / Annulla
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : isCollaboratore(myAssociatedName, dipendenti) ? (
+              {isCollaboratore(myAssociatedName, dipendenti) ? (
                 // COLLABORATOR VIEW
                 <>
                   {/* Digital invoice draft block */}
@@ -4045,7 +4029,7 @@ export default function Presenze() {
                                   </div>
                                 </td>
                                 <td className="p-3 text-right font-bold text-blue-900">
-                                  {formatDec((Number(rapportino.collaboratoreData.importoFissoMensile)).toFixed(2))} €
+                                  {formatMoney(rapportino.collaboratoreData.importoFissoMensile)} €
                                 </td>
                               </tr>
                             ) : (
@@ -4098,7 +4082,7 @@ export default function Presenze() {
                                 <tr className="bg-amber-50/30 font-bold">
                                   <td className="p-3 border-r border-gray-200">Compenso Mensile (Giornate × Tariffa)</td>
                                   <td className="p-3 border-r border-gray-200 text-center text-gray-400">-</td>
-                                  <td className="p-3 text-right font-bold text-gray-900">{formatDec(rapportino.collaboratoreData.compensoMensile.toFixed(2))} €</td>
+                                  <td className="p-3 text-right font-bold text-gray-900">{formatMoney(rapportino.collaboratoreData.compensoMensile)} €</td>
                                 </tr>
                               </>
                             )}
@@ -4123,7 +4107,7 @@ export default function Presenze() {
                                   </div>
                                 </div>
                               </td>
-                              <td className="p-3 text-right font-bold text-gray-900">{formatDec(rapportino.collaboratoreData.spese.toFixed(2))} €</td>
+                              <td className="p-3 text-right font-bold text-gray-900">{formatMoney(rapportino.collaboratoreData.spese)} €</td>
                             </tr>
                             <tr className="hover:bg-amber-50/20">
                               <td className="p-3 border-r border-gray-200 font-semibold">Chilometri Percorsi</td>
@@ -4170,14 +4154,37 @@ export default function Presenze() {
                             <tr className="bg-amber-50/30 font-bold">
                               <td className="p-3 border-r border-gray-200">Rimborso Chilometrico (Km × Tariffa)</td>
                               <td className="p-3 border-r border-gray-200 text-center text-gray-400">-</td>
-                              <td className="p-3 text-right font-bold text-gray-900">{formatDec(rapportino.collaboratoreData.rimborsoKm.toFixed(2))} €</td>
+                              <td className="p-3 text-right font-bold text-gray-900">{formatMoney(rapportino.collaboratoreData.rimborsoKm)} €</td>
                             </tr>
+
+                             {/* IMPOSTA DI BOLLO */}
+                             <tr className="hover:bg-amber-50/20">
+                               <td className="p-3 border-r border-gray-200 font-semibold">Imposta di Bollo</td>
+                               <td className="p-3 border-r border-gray-200 text-center">
+                                 <div className="flex items-center justify-center w-full">
+                                   <div className="flex items-center gap-1.5 w-32 justify-start">
+                                     <input 
+                                       type="number"
+                                       step="any"
+                                       min="0"
+                                       disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                       value={rapportino.collaboratoreData.bollo !== undefined && rapportino.collaboratoreData.bollo !== null ? rapportino.collaboratoreData.bollo : ''}
+                                       onChange={e => handleCollabFieldChange('bollo', e.target.value === '' ? 0 : Number(e.target.value))}
+                                       style={{ border: '1.5px solid #cbd5e1', width: '65px' }}
+                                       className="p-1 text-xs text-right bg-amber-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
+                                     />
+                                     <span className="text-xs text-gray-600 font-medium w-10 text-left">€</span>
+                                   </div>
+                                 </div>
+                               </td>
+                               <td className="p-3 text-right font-bold text-gray-900">{formatMoney(rapportino.collaboratoreData.bollo || 0)} €</td>
+                             </tr>
 
                             {/* TOTAL COMPENSO */}
                             <tr className="bg-amber-100/70 text-sm font-extrabold border-y-2 border-amber-300">
                               <td className="p-3 border-r border-amber-300 uppercase text-amber-950">TOTALE COMPENSO (IMPONIBILE)</td>
                               <td className="p-3 border-r border-amber-300 text-center text-amber-800">-</td>
-                              <td className="p-3 text-right text-amber-950 text-base font-black">{formatDec(rapportino.collaboratoreData.totaleCompenso.toFixed(2))} €</td>
+                              <td className="p-3 text-right text-amber-950 text-base font-black">{formatMoney(rapportino.collaboratoreData.totaleCompenso)} €</td>
                             </tr>
 
                             {/* TAX RATES */}
@@ -4213,7 +4220,7 @@ export default function Presenze() {
                                   </div>
                                 </div>
                               </td>
-                              <td className="p-3 text-right font-bold text-gray-900">{formatDec(rapportino.collaboratoreData.inps.toFixed(2))} €</td>
+                              <td className="p-3 text-right font-bold text-gray-900">{formatMoney(rapportino.collaboratoreData.inps)} €</td>
                             </tr>
                             <tr className="hover:bg-amber-50/20">
                               <td className="p-3 border-r border-gray-200 font-semibold">IVA</td>
@@ -4234,7 +4241,7 @@ export default function Presenze() {
                                   </div>
                                 </div>
                               </td>
-                              <td className="p-3 text-right font-bold text-gray-900">{formatDec(rapportino.collaboratoreData.iva.toFixed(2))} €</td>
+                              <td className="p-3 text-right font-bold text-gray-900">{formatMoney(rapportino.collaboratoreData.iva)} €</td>
                             </tr>
                             <tr className="hover:bg-amber-50/20">
                               <td className="p-3 border-r border-gray-200 font-semibold">Ritenuta d'Acconto</td>
@@ -4255,14 +4262,14 @@ export default function Presenze() {
                                   </div>
                                 </div>
                               </td>
-                              <td className="p-3 text-right font-bold text-red-600">- {formatDec(rapportino.collaboratoreData.ra.toFixed(2))} €</td>
+                              <td className="p-3 text-right font-bold text-red-600">- {formatMoney(rapportino.collaboratoreData.ra)} €</td>
                             </tr>
 
-                            {/* TOTAL DUE */}
+                            {/* TOTAL NETTO */}
                             <tr className="bg-amber-500 text-white font-black text-base border-t-2 border-amber-600">
-                              <td className="p-3.5 border-r border-amber-400 uppercase tracking-wide">TOTALE DOVUTO (A PAGARE)</td>
-                              <td className="p-3.5 border-r border-amber-400 text-center text-amber-100">-</td>
-                              <td className="p-3.5 text-right text-white text-lg font-black">{formatDec(rapportino.collaboratoreData.totaleDovuto.toFixed(2))} €</td>
+                              <td className="p-3.5 border-r border-amber-600 uppercase tracking-wide">TOTALE NETTO A PAGARE</td>
+                              <td className="p-3.5 border-r border-amber-600 text-center text-amber-200">-</td>
+                              <td className="p-3.5 text-right text-white text-lg font-black">{formatMoney(rapportino.collaboratoreData.totaleDovuto)} €</td>
                             </tr>
                           </tbody>
                         </table>
@@ -4312,9 +4319,7 @@ export default function Presenze() {
               ) : (
                 // STANDARD EMPLOYEE FORM
                 <>
-                  {activeTab === 'ore' && (
-                    <>
-                      {/* TABELLA REGISTRO PRESENZE (giorni 1-31) */}
+                  {/* TABELLA REGISTRO PRESENZE (giorni 1-31) */}
                       <div className="bg-white rounded-[2rem] shadow-xl border overflow-hidden relative">
                 
                 {/* Legenda rapida */}
@@ -5091,10 +5096,8 @@ export default function Presenze() {
               )}
             </>
           )}
-          </>
-        )}
-      </div>
-    )}
+        </div>
+      )}
   </div>
 )}
 
@@ -5353,7 +5356,7 @@ export default function Presenze() {
                             <tr className="bg-amber-50/30 font-bold">
                               <td className="p-2.5 border-r border-gray-200">Compenso Mensile (Giornate × Tariffa)</td>
                               <td className="p-2.5 border-r border-gray-200 text-center text-gray-400">-</td>
-                              <td className="p-2.5 text-right font-bold text-gray-900">{formatDec(reviewingRapportino.collaboratoreData.compensoMensile.toFixed(2))} €</td>
+                              <td className="p-2.5 text-right font-bold text-gray-900">{formatMoney(reviewingRapportino.collaboratoreData.compensoMensile)} €</td>
                             </tr>
                             
                             {/* HR can input a flat rate here to enable it */}
@@ -5404,7 +5407,7 @@ export default function Presenze() {
                               </div>
                             </div>
                           </td>
-                          <td className="p-2.5 text-right font-bold text-gray-900">{formatDec(reviewingRapportino.collaboratoreData.spese.toFixed(2))} €</td>
+                          <td className="p-2.5 text-right font-bold text-gray-900">{formatMoney(reviewingRapportino.collaboratoreData.spese)} €</td>
                         </tr>
                         <tr className="hover:bg-amber-50/20">
                           <td className="p-2.5 border-r border-gray-200 font-semibold">Chilometri Percorsi</td>
@@ -5451,14 +5454,37 @@ export default function Presenze() {
                         <tr className="bg-amber-50/30 font-bold">
                           <td className="p-2.5 border-r border-gray-200">Rimborso Chilometrico (Km × Tariffa)</td>
                           <td className="p-2.5 border-r border-gray-200 text-center text-gray-400">-</td>
-                          <td className="p-2.5 text-right font-bold text-gray-900">{formatDec(reviewingRapportino.collaboratoreData.rimborsoKm.toFixed(2))} €</td>
+                          <td className="p-2.5 text-right font-bold text-gray-900">{formatMoney(reviewingRapportino.collaboratoreData.rimborsoKm)} €</td>
                         </tr>
+
+                         {/* IMPOSTA DI BOLLO */}
+                         <tr className="hover:bg-amber-50/20">
+                           <td className="p-2.5 border-r border-gray-200 font-semibold">Imposta di Bollo</td>
+                           <td className="p-2.5 border-r border-gray-200 text-center">
+                             <div className="flex items-center justify-center w-full">
+                               <div className="flex items-center gap-1.5 w-32 justify-start">
+                                 <input 
+                                   type="number"
+                                   step="any"
+                                   min="0"
+                                   disabled={reviewingRapportino.stato === 'Approvato'}
+                                   value={reviewingRapportino.collaboratoreData.bollo !== undefined && reviewingRapportino.collaboratoreData.bollo !== null ? reviewingRapportino.collaboratoreData.bollo : ''}
+                                   onChange={e => handleReviewCollabFieldChange('bollo', e.target.value === '' ? 0 : Number(e.target.value))}
+                                   style={{ border: '1.5px solid #cbd5e1', width: '65px' }}
+                                   className="p-1 text-xs text-right bg-amber-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
+                                 />
+                                 <span className="text-xs text-gray-600 font-medium w-10 text-left">€</span>
+                               </div>
+                             </div>
+                           </td>
+                           <td className="p-2.5 text-right font-bold text-gray-900">{formatMoney(reviewingRapportino.collaboratoreData.bollo || 0)} €</td>
+                         </tr>
 
                         {/* TOTAL COMPENSO */}
                         <tr className="bg-amber-100/70 text-xs font-extrabold border-y-2 border-amber-300">
                           <td className="p-2.5 border-r border-amber-300 uppercase text-amber-950">TOTALE COMPENSO (IMPONIBILE)</td>
                           <td className="p-2.5 border-r border-amber-300 text-center text-amber-800">-</td>
-                          <td className="p-2.5 text-right text-amber-950 text-sm font-black">{formatDec(reviewingRapportino.collaboratoreData.totaleCompenso.toFixed(2))} €</td>
+                          <td className="p-2.5 text-right text-amber-950 text-sm font-black">{formatMoney(reviewingRapportino.collaboratoreData.totaleCompenso)} €</td>
                         </tr>
 
                         {/* TAX RATES */}
@@ -5494,7 +5520,7 @@ export default function Presenze() {
                               </div>
                             </div>
                           </td>
-                          <td className="p-2.5 text-right font-bold text-gray-900">{formatDec(reviewingRapportino.collaboratoreData.inps.toFixed(2))} €</td>
+                          <td className="p-2.5 text-right font-bold text-gray-900">{formatMoney(reviewingRapportino.collaboratoreData.inps)} €</td>
                         </tr>
                         <tr className="hover:bg-amber-50/20">
                           <td className="p-2.5 border-r border-gray-200 font-semibold">IVA</td>
@@ -5515,7 +5541,7 @@ export default function Presenze() {
                               </div>
                             </div>
                           </td>
-                          <td className="p-2.5 text-right font-bold text-gray-900">{formatDec(reviewingRapportino.collaboratoreData.iva.toFixed(2))} €</td>
+                          <td className="p-2.5 text-right font-bold text-gray-900">{formatMoney(reviewingRapportino.collaboratoreData.iva)} €</td>
                         </tr>
                         <tr className="hover:bg-amber-50/20">
                           <td className="p-2.5 border-r border-gray-200 font-semibold">Ritenuta d'Acconto</td>
@@ -5536,14 +5562,14 @@ export default function Presenze() {
                               </div>
                             </div>
                           </td>
-                          <td className="p-2.5 text-right font-bold text-red-600">- {formatDec(reviewingRapportino.collaboratoreData.ra.toFixed(2))} €</td>
+                          <td className="p-2.5 text-right font-bold text-red-600">- {formatMoney(reviewingRapportino.collaboratoreData.ra)} €</td>
                         </tr>
 
                         {/* TOTAL DUE */}
                         <tr className="bg-amber-600/10 text-xs font-black border-t-2 border-amber-600">
                           <td className="p-3 uppercase text-amber-950">TOTALE DOVUTO (A PAGARE)</td>
                           <td className="p-3 text-right">-</td>
-                          <td className="p-3 text-right text-amber-900 text-sm font-black">{formatDec(reviewingRapportino.collaboratoreData.totaleDovuto.toFixed(2))} €</td>
+                          <td className="p-3 text-right text-amber-900 text-sm font-black">{formatMoney(reviewingRapportino.collaboratoreData.totaleDovuto)} €</td>
                         </tr>
                       </tbody>
                     </table>
@@ -6945,7 +6971,7 @@ export default function Presenze() {
                               </td>
                               <td className="p-2.5 border-r border-gray-300 text-right font-mono text-gray-500">-</td>
                               <td className="p-2.5 text-right font-bold text-gray-900">
-                                {formatDec((Number(sheetToPrint.collaboratoreData.importoFissoMensile)).toFixed(2))} €
+                                {formatMoney(sheetToPrint.collaboratoreData.importoFissoMensile)} €
                               </td>
                             </tr>
                           ) : (
@@ -6960,10 +6986,10 @@ export default function Presenze() {
                                 </span>
                               </td>
                               <td className="p-2.5 border-r border-gray-300 text-right font-mono text-gray-500">
-                                {formatDec(sheetToPrint.collaboratoreData?.giornateOverride ?? sheetToPrint.collaboratoreData?.giornate ?? 0)} gg × {formatDec(sheetToPrint.collaboratoreData?.dailyRate ?? 0)} €/gg
+                                {formatDec(sheetToPrint.collaboratoreData?.giornateOverride ?? sheetToPrint.collaboratoreData?.giornate ?? 0)} gg × {formatMoney(sheetToPrint.collaboratoreData?.dailyRate ?? 0)} €/gg
                               </td>
                               <td className="p-2.5 text-right font-bold text-gray-900">
-                                {formatDec((sheetToPrint.collaboratoreData?.compensoMensile ?? 0).toFixed(2))} €
+                                {formatMoney(sheetToPrint.collaboratoreData?.compensoMensile ?? 0)} €
                               </td>
                             </tr>
                           )}
@@ -6976,7 +7002,7 @@ export default function Presenze() {
                               </td>
                               <td className="p-2.5 border-r border-gray-300 text-right font-mono text-gray-500">-</td>
                               <td className="p-2.5 text-right font-bold text-gray-900">
-                                {formatDec((sheetToPrint.collaboratoreData.spese).toFixed(2))} €
+                                {formatMoney(sheetToPrint.collaboratoreData.spese)} €
                               </td>
                             </tr>
                           ) : null}
@@ -6990,10 +7016,27 @@ export default function Presenze() {
                                 </span>
                               </td>
                               <td className="p-2.5 border-r border-gray-300 text-right font-mono text-gray-500">
-                                {formatDec(sheetToPrint.collaboratoreData.km)} km × {formatDec(sheetToPrint.collaboratoreData.kmRate ?? 0)} €/km
+                                {formatDec(sheetToPrint.collaboratoreData.km)} km × {formatMoney(sheetToPrint.collaboratoreData.kmRate ?? 0)} €/km
                               </td>
                               <td className="p-2.5 text-right font-bold text-gray-900">
-                                {formatDec((sheetToPrint.collaboratoreData.rimborsoKm ?? 0).toFixed(2))} €
+                                {formatMoney(sheetToPrint.collaboratoreData.rimborsoKm ?? 0)} €
+                              </td>
+                            </tr>
+                          ) : null}
+
+                          {sheetToPrint.collaboratoreData?.bollo && sheetToPrint.collaboratoreData.bollo > 0 ? (
+                            <tr className="hover:bg-gray-50/20 bg-white">
+                              <td className="p-2.5 border-r border-gray-300 text-left">
+                                <span className="font-bold text-gray-900 block">Imposta di Bollo</span>
+                                <span className="text-[8px] text-gray-400 block mt-0.5">
+                                  Imposta di bollo su documento
+                                </span>
+                              </td>
+                              <td className="p-2.5 border-r border-gray-300 text-right font-mono text-gray-500">
+                                {formatMoney(sheetToPrint.collaboratoreData.bollo)} €
+                              </td>
+                              <td className="p-2.5 text-right font-bold text-gray-900">
+                                {formatMoney(sheetToPrint.collaboratoreData.bollo)} €
                               </td>
                             </tr>
                           ) : null}
@@ -7002,8 +7045,8 @@ export default function Presenze() {
                           <tr className="bg-gray-50/80 font-bold border-t border-gray-300 text-[10px]">
                             <td className="p-2.5 border-r border-gray-300 text-gray-900 uppercase text-left">TOTALE COMPENSO (IMPONIBILE)</td>
                             <td className="p-2.5 border-r border-gray-300 text-right font-mono text-gray-500">-</td>
-                            <td className="p-2.5 text-right text-gray-955 font-extrabold">
-                              {formatDec((sheetToPrint.collaboratoreData?.totaleCompenso ?? 0).toFixed(2))} €
+                            <td className="p-2.5 text-right text-gray-950 font-extrabold">
+                              {formatMoney(sheetToPrint.collaboratoreData?.totaleCompenso ?? 0)} €
                             </td>
                           </tr>
 
@@ -7023,7 +7066,7 @@ export default function Presenze() {
                                 {formatDec(sheetToPrint.collaboratoreData.inpsRate)}%
                               </td>
                               <td className="p-2.5 text-right font-bold text-gray-900">
-                                {formatDec((sheetToPrint.collaboratoreData.inps ?? 0).toFixed(2))} €
+                                {formatMoney(sheetToPrint.collaboratoreData.inps ?? 0)} €
                               </td>
                             </tr>
                           ) : null}
@@ -7038,7 +7081,7 @@ export default function Presenze() {
                                 {formatDec(sheetToPrint.collaboratoreData.ivaRate)}%
                               </td>
                               <td className="p-2.5 text-right font-bold text-gray-900">
-                                {formatDec((sheetToPrint.collaboratoreData.iva ?? 0).toFixed(2))} €
+                                {formatMoney(sheetToPrint.collaboratoreData.iva ?? 0)} €
                               </td>
                             </tr>
                           ) : null}
@@ -7052,8 +7095,8 @@ export default function Presenze() {
                               <td className="p-2.5 border-r border-gray-300 text-right font-mono text-gray-500">
                                 -{formatDec(sheetToPrint.collaboratoreData.raRate)}%
                               </td>
-                              <td className="p-2.5 text-right font-bold text-red-655 font-extrabold">
-                                - {formatDec((sheetToPrint.collaboratoreData.ra ?? 0).toFixed(2))} €
+                              <td className="p-2.5 text-right font-bold text-red-600 font-extrabold">
+                                - {formatMoney(sheetToPrint.collaboratoreData.ra ?? 0)} €
                               </td>
                             </tr>
                           ) : null}
@@ -7063,7 +7106,7 @@ export default function Presenze() {
                             <td className="p-3 border-r border-gray-300 text-gray-900 uppercase text-left">TOTALE NETTO A PAGARE</td>
                             <td className="p-3 border-r border-gray-300 text-right font-mono text-gray-500">-</td>
                             <td className="p-3 text-right text-gray-950 font-black text-lg">
-                              {formatDec((sheetToPrint.collaboratoreData?.totaleDovuto ?? 0).toFixed(2))} €
+                              {formatMoney(sheetToPrint.collaboratoreData?.totaleDovuto ?? 0)} €
                             </td>
                           </tr>
                         </tbody>
