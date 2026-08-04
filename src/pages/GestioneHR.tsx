@@ -260,6 +260,7 @@ export default function GestioneHR() {
     try {
       await addDoc(collection(db, 'dashboard_greetings'), { testo: newGreetingText.trim() });
       setNewGreetingText('');
+      await loadData();
       showToast("Frase di benvenuto aggiunta!");
     } catch (err) {
       showToast("Errore durante l'aggiunta", "error");
@@ -281,6 +282,7 @@ export default function GestioneHR() {
       for (const phrase of defaultPhrases) {
         await addDoc(collection(db, 'dashboard_greetings'), { testo: phrase });
       }
+      await loadData();
       showToast("Frasi predefinite caricate!");
     } catch (err) {
       showToast("Errore caricamento frasi", "error");
@@ -292,6 +294,7 @@ export default function GestioneHR() {
     try {
       await setDoc(doc(db, 'dashboard_greetings', id), { testo: editingGreetingText.trim() });
       setEditingGreetingId(null);
+      await loadData();
       showToast("Frase modificata!");
     } catch (err) {
       showToast("Errore salvataggio", "error");
@@ -305,6 +308,7 @@ export default function GestioneHR() {
       async () => {
         try {
           await deleteDoc(doc(db, 'dashboard_greetings', id));
+          await loadData();
           showToast("Frase eliminata!");
         } catch (err) {
           showToast("Errore eliminazione", "error");

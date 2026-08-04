@@ -231,7 +231,8 @@ export default function Commesse() {
     approvedLeaves = [], 
     coordinatori = [], 
     pmsEmails = [],
-    prioritaCommesse = {}
+    prioritaCommesse = {},
+    refreshData
   } = useAuth();
 
   const [tableHeight, setTableHeight] = useState<number>(650);
@@ -1755,6 +1756,7 @@ export default function Commesse() {
         }
       }
 
+      await refreshData();
       setEditingCommessa(null);
       if (!isClosingNow) {
         showToast("Dettagli commessa salvati con successo!", "success");
@@ -2311,6 +2313,7 @@ export default function Commesse() {
         }
       ]);
       
+      await refreshData();
       showToast("Commessa salvata nel catalogo con successo!", "success");
     } catch (err) {
       console.error("Errore salvataggio commessa:", err);
@@ -2463,6 +2466,7 @@ export default function Commesse() {
             }
           }
 
+          await refreshData();
           showToast("Commessa e relative assegnazioni rimosse con successo!", "success");
         } catch (err) {
           console.error("Errore rimozione commessa:", err);

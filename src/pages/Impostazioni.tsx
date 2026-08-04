@@ -367,6 +367,7 @@ export default function Impostazioni() {
         codice: nextCode,
         nome: newClientNome.trim()
       });
+      await refreshData();
       await loadImpostazioniLists();
       setNewClientNome('');
       showToast("Cliente creato con successo!", "success");
@@ -391,6 +392,7 @@ export default function Impostazioni() {
       await updateDoc(doc(db, 'clienti', editingClient.id), {
         nome: editClientNome.trim()
       });
+      await refreshData();
       await loadImpostazioniLists();
       showToast("Ragione sociale del cliente aggiornata con successo!", "success");
       setEditingClient(null);
