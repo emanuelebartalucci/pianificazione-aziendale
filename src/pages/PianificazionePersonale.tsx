@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth, isTechnicalUser, type Dipendente } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, doc, writeBatch, addDoc, updateDoc, deleteDoc, query, where, getDocs } from 'firebase/firestore';
-import { Users, ChevronLeft, ChevronRight, Save, Download, ZoomIn, ZoomOut, Trash2, Plus, RefreshCw, CalendarDays, FileText, X, UserCheck, MoveVertical, Clock, Pencil } from 'lucide-react';
+import { Users, ChevronLeft, ChevronRight, Save, Download, ZoomIn, ZoomOut, Trash2, Plus, RefreshCw, CalendarDays, FileText, X, UserCheck, MoveVertical, Clock, Pencil, ExternalLink } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays, isItalianHoliday } from '../utils/date';
 
 import ConfirmModal from '../components/ConfirmModal';
@@ -139,11 +139,12 @@ const getWeekMondayDate = (wkId: string): Date | null => {
   return monday;
 };
 
-// Formatta una Date come "D Mmm" in italiano
-const formatShortDate = (d: Date | null): string => {
+// Formatta una Date come "D Mmm" o "D Mmm YYYY" in italiano
+const formatShortDate = (d: Date | null, includeYear: boolean = false): string => {
   if (!d) return '';
   const months = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
-  return `${d.getDate()} ${months[d.getMonth()]}`;
+  const base = `${d.getDate()} ${months[d.getMonth()]}`;
+  return includeYear ? `${base} ${d.getFullYear()}` : base;
 };
 
 
@@ -494,40 +495,45 @@ export default function PianificazionePersonale() {
   const [commesseToRemove, setCommesseToRemove] = useState<string[]>([]);
 
   // Gestione parametri URL per il collegamento da altre pagine (es. Commesse.tsx)
+  // Supporta: ?tab=commessa&commessaId=X&startWeek=2026-W32&endWeek=2026-W45
+  //           ?tab=risorsa&risorsa=Nome+Cognome&startWeek=2026-W32&endWeek=2026-W45
   useEffect(() => {
+    if (!commesse.length || !selectableWeekOptions.length) return;
     const params = new URLSearchParams(window.location.search);
     const tabParam = params.get('tab');
     const commessaIdParam = params.get('commessaId');
     const risorsaParam = params.get('risorsa');
+    const startWeekParam = params.get('startWeek');
+    const endWeekParam = params.get('endWeek');
+    // legacy: weekId singolo
     const weekIdParam = params.get('weekId');
+
+    const applyWeeks = () => {
+      const startId = startWeekParam || weekIdParam || null;
+      const endId = endWeekParam || weekIdParam || null;
+      if (startId) {
+        const matched = selectableWeekOptions.find(o => o.id === startId);
+        if (matched) setSelectedStartWeekId(matched.id);
+      }
+      if (endId) {
+        const matched = selectableWeekOptions.find(o => o.id === endId);
+        if (matched) setSelectedEndWeekId(matched.id);
+      }
+    };
 
     if (tabParam === 'commessa' && commessaIdParam) {
       setActiveTab('commessa');
       setSelectedCommessaId(commessaIdParam);
       const commObj = commesse.find(c => c.id === commessaIdParam);
-      if (commObj) {
-        setCommessaSearchText(commObj.nome);
-      }
-      if (weekIdParam) {
-        const matched = selectableWeekOptions.find(o => o.id === weekIdParam);
-        if (matched) {
-          setSelectedStartWeekId(matched.id);
-          setSelectedEndWeekId(matched.id);
-        }
-      }
+      if (commObj) setCommessaSearchText(commObj.nome);
+      applyWeeks();
       setTimeout(() => {
         plannerContainerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }, 100);
     } else if (tabParam === 'risorsa' && risorsaParam) {
       setActiveTab('risorsa');
       setSelectedResourceForTab(decodeURIComponent(risorsaParam));
-      if (weekIdParam) {
-        const matched = selectableWeekOptions.find(o => o.id === weekIdParam);
-        if (matched) {
-          setSelectedStartWeekId(matched.id);
-          setSelectedEndWeekId(matched.id);
-        }
-      }
+      applyWeeks();
       setTimeout(() => {
         plannerContainerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }, 100);
@@ -553,15 +559,25 @@ export default function PianificazionePersonale() {
   });
 
   // =====================================================================
-  // SOTTO-PERIODI: stato espansione cards nel pannello "Gestione per Commessa"
+  // SOTTO-PERIODI: stato espansione cards nei pannelli di gestione
   // =====================================================================
   const [expandedRisorseCommessa, setExpandedRisorseCommessa] = useState<Set<string>>(new Set());
+  const [expandedCommessaRisorsa, setExpandedCommessaRisorsa] = useState<Set<string>>(new Set());
 
   const toggleRisorsaExpanded = (nome: string) => {
     setExpandedRisorseCommessa(prev => {
       const next = new Set(prev);
       if (next.has(nome)) next.delete(nome);
       else next.add(nome);
+      return next;
+    });
+  };
+
+  const toggleCommessaExpanded = (id: string) => {
+    setExpandedCommessaRisorsa(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
@@ -584,7 +600,16 @@ export default function PianificazionePersonale() {
       const monday = getWeekMondayDate(g[0]);
       const friday = getWeekMondayDate(g[g.length - 1]);
       if (friday) friday.setDate(friday.getDate() + 4);
-      const dateRange = `${formatShortDate(monday)} – ${formatShortDate(friday)}`;
+
+      let dateRange = '';
+      if (monday && friday) {
+        if (monday.getFullYear() === friday.getFullYear()) {
+          dateRange = `${formatShortDate(monday)} – ${formatShortDate(friday)} ${friday.getFullYear()}`;
+        } else {
+          dateRange = `${formatShortDate(monday, true)} – ${formatShortDate(friday, true)}`;
+        }
+      }
+
       if (g.length === 1) return `Sett. ${sWk} (${dateRange})`;
       return `Sett. ${sWk} → ${eWk}  ·  ${dateRange}`;
     };
@@ -1753,7 +1778,9 @@ export default function PianificazionePersonale() {
       });
       updatePendingNotificationsCount();
       
-      setDbAssignments(assignments);
+      const freshAssignments = JSON.parse(JSON.stringify(assignments));
+      setDbAssignments(freshAssignments);
+      setAssignments(freshAssignments);
       setDraftNotifications([]);
       setIsDirty(false);
       showToast("Tutte le modifiche sono state salvate con successo!", "success");
@@ -3256,28 +3283,53 @@ export default function PianificazionePersonale() {
                                     </span>
                                   )}
                                 </div>
-                                {/* Rimuovi TUTTO il periodo */}
-                                <button
-                                  type="button"
-                                  disabled={savingAllocations}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setConfirmConfig({
-                                      isOpen: true,
-                                      title: 'Rimozione Risorsa',
-                                      message: `Rimuovere ${r.nome} da questa commessa per TUTTO il periodo selezionato?`,
-                                      type: 'danger',
-                                      onConfirm: async () => {
-                                        await executeRemoveResourceFromCommessa(r.nome, selectedCommessaId);
-                                        setConfirmConfig(prev => ({ ...prev, isOpen: false }));
-                                      }
-                                    });
-                                  }}
-                                  className="text-red-400 hover:text-red-600 hover:bg-red-50 p-1.5 rounded-lg transition-colors shrink-0 disabled:opacity-50"
-                                  title="Rimuovi da tutto il periodo"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  {/* Deep-link → Pianifica per Risorsa */}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      // Usa le settimane effettive dell'assegnazione, non il filtro pagina
+                                      const assignedWeeks = Object.keys(r.percentuali).sort();
+                                      const wStart = assignedWeeks[0] || selectedStartWeekId;
+                                      const wEnd = assignedWeeks[assignedWeeks.length - 1] || selectedEndWeekId;
+                                      const url = new URL(window.location.href);
+                                      url.searchParams.set('tab', 'risorsa');
+                                      url.searchParams.set('risorsa', encodeURIComponent(r.nome));
+                                      url.searchParams.set('startWeek', wStart);
+                                      url.searchParams.set('endWeek', wEnd);
+                                      url.searchParams.delete('commessaId');
+                                      url.searchParams.delete('weekId');
+                                      window.open(url.toString(), '_blank');
+                                    }}
+                                    className="text-indigo-400 hover:text-indigo-700 hover:bg-indigo-50 p-1.5 rounded-lg transition-colors shrink-0"
+                                    title={`Apri pianificazione per risorsa: ${r.nome}`}
+                                  >
+                                    <ExternalLink className="w-3.5 h-3.5" />
+                                  </button>
+                                  {/* Rimuovi TUTTO il periodo */}
+                                  <button
+                                    type="button"
+                                    disabled={savingAllocations}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setConfirmConfig({
+                                        isOpen: true,
+                                        title: 'Rimozione Risorsa',
+                                        message: `Rimuovere ${r.nome} da questa commessa per TUTTO il periodo selezionato?`,
+                                        type: 'danger',
+                                        onConfirm: async () => {
+                                          await executeRemoveResourceFromCommessa(r.nome, selectedCommessaId);
+                                          setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+                                        }
+                                      });
+                                    }}
+                                    className="text-red-400 hover:text-red-600 hover:bg-red-50 p-1.5 rounded-lg transition-colors shrink-0 disabled:opacity-50"
+                                    title="Rimuovi da tutto il periodo"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
                               </div>
 
                               {/* SOTTO-PERIODI */}
@@ -3501,23 +3553,24 @@ export default function PianificazionePersonale() {
                     </button>
                   </div>
 
-                  {/* Lista Commesse Assegnate */}
-                  <div className="bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col max-h-[480px] min-h-[360px]">
+                  {/* Lista Commesse Assegnate — UI a sotto-periodi */}
+                  <div className="bg-white/60 p-5 rounded-2xl border border-indigo-100/50 flex flex-col max-h-[600px] min-h-[360px]">
                     <h4 className="font-bold text-sm text-indigo-900 border-b pb-2 mb-3 flex items-center justify-between">
-                      <span>📁 Commesse Assegnate</span>
-                      <span className="bg-indigo-100 text-indigo-800 font-extrabold text-xs px-2.5 py-0.5 rounded-full">
-                        {commesseAssegnateAllaRisorsa.length}
-                      </span>
+                      <span>📁 Commesse Assegnate ({commesseAssegnateAllaRisorsa.length})</span>
                     </h4>
                     <div className="overflow-y-auto flex-1 space-y-2.5 pr-1 scrollbar-thin">
                       {commesseAssegnateAllaRisorsa.length === 0 ? (
                         <p className="text-xs text-gray-400 italic p-6 text-center">Nessuna commessa assegnata a {selectedResourceForTab} nel periodo selezionato.</p>
-                      ) : (
-                        commesseAssegnateAllaRisorsa.map(c => {
+                      ) : (() => {
+                        const allWeekIds = getWeeksSpannedByDates(allocDataInizio, allocDataFine);
+                        return commesseAssegnateAllaRisorsa.map(c => {
+                          const subperiods = computeSubperiodsPage(c.percentuali, allWeekIds);
                           const pcts = Object.values(c.percentuali);
-                          const minPct = Math.min(...pcts);
-                          const maxPct = Math.max(...pcts);
-                          const displayPct = minPct === maxPct ? `${minPct}%` : `${minPct}% - ${maxPct}%`;
+                          const minPct = pcts.length > 0 ? Math.min(...pcts) : 0;
+                          const maxPct = pcts.length > 0 ? Math.max(...pcts) : 0;
+                          const displayPct = minPct === maxPct ? `${minPct}%` : `${minPct}% – ${maxPct}%`;
+                          const totalWeeks = Object.keys(c.percentuali).length;
+                          const isExpanded = expandedCommessaRisorsa.has(c.id);
 
                           // Permessi di modifica per questa commessa
                           const commObj = commesse.find(x => x.id === c.id);
@@ -3526,61 +3579,166 @@ export default function PianificazionePersonale() {
                           const hasPermission = isAdmin || isSoci(myAssociatedName) || (commObj && (isPM || areNamesEqual(commObj.responsabile, myAssociatedName)));
 
                           return (
-                            <div key={c.id} className="flex justify-between items-center p-3 bg-white rounded-xl border border-indigo-50 shadow-sm hover:border-indigo-100 transition-colors">
-                              <div className="flex flex-col gap-1 truncate pr-2">
-                                <div className="flex items-center gap-2 truncate">
+                            <div key={c.id} className="rounded-xl border border-indigo-100 shadow-xs overflow-hidden">
+
+                              {/* HEADER COMMESSA */}
+                              <div
+                                className={`flex items-center justify-between p-2.5 cursor-pointer transition-colors select-none ${
+                                  isExpanded ? 'bg-indigo-50/70' : 'bg-white hover:bg-indigo-50/40'
+                                }`}
+                                onClick={() => toggleCommessaExpanded(c.id)}
+                              >
+                                <div className="flex items-center gap-2 truncate min-w-0 pr-2">
+                                  <span className={`text-indigo-500 text-[10px] shrink-0 transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
                                   <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm" style={{ backgroundColor: c.colore }}></span>
                                   <span className="font-bold text-xs text-gray-850 truncate">{c.nome}</span>
+                                  {displayPct && (
+                                    <span className="text-[10px] font-black text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded-full shrink-0">
+                                      {displayPct} · {totalWeeks} sett.
+                                    </span>
+                                  )}
                                 </div>
-                                {displayPct && <span className="text-[10px] font-black text-indigo-650 ml-4.5">Impegno commessa: {displayPct}</span>}
+
+                                <div className="flex items-center gap-1 shrink-0">
+                                  {hasPermission ? (
+                                    <>
+                                      {/* Deep-link → Pianifica per Commessa */}
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          const assignedWeeks = Object.keys(c.percentuali).sort();
+                                          const wStart = assignedWeeks[0] || selectedStartWeekId;
+                                          const wEnd = assignedWeeks[assignedWeeks.length - 1] || selectedEndWeekId;
+                                          const url = new URL(window.location.href);
+                                          url.searchParams.set('tab', 'commessa');
+                                          url.searchParams.set('commessaId', c.id);
+                                          url.searchParams.set('startWeek', wStart);
+                                          url.searchParams.set('endWeek', wEnd);
+                                          url.searchParams.delete('risorsa');
+                                          url.searchParams.delete('weekId');
+                                          window.open(url.toString(), '_blank');
+                                        }}
+                                        className="text-indigo-400 hover:text-indigo-700 hover:bg-indigo-50 p-1.5 rounded-lg transition-colors shrink-0"
+                                        title={`Apri pianificazione per commessa: ${c.nome}`}
+                                      >
+                                        <ExternalLink className="w-3.5 h-3.5" />
+                                      </button>
+                                      {/* Rimuovi da tutto il periodo */}
+                                      <button
+                                        type="button"
+                                        disabled={savingAllocations}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setConfirmConfig({
+                                            isOpen: true,
+                                            title: 'Rimozione Commessa',
+                                            message: `Rimuovere la commessa "${c.nome}" per ${selectedResourceForTab} per TUTTO il periodo selezionato?`,
+                                            type: 'danger',
+                                            onConfirm: async () => {
+                                              await executeRemoveResourceFromCommessa(selectedResourceForTab, c.id);
+                                              setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+                                            }
+                                          });
+                                        }}
+                                        className="text-red-400 hover:text-red-600 hover:bg-red-50 p-1.5 rounded-lg transition-colors shrink-0 disabled:opacity-50"
+                                        title="Rimuovi da tutto il periodo"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <span className="text-gray-400 text-[10px] italic font-bold bg-gray-50 px-2 py-0.5 rounded-lg border border-gray-100">
+                                      🔒 Sola Lettura
+                                    </span>
+                                  )}
+                                </div>
                               </div>
 
-                              <div className="flex items-center gap-2 shrink-0">
-                                {hasPermission ? (
-                                  <>
-                                    <select
-                                      value={pcts[0] || 100}
-                                      disabled={savingAllocations}
-                                      onChange={async (e) => {
-                                        await executeAssignResourceToCommessa(selectedResourceForTab, c.id, parseInt(e.target.value));
-                                      }}
-                                      className="p-1.5 border border-gray-200 rounded-lg bg-white font-bold text-xs text-gray-700 outline-none focus:border-indigo-400 cursor-pointer"
-                                    >
-                                      {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
-                                        <option key={pct} value={pct}>{pct}%</option>
-                                      ))}
-                                    </select>
-                                    <button
-                                      type="button"
-                                      disabled={savingAllocations}
-                                      onClick={() => {
-                                        setConfirmConfig({
-                                          isOpen: true,
-                                          title: 'Rimozione Commessa',
-                                          message: `Sei sicuro di voler rimuovere la commessa "${c.nome}" per ${selectedResourceForTab} nel periodo selezionato?`,
-                                          type: 'danger',
-                                          onConfirm: async () => {
-                                            await executeRemoveResourceFromCommessa(selectedResourceForTab, c.id);
-                                            setConfirmConfig(prev => ({ ...prev, isOpen: false }));
-                                          }
-                                        });
-                                      }}
-                                      className="text-red-500 hover:text-red-750 hover:bg-red-50 p-2 rounded-lg transition-colors disabled:opacity-50 cursor-pointer"
-                                      title="Rimuovi questa commessa"
-                                    >
-                                      <Trash2 className="w-4 h-4" />
-                                    </button>
-                                  </>
-                                ) : (
-                                  <span className="text-gray-400 text-[10px] italic font-bold bg-gray-50 px-2 py-1 rounded-lg border border-gray-100">
-                                    🔒 Sola Lettura
-                                  </span>
-                                )}
-                              </div>
+                              {/* SOTTO-PERIODI */}
+                              {isExpanded && (
+                                <div className="border-t border-indigo-100/70 bg-white divide-y divide-slate-50">
+                                  {subperiods.map((sp, spIdx) => {
+                                    const bgRow = sp.pct <= 60 ? 'bg-sky-50/50' : sp.pct <= 110 ? 'bg-emerald-50/50' : 'bg-rose-50/50';
+                                    const pctBadge = sp.pct <= 60 ? 'bg-sky-100 text-sky-800' : sp.pct <= 110 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800';
+
+                                    return (
+                                      <div key={spIdx} className={`flex items-center justify-between px-3.5 py-2 gap-2 ${bgRow}`}>
+                                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                                          <span className="text-slate-400 text-[10px] shrink-0">↳</span>
+                                          <span className="text-[11px] font-semibold text-gray-700 truncate">{sp.label}</span>
+                                          <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-full shrink-0 ${pctBadge}`}>{sp.pct}%</span>
+                                        </div>
+
+                                        {hasPermission && (
+                                          <div className="flex items-center gap-1.5 shrink-0">
+                                            <select
+                                              value={sp.pct}
+                                              disabled={savingAllocations}
+                                              onChange={async (e) => {
+                                                e.stopPropagation();
+                                                await executeAssignSubperiodToCommessa(selectedResourceForTab, c.id, sp.weekIds, parseInt(e.target.value));
+                                              }}
+                                              className="p-1 border border-gray-200 rounded-lg bg-white font-bold text-[10px] text-gray-700 outline-none focus:border-indigo-400 cursor-pointer"
+                                              title="Modifica % solo per questo sotto-periodo"
+                                            >
+                                              {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
+                                                <option key={pct} value={pct}>{pct}%</option>
+                                              ))}
+                                            </select>
+                                            <button
+                                              type="button"
+                                              disabled={savingAllocations}
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                executeRemoveSubperiodFromCommessa(selectedResourceForTab, c.id, sp.weekIds);
+                                              }}
+                                              className="text-red-400 hover:text-red-600 hover:bg-red-50 p-1 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                                              title={`Rimuovi solo ${sp.label}`}
+                                            >
+                                              <Trash2 className="w-3 h-3" />
+                                            </button>
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+
+                                  {/* Applica % uniforme all'intero periodo */}
+                                  {hasPermission && subperiods.length > 1 && (
+                                    <div className="flex items-center justify-between px-3.5 py-2 bg-indigo-50/40 gap-2">
+                                      <span className="text-[10px] font-semibold text-indigo-700">📐 Applica % uniforme:</span>
+                                      <div className="flex items-center gap-1.5">
+                                        <select
+                                          id={`uniform-pr-${c.id}`}
+                                          defaultValue={subperiods[0]?.pct || 100}
+                                          className="p-1 border border-indigo-200 rounded-lg bg-white font-bold text-[10px] text-gray-700 outline-none focus:border-indigo-400 cursor-pointer"
+                                        >
+                                          {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
+                                            <option key={pct} value={pct}>{pct}%</option>
+                                          ))}
+                                        </select>
+                                        <button
+                                          type="button"
+                                          disabled={savingAllocations}
+                                          onClick={async () => {
+                                            const sel = document.getElementById(`uniform-pr-${c.id}`) as HTMLSelectElement;
+                                            if (!sel) return;
+                                            await executeAssignResourceToCommessa(selectedResourceForTab, c.id, parseInt(sel.value));
+                                          }}
+                                          className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] px-2 py-1.5 rounded-lg transition cursor-pointer active:scale-95"
+                                        >
+                                          ✓ Applica
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           );
-                        })
-                      )}
+                        });
+                      })()}
                     </div>
                   </div>
                 </div>

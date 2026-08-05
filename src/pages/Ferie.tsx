@@ -7,6 +7,8 @@ import { queueMail } from '../utils/mailSender';
 import { isItalianHoliday, isWeekend, getWeekNumber } from '../utils/date';
 import { getPrintFooterHtml, getPrintDateString, APP_VERSION } from '../config/version';
 import { isCollaboratore, isSoci } from './Impostazioni';
+import ResourceAnalyticsModal from '../components/ResourceAnalyticsModal';
+import { rebuildYearlySummary } from '../services/yearlySummaryService';
 
 const formatDate = (dateStr: string) => {
   if (!dateStr) return '';
@@ -56,6 +58,43 @@ const PAUSA_PRANZO_OPTIONS = Array.from({ length: 8 }).map((_, i) => {
   return { value: v.toFixed(1), label: `${v.toString().replace('.', ',')} or${v === 1 ? 'a' : 'e'}` };
 });
 
+// Cache persistente in memoria modulo e sessionStorage per evitare qualsiasi sfarfallio a 0 al cambio di rotta
+let globalCounterYearSummaries: Record<number, any> = {};
+
+const getInitialSummaries = (): Record<number, any> => {
+  if (Object.keys(globalCounterYearSummaries).length > 0) {
+    return globalCounterYearSummaries;
+  }
+  try {
+    const cached = sessionStorage.getItem('cached_yearly_summaries');
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      globalCounterYearSummaries = parsed;
+      return parsed;
+    }
+  } catch (e) {}
+  return {};
+};
+
+const saveSummariesToCache = (newMap: Record<number, any>) => {
+  globalCounterYearSummaries = newMap;
+  try {
+    sessionStorage.setItem('cached_yearly_summaries', JSON.stringify(newMap));
+  } catch (e) {}
+};
+
+const getInitialTargetDipName = (nameProp: string): string => {
+  if (nameProp) {
+    try { localStorage.setItem('last_user_associated_name', nameProp); } catch (e) {}
+    return nameProp;
+  }
+  try {
+    const cached = localStorage.getItem('last_user_associated_name');
+    if (cached) return cached;
+  } catch (e) {}
+  return '';
+};
+
 interface FerieContentProps {
   isHR: boolean;
   isAdmin: boolean;
@@ -82,7 +121,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
 
   // State per la nuova richiesta
   const [requestMode, setRequestMode] = useState<'singolo' | 'range'>('singolo');
-  const [dipendenteSelezionato, setDipendenteSelezionato] = useState(myAssociatedName || '');
+  const [dipendenteSelezionato, setDipendenteSelezionato] = useState<string>(() => getInitialTargetDipName(myAssociatedName));
   const [dataRichiesta, setDataRichiesta] = useState('');
   const [dataInizio, setDataInizio] = useState('');
   const [dataFine, setDataFine] = useState('');
@@ -95,12 +134,16 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
   const [pausaPranzoOre, setPausaPranzoOre] = useState('1.0');
 
   useEffect(() => {
-    if (myAssociatedName && !dipendenteSelezionato) {
-      setDipendenteSelezionato(myAssociatedName);
+    if (myAssociatedName) {
+      try { localStorage.setItem('last_user_associated_name', myAssociatedName); } catch (e) {}
+      if (!dipendenteSelezionato) {
+        setDipendenteSelezionato(myAssociatedName);
+      }
     }
   }, [myAssociatedName]);
 
-  const targetDipName = (isHR || isAdmin) ? (dipendenteSelezionato || myAssociatedName) : myAssociatedName;
+  const effectiveMyAssociatedName = myAssociatedName || getInitialTargetDipName('');
+  const targetDipName = (isHR || isAdmin) ? (dipendenteSelezionato || effectiveMyAssociatedName) : effectiveMyAssociatedName;
   // I Soci vengono trattati come collaboratori nel Piano Ferie
   const isCollaboratoreUser = isCollaboratore(targetDipName, dipendenti) || isSoci(targetDipName);
 
@@ -122,6 +165,148 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
   const [othersApprovedRichieste, setOthersApprovedRichieste] = useState<RichiestaFerie[]>([]);
   const [hrRichieste, setHrRichieste] = useState<RichiestaFerie[]>([]);
   const [loading, setLoading] = useState(false);
+
+  const [loadedYears, setLoadedYears] = useState<Set<number>>(() => new Set<number>());
+
+  const mapRequestTipo = (dipName: string, docId: string, currentTipo: string) => {
+    if (isCollaboratore(dipName, dipendenti) && (currentTipo === 'ferie' || currentTipo === 'permesso' || currentTipo === 'mattina' || currentTipo === 'pomeriggio')) {
+      updateDoc(doc(db, 'richieste_ferie', docId), { tipo: 'assenza' }).catch(() => {});
+      return 'assenza';
+    }
+    return currentTipo;
+  };
+
+  const ensureYearLoaded = async (targetYear: number) => {
+    if (loadedYears.has(targetYear)) return;
+
+    try {
+      const startStr = `${targetYear}-01-01`;
+      const endStr = `${targetYear}-12-31`;
+
+      const qOld = query(
+        collection(db, 'richieste_ferie'),
+        where('dataFine', '>=', startStr)
+      );
+      const snap = await getDocs(qOld);
+      const fetched: RichiestaFerie[] = [];
+      snap.forEach(docSnap => {
+        const data = docSnap.data();
+        const dInizio = data.dataInizio || data.data || '';
+        if (dInizio <= endStr) {
+          fetched.push({
+            id: docSnap.id,
+            dipendenteName: data.dipendenteName,
+            data: data.data || '',
+            tipo: mapRequestTipo(data.dipendenteName, docSnap.id, data.tipo),
+            stato: data.stato || 'In attesa',
+            frazioneTipo: data.frazioneTipo,
+            dataInizio: data.dataInizio,
+            dataFine: data.dataFine,
+            oraInizio: data.oraInizio,
+            oraFine: data.oraFine,
+            timestamp: data.timestamp,
+            note: data.note || '',
+            comunicazioneId: data.comunicazioneId || '',
+            pausaPranzo: data.pausaPranzo || false,
+            pausaPranzoOre: data.pausaPranzoOre || 0,
+            richiestaModifica: data.richiestaModifica || null
+          });
+        }
+      });
+
+      if (isHR || isAdmin) {
+        setHrRichieste(prev => {
+          const existingIds = new Set(prev.map(p => p.id));
+          const newItems = fetched.filter(f => !existingIds.has(f.id));
+          return [...prev, ...newItems];
+        });
+      }
+
+      const myNameClean = (myAssociatedName || '').trim().toLowerCase();
+      setOthersApprovedRichieste(prev => {
+        const existingIds = new Set(prev.map(p => p.id));
+        const newItems = fetched.filter(f => f.stato === 'Approvato' && (f.dipendenteName || '').trim().toLowerCase() !== myNameClean && !existingIds.has(f.id));
+        return [...prev, ...newItems];
+      });
+
+      setLoadedYears(prev => new Set([...Array.from(prev), targetYear]));
+    } catch (err) {
+      console.error("Errore caricamento anno su richiesta:", err);
+    }
+  };
+
+  const [loadedMonths, setLoadedMonths] = useState<Set<string>>(() => {
+    const now = new Date();
+    const key = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    return new Set([key]);
+  });
+
+  const ensureMonthLoaded = async (year: number, month: number) => {
+    const monthKey = `${year}-${String(month).padStart(2, '0')}`;
+    if (loadedMonths.has(monthKey) || loadedYears.has(year)) return;
+
+    try {
+      const startStr = `${year}-${String(month).padStart(2, '0')}-01`;
+      const lastDay = new Date(year, month, 0).getDate();
+      const endStr = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+
+      const qOld = query(
+        collection(db, 'richieste_ferie'),
+        where('dataFine', '>=', startStr)
+      );
+      const snap = await getDocs(qOld);
+      const fetched: RichiestaFerie[] = [];
+      snap.forEach(docSnap => {
+        const data = docSnap.data();
+        const dInizio = data.dataInizio || data.data || '';
+        if (dInizio <= endStr) {
+          fetched.push({
+            id: docSnap.id,
+            dipendenteName: data.dipendenteName,
+            data: data.data || '',
+            tipo: mapRequestTipo(data.dipendenteName, docSnap.id, data.tipo),
+            stato: data.stato || 'In attesa',
+            frazioneTipo: data.frazioneTipo,
+            dataInizio: data.dataInizio,
+            dataFine: data.dataFine,
+            oraInizio: data.oraInizio,
+            oraFine: data.oraFine,
+            timestamp: data.timestamp,
+            note: data.note || '',
+            comunicazioneId: data.comunicazioneId || '',
+            pausaPranzo: data.pausaPranzo || false,
+            pausaPranzoOre: data.pausaPranzoOre || 0,
+            richiestaModifica: data.richiestaModifica || null
+          });
+        }
+      });
+
+      if (isHR || isAdmin) {
+        setHrRichieste(prev => {
+          const existingIds = new Set(prev.map(p => p.id));
+          const newItems = fetched.filter(f => !existingIds.has(f.id));
+          return [...prev, ...newItems];
+        });
+      }
+
+      const myNameClean = (myAssociatedName || '').trim().toLowerCase();
+      setOthersApprovedRichieste(prev => {
+        const existingIds = new Set(prev.map(p => p.id));
+        const newItems = fetched.filter(f => f.stato === 'Approvato' && (f.dipendenteName || '').trim().toLowerCase() !== myNameClean && !existingIds.has(f.id));
+        return [...prev, ...newItems];
+      });
+
+      setLoadedMonths(prev => new Set([...Array.from(prev), monthKey]));
+    } catch (err) {
+      console.error("Errore caricamento mese su richiesta:", err);
+    }
+  };
+
+  useEffect(() => {
+    if (currentMonth) {
+      ensureMonthLoaded(currentMonth.getFullYear(), currentMonth.getMonth() + 1);
+    }
+  }, [currentMonth]);
 
   // States per l'annullamento ferie da parte di HR
   const [cancellationRequest, setCancellationRequest] = useState<RichiestaFerie | null>(null);
@@ -158,18 +343,9 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       }
       setChiusureAziendali(listClosures);
 
-      const mapRequestTipo = (dipName: string, docId: string, currentTipo: string) => {
-        if (isCollaboratore(dipName, dipendenti) && (currentTipo === 'ferie' || currentTipo === 'permesso' || currentTipo === 'mattina' || currentTipo === 'pomeriggio')) {
-          updateDoc(doc(db, 'richieste_ferie', docId), { tipo: 'assenza' }).catch(() => {});
-          return 'assenza';
-        }
-        return currentTipo;
-      };
-
       if (isHR || isAdmin) {
-        const twoYearsAgo = new Date();
-        twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
-        const startLimit = twoYearsAgo.toLocaleDateString('sv-SE');
+        const now = new Date();
+        const startLimit = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
 
         const q = query(
           collection(db, 'richieste_ferie'),
@@ -231,9 +407,8 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         });
         setMyRichieste(listMy);
 
-        const sixtyDaysAgo = new Date();
-        sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
-        const startLimitOthers = sixtyDaysAgo.toLocaleDateString('sv-SE');
+        const nowOthers = new Date();
+        const startLimitOthers = `${nowOthers.getFullYear()}-${String(nowOthers.getMonth() + 1).padStart(2, '0')}-01`;
 
         const qOthers = query(
           collection(db, 'richieste_ferie'),
@@ -285,6 +460,30 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         });
       }
       setApprovedWeekends(wkMap);
+
+      // Carica e garantisce la presenza delle sintesi 2025 e 2026 per contatori e grafici (solo se dipendenti caricati!)
+      if (dipendenti && dipendenti.length > 0) {
+        [2025, 2026].forEach(async y => {
+          try {
+            const docRef = doc(db, 'storico_annuale_ferie', String(y));
+            const snap = await getDoc(docRef);
+            if (snap.exists() && snap.data()?.employeeStats && Object.keys(snap.data().employeeStats).length > 0) {
+              updateCounterSummaries(prev => ({ ...prev, [y]: snap.data() }));
+            } else {
+              const newSum = await rebuildYearlySummary(y, dipendenti);
+              if (newSum) {
+                updateCounterSummaries(prev => ({ ...prev, [y]: newSum }));
+              }
+            }
+          } catch (err) {
+            console.error(`Errore caricamento sintesi ${y}:`, err);
+            const newSum = await rebuildYearlySummary(y, dipendenti);
+            if (newSum) {
+              updateCounterSummaries(prev => ({ ...prev, [y]: newSum }));
+            }
+          }
+        });
+      }
     } catch (err) {
       console.error("Error loading ferie data:", err);
       showToast("Errore nel caricamento delle ferie.", "error");
@@ -318,9 +517,34 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
   };
 
   useEffect(() => {
+    const now = new Date();
+    const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    setLoadedMonths(new Set([currentMonthKey]));
+    setLoadedYears(new Set<number>());
     loadFerieData();
     loadWeekendData();
   }, [myAssociatedName, isHR, isAdmin, isDev]);
+
+  useEffect(() => {
+    if (dipendenti && dipendenti.length > 0) {
+      [2025, 2026].forEach(async y => {
+        try {
+          const docRef = doc(db, 'storico_annuale_ferie', String(y));
+          const snap = await getDoc(docRef);
+          if (snap.exists() && snap.data()?.employeeStats && Object.keys(snap.data().employeeStats).length > 0) {
+            updateCounterSummaries(prev => ({ ...prev, [y]: snap.data() }));
+          } else {
+            const newSum = await rebuildYearlySummary(y, dipendenti);
+            if (newSum) {
+              updateCounterSummaries(prev => ({ ...prev, [y]: newSum }));
+            }
+          }
+        } catch (err) {
+          console.error(`Errore caricamento sintesi ${y}:`, err);
+        }
+      });
+    }
+  }, [dipendenti]);
 
   const handleRequestWeekendSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -465,10 +689,31 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
 
   // Calcolo ore assenze per l'anno corrente (dal 01 gennaio al 31 dicembre)
   const currentYear = new Date().getFullYear();
+  const [counterYearSummaries, setCounterYearSummaries] = useState<Record<number, any>>(() => getInitialSummaries());
+
+  const updateCounterSummaries = (updater: (prev: Record<number, any>) => Record<number, any>) => {
+    setCounterYearSummaries(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      saveSummariesToCache(next);
+      return next;
+    });
+  };
 
   const yearlyStats = useMemo(() => {
     if (!targetDipName) {
       return { ferieHours: 0, permessoHours: 0, malattiaHours: 0, assenzeGenericheHours: 0 };
+    }
+
+    const summary = counterYearSummaries[currentYear];
+    const dipNameClean = (targetDipName || '').trim().toLowerCase();
+    if (summary && summary.employeeStats && summary.employeeStats[dipNameClean]) {
+      const stats = summary.employeeStats[dipNameClean];
+      return {
+        ferieHours: Math.round((stats.ferie || 0) * 100) / 100,
+        permessoHours: Math.round((stats.permessi || 0) * 100) / 100,
+        malattiaHours: Math.round((stats.malattia || 0) * 100) / 100,
+        assenzeGenericheHours: Math.round((stats.totale || 0) * 100) / 100
+      };
     }
 
     const allList = isHR ? hrRichieste : requestsList;
@@ -554,7 +799,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       malattiaHours: Math.round(malattiaHours * 100) / 100,
       assenzeGenericheHours: Math.round(assenzeGenericheHours * 100) / 100
     };
-  }, [isHR, hrRichieste, requestsList, targetDipName, currentYear, approvedWeekends]);
+  }, [isHR, hrRichieste, requestsList, targetDipName, currentYear, approvedWeekends, counterYearSummaries]);
 
   // States per la scheda Riepilogo Contatori Risorse (Soci & HR)
   const [mainTab, setMainTab] = useState<'piano' | 'weekend' | 'contatori_risorse'>('piano');
@@ -576,9 +821,70 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
   const [isResourceDropdownOpen, setIsResourceDropdownOpen] = useState<boolean>(false);
   const [selectedResource, setSelectedResource] = useState<any | null>(null);
 
-  // Aggregazione contatori per tutte le risorse per l'anno selezionato
+  // State per modale di analisi grafica dettagliata risorsa
+  const [analyticsResource, setAnalyticsResource] = useState<any | null>(null);
+  const [isAnalyticsOpen, setIsAnalyticsOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (mainTab === 'contatori_risorse') {
+      const y = counterYear;
+      ensureYearLoaded(y);
+      if (counterYearSummaries[y] && Object.keys(counterYearSummaries[y]?.employeeStats || {}).length > 0) return;
+
+      const docRef = doc(db, 'storico_annuale_ferie', String(y));
+      getDoc(docRef).then(async snap => {
+        if (snap.exists() && snap.data()?.employeeStats && Object.keys(snap.data().employeeStats).length > 0) {
+          updateCounterSummaries(prev => ({ ...prev, [y]: snap.data() }));
+        } else if (dipendenti && dipendenti.length > 0) {
+          // Genera al volo se non esiste ancora su Firestore
+          const newSummary = await rebuildYearlySummary(y, dipendenti);
+          if (newSummary) {
+            updateCounterSummaries(prev => ({ ...prev, [y]: newSummary }));
+          }
+        }
+      }).catch(async () => {
+        if (dipendenti && dipendenti.length > 0) {
+          const newSummary = await rebuildYearlySummary(y, dipendenti);
+          if (newSummary) {
+            updateCounterSummaries(prev => ({ ...prev, [y]: newSummary }));
+          }
+        }
+      });
+    }
+  }, [mainTab, counterYear, dipendenti]);
+
+  // Aggregazione contatori per tutte le risorse per l'anno selezionato (1 sola lettura da sintesi!)
   const allResourcesStats = useMemo(() => {
     if (!isHR && !isAdmin) return [];
+
+    const summary = counterYearSummaries[counterYear];
+    if (summary && summary.employeeStats && Object.keys(summary.employeeStats).length > 0) {
+      return dipendenti.map(dip => {
+        const dipName = dip.nome || '';
+        const dipNameClean = dipName.trim().toLowerCase();
+        const isCollab = isCollaboratore(dipName, dipendenti) || isSoci(dipName);
+        const stats = summary.employeeStats[dipNameClean] || { ferie: 0, permessi: 0, malattia: 0, smart: 0, totale: 0 };
+
+        const ferieHours = stats.ferie || 0;
+        const permessoHours = stats.permessi || 0;
+        const malattiaHours = stats.malattia || 0;
+        const assenzeGenericheHours = stats.totale || 0;
+        const totaleOreAssenze = isCollab ? assenzeGenericheHours : Math.round((ferieHours + permessoHours + malattiaHours) * 100) / 100;
+
+        return {
+          dip,
+          dipName,
+          email: dip.email || '',
+          macroArea: dip.macroArea || 'Non specificata',
+          isCollab,
+          ferieHours,
+          permessoHours,
+          malattiaHours,
+          assenzeGenericheHours,
+          totaleOreAssenze
+        };
+      }).sort((a, b) => a.dipName.localeCompare(b.dipName));
+    }
 
     const approvedTarget = hrRichieste.filter(r => 
       r.stato === 'Approvato' && 
@@ -654,14 +960,19 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         }
 
         const t = (req.tipo || '').toLowerCase();
+        const isSmartWorking = t === 'smart' || t.includes('smart') || t.includes('lavoro da casa');
+
+        if (isSmartWorking) {
+          // Lavoro da Casa non è un'assenza: ignora dal conteggio assenze
+          return;
+        }
+
         if (isCollab) {
-          if (t !== 'smart') {
-            assenzeGenericheHours += reqTotalHrs;
-          }
+          assenzeGenericheHours += reqTotalHrs;
         } else {
-          if (t === 'ferie') {
+          if (t === 'ferie' || t.includes('ferie')) {
             ferieHours += reqTotalHrs;
-          } else if (t === 'malattia' || t === 'maternita' || t === 'maternità') {
+          } else if (t === 'malattia' || t.includes('malattia') || t.includes('maternita') || t.includes('maternità') || t.includes('infortunio')) {
             malattiaHours += reqTotalHrs;
           } else {
             permessoHours += reqTotalHrs;
@@ -686,7 +997,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         totaleOreAssenze
       };
     }).sort((a, b) => a.dipName.localeCompare(b.dipName));
-  }, [isHR, isAdmin, hrRichieste, dipendenti, counterYear, approvedWeekends]);
+  }, [isHR, isAdmin, hrRichieste, dipendenti, counterYear, approvedWeekends, counterYearSummaries]);
 
   // Filtro per ricerca e macro-area
   const filteredResourceStats = useMemo(() => {
@@ -1720,7 +2031,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
 
     const statusMap: Record<string, Record<number, RichiestaFerie>> = {};
     sortedDipendenti.forEach(dip => {
-      statusMap[dip.nome] = {};
+      statusMap[(dip.nome || '').trim().toLowerCase()] = {};
     });
 
     richieste.forEach(req => {
@@ -1743,9 +2054,9 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         const d = curr.getDate();
 
         if (y === year && m === month) {
-          const dipName = req.dipendenteName;
-          if (statusMap[dipName]) {
-            statusMap[dipName][d] = req;
+          const dipNameClean = (req.dipendenteName || '').trim().toLowerCase();
+          if (statusMap[dipNameClean]) {
+            statusMap[dipNameClean][d] = req;
           }
         }
         curr.setDate(curr.getDate() + 1);
@@ -1759,6 +2070,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
     }
 
     const rowsHtml = sortedDipendenti.map(dip => {
+      const dipKey = (dip.nome || '').trim().toLowerCase();
       const daysCells = Array.from({ length: 31 }).map((_, i) => {
         const day = i + 1;
         if (day > numDays) {
@@ -1774,7 +2086,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         const isSpecialDay = (isWknd || isHoliday) && !isUnlocked;
         const isCessato = dip.dataCessazione && dateStr > dip.dataCessazione;
 
-        const reqObj = statusMap[dip.nome]?.[day];
+        const reqObj = statusMap[dipKey]?.[day];
         const tipo = reqObj?.tipo;
         let cellBg = '';
         let cellText = '';
@@ -2371,18 +2683,20 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
           </button>
 
           {(isHR || isAdmin || isDev) && (
-            <button
-              type="button"
-              onClick={() => setMainTab('contatori_risorse')}
-              className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
-                mainTab === 'contatori_risorse'
-                  ? 'bg-white text-indigo-950 shadow-sm border border-indigo-100'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-              }`}
-            >
-              <BarChart2 className="w-4 h-4 text-indigo-600" />
-              <span>Riepilogo Contatori Risorse (Soci & HR)</span>
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => setMainTab('contatori_risorse')}
+                className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
+                  mainTab === 'contatori_risorse'
+                    ? 'bg-white text-indigo-950 shadow-sm border border-indigo-100'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+                }`}
+              >
+                <BarChart2 className="w-4 h-4 text-indigo-600" />
+                <span>Riepilogo Contatori Risorse (Soci & HR)</span>
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -2836,7 +3150,18 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                       <tr key={stat.dip.id || idx} className="hover:bg-slate-50/80 transition-colors">
                         <td className="p-3.5 font-bold text-gray-900">
                           <div className="flex flex-col">
-                            <span className="text-sm font-extrabold text-gray-900">{stat.dipName}</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAnalyticsResource(stat.dip);
+                                setIsAnalyticsOpen(true);
+                              }}
+                              className="text-left font-extrabold text-sm text-indigo-950 hover:text-indigo-600 flex items-center gap-1.5 cursor-pointer group transition-colors"
+                              title="Clicca per aprire l'analisi grafica dettagliata e il trend storico"
+                            >
+                              <span>{stat.dipName}</span>
+                              <BarChart2 className="w-3.5 h-3.5 text-indigo-500 opacity-60 group-hover:opacity-100 group-hover:scale-110 transition-all" />
+                            </button>
                             <div className="flex items-center gap-1.5 mt-0.5">
                               <span className={`px-1.5 py-0.2 rounded text-[9.5px] font-extrabold uppercase ${
                                 stat.isCollab ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'
@@ -3595,7 +3920,8 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                                if (r.stato === 'Rifiutato') return false;
                                const start = r.dataInizio || r.data;
                                const end = r.dataFine || r.data;
-                               return start && end && dateStr >= start && dateStr <= end && r.dipendenteName === dip.nome;
+                               const matchName = (r.dipendenteName || '').trim().toLowerCase() === (dip.nome || '').trim().toLowerCase();
+                               return start && end && dateStr >= start && dateStr <= end && matchName;
                              });
 
                             let cellBg = '';
@@ -4041,6 +4367,15 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
           </div>
         </div>
       )}
+      {/* MODALE DI ANALISI GRAFICA E TREND RISORSA */}
+      <ResourceAnalyticsModal
+        isOpen={isAnalyticsOpen}
+        onClose={() => setIsAnalyticsOpen(false)}
+        resource={analyticsResource}
+        allRequests={hrRichieste}
+        dipendenti={dipendenti}
+        onEnsureYearLoaded={ensureYearLoaded}
+      />
     </div>
   );
 });

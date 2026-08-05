@@ -17,10 +17,9 @@ Dopo ogni modifica di codice o rilascio di funzionalità, **DEVI SEMPRE AGGIORNA
 ---
 
 ## 🏷️ 3. Procedura di Versionamento
-Quando l'utente chiede di aggiornare la WebApp alla versione attuale o a un nuovo rilascio:
-- Aggiorna il numero di versione e la data nel footer dell'app (`src/App.tsx` o componente footer).
-- Se il numero di versione non è specificato, incrementa automaticamente la versione (es. v1.0.6 → v1.0.7).
-- Verifica che tutti i documenti stampati o generati riportino il numero di versione aggiornato.
+- **SOLO SU RICHIESTA DELL'UTENTE**: Aggiorna il numero di versione e la data nel footer dell'app (`src/config/version.ts`) **SOLTANTO QUANDO L'UTENTE LO CHIEDE ESPLICITAMENTE** (es. "aggiorna la versione della webapp", "rilascia una nuova versione").
+- **NON incrementare la versione ad ogni singola modifica o richiesta**: Durante le lavorazioni ordinarie mantieni invariata la versione esistente finché l'utente non richiede un rilascio formale.
+- Quando l'utente richiede un rilascio o nuovo numero di versione: incrementa la versione (es. v1.0.8 → v1.0.9) e aggiorna i riferimenti nei documenti generati.
 
 ---
 

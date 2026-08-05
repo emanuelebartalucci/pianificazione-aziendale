@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, doc, setDoc, getDocs, query, where, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
+import { collection, doc, setDoc, getDocs, query, where, updateDoc, getDoc, deleteDoc, deleteField } from 'firebase/firestore';
 import { FileText, Printer, Save, Send, CheckCircle, AlertCircle, Edit, Edit3, Trash2, MessageSquare, Clock, MapPin, Check, X, ShieldAlert, Download, RefreshCw, Plus, Bell, ChevronRight } from 'lucide-react';
 import { queueMail } from '../utils/mailSender';
 import ConfirmModal from '../components/ConfirmModal';
@@ -109,6 +109,7 @@ interface RapportinoPresenze {
     ivaRate: number;
     raRate: number;
     compensoMensile: number;
+    premio?: number;
     rimborsoKm: number;
     totaleCompenso: number;
     inps: number;
@@ -239,18 +240,22 @@ export function recalculateCollabData(
     ? Number(collabData.importoFissoMensile)
     : giornate * (collabData.dailyRate || 0);
 
+  const premio = (collabData.premio !== undefined && collabData.premio !== null) ? Number(collabData.premio) : 0;
   const rimborsoKm = (collabData.km || 0) * (collabData.kmRate || 0);
   const bollo = (collabData.bollo !== undefined && collabData.bollo !== null) ? Number(collabData.bollo) : 0;
-  const totaleCompenso = compensoMensile + (collabData.spese || 0) + rimborsoKm + bollo;
-  const inps = (compensoMensile + rimborsoKm) * ((collabData.inpsRate || 0) / 100);
-  const iva = (compensoMensile + rimborsoKm + inps) * ((collabData.ivaRate || 0) / 100);
-  const ra = (compensoMensile + rimborsoKm) * ((collabData.raRate || 0) / 100);
+  
+  const compensoTotaleSoggetto = compensoMensile + premio;
+  const totaleCompenso = compensoTotaleSoggetto + (collabData.spese || 0) + rimborsoKm + bollo;
+  const inps = (compensoTotaleSoggetto + rimborsoKm) * ((collabData.inpsRate || 0) / 100);
+  const iva = (compensoTotaleSoggetto + rimborsoKm + inps) * ((collabData.ivaRate || 0) / 100);
+  const ra = (compensoTotaleSoggetto + rimborsoKm) * ((collabData.raRate || 0) / 100);
   const totaleDovuto = totaleCompenso + inps + iva - ra;
 
   return {
     ...collabData,
     giornate,
     compensoMensile,
+    premio,
     rimborsoKm,
     bollo,
     totaleCompenso,
@@ -322,9 +327,24 @@ export default function Presenze() {
 
   // queueEmailNotification rimossa a favore di queueMail centralizzata
   
+  // Helper per calcolo data iniziale di default (nei primi 15 giorni del mese apre il mese precedente da compilare/fatturare)
+  const getDefaultInitialDate = () => {
+    const now = new Date();
+    if (now.getDate() <= 15) {
+      let prevM = now.getMonth(); // Gen (0) -> Dic (12) anno prec
+      let prevY = now.getFullYear();
+      if (prevM === 0) {
+        prevM = 12;
+        prevY = prevY - 1;
+      }
+      return { month: prevM, year: prevY };
+    }
+    return { month: now.getMonth() + 1, year: now.getFullYear() };
+  };
+
   // Date Selection
-  const [selectedMonth, setSelectedMonth] = useState(() => new Date().getMonth() + 1); // 1-12
-  const [selectedYear, setSelectedYear] = useState(() => new Date().getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState(() => getDefaultInitialDate().month); // 1-12
+  const [selectedYear, setSelectedYear] = useState(() => getDefaultInitialDate().year);
   
   // Mode Selection: 'compila' (employee mode) or 'hr' (admin/hr dashboard)
   const [viewMode, setViewMode] = useState<'compila' | 'hr'>(() => {
@@ -333,7 +353,6 @@ export default function Presenze() {
     return (isHR || isAdmin || socio) ? 'hr' : 'compila';
   });
 
-  // Impostazione automatica del mese/anno per i collaboratori (nei primi 15 giorni del mese apre il mese precedente)
   const [hasSetDefaultDate, setHasSetDefaultDate] = useState(false);
 
   useEffect(() => {
@@ -342,20 +361,14 @@ export default function Presenze() {
 
     const isCollab = isCollaboratore(myAssociatedName, dipendenti);
     if (isCollab) {
-      const now = new Date();
-      if (now.getDate() <= 15) {
-        let prevM = now.getMonth(); // if August (7 in 0-indexed), prevM = 7 (July in 1-indexed)
-        let prevY = now.getFullYear();
-        if (prevM === 0) {
-          prevM = 12;
-          prevY = prevY - 1;
-        }
-        setSelectedMonth(prevM);
-        setSelectedYear(prevY);
+      const defaultDate = getDefaultInitialDate();
+      if (selectedMonth !== defaultDate.month || selectedYear !== defaultDate.year) {
+        setSelectedMonth(defaultDate.month);
+        setSelectedYear(defaultDate.year);
       }
     }
     setHasSetDefaultDate(true);
-  }, [myAssociatedName, dipendenti, hasSetDefaultDate]);
+  }, [myAssociatedName, dipendenti, hasSetDefaultDate, selectedMonth, selectedYear]);
 
   useEffect(() => {
     if (isSocio && viewMode !== 'hr') {
@@ -913,6 +926,8 @@ export default function Presenze() {
       }
 
       const targetEmpName = reviewingRapportino ? reviewingRapportino.dipendenteNome : myAssociatedName;
+      const reqM = selectedMonth;
+      const reqY = selectedYear;
       if ((viewMode === 'compila' && myAssociatedName) || reviewingRapportino) {
         setLoadingSheet(true);
         
@@ -1336,8 +1351,14 @@ export default function Presenze() {
               console.error("Error auto-syncing absences in timesheet sheet load:", syncErr);
             }
           }
+          if (reqM !== selectedMonth || reqY !== selectedYear) {
+            return;
+          }
           setRapportino(finalData);
         } else {
+          if (reqM !== selectedMonth || reqY !== selectedYear) {
+            return;
+          }
           await createPrefilledRapportino();
         }
         setLoadingSheet(false);
@@ -1764,11 +1785,11 @@ export default function Presenze() {
       async () => {
         try {
           const docRef = doc(db, 'presenze', rapportino.id);
-          const updated: RapportinoPresenze = {
-            ...rapportino,
-            richiestaSblocco: undefined
-          };
-          await setDoc(docRef, updated);
+          await updateDoc(docRef, {
+            richiestaSblocco: deleteField()
+          });
+          const updated = { ...rapportino };
+          delete updated.richiestaSblocco;
           setRapportino(updated);
           showToast("Richiesta di sblocco annullata con successo.");
           loadPresenzeData();
@@ -2363,6 +2384,7 @@ export default function Presenze() {
         "Giornate Lavorate",
         "Tariffa Giornaliera (€)",
         "Compenso Mensile (€)",
+        "Premio (€)",
         "Spese (€)",
         "Km Percorsi",
         "Tariffa Km (€/km)",
@@ -2426,6 +2448,7 @@ export default function Presenze() {
           cData ? cData.giornate.toString() : "0",
           cData ? cData.dailyRate.toString() : "0",
           cData ? cData.compensoMensile.toFixed(2) : "0.00",
+          cData ? (cData.premio || 0).toFixed(2) : "0.00",
           cData ? cData.spese.toFixed(2) : "0.00",
           cData ? cData.km.toString() : "0",
           cData ? cData.kmRate.toString() : "0.3",
@@ -2504,6 +2527,7 @@ export default function Presenze() {
         "Giornate Lavorate",
         "Tariffa Giornaliera (€)",
         "Compenso Mensile (€)",
+        "Premio (€)",
         "Spese (€)",
         "Km Percorsi",
         "Tariffa Km (€/km)",
@@ -2573,6 +2597,7 @@ export default function Presenze() {
             cData ? cData.giornate.toString() : "0",
             cData ? cData.dailyRate.toString() : "0",
             cData ? cData.compensoMensile.toFixed(2) : "0.00",
+            cData ? (cData.premio || 0).toFixed(2) : "0.00",
             cData ? cData.spese.toFixed(2) : "0.00",
             cData ? cData.km.toString() : "0",
             cData ? cData.kmRate.toString() : "0.3",
@@ -2654,6 +2679,7 @@ export default function Presenze() {
         ["Giornate Lavorate", cData.giornate.toString()],
         ["Tariffa Giornaliera (€)", cData.dailyRate.toString()],
         ["Compenso Mensile (€)", cData.compensoMensile.toFixed(2)],
+        ["Premio (€)", (cData.premio || 0).toFixed(2)],
         ["Spese (€)", cData.spese.toFixed(2)],
         ["Km Percorsi", cData.km.toString()],
         ["Tariffa Km (€/km)", cData.kmRate.toString()],
@@ -3038,7 +3064,7 @@ export default function Presenze() {
 
   // Riepilogo mesi con pratiche in attesa di approvazione (per banner smart HR / Soci)
   const pendingMonthsSummary = useMemo(() => {
-    if (!isHR && !isSocio) return [];
+    if (!isHR || isSocio) return [];
 
     const map = new Map<string, { mese: number; anno: number; count: number; dipCount: number; collabCount: number }>();
 
@@ -3121,7 +3147,11 @@ export default function Presenze() {
           <div>
             <div className="flex items-center gap-3">
               <h2 className="text-3xl font-extrabold text-gray-900 tracking-tight">
-                {isCollaboratore(myAssociatedName, dipendenti) || isSocio ? 'Bozza Fattura' : 'Registro Presenze'}
+                {isSocio 
+                  ? 'Riepilogo Ore e Bozze' 
+                  : isCollaboratore(myAssociatedName, dipendenti) 
+                    ? 'Bozza Fattura' 
+                    : 'Registro Presenze'}
               </h2>
               <button 
                 onClick={loadPresenzeData}
@@ -3132,9 +3162,11 @@ export default function Presenze() {
               </button>
             </div>
             <p className="text-xs text-gray-500 font-semibold mt-0.5">
-              {isCollaboratore(myAssociatedName, dipendenti) || isSocio
-                ? 'Gestione bozza fattura mensile e rimborsi spese'
-                : 'Gestione foglio ore e riepilogo mensile per amministrazione'}
+              {isSocio
+                ? 'Riepilogo mensile dei fogli ore e delle bozze fattura delle risorse'
+                : isCollaboratore(myAssociatedName, dipendenti)
+                  ? 'Gestione bozza fattura mensile e rimborsi spese'
+                  : 'Gestione foglio ore e riepilogo mensile per amministrazione'}
             </p>
           </div>
         </div>
@@ -3163,8 +3195,8 @@ export default function Presenze() {
         )}
       </div>
 
-      {/* BANNER NOTIFICHE INTELLIGENTE PER HR / SOCI (A LARGHEZZA INTERA SOTTO L'HEADER) */}
-      {(isHR || isSocio) && pendingMonthsSummary.length > 0 && (
+      {/* BANNER NOTIFICHE INTELLIGENTE PER HR (A LARGHEZZA INTERA SOTTO L'HEADER, NASCOSTO PER I SOCI) */}
+      {isHR && !isSocio && pendingMonthsSummary.length > 0 && (
         <div className="w-full bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 text-white rounded-[2rem] p-4 sm:p-6 shadow-xl border border-amber-400/40 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 animate-in fade-in slide-in-from-top-4 duration-300">
           <div className="flex items-center gap-3.5">
             <div className="p-3 bg-white/20 backdrop-blur-md rounded-2xl shrink-0 text-amber-100">
@@ -3315,7 +3347,7 @@ export default function Presenze() {
                 className={`px-5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${hrTab === 'dipendenti' ? 'bg-white text-indigo-700 shadow-sm font-extrabold' : 'text-gray-500 hover:text-gray-700'}`}
               >
                 <span>Dipendenti</span>
-                {(isHR || isSocio) && pendingDipCount > 0 && (
+                {isHR && !isSocio && pendingDipCount > 0 && (
                   <span className="bg-red-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">
                     {pendingDipCount}
                   </span>
@@ -3326,7 +3358,7 @@ export default function Presenze() {
                 className={`px-5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${hrTab === 'collaboratori' ? 'bg-white text-indigo-700 shadow-sm font-extrabold' : 'text-gray-500 hover:text-gray-700'}`}
               >
                 <span>Collaboratori (P. IVA)</span>
-                {(isHR || isSocio) && pendingCollabCount > 0 && (
+                {isHR && !isSocio && pendingCollabCount > 0 && (
                   <span className="bg-red-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">
                     {pendingCollabCount}
                   </span>
@@ -3421,13 +3453,13 @@ export default function Presenze() {
                                 {sheet?.collaboratoreData ? `${formatDec(sheet.collaboratoreData.giornate)} gg` : '-'}
                               </td>
                               <td className="p-4 text-right font-semibold text-gray-700">
-                                {sheet?.collaboratoreData ? `${formatDec(sheet.collaboratoreData.spese.toFixed(2))} €` : '-'}
+                                {sheet?.collaboratoreData ? `${formatMoney(sheet.collaboratoreData.spese)} €` : '-'}
                               </td>
                               <td className="p-4 text-right font-semibold text-gray-700">
-                                {sheet?.collaboratoreData ? `${formatDec(sheet.collaboratoreData.rimborsoKm.toFixed(2))} €` : '-'}
+                                {sheet?.collaboratoreData ? `${formatMoney(sheet.collaboratoreData.rimborsoKm)} €` : '-'}
                               </td>
                               <td className="p-4 text-right font-bold text-indigo-600">
-                                {sheet?.collaboratoreData ? `${formatDec(sheet.collaboratoreData.totaleDovuto.toFixed(2))} €` : '-'}
+                                {sheet?.collaboratoreData ? `${formatMoney(sheet.collaboratoreData.totaleDovuto)} €` : '-'}
                               </td>
                             </>
                           )}
@@ -3840,6 +3872,34 @@ export default function Presenze() {
                                 </tr>
                               </>
                             )}
+
+                             {/* PREMIO */}
+                             <tr className="hover:bg-amber-50/20">
+                               <td className="p-3 border-r border-gray-200 font-semibold text-emerald-900">
+                                 Premio
+                                 <span className="ml-1 text-[9px] text-emerald-600 font-normal block sm:inline">(eventuale bonus / una tantum)</span>
+                               </td>
+                               <td className="p-3 border-r border-gray-200 text-center">
+                                 <div className="flex items-center justify-center w-full">
+                                   <div className="flex items-center gap-1.5 w-32 justify-start">
+                                     <input 
+                                       type="number"
+                                       step="any"
+                                       min="0"
+                                       disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                       value={rapportino.collaboratoreData.premio ? rapportino.collaboratoreData.premio : ''}
+                                       onChange={e => handleCollabFieldChange('premio', e.target.value === '' ? 0 : Number(e.target.value))}
+                                       style={{ border: '1.5px solid #10b981', width: '65px' }}
+                                       className="p-1 text-xs text-right bg-emerald-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-emerald-300"
+                                     />
+                                     <span className="text-xs font-bold text-emerald-900 w-10 text-left">€</span>
+                                   </div>
+                                 </div>
+                               </td>
+                               <td className="p-3 text-right font-bold text-emerald-900">
+                                 {formatMoney(rapportino.collaboratoreData.premio || 0)} €
+                               </td>
+                             </tr>
 
                             {/* SPESE & KM */}
                             <tr className="hover:bg-amber-50/20">
@@ -4968,41 +5028,64 @@ export default function Presenze() {
                   )}
                 </div>
 
-                {/* Sezione 1: Certificati (Stampati in PDF) */}
-                <div className="bg-emerald-50/40 p-4 rounded-xl border border-emerald-200 flex flex-col justify-between">
-                  <div className="flex justify-between items-center mb-1">
-                    <div className="text-[10px] text-emerald-900 font-extrabold uppercase flex items-center gap-1">
-                      <FileText className="w-3.5 h-3.5 text-emerald-600" />
-                      Certificati
+                {isCollab ? (
+                  /* SEZIONE UNICA PER I COLLABORATORI P.IVA (NON HANNO CERTIFICATI MEDICI) */
+                  <div className="md:col-span-2 bg-amber-50/40 p-4 rounded-xl border border-amber-200 flex flex-col justify-between">
+                    <div className="flex justify-between items-center mb-1">
+                      <div className="text-[10px] text-amber-950 font-extrabold uppercase flex items-center gap-1">
+                        <MessageSquare className="w-3.5 h-3.5 text-amber-600" />
+                        Note e Comunicazioni Collaboratore
+                      </div>
+                      <span className="text-[9px] font-extrabold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">Bozza Fattura</span>
                     </div>
-                    <span className="text-[9px] font-extrabold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">Incluso in PDF</span>
+                    <textarea
+                      rows={2}
+                      value={reviewingRapportino.noteDipendente || reviewingRapportino.comunicazioniHR || ''}
+                      onChange={e => setReviewingRapportino({ ...reviewingRapportino, noteDipendente: e.target.value, comunicazioniHR: e.target.value })}
+                      placeholder="Note o comunicazioni inserite dal collaboratore per la fattura..."
+                      className="w-full text-xs font-medium text-gray-800 bg-white p-2 border border-amber-200 rounded-lg outline-none focus:ring-1 focus:ring-amber-500"
+                    />
                   </div>
-                  <textarea
-                    rows={2}
-                    value={reviewingRapportino.noteDipendente || ''}
-                    onChange={e => setReviewingRapportino({ ...reviewingRapportino, noteDipendente: e.target.value })}
-                    placeholder="Certificati medici, protocolli o note ufficiali..."
-                    className="w-full text-xs font-medium text-gray-800 bg-white p-2 border border-emerald-200 rounded-lg outline-none focus:ring-1 focus:ring-emerald-500"
-                  />
-                </div>
+                ) : (
+                  /* SEZIONE A 2 SCHEDE SEPARATE PER I DIPENDENTI (CERTIFICATI + COMUNICAZIONI HR) */
+                  <>
+                    {/* Sezione 1: Certificati (Stampati in PDF) */}
+                    <div className="bg-emerald-50/40 p-4 rounded-xl border border-emerald-200 flex flex-col justify-between">
+                      <div className="flex justify-between items-center mb-1">
+                        <div className="text-[10px] text-emerald-900 font-extrabold uppercase flex items-center gap-1">
+                          <FileText className="w-3.5 h-3.5 text-emerald-600" />
+                          Certificati
+                        </div>
+                        <span className="text-[9px] font-extrabold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">Incluso in PDF</span>
+                      </div>
+                      <textarea
+                        rows={2}
+                        value={reviewingRapportino.noteDipendente || ''}
+                        onChange={e => setReviewingRapportino({ ...reviewingRapportino, noteDipendente: e.target.value })}
+                        placeholder="Certificati medici, protocolli o note ufficiali..."
+                        className="w-full text-xs font-medium text-gray-800 bg-white p-2 border border-emerald-200 rounded-lg outline-none focus:ring-1 focus:ring-emerald-500"
+                      />
+                    </div>
 
-                {/* Sezione 2: Comunicazioni per l'HR (Uso Interno - Escluso da Stampa) */}
-                <div className="bg-indigo-50/40 p-4 rounded-xl border border-indigo-200 no-print flex flex-col justify-between">
-                  <div className="flex justify-between items-center mb-1">
-                    <div className="text-[10px] text-indigo-950 font-extrabold uppercase flex items-center gap-1">
-                      <MessageSquare className="w-3.5 h-3.5 text-indigo-600" />
-                      Comunicazioni HR
+                    {/* Sezione 2: Comunicazioni per l'HR (Uso Interno - Escluso da Stampa) */}
+                    <div className="bg-indigo-50/40 p-4 rounded-xl border border-indigo-200 no-print flex flex-col justify-between">
+                      <div className="flex justify-between items-center mb-1">
+                        <div className="text-[10px] text-indigo-950 font-extrabold uppercase flex items-center gap-1">
+                          <MessageSquare className="w-3.5 h-3.5 text-indigo-600" />
+                          Comunicazioni HR
+                        </div>
+                        <span className="text-[9px] font-bold bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">Escluso da PDF</span>
+                      </div>
+                      <textarea
+                        rows={2}
+                        value={reviewingRapportino.comunicazioniHR || ''}
+                        onChange={e => setReviewingRapportino({ ...reviewingRapportino, comunicazioniHR: e.target.value })}
+                        placeholder="Messaggi interni dal dipendente all'HR..."
+                        className="w-full text-xs font-medium text-gray-800 bg-white p-2 border border-indigo-200 rounded-lg outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
                     </div>
-                    <span className="text-[9px] font-bold bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">Escluso da PDF</span>
-                  </div>
-                  <textarea
-                    rows={2}
-                    value={reviewingRapportino.comunicazioniHR || ''}
-                    onChange={e => setReviewingRapportino({ ...reviewingRapportino, comunicazioniHR: e.target.value })}
-                    placeholder="Messaggi interni dal dipendente all'HR..."
-                    className="w-full text-xs font-medium text-gray-800 bg-white p-2 border border-indigo-200 rounded-lg outline-none focus:ring-1 focus:ring-indigo-500"
-                  />
-                </div>
+                  </>
+                )}
               </div>
 
               {isCollaboratore(reviewingRapportino.dipendenteNome, dipendenti) ? (
@@ -5140,6 +5223,34 @@ export default function Presenze() {
                             </tr>
                           </>
                         )}
+
+                        {/* PREMIO */}
+                        <tr className="hover:bg-amber-50/20">
+                          <td className="p-2.5 border-r border-gray-200 font-semibold text-emerald-900">
+                            Premio
+                            <span className="ml-1 text-[9px] text-emerald-600 font-normal block sm:inline">(eventuale bonus / una tantum)</span>
+                          </td>
+                          <td className="p-2.5 border-r border-gray-200 text-center">
+                            <div className="flex items-center justify-center w-full">
+                              <div className="flex items-center gap-1.5 w-32 justify-start">
+                                <input 
+                                  type="number"
+                                  step="any"
+                                  min="0"
+                                  disabled={reviewingRapportino.stato === 'Approvato'}
+                                  value={reviewingRapportino.collaboratoreData.premio ? reviewingRapportino.collaboratoreData.premio : ''}
+                                  onChange={e => handleReviewCollabFieldChange('premio', e.target.value === '' ? 0 : Number(e.target.value))}
+                                  style={{ border: '1.5px solid #10b981', width: '65px' }}
+                                  className="p-1 text-xs text-right bg-emerald-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-emerald-300"
+                                />
+                                <span className="text-xs font-bold text-emerald-900 w-10 text-left">€</span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-2.5 text-right font-bold text-emerald-900">
+                            {formatMoney(reviewingRapportino.collaboratoreData.premio || 0)} €
+                          </td>
+                        </tr>
 
                         {/* SPESE & KM */}
                         <tr className="hover:bg-amber-50/20">

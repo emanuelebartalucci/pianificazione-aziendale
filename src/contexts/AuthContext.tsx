@@ -336,6 +336,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return () => unsubPriority();
   }, [user]);
 
+  // Listener real-time per assegnazioni (sincronizzazione immediata della pianificazione)
+  useEffect(() => {
+    if (!user) return;
+    const unsubAssegnazioni = onSnapshot(collection(db, 'assegnazioni'), (snap) => {
+      const assMap: Record<string, any[]> = {};
+      snap.forEach(docSnap => {
+        assMap[docSnap.id] = docSnap.data().lista || [];
+      });
+      setAssegnazioni(assMap);
+    });
+    return () => unsubAssegnazioni();
+  }, [user]);
+
   // Calcolo ruoli derivati
   const realEmail = user?.email?.toLowerCase().trim() || '';
   const isDevEmail = (email: string) => {

@@ -492,10 +492,11 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     const mon = new Date(fm); mon.setDate(fm.getDate() + (week - 1) * 7);
     return mon;
   };
-  const fmtShort = (d: Date | null): string => {
+  const fmtShort = (d: Date | null, includeYear: boolean = false): string => {
     if (!d) return '';
     const M = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
-    return `${d.getDate()} ${M[d.getMonth()]}`;
+    const base = `${d.getDate()} ${M[d.getMonth()]}`;
+    return includeYear ? `${base} ${d.getFullYear()}` : base;
   };
 
   const buildSubLabel = (g: string[]): string => {
@@ -504,7 +505,16 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     const mon = getWkMonday(g[0]);
     const fri = getWkMonday(g[g.length - 1]);
     if (fri) fri.setDate(fri.getDate() + 4);
-    const dateRange = `${fmtShort(mon)} – ${fmtShort(fri)}`;
+
+    let dateRange = '';
+    if (mon && fri) {
+      if (mon.getFullYear() === fri.getFullYear()) {
+        dateRange = `${fmtShort(mon)} – ${fmtShort(fri)} ${fri.getFullYear()}`;
+      } else {
+        dateRange = `${fmtShort(mon, true)} – ${fmtShort(fri, true)}`;
+      }
+    }
+
     if (g.length === 1) return `Sett. ${sWk}  ·  ${dateRange}`;
     return `Sett. ${sWk} → ${eWk}  ·  ${dateRange}`;
   };
