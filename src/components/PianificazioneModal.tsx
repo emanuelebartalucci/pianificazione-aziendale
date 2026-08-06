@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { doc, writeBatch } from 'firebase/firestore';
+import { doc, writeBatch, collection, addDoc } from 'firebase/firestore';
 import { getStartOfWeek, addDays, getWeekNumber } from '../utils/date';
 import { addPendingNotification } from '../utils/pendingNotifications';
+import { queueMail } from '../utils/mailSender';
 import { isSoci } from '../pages/Impostazioni';
 import { 
   X, 
@@ -16,13 +17,14 @@ import {
   ArrowRightLeft,
   CheckCircle2,
   AlertTriangle,
-  Lock
+  Lock,
+  Send
 } from 'lucide-react';
 
 export interface PianificazioneModalProps {
   isOpen: boolean;
   onClose: () => void;
-  initialTab?: 'commessa' | 'risorsa' | 'sostituisci';
+  initialTab?: 'commessa' | 'risorsa' | 'sostituisci' | 'altre-commesse';
   initialCommessaId?: string;
   initialResourceName?: string;
   initialWeekId?: string;
@@ -84,7 +86,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     approvedLeaves = []
   } = useAuth();
 
-  const [activeTab, setActiveTab] = useState<'commessa' | 'risorsa' | 'sostituisci'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'commessa' | 'risorsa' | 'sostituisci' | 'altre-commesse'>(initialTab);
   const [selectedCommessaId, setSelectedCommessaId] = useState(initialCommessaId);
   const [selectedResourceForTab, setSelectedResourceForTab] = useState(initialResourceName);
 
@@ -98,6 +100,15 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
   // Per aggiungere commessa a risorsa
   const [addCommessaId, setAddCommessaId] = useState('');
   const [addCommessaPercentage, setAddCommessaPercentage] = useState('100');
+
+  // Per Tab Altre Commesse (Richiesta inserimento per Coordinatori)
+  const [altreReqCommessaId, setAltreReqCommessaId] = useState('');
+  const [altreReqResourceName, setAltreReqResourceName] = useState('');
+  const [altreReqStartWeekId, setAltreReqStartWeekId] = useState('');
+  const [altreReqEndWeekId, setAltreReqEndWeekId] = useState('');
+  const [altreReqPercentage, setAltreReqPercentage] = useState('100');
+  const [altreReqNota, setAltreReqNota] = useState('');
+  const [isSubmittingAltreReq, setIsSubmittingAltreReq] = useState(false);
 
   // Priorità commessa per la settimana selezionata
   const [selectedPriority, setSelectedPriority] = useState<'Alta' | 'Standard' | 'Bassa'>('Standard');
@@ -754,6 +765,9 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
       const allKeys = new Set([...Object.keys(draftAssignments), ...Object.keys(assegnazioni)]);
       let writeCount = 0;
 
+      const isCoordinatoreUser = (coordinatori || []).some(c => c.email?.toLowerCase() === userEmail?.toLowerCase()) || myCoordinatedAreas.length > 0;
+      const coordSelfChangesByCommessa: Record<string, { commessaName: string; weekLabels: string[]; pmsAndRespEmails: string[] }> = {};
+
       allKeys.forEach(key => {
         const currentList = draftAssignments[key] || [];
         const dbList = assegnazioni[key] || [];
@@ -777,9 +791,47 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
             const wkId = parts.slice(-2).join('-');
             const targetDip = dipendenti.find(d => d.nome === resName);
             const isSelfRes = (targetDip?.email?.toLowerCase() === (userEmail || '').toLowerCase()) || areNamesEqual(resName, myAssociatedName || undefined);
+            
             if (targetDip && targetDip.email && !isSelfRes) {
               const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
               addPendingNotification(resName, targetDip.email, wkLabel, `Aggiornate assegnazioni commessa`, userEmail || undefined, myAssociatedName || undefined);
+            }
+
+            // Traccia notifiche per Coordinatori su commesse altrui
+            if (isCoordinatoreUser && isSelfRes) {
+              const modifiedCommIds = new Set<string>();
+              currentList.forEach((a: any) => modifiedCommIds.add(a.commessaId));
+              dbList.forEach((a: any) => modifiedCommIds.add(a.commessaId));
+
+              modifiedCommIds.forEach(commId => {
+                const commObj = commesse.find(c => c.id === commId);
+                if (commObj && !isUserPmOrResp(commObj)) {
+                  const targets = [commObj.responsabile, ...(Array.isArray(commObj.pm) ? commObj.pm : [commObj.pm])].filter(Boolean);
+                  const recipientEmails: string[] = [];
+                  targets.forEach(t => {
+                    const matchedDip = dipendenti.find(d => d.email && (areNamesEqual(d.nome, String(t)) || d.email.toLowerCase().includes(String(t).toLowerCase())));
+                    if (matchedDip?.email && matchedDip.email.toLowerCase() !== userEmail.toLowerCase()) {
+                      if (!recipientEmails.includes(matchedDip.email.toLowerCase())) {
+                        recipientEmails.push(matchedDip.email.toLowerCase());
+                      }
+                    }
+                  });
+
+                  if (recipientEmails.length > 0) {
+                    if (!coordSelfChangesByCommessa[commId]) {
+                      coordSelfChangesByCommessa[commId] = {
+                        commessaName: commObj.nome || commId,
+                        weekLabels: [],
+                        pmsAndRespEmails: recipientEmails
+                      };
+                    }
+                    const wkLabel = `Sett. ${wkId.split('-W')[1] || wkId}`;
+                    if (!coordSelfChangesByCommessa[commId].weekLabels.includes(wkLabel)) {
+                      coordSelfChangesByCommessa[commId].weekLabels.push(wkLabel);
+                    }
+                  }
+                }
+              });
             }
           }
         }
@@ -804,6 +856,26 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
 
       if (writeCount > 0) {
         await batch.commit();
+
+        // Spedisci notifiche email ai responsabili/PM per le variazioni del Coordinatore
+        for (const commId of Object.keys(coordSelfChangesByCommessa)) {
+          const item = coordSelfChangesByCommessa[commId];
+          if (item.pmsAndRespEmails.length > 0) {
+            const subject = `[Pianificazione] Aggiornamento percentuale Coordinatore su commessa ${item.commessaName}`;
+            const htmlBody = `
+              <div style="font-family: Arial, sans-serif; color: #1e293b; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                <h2 style="color: #4f46e5; margin-top: 0;">ℹ️ Variazione Carico da Coordinatore</h2>
+                <p>Ciao,</p>
+                <p>Ti informiamo che il coordinatore <strong>${myAssociatedName || userEmail}</strong> ha aggiornato la propria percentuale di presenza sulla tua commessa <strong>${item.commessaName}</strong>.</p>
+                <p><strong>Settimane interessate:</strong> ${item.weekLabels.join(', ')}</p>
+                <p style="margin-top:16px;">Accedi alla <strong>Pianificazione del Personale e Carichi</strong> per visualizzare il dettaglio aggiornato.</p>
+              </div>
+            `;
+            for (const email of item.pmsAndRespEmails) {
+              await queueMail(email, subject, htmlBody).catch(e => console.error("Errore invio mail a responsabile:", e));
+            }
+          }
+        }
       }
 
       showToast("Modifiche salvate con successo!", "success");
@@ -910,6 +982,21 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                 <ArrowRightLeft className="w-4 h-4" />
                 <span>Sostituzione Risorsa</span>
               </button>
+
+              {(myCoordinatedAreas.length > 0 || (coordinatori || []).some(c => c.email?.toLowerCase() === userEmail?.toLowerCase()) || isAdmin || isDev || isSoci(myAssociatedName)) && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('altre-commesse')}
+                  className={`px-4 py-2.5 font-extrabold text-xs sm:text-sm rounded-t-xl transition-all flex items-center gap-2 cursor-pointer ${
+                    activeTab === 'altre-commesse'
+                      ? 'bg-amber-600 text-white shadow-md'
+                      : 'text-amber-800 hover:bg-amber-100/60'
+                  }`}
+                >
+                  <Send className="w-4 h-4" />
+                  <span>Altre Commesse (Richiesta)</span>
+                </button>
+              )}
             </div>
           )}
 
@@ -1044,7 +1131,9 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                         ) : (
                           risorseAssegnateAllaCommessa.map(r => {
                             const dipObj = filteredDipendenti.find(d => d.nome === r.nome);
-                            const isOwnArea = isAdmin || isDev || isSoci(myAssociatedName) || isPmOfSelectedCommessa;
+                            const isCoordinatoreUser = (coordinatori || []).some(c => c.email?.toLowerCase() === userEmail?.toLowerCase()) || myCoordinatedAreas.length > 0;
+                            const isSelfRes = (dipObj?.email?.toLowerCase() === (userEmail || '').toLowerCase()) || areNamesEqual(r.nome, myAssociatedName || undefined);
+                            const isOwnArea = isAdmin || isDev || isSoci(myAssociatedName) || isPmOfSelectedCommessa || (isCoordinatoreUser && isSelfRes);
 
                             // Calcola i sotto-periodi per questa risorsa
                             const subperiods = computeSubperiods(r.percentuali, allWeekIds);
@@ -1572,6 +1661,227 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                 </button>
               </div>
 
+            </div>
+          )}
+
+          {/* TAB 4: ALTRE COMMESSE (RICHIESTA INSERIMENTO PER COORDINATORI) */}
+          {activeTab === 'altre-commesse' && (
+            <div className="flex flex-col gap-5">
+              <div className="bg-amber-50/60 p-5 rounded-2xl border border-amber-200/80 flex flex-col gap-4 shadow-xs">
+                <div className="flex items-center gap-3 border-b border-amber-200/60 pb-3">
+                  <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center font-black text-lg shrink-0">
+                    ✉️
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black text-amber-950">Richiesta Inserimento in Commessa Aperta</h4>
+                    <p className="text-xs text-amber-800 font-medium">
+                      Come coordinatore puoi consultare le commesse aziendali di altri responsabili e inviare una richiesta formale di assegnazione per te o per risorse della tua area.
+                    </p>
+                  </div>
+                </div>
+
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    if (!altreReqCommessaId) {
+                      alert("Seleziona una commessa!");
+                      return;
+                    }
+                    const resTarget = altreReqResourceName || myAssociatedName;
+                    if (!resTarget) {
+                      alert("Seleziona una risorsa da inserire!");
+                      return;
+                    }
+
+                    const stWk = altreReqStartWeekId || selectedStartWeekId;
+                    const enWk = altreReqEndWeekId || selectedEndWeekId;
+
+                    setIsSubmittingAltreReq(true);
+                    try {
+                      const targetComm = commesse.find(c => c.id === altreReqCommessaId);
+                      const commName = targetComm?.nome || 'Commessa';
+                      const startOpt = selectableWeekOptions.find(o => o.id === stWk);
+                      const endOpt = selectableWeekOptions.find(o => o.id === enWk);
+
+                      const dataInizio = startOpt ? startOpt.mondayStr : stWk;
+                      const dataFine = endOpt ? endOpt.sundayStr : enWk;
+
+                      const resDipObj = dipendenti.find(d => d.nome === resTarget);
+                      const reqAreaTarget = resDipObj?.macroArea || 'Disegnatori';
+
+                      await addDoc(collection(db, 'richieste_disegnatori'), {
+                        commessaId: altreReqCommessaId,
+                        commessaName: commName,
+                        richiedenteNome: myAssociatedName || userEmail,
+                        richiedenteEmail: userEmail,
+                        risorsaPreferita: resTarget,
+                        area: reqAreaTarget,
+                        dataInizio,
+                        dataFine,
+                        weekStart: stWk,
+                        weekEnd: enWk,
+                        percentuale: Number(altreReqPercentage),
+                        nota: altreReqNota || '',
+                        stato: 'in_attesa',
+                        createdAt: new Date().toISOString()
+                      });
+
+                      if (targetComm) {
+                        const pmsAndRespNames = [targetComm.responsabile, ...(Array.isArray(targetComm.pm) ? targetComm.pm : [targetComm.pm])].filter(Boolean);
+                        const recipientEmails: string[] = [];
+                        pmsAndRespNames.forEach(t => {
+                          const matchedDip = dipendenti.find(d => d.email && (areNamesEqual(d.nome, String(t)) || d.email.toLowerCase().includes(String(t).toLowerCase())));
+                          if (matchedDip?.email && matchedDip.email.toLowerCase() !== userEmail.toLowerCase()) {
+                            if (!recipientEmails.includes(matchedDip.email.toLowerCase())) {
+                              recipientEmails.push(matchedDip.email.toLowerCase());
+                            }
+                          }
+                        });
+
+                        if (recipientEmails.length > 0) {
+                          const subject = `[Pianificazione] Richiesta inserimento risorsa in commessa ${commName}`;
+                          const htmlBody = `
+                            <div style="font-family: Arial, sans-serif; color: #1e293b; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px;">
+                              <h2 style="color: #d97706; margin-top: 0;">📥 Richiesta Inserimento in Commessa</h2>
+                              <p>Ciao,</p>
+                              <p>Il coordinatore <strong>${myAssociatedName || userEmail}</strong> ha inviato una richiesta di inserimento per la risorsa <strong>${resTarget}</strong> sulla tua commessa <strong>${commName}</strong>.</p>
+                              <table border="0" cellpadding="6" cellspacing="0" style="font-size:13px;color:#374151;width:100%;margin-top:12px;">
+                                <tr><td style="font-weight:bold;width:180px">Commessa:</td><td>${commName}</td></tr>
+                                <tr><td style="font-weight:bold">Risorsa Proposta:</td><td><strong style="color:#4f46e5">${resTarget}</strong></td></tr>
+                                <tr><td style="font-weight:bold">Periodo:</td><td>dal ${dataInizio} al ${dataFine} (${startOpt?.label || ''} - ${endOpt?.label || ''})</td></tr>
+                                <tr><td style="font-weight:bold">Carico Richiesto:</td><td>${altreReqPercentage}%</td></tr>
+                                ${altreReqNota ? `<tr><td style="font-weight:bold">Nota:</td><td><em>${altreReqNota}</em></td></tr>` : ''}
+                              </table>
+                              <p style="margin-top:16px;">Accedi alla <strong>Pianificazione del Personale e Carichi</strong> per valutare ed approvare la richiesta.</p>
+                            </div>
+                          `;
+                          for (const email of recipientEmails) {
+                            await queueMail(email, subject, htmlBody).catch(e => console.error("Errore invio mail richiesta:", e));
+                          }
+                        }
+                      }
+
+                      alert(`Richiesta per la commessa "${commName}" inoltrata con successo al responsabile!`);
+                      setAltreReqCommessaId('');
+                      setAltreReqNota('');
+                    } catch (err) {
+                      console.error("Errore invio richiesta altre commesse:", err);
+                      alert("Errore durante l'invio della richiesta.");
+                    } finally {
+                      setIsSubmittingAltreReq(false);
+                    }
+                  }}
+                  className="flex flex-col gap-4 mt-2"
+                >
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Commessa Target */}
+                    <div>
+                      <label className="block text-xs font-bold text-amber-950 mb-1">Commessa Aperta Target *</label>
+                      <select
+                        required
+                        value={altreReqCommessaId}
+                        onChange={e => setAltreReqCommessaId(e.target.value)}
+                        className="w-full p-2.5 border border-amber-200 bg-white rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 shadow-2xs cursor-pointer"
+                      >
+                        <option value="">-- Seleziona una commessa aperta --</option>
+                        {commesse
+                          .filter(c => (!c.stato || c.stato !== 'Chiusa') && !isUserPmOrResp(c))
+                          .map(c => (
+                            <option key={c.id} value={c.id}>
+                              {c.nome} {c.responsabile ? `(Resp: ${c.responsabile})` : ''}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+
+                    {/* Risorsa da Assegnare */}
+                    <div>
+                      <label className="block text-xs font-bold text-amber-950 mb-1">Risorsa da Inserire *</label>
+                      <select
+                        value={altreReqResourceName || myAssociatedName || ''}
+                        onChange={e => setAltreReqResourceName(e.target.value)}
+                        className="w-full p-2.5 border border-amber-200 bg-white rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 shadow-2xs cursor-pointer"
+                      >
+                        {myAssociatedName && (
+                          <option value={myAssociatedName}>Me stesso ({myAssociatedName})</option>
+                        )}
+                        {filteredDipendenti
+                          .filter(d => d.nome !== myAssociatedName && myCoordinatedAreas.includes(d.macroArea || ''))
+                          .map(d => (
+                            <option key={d.id} value={d.nome}>{d.nome} ({d.macroArea})</option>
+                          ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    {/* Settimana Inizio */}
+                    <div>
+                      <label className="block text-xs font-bold text-amber-950 mb-1">Settimana Inizio *</label>
+                      <select
+                        value={altreReqStartWeekId || selectedStartWeekId}
+                        onChange={e => setAltreReqStartWeekId(e.target.value)}
+                        className="w-full p-2 border border-amber-200 bg-white rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 shadow-2xs cursor-pointer"
+                      >
+                        {selectableWeekOptions.map(w => (
+                          <option key={w.id} value={w.id}>{w.label}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Settimana Fine */}
+                    <div>
+                      <label className="block text-xs font-bold text-amber-950 mb-1">Settimana Fine *</label>
+                      <select
+                        value={altreReqEndWeekId || selectedEndWeekId}
+                        onChange={e => setAltreReqEndWeekId(e.target.value)}
+                        className="w-full p-2 border border-amber-200 bg-white rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 shadow-2xs cursor-pointer"
+                      >
+                        {selectableWeekOptions.map(w => (
+                          <option key={w.id} value={w.id}>{w.label}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Percentuale Carico */}
+                    <div>
+                      <label className="block text-xs font-bold text-amber-950 mb-1">Percentuale Carico *</label>
+                      <select
+                        value={altreReqPercentage}
+                        onChange={e => setAltreReqPercentage(e.target.value)}
+                        className="w-full p-2 border border-amber-200 bg-white rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 shadow-2xs cursor-pointer"
+                      >
+                        {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
+                          <option key={pct} value={pct}>{pct}%</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Nota per il responsabile */}
+                  <div>
+                    <label className="block text-xs font-bold text-amber-950 mb-1">
+                      Nota per il Responsabile di Commessa <span className="text-[10px] text-gray-400 font-normal italic">(Facoltativa)</span>
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={altreReqNota}
+                      onChange={e => setAltreReqNota(e.target.value)}
+                      placeholder="Indica dettagli sull'attività prevista o disponibilità..."
+                      className="w-full p-2.5 border border-amber-200 bg-white rounded-xl text-xs font-medium text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 shadow-inner"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isSubmittingAltreReq || !altreReqCommessaId}
+                    className="w-full flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-700 text-white font-extrabold py-3 rounded-xl transition shadow-md active:scale-95 disabled:opacity-50 cursor-pointer text-xs mt-1"
+                  >
+                    <Send className="w-4 h-4" />
+                    <span>{isSubmittingAltreReq ? 'Invio richiesta in corso...' : '✉️ Invia Richiesta al Responsabile'}</span>
+                  </button>
+                </form>
+              </div>
             </div>
           )}
 

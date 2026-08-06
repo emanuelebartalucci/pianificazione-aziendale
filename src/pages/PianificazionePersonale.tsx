@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth, isTechnicalUser, type Dipendente } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, doc, writeBatch, addDoc, updateDoc, deleteDoc, query, where, getDocs } from 'firebase/firestore';
-import { Users, ChevronLeft, ChevronRight, Save, Download, ZoomIn, ZoomOut, Trash2, Plus, RefreshCw, CalendarDays, FileText, X, UserCheck, MoveVertical, Clock, Pencil, ExternalLink } from 'lucide-react';
+import { Users, ChevronLeft, ChevronRight, ChevronDown, Save, Download, ZoomIn, ZoomOut, Trash2, Plus, RefreshCw, CalendarDays, FileText, X, UserCheck, MoveVertical, Clock, Pencil, ExternalLink } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays, isItalianHoliday } from '../utils/date';
 
 import ConfirmModal from '../components/ConfirmModal';
@@ -160,8 +160,14 @@ export default function PianificazionePersonale() {
     userEmail = '',
     assegnazioni: globalAssignments = {},
     approvedLeaves = [],
-    richiesteDisegnatori = []
+    richiesteDisegnatori = [],
+    refreshDataIfStale
   } = useAuth();
+
+  useEffect(() => {
+    // Ricarica i dati solo se non freschi (throttle 2 min) per evitare 14 letture Firestore ad ogni navigazione
+    refreshDataIfStale();
+  }, []);
   const [commessaSearchText, setCommessaSearchText] = useState('');
   const [isCommessaDropdownOpen, setIsCommessaDropdownOpen] = useState(false);
   const [timelineWeeks, setTimelineWeeks] = useState<WeekInfo[]>([]); // weeks for the load grid
@@ -2361,8 +2367,9 @@ export default function PianificazionePersonale() {
           const weekStartStr = wk.dateObj ? wk.dateObj.toLocaleDateString('sv-SE') : '';
           const isWeekCessato = dip.dataCessazione && weekStartStr && weekStartStr > dip.dataCessazione;
 
-          // Admin/Soci, Coordinatori e PM della commessa possono sempre editare le risorse in pianificazione
-          const canDirectlyEditCell = !isWeekCessato && (isEditable || isPMOrResponsabile || isAdmin || isSoci(myAssociatedName) || isCoordinatoreArea);
+          const isSelfRow = (dip.email?.toLowerCase() === (userEmail || '').toLowerCase()) || areNamesEqual(dip.nome, myAssociatedName);
+          // Admin/Soci, Coordinatori e PM della commessa possono sempre editare le risorse in pianificazione (o se stessi se coordinatori)
+          const canDirectlyEditCell = !isWeekCessato && (isEditable || isPMOrResponsabile || isAdmin || isSoci(myAssociatedName) || isCoordinatoreArea || (isCoordinatoreQualsiasi && isSelfRow));
 
           let bgClass = isWeekCessato 
             ? "bg-slate-400/90 text-white font-bold text-center" 
@@ -3105,61 +3112,68 @@ export default function PianificazionePersonale() {
                   <div className="relative">
                     <input
                       type="text"
-                      placeholder="Cerca commessa..."
-                      value={selectedCommessaId ? (commesse.find(c => c.id === selectedCommessaId)?.nome || '') : commessaSearchText}
+                      placeholder="Cerca o seleziona commessa..."
+                      value={isCommessaDropdownOpen ? commessaSearchText : (selectedCommessaId ? (commesse.find(c => c.id === selectedCommessaId)?.nome || '') : commessaSearchText)}
                       onChange={e => {
                         setCommessaSearchText(e.target.value);
-                        if (selectedCommessaId) setSelectedCommessaId('');
                         setIsCommessaDropdownOpen(true);
                       }}
-                      onFocus={() => setIsCommessaDropdownOpen(true)}
-                      className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-750"
+                      onFocus={() => {
+                        setCommessaSearchText('');
+                        setIsCommessaDropdownOpen(true);
+                      }}
+                      className="w-full p-2.5 pr-8 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-750 cursor-pointer"
                     />
-                    {selectedCommessaId && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedCommessaId('');
-                          setCommessaSearchText('');
-                        }}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-red-500 hover:text-red-700 font-extrabold text-[10px] bg-red-50 px-2 py-1 rounded-lg transition"
-                      >
-                        Rimuovi
-                      </button>
-                    )}
+                    <div className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+                      <ChevronDown className="w-4 h-4" />
+                    </div>
                   </div>
                   {isCommessaDropdownOpen && (
                     <>
                       <div className="fixed inset-0 z-10" onClick={() => setIsCommessaDropdownOpen(false)}></div>
-                      <div className="absolute left-0 right-0 z-20 mt-1 max-h-56 overflow-y-auto bg-white border border-gray-150 rounded-xl shadow-xl divide-y divide-gray-50">
-                        {(() => {
-                          const search = commessaSearchText.toLowerCase();
-                          const filtered = selectableCommesse.filter(c =>
-                            c.nome.toLowerCase().includes(search) ||
-                            (c.cliente && c.cliente.toLowerCase().includes(search))
-                          );
-                          if (filtered.length === 0) {
-                            return <div className="p-3 text-xs text-gray-450 italic font-bold">Nessuna commessa abilitata trovata</div>;
-                          }
-                          return filtered.map(c => (
-                            <button
-                              key={c.id}
-                              type="button"
-                              title={c.nome}
-                              onClick={() => {
-                                setSelectedCommessaId(c.id);
-                                setCommessaSearchText(c.nome);
-                                setIsCommessaDropdownOpen(false);
-                              }}
-                              className="w-full text-left px-3 py-2 hover:bg-indigo-50 text-xs font-semibold text-gray-700 transition-colors flex flex-col gap-0.5 cursor-pointer"
-                            >
-                              <span className="truncate w-full font-bold text-gray-800">{c.nome}</span>
-                              <span className="text-[9.5px] text-indigo-650 font-semibold italic">
-                                💼 Cliente: {c.cliente || 'Nessun cliente'}
-                              </span>
-                            </button>
-                          ));
+                      <div className="absolute left-0 right-0 z-20 mt-1 bg-white border border-indigo-200 rounded-xl shadow-2xl overflow-hidden">
+                        <div className="max-h-56 overflow-y-auto divide-y divide-gray-50 p-1">
+                          {(() => {
+                            const search = commessaSearchText.toLowerCase();
+                            const filtered = selectableCommesse.filter(c =>
+                              c.nome.toLowerCase().includes(search) ||
+                              (c.cliente && c.cliente.toLowerCase().includes(search))
+                            );
+                            if (filtered.length === 0) {
+                              return <div className="p-3 text-xs text-gray-450 italic font-bold">Nessuna commessa abilitata trovata</div>;
+                            }
+                            return filtered.map(c => {
+                              const isSelected = selectedCommessaId === c.id;
+                              return (
+                                <button
+                                  key={c.id}
+                                  ref={el => {
+                                    if (el && isSelected && el.parentElement) {
+                                      el.parentElement.scrollTop = el.offsetTop;
+                                    }
+                                  }}
+                                  type="button"
+                                  title={c.nome}
+                                  onClick={() => {
+                                    setSelectedCommessaId(c.id);
+                                    setCommessaSearchText(c.nome);
+                                    setIsCommessaDropdownOpen(false);
+                                  }}
+                                  className={`w-full text-left px-3 py-2 text-xs font-semibold transition-colors flex flex-col gap-0.5 cursor-pointer rounded-lg ${
+                                    isSelected ? 'bg-indigo-100/90 font-black text-indigo-950' : 'hover:bg-indigo-50 text-gray-700'
+                                  }`}
+                                >
+                                <span className="truncate w-full font-bold text-gray-800">
+                                  {isSelected ? '✓ ' : ''}{c.nome}
+                                </span>
+                                <span className="text-[9.5px] text-indigo-650 font-semibold italic">
+                                  💼 Cliente: {c.cliente || 'Nessun cliente'}
+                                </span>
+                              </button>
+                            );
+                          });
                         })()}
+                        </div>
                       </div>
                     </>
                   )}
@@ -3758,61 +3772,68 @@ export default function PianificazionePersonale() {
                   <div className="relative">
                     <input
                       type="text"
-                      placeholder="Cerca commessa..."
-                      value={selectedCommessaId ? (commesse.find(c => c.id === selectedCommessaId)?.nome || '') : commessaSearchText}
+                      placeholder="Cerca o seleziona commessa..."
+                      value={isCommessaDropdownOpen ? commessaSearchText : (selectedCommessaId ? (commesse.find(c => c.id === selectedCommessaId)?.nome || '') : commessaSearchText)}
                       onChange={e => {
                         setCommessaSearchText(e.target.value);
-                        if (selectedCommessaId) setSelectedCommessaId('');
                         setIsCommessaDropdownOpen(true);
                       }}
-                      onFocus={() => setIsCommessaDropdownOpen(true)}
-                      className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-800"
+                      onFocus={() => {
+                        setCommessaSearchText('');
+                        setIsCommessaDropdownOpen(true);
+                      }}
+                      className="w-full p-2.5 pr-8 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-800 cursor-pointer"
                     />
-                    {selectedCommessaId && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedCommessaId('');
-                          setCommessaSearchText('');
-                        }}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-red-500 hover:text-red-700 font-extrabold text-[10px] bg-red-50 px-2 py-1 rounded-lg transition cursor-pointer"
-                      >
-                        Rimuovi
-                      </button>
-                    )}
+                    <div className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+                      <ChevronDown className="w-4 h-4" />
+                    </div>
                   </div>
                   {isCommessaDropdownOpen && (
                     <>
                       <div className="fixed inset-0 z-10" onClick={() => setIsCommessaDropdownOpen(false)}></div>
-                      <div className="absolute left-0 right-0 z-20 mt-1 max-h-56 overflow-y-auto bg-white border border-gray-150 rounded-xl shadow-xl divide-y divide-gray-50">
-                        {(() => {
-                          const search = commessaSearchText.toLowerCase();
-                          const filtered = selectableCommesse.filter(c =>
-                            c.nome.toLowerCase().includes(search) ||
-                            (c.cliente && c.cliente.toLowerCase().includes(search))
-                          );
-                          if (filtered.length === 0) {
-                            return <div className="p-3 text-xs text-gray-450 italic font-bold">Nessuna commessa trovata</div>;
-                          }
-                          return filtered.map(c => (
-                            <button
-                              key={c.id}
-                              type="button"
-                              title={c.nome}
-                              onClick={() => {
-                                setSelectedCommessaId(c.id);
-                                setCommessaSearchText(c.nome);
-                                setIsCommessaDropdownOpen(false);
-                              }}
-                              className="w-full text-left px-3 py-2 hover:bg-indigo-50 text-xs font-semibold text-gray-700 transition-colors flex flex-col gap-0.5 cursor-pointer"
-                            >
-                              <span className="truncate w-full font-bold text-gray-800">{c.nome}</span>
-                              <span className="text-[9.5px] text-indigo-650 font-semibold italic">
-                                💼 Cliente: {c.cliente || 'Nessun cliente'}
-                              </span>
-                            </button>
-                          ));
+                      <div className="absolute left-0 right-0 z-20 mt-1 bg-white border border-indigo-200 rounded-xl shadow-2xl overflow-hidden">
+                        <div className="max-h-56 overflow-y-auto divide-y divide-gray-50 p-1">
+                          {(() => {
+                            const search = commessaSearchText.toLowerCase();
+                            const filtered = selectableCommesse.filter(c =>
+                              c.nome.toLowerCase().includes(search) ||
+                              (c.cliente && c.cliente.toLowerCase().includes(search))
+                            );
+                            if (filtered.length === 0) {
+                              return <div className="p-3 text-xs text-gray-450 italic font-bold">Nessuna commessa trovata</div>;
+                            }
+                            return filtered.map(c => {
+                              const isSelected = selectedCommessaId === c.id;
+                              return (
+                                <button
+                                  key={c.id}
+                                  ref={el => {
+                                    if (el && isSelected && el.parentElement) {
+                                      el.parentElement.scrollTop = el.offsetTop;
+                                    }
+                                  }}
+                                  type="button"
+                                  title={c.nome}
+                                  onClick={() => {
+                                    setSelectedCommessaId(c.id);
+                                    setCommessaSearchText(c.nome);
+                                    setIsCommessaDropdownOpen(false);
+                                  }}
+                                  className={`w-full text-left px-3 py-2 text-xs font-semibold transition-colors flex flex-col gap-0.5 cursor-pointer rounded-lg ${
+                                    isSelected ? 'bg-indigo-100/90 font-black text-indigo-950' : 'hover:bg-indigo-50 text-gray-700'
+                                  }`}
+                                >
+                                <span className="truncate w-full font-bold text-gray-800">
+                                  {isSelected ? '✓ ' : ''}{c.nome}
+                                </span>
+                                <span className="text-[9.5px] text-indigo-650 font-semibold italic">
+                                  💼 Cliente: {c.cliente || 'Nessun cliente'}
+                                </span>
+                              </button>
+                            );
+                          });
                         })()}
+                        </div>
                       </div>
                     </>
                   )}

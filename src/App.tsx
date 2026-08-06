@@ -16,6 +16,8 @@ const Prenotazioni = lazy(() => import('./pages/Prenotazioni'));
 const Organigramma = lazy(() => import('./pages/Organigramma'));
 const GestioneHR = lazy(() => import('./pages/GestioneHR'));
 
+import { auth } from './services/firebase';
+
 // Components
 import Navbar from './components/Navbar';
 import DevImpersonator from './components/DevImpersonator';
@@ -58,8 +60,71 @@ function PrintVersionFooter() {
   );
 }
 
+function AccountCessatoScreen() {
+  const { isRealDev, cessatoInfo, impersonateUser } = useAuth();
+  const dateFormatted = cessatoInfo?.dataCessazione
+    ? cessatoInfo.dataCessazione.split('-').reverse().join('/')
+    : '';
+
+  return (
+    <div className="min-h-screen bg-slate-900 text-white flex flex-col items-center justify-center p-6 text-center relative overflow-hidden">
+      {/* Background Glow Effect */}
+      <div className="absolute -top-40 -left-40 w-96 h-96 bg-red-600/20 rounded-full blur-3xl pointer-events-none"></div>
+      <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-amber-600/10 rounded-full blur-3xl pointer-events-none"></div>
+
+      <div className="max-w-md w-full bg-slate-800/90 backdrop-blur-md p-8 rounded-3xl border border-red-500/30 shadow-2xl space-y-6 z-10 animate-in fade-in zoom-in-95 duration-200">
+        <div className="w-16 h-16 bg-red-500/10 border border-red-500/30 rounded-2xl flex items-center justify-center mx-auto text-3xl text-red-500">
+          🚫
+        </div>
+
+        <div className="space-y-2">
+          <h2 className="text-xl font-black tracking-tight text-white">
+            {isRealDev ? 'Simulazione Blocco Accesso' : 'Accesso Negato: Account Inattivo'}
+          </h2>
+          <p className="text-xs text-slate-300 leading-relaxed">
+            L'account di <strong className="text-white">{cessatoInfo?.nome || 'questa risorsa'}</strong> risulta inattivo a causa della cessazione avvenuta il <strong className="text-red-400 font-extrabold">{dateFormatted || 'N/D'}</strong>.
+          </p>
+        </div>
+
+        {isRealDev ? (
+          <div className="bg-amber-500/10 border border-amber-500/30 p-4 rounded-2xl text-amber-200 text-xs space-y-3 text-left">
+            <p className="font-semibold text-[11px] leading-relaxed">
+              🛠️ <strong>Nota Sviluppatore:</strong> Stai simulando l'esperienza di un utente la cui data di cessazione è passata. Gli utenti reali vedono questa schermata e sono impossibilitati ad accedere a qualunque sezione dell'app.
+            </p>
+            <button
+              onClick={() => impersonateUser(null)}
+              className="w-full py-2.5 px-4 bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 font-black text-xs rounded-xl shadow-lg transition-all cursor-pointer"
+            >
+              Ripristina Utente Sviluppatore Reale
+            </button>
+          </div>
+        ) : (
+          <div className="pt-2">
+            <p className="text-[11px] text-slate-400 mb-4">
+              Per informazioni o chiarimenti amministrativi si prega di contattare la direzione aziendale o l'ufficio HR.
+            </p>
+            <button
+              onClick={() => auth.signOut()}
+              className="w-full py-2.5 px-4 bg-red-600 hover:bg-red-700 active:scale-95 text-white font-extrabold text-xs rounded-xl shadow-lg transition-all cursor-pointer"
+            >
+              Disconnetti e Torna al Login
+            </button>
+          </div>
+        )}
+      </div>
+
+      {isRealDev && <DevImpersonator />}
+    </div>
+  );
+}
+
+function ProtectedRoute({ children, condition }: { children: React.ReactNode; condition: boolean }) {
+  if (!condition) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
 function App() {
-  const { user, loading } = useAuth();
+  const { user, loading, isAccountCessato, isDev, isHR } = useAuth();
 
   useEffect(() => {
     const handleWheel = (e: WheelEvent) => {
@@ -88,6 +153,10 @@ function App() {
     );
   }
 
+  if (user && isAccountCessato) {
+    return <AccountCessatoScreen />;
+  }
+
   return (
     <Router>
       <ScrollToTop />
@@ -104,13 +173,21 @@ function App() {
                     <Route path="/" element={<Dashboard />} />
                     <Route path="/commesse" element={<Commesse />} />
                     <Route path="/ferie" element={<Ferie />} />
-                    <Route path="/impostazioni" element={<Impostazioni />} />
+                    <Route path="/impostazioni" element={
+                      <ProtectedRoute condition={isDev}>
+                        <Impostazioni />
+                      </ProtectedRoute>
+                    } />
                     <Route path="/presenze" element={<Presenze />} />
                     <Route path="/suggerimenti" element={<Suggerimenti />} />
                     <Route path="/pianificazione-personale" element={<PianificazionePersonale />} />
                     <Route path="/prenotazioni" element={<Prenotazioni />} />
                     <Route path="/organigramma" element={<Organigramma />} />
-                    <Route path="/gestione-hr" element={<GestioneHR />} />
+                    <Route path="/gestione-hr" element={
+                      <ProtectedRoute condition={isHR || isDev}>
+                        <GestioneHR />
+                      </ProtectedRoute>
+                    } />
                     <Route path="*" element={<Navigate to="/" />} />
                   </Routes>
                 </Suspense>

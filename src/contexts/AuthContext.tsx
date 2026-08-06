@@ -1,6 +1,6 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useRef, type ReactNode } from 'react';
 import { type User, onAuthStateChanged } from 'firebase/auth';
-import { collection, doc, addDoc, deleteDoc, getDoc, getDocs, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, doc, addDoc, deleteDoc, getDoc, getDocs, query, where, onSnapshot, documentId } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
 
 const DEFAULT_ADMINS = ['aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it'];
@@ -81,6 +81,7 @@ interface AuthContextType {
   isGestoreCommesse: boolean;
   prioritaCommesse: Record<string, 'Alta' | 'Standard' | 'Bassa'>;
   refreshData: () => Promise<void>;
+  refreshDataIfStale: () => Promise<void>;
   loadAssegnazioniForWeeks?: (requestedWeekIds: string[]) => Promise<void>;
 
   // Impersonificazione
@@ -88,6 +89,10 @@ interface AuthContextType {
   isRealDev: boolean;
   impersonatedEmail: string | null;
   userEmail: string;
+
+  // Cessazione Account
+  isAccountCessato: boolean;
+  cessatoInfo: { isCessato: boolean; dataCessazione: string; nome: string } | null;
 }
 
 const AuthContext = createContext<AuthContextType>({} as AuthContextType);
@@ -284,8 +289,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  // Timestamp dell'ultimo fetch completo (per throttle refreshDataIfStale)
+  const lastFetchTimestampRef = useRef<number>(0);
+
   const refreshData = async () => {
+    lastFetchTimestampRef.current = Date.now();
     await fetchAuthData();
+  };
+
+  // Versione throttled: non rilancia il fetch se i dati sono stati caricati negli ultimi 2 minuti.
+  // Da usare nei mount di pagina (Commesse, PianificazionePersonale) per evitare 14 letture ad ogni navigazione.
+  const refreshDataIfStale = async () => {
+    const TWO_MINUTES = 2 * 60 * 1000;
+    if (Date.now() - lastFetchTimestampRef.current < TWO_MINUTES) return;
+    await refreshData();
   };
 
   // Gestione caricamento iniziale on demand
@@ -336,18 +353,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return () => unsubPriority();
   }, [user]);
 
-  // Listener real-time per assegnazioni (sincronizzazione immediata della pianificazione)
-  useEffect(() => {
-    if (!user) return;
-    const unsubAssegnazioni = onSnapshot(collection(db, 'assegnazioni'), (snap) => {
-      const assMap: Record<string, any[]> = {};
-      snap.forEach(docSnap => {
-        assMap[docSnap.id] = docSnap.data().lista || [];
-      });
-      setAssegnazioni(assMap);
-    });
-    return () => unsubAssegnazioni();
-  }, [user]);
+
 
   // Calcolo ruoli derivati
   const realEmail = user?.email?.toLowerCase().trim() || '';
@@ -358,8 +364,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     if (clean.includes('ebartalucci') || clean.includes('bartalucci')) return true;
     return dynamicDevs.some(d => d && typeof d === 'string' && d.trim().toLowerCase() === clean);
   };
-  const isRealDev = isDevEmail(realEmail);
+  const isRealDev = realEmail.includes('ebartalucci@ingegno06.it') || realEmail.includes('synerg') || isDevEmail(realEmail);
   const userEmail = (impersonatedEmail || realEmail).toLowerCase().trim();
+
+  // Quando si impersonifica un utente, isDev valuta SOLO l'email simulata (userEmail),
+  // così che la simulazione mostri l'esatta esperienza e permessi dell'utente impersonificato.
   const isDev = isDevEmail(userEmail);
   const isSocio = userEmail.includes('aprofeti') || userEmail.includes('mcorbellini') || userEmail.includes('profeti') || userEmail.includes('corbellini');
   const isAdmin = isDev || isSocio || DEFAULT_ADMINS.some(e => e.toLowerCase().trim() === userEmail) || dynamicAdmins.some(e => e.toLowerCase().trim() === userEmail);
@@ -371,24 +380,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   useEffect(() => {
     if (isRealDev) {
-      setImpersonatedEmailState(localStorage.getItem('dev_impersonated_email'));
-    } else {
-      setImpersonatedEmailState(null);
-    }
-  }, [user, isRealDev]);
-
-  useEffect(() => {
-    if (user && dipendenti.length > 0 && !isRealDev) {
-      const cleanEmail = (user.email || '').toLowerCase().trim();
-      const dipObj = dipendenti.find(d => (d.email || '').toLowerCase().trim() === cleanEmail);
-      const todayISO = new Date().toLocaleDateString('sv-SE');
-      if (dipObj && dipObj.dataCessazione && dipObj.dataCessazione < todayISO) {
-        const dateFormatted = dipObj.dataCessazione.split('-').reverse().join('/');
-        alert(`Accesso negato: l'account per ${dipObj.nome} risulta inattivo o cessato il ${dateFormatted}. Impossibile accedere alla piattaforma.`);
-        auth.signOut();
+      const saved = localStorage.getItem('dev_impersonated_email');
+      if (saved) {
+        setImpersonatedEmailState(saved);
       }
     }
-  }, [user, dipendenti, isRealDev]);
+  }, [user, isRealDev]);
 
   const impersonateUser = (email: string | null) => {
     if (!isRealDev) return;
@@ -400,7 +397,26 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setImpersonatedEmailState(null);
     }
   };
-  
+
+  // Tracciamento cessazione utente (reale o simulato)
+  const cessatoInfo = (() => {
+    if (!userEmail || dipendenti.length === 0) return null;
+    const uClean = userEmail.toLowerCase().trim();
+    const dipObj = dipendenti.find(d => (d.email || '').toLowerCase().trim() === uClean);
+    if (!dipObj || !dipObj.dataCessazione || !dipObj.dataCessazione.trim()) return null;
+    const todayISO = new Date().toLocaleDateString('sv-SE');
+    if (dipObj.dataCessazione <= todayISO) {
+      return {
+        isCessato: true,
+        dataCessazione: dipObj.dataCessazione,
+        nome: dipObj.nome
+      };
+    }
+    return null;
+  })();
+
+  const isAccountCessato = Boolean(cessatoInfo?.isCessato);
+
   const myDip = dipendenti.find(d => {
     if (!userEmail) return false;
     const uClean = userEmail.toLowerCase().trim();
@@ -411,18 +427,26 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     if (uUser && dUser && (uUser.includes(dUser) || dUser.includes(uUser))) return true;
     return false;
   });
-  const myAssociatedName = myDip ? myDip.nome : null;
+  const myAssociatedName = myDip ? myDip.nome : (userEmail ? (
+    userEmail.includes('ebartalucci') ? 'Emanuele Bartalucci' :
+    userEmail.includes('aprofeti') ? 'Andrea Profeti' :
+    userEmail.includes('mcorbellini') ? 'Marco Corbellini' : null
+  ) : null);
 
   const loadAssegnazioniForWeeks = async (requestedWeekIds: string[]) => {
+    if (!requestedWeekIds || requestedWeekIds.length === 0) return;
     try {
-      const snap = await getDocs(collection(db, 'assegnazioni'));
       const assMap: Record<string, any[]> = {};
-      snap.forEach((docSnap: any) => {
-        const id = docSnap.id;
-        if (requestedWeekIds.some(wk => id.includes(wk))) {
-          assMap[id] = docSnap.data().lista || [];
-        }
-      });
+      // Firestore 'in' supporta max 30 elementi: batching
+      const BATCH_SIZE = 30;
+      for (let i = 0; i < requestedWeekIds.length; i += BATCH_SIZE) {
+        const batch = requestedWeekIds.slice(i, i + BATCH_SIZE);
+        const q = query(collection(db, 'assegnazioni'), where(documentId(), 'in', batch));
+        const snap = await getDocs(q);
+        snap.forEach((docSnap: any) => {
+          assMap[docSnap.id] = docSnap.data().lista || [];
+        });
+      }
       setAssegnazioni(prev => ({ ...prev, ...assMap }));
     } catch (err) {
       console.error("Errore caricamento assegnazioni per settimane richieste:", err);
@@ -453,11 +477,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       isGestoreCommesse,
       prioritaCommesse,
       refreshData,
+      refreshDataIfStale,
       loadAssegnazioniForWeeks,
       impersonateUser,
       isRealDev,
       impersonatedEmail,
-      userEmail
+      userEmail,
+      isAccountCessato,
+      cessatoInfo
     }}>
       {children}
     </AuthContext.Provider>

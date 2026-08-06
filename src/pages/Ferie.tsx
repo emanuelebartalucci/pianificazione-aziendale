@@ -10,6 +10,16 @@ import { isCollaboratore, isSoci } from './Impostazioni';
 import ResourceAnalyticsModal from '../components/ResourceAnalyticsModal';
 import { rebuildYearlySummary } from '../services/yearlySummaryService';
 
+const areNamesEqual = (n1?: string | null, n2?: string | null): boolean => {
+  if (!n1 || !n2) return false;
+  const clean1 = n1.toLowerCase().trim().replace(/\s+/g, ' ');
+  const clean2 = n2.toLowerCase().trim().replace(/\s+/g, ' ');
+  if (clean1 === clean2) return true;
+  const p1 = clean1.split(' ').sort().join(' ');
+  const p2 = clean2.split(' ').sort().join(' ');
+  return p1 === p2;
+};
+
 const formatDate = (dateStr: string) => {
   if (!dateStr) return '';
   const parts = dateStr.split('-');
@@ -103,7 +113,7 @@ interface FerieContentProps {
 }
 
 const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: FerieContentProps) => {
-  const { userEmail, coordinatori = [], commesse = [], isDev } = useAuth();
+  const { userEmail, coordinatori = [], commesse = [], isDev, refreshData } = useAuth();
   const [viewMode, setViewMode] = useState<'calendario' | 'tabella'>('calendario');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' | 'info' } | null>(null);
   const [chiusureAziendali, setChiusureAziendali] = useState<Array<{ dataInizio: string; dataFine: string }>>([]);
@@ -328,6 +338,16 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
   // States per il filtraggio della lista richieste
   const [requestTab, setRequestTab] = useState<'tutte' | 'in_attesa' | 'approvate' | 'storico'>('tutte');
   const [searchResourceText, setSearchResourceText] = useState('');
+
+  const [counterYearSummaries, setCounterYearSummaries] = useState<Record<number, any>>(() => getInitialSummaries());
+
+  const updateCounterSummaries = (updater: (prev: Record<number, any>) => Record<number, any>) => {
+    setCounterYearSummaries(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      saveSummariesToCache(next);
+      return next;
+    });
+  };
 
   const loadFerieData = async () => {
     try {
@@ -689,15 +709,6 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
 
   // Calcolo ore assenze per l'anno corrente (dal 01 gennaio al 31 dicembre)
   const currentYear = new Date().getFullYear();
-  const [counterYearSummaries, setCounterYearSummaries] = useState<Record<number, any>>(() => getInitialSummaries());
-
-  const updateCounterSummaries = (updater: (prev: Record<number, any>) => Record<number, any>) => {
-    setCounterYearSummaries(prev => {
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      saveSummariesToCache(next);
-      return next;
-    });
-  };
 
   const yearlyStats = useMemo(() => {
     if (!targetDipName) {
@@ -706,8 +717,18 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
 
     const summary = counterYearSummaries[currentYear];
     const dipNameClean = (targetDipName || '').trim().toLowerCase();
-    if (summary && summary.employeeStats && summary.employeeStats[dipNameClean]) {
-      const stats = summary.employeeStats[dipNameClean];
+    
+    let stats: any = null;
+    if (summary && summary.employeeStats) {
+      if (summary.employeeStats[dipNameClean]) {
+        stats = summary.employeeStats[dipNameClean];
+      } else {
+        const foundKey = Object.keys(summary.employeeStats).find(k => areNamesEqual(k, targetDipName));
+        if (foundKey) stats = summary.employeeStats[foundKey];
+      }
+    }
+
+    if (stats) {
       return {
         ferieHours: Math.round((stats.ferie || 0) * 100) / 100,
         permessoHours: Math.round((stats.permessi || 0) * 100) / 100,
@@ -820,38 +841,60 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
   const [counterSearchText, setCounterSearchText] = useState<string>('');
   const [isResourceDropdownOpen, setIsResourceDropdownOpen] = useState<boolean>(false);
   const [selectedResource, setSelectedResource] = useState<any | null>(null);
+  const [isRegenerating, setIsRegenerating] = useState<boolean>(false);
+
+  // Rigenera forzatamente il documento di sintesi annuale su Firestore
+  const handleRegenerateSummary = async () => {
+    if (!dipendenti || dipendenti.length === 0) {
+      showToast('Impossibile rigenerare: lista dipendenti non disponibile.', 'error');
+      return;
+    }
+    setIsRegenerating(true);
+    try {
+      const newSummary = await rebuildYearlySummary(counterYear, dipendenti);
+      if (newSummary) {
+        updateCounterSummaries(prev => ({ ...prev, [counterYear]: newSummary }));
+        showToast(`Sintesi ${counterYear} rigenerata con successo! I contatori sono ora aggiornati.`, 'success');
+      } else {
+        showToast(`Rigenerazione ${counterYear} fallita: controlla i permessi Firestore o la console per dettagli.`, 'error');
+      }
+    } catch (err) {
+      console.error('Errore rigenerazione sintesi:', err);
+      showToast('Errore durante la rigenerazione della sintesi annuale.', 'error');
+    } finally {
+      setIsRegenerating(false);
+    }
+  };
 
   // State per modale di analisi grafica dettagliata risorsa
   const [analyticsResource, setAnalyticsResource] = useState<any | null>(null);
   const [isAnalyticsOpen, setIsAnalyticsOpen] = useState<boolean>(false);
 
   useEffect(() => {
-    if (mainTab === 'contatori_risorse') {
-      const y = counterYear;
-      ensureYearLoaded(y);
-      if (counterYearSummaries[y] && Object.keys(counterYearSummaries[y]?.employeeStats || {}).length > 0) return;
+    const y = counterYear;
+    ensureYearLoaded(y);
+    if (counterYearSummaries[y] && Object.keys(counterYearSummaries[y]?.employeeStats || {}).length > 0) return;
 
-      const docRef = doc(db, 'storico_annuale_ferie', String(y));
-      getDoc(docRef).then(async snap => {
-        if (snap.exists() && snap.data()?.employeeStats && Object.keys(snap.data().employeeStats).length > 0) {
-          updateCounterSummaries(prev => ({ ...prev, [y]: snap.data() }));
-        } else if (dipendenti && dipendenti.length > 0) {
-          // Genera al volo se non esiste ancora su Firestore
-          const newSummary = await rebuildYearlySummary(y, dipendenti);
-          if (newSummary) {
-            updateCounterSummaries(prev => ({ ...prev, [y]: newSummary }));
-          }
+    const docRef = doc(db, 'storico_annuale_ferie', String(y));
+    getDoc(docRef).then(async snap => {
+      if (snap.exists() && snap.data()?.employeeStats && Object.keys(snap.data().employeeStats).length > 0) {
+        updateCounterSummaries(prev => ({ ...prev, [y]: snap.data() }));
+      } else if (dipendenti && dipendenti.length > 0) {
+        // Genera al volo se non esiste ancora su Firestore
+        const newSummary = await rebuildYearlySummary(y, dipendenti);
+        if (newSummary) {
+          updateCounterSummaries(prev => ({ ...prev, [y]: newSummary }));
         }
-      }).catch(async () => {
-        if (dipendenti && dipendenti.length > 0) {
-          const newSummary = await rebuildYearlySummary(y, dipendenti);
-          if (newSummary) {
-            updateCounterSummaries(prev => ({ ...prev, [y]: newSummary }));
-          }
+      }
+    }).catch(async () => {
+      if (dipendenti && dipendenti.length > 0) {
+        const newSummary = await rebuildYearlySummary(y, dipendenti);
+        if (newSummary) {
+          updateCounterSummaries(prev => ({ ...prev, [y]: newSummary }));
         }
-      });
-    }
-  }, [mainTab, counterYear, dipendenti]);
+      }
+    });
+  }, [counterYear, dipendenti]);
 
   // Aggregazione contatori per tutte le risorse per l'anno selezionato (1 sola lettura da sintesi!)
   const allResourcesStats = useMemo(() => {
@@ -863,7 +906,13 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         const dipName = dip.nome || '';
         const dipNameClean = dipName.trim().toLowerCase();
         const isCollab = isCollaboratore(dipName, dipendenti) || isSoci(dipName);
-        const stats = summary.employeeStats[dipNameClean] || { ferie: 0, permessi: 0, malattia: 0, smart: 0, totale: 0 };
+        
+        let stats = summary.employeeStats[dipNameClean];
+        if (!stats) {
+          const foundKey = Object.keys(summary.employeeStats).find(k => areNamesEqual(k, dipName));
+          if (foundKey) stats = summary.employeeStats[foundKey];
+        }
+        if (!stats) stats = { ferie: 0, permessi: 0, malattia: 0, smart: 0, totale: 0 };
 
         const ferieHours = stats.ferie || 0;
         const permessoHours = stats.permessi || 0;
@@ -1638,6 +1687,15 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         }
       }
       loadFerieData();
+
+      // Rigenera la sintesi annuale in background (fire-and-forget)
+      const reqYear = new Date(req.dataInizio || req.data || new Date()).getFullYear();
+      rebuildYearlySummary(reqYear, dipendenti).then(newSum => {
+        if (newSum) updateCounterSummaries(prev => ({ ...prev, [reqYear]: newSum }));
+      }).catch(() => {/* silent */});
+
+      // Aggiorna approvedLeaves in AuthContext (usato da PianificazioneModal)
+      refreshData().catch(() => {/* silent */});
     } catch (e) {
       console.error("Errore aggiornamento:", e);
     }
@@ -1700,6 +1758,12 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       setCancellationRequest(null);
       setCancellationReason('');
       loadFerieData();
+
+      // Rigenera la sintesi annuale in background
+      const cancelYear = new Date(req.dataInizio || req.data || new Date()).getFullYear();
+      rebuildYearlySummary(cancelYear, dipendenti).then(newSum => {
+        if (newSum) updateCounterSummaries(prev => ({ ...prev, [cancelYear]: newSum }));
+      }).catch(() => {/* silent */});
     } catch (err) {
       console.error(err);
       showToast("Errore durante l'annullamento delle ferie.", "error");
@@ -3122,6 +3186,19 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                   <Printer className="w-4 h-4" />
                   <span>Stampa / PDF</span>
                 </button>
+
+                {isDev && (
+                  <button
+                    type="button"
+                    onClick={handleRegenerateSummary}
+                    disabled={isRegenerating}
+                    title={`Rigenera il documento di sintesi ${counterYear} su Firestore con i dati corretti`}
+                    className="px-3.5 py-2 bg-orange-500 hover:bg-orange-600 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-xl text-xs font-extrabold flex items-center gap-2 shadow-xs transition-all cursor-pointer"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isRegenerating ? 'animate-spin' : ''}`} />
+                    <span>{isRegenerating ? 'Rigenerazione...' : `Rigenera Sintesi ${counterYear}`}</span>
+                  </button>
+                )}
               </div>
             </div>
 

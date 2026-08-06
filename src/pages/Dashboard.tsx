@@ -545,9 +545,20 @@ export default function Dashboard() {
   }, [announcements, myAssociatedName, dipendenti, myMaternityLeaves]);
 
   const welcomeName = (() => {
-    if (!myAssociatedName) return userEmail || 'Utente';
+    if (!myAssociatedName) {
+      if (userEmail) {
+        const u = userEmail.toLowerCase().trim().split('@')[0];
+        if (u.includes('ebartalucci') || u.includes('emanuele')) return 'Emanuele';
+        if (u.includes('aprofeti') || u.includes('andrea')) return 'Andrea';
+        if (u.includes('mcorbellini') || u.includes('marco')) return 'Marco';
+        return u.charAt(0).toUpperCase() + u.slice(1);
+      }
+      return 'Utente';
+    }
+    // myAssociatedName è in formato "Cognome Nome" → prendi l'ultimo token (nome di battesimo)
     const parts = myAssociatedName.trim().split(/\s+/);
-    return parts.length > 1 ? parts[parts.length - 1] : myAssociatedName;
+    const firstName = parts.length > 1 ? parts[parts.length - 1] : parts[0];
+    return firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase();
   })();
 
   const [welcomePhrase, setWelcomePhrase] = useState('');

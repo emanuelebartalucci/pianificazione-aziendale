@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, doc, setDoc, addDoc, deleteDoc, getDocs, runTransaction } from 'firebase/firestore';
-import { Briefcase, ChevronLeft, ChevronRight, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw, Printer, Plus, UserCheck, MoveVertical, Building2, Send } from 'lucide-react';
+import { Briefcase, ChevronLeft, ChevronRight, ChevronDown, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw, Printer, Plus, UserCheck, MoveVertical, Building2, Send } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays } from '../utils/date';
 import { queueMail } from '../utils/mailSender';
 import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
@@ -13,22 +13,7 @@ import { getPrintDateString, APP_VERSION } from '../config/version';
 import { TIPOLOGIE_COMMESSE, isSoci } from './Impostazioni';
 import { loadSavedEmailTemplates, substitutePlaceholders, getCommesseNotificationEmails } from '../utils/emailTemplateManager';
 
-const isWeekWithinRange = (wkDateObj: Date | undefined, startStr?: string, endStr?: string): boolean => {
-  if (!wkDateObj || !startStr || !endStr) return false;
-  const start = new Date(startStr);
-  const end = new Date(endStr);
-  start.setHours(0, 0, 0, 0);
-  end.setHours(23, 59, 59, 999);
-  
-  const wkStart = new Date(wkDateObj);
-  wkStart.setHours(0, 0, 0, 0);
-  
-  const wkEnd = new Date(wkStart);
-  wkEnd.setDate(wkStart.getDate() + 6);
-  wkEnd.setHours(23, 59, 59, 999);
-  
-  return wkStart <= end && wkEnd >= start;
-};
+
 
 const hexToRgba = (hex: string, alpha: number): string => {
   if (!hex) return `rgba(100, 116, 139, ${alpha})`;
@@ -232,7 +217,8 @@ export default function Commesse() {
     coordinatori = [], 
     pmsEmails = [],
     prioritaCommesse = {},
-    refreshData
+    refreshData,
+    refreshDataIfStale
   } = useAuth();
 
   const [tableHeight, setTableHeight] = useState<number>(650);
@@ -310,7 +296,7 @@ export default function Commesse() {
   };
   
   const [baseDate, setBaseDate] = useState<Date>(new Date());
-  const [zoomWeeks, setZoomWeeks] = useState<number>(8); // Default to 8 Weeks
+  const [zoomWeeks, setZoomWeeks] = useState<number>(6); // Default to 6 Weeks
   const [selectedCommessaIdsFilter, setSelectedCommessaIdsFilter] = useState<string[]>([]);
   const [selectedClientFilter, setSelectedClientFilter] = useState<string>('');
   const [selectedPMFilter, setSelectedPMFilter] = useState<string>('');
@@ -318,7 +304,7 @@ export default function Commesse() {
   const [commessaTextQuery, setCommessaTextQuery] = useState('');
 
   // Tab control
-  const [activeTab, setActiveTab] = useState<'consultazione' | 'gestione'>('consultazione');
+  const [activeTab, setActiveTab] = useState<'consultazione' | 'gestione' | 'altre-commesse'>('consultazione');
 
   // Stato per la modale di conferma
   const [confirmConfig, setConfirmConfig] = useState<{
@@ -374,6 +360,11 @@ export default function Commesse() {
   const [selectedClient, setSelectedClient] = useState<{ codice: string; nome: string } | null>(null);
   const [clientSearchText, setClientSearchText] = useState('');
   const [isClientDropdownOpen, setIsClientDropdownOpen] = useState(false);
+
+  // Searchable Altre Commesse Dropdown States (per Coordinatori)
+  const [altreCommessaSearchText, setAltreCommessaSearchText] = useState('');
+  const [selectedAltreCommessa, setSelectedAltreCommessa] = useState<any | null>(null);
+  const [isAltreCommessaDropdownOpen, setIsAltreCommessaDropdownOpen] = useState(false);
 
   // Modal rapida per Aggiungi Cliente
   const [isNewClientModalOpen, setIsNewClientModalOpen] = useState(false);
@@ -442,15 +433,38 @@ export default function Commesse() {
   const [showNewCommessaForm, _setShowNewCommessaForm] = useState(true);
   
   const weekColumnMinWidth = useMemo(() => {
-    // Estimating remaining width of a container on standard screen (approx 900px)
-    const containerWidth = 900;
-    const calculated = Math.floor(containerWidth / zoomWeeks);
-    return `${Math.max(35, Math.min(150, calculated))}px`;
+    if (zoomWeeks <= 6) return '100px';
+    if (zoomWeeks <= 12) return '75px';
+    if (zoomWeeks <= 20) return '60px';
+    return '50px';
   }, [zoomWeeks]);
 
+  const commesseDateRangeMap = useMemo(() => {
+    const map = new Map<string, { startMs: number; endMs: number } | null>();
+    commesse.forEach(c => {
+      if (c.dataInizio && c.dataFine) {
+        const s = new Date(c.dataInizio);
+        const e = new Date(c.dataFine);
+        s.setHours(0, 0, 0, 0);
+        e.setHours(23, 59, 59, 999);
+        map.set(c.id, { startMs: s.getTime(), endMs: e.getTime() });
+      } else {
+        map.set(c.id, null);
+      }
+    });
+    return map;
+  }, [commesse]);
+
   const isNarrow = useMemo(() => parseInt(weekColumnMinWidth) < 80, [weekColumnMinWidth]);
-  const isUltraNarrow = useMemo(() => parseInt(weekColumnMinWidth) < 50, [weekColumnMinWidth]);
+  const isUltraNarrow = useMemo(() => parseInt(weekColumnMinWidth) < 62, [weekColumnMinWidth]);
   const [isAvailabilityModalOpen, setIsAvailabilityModalOpen] = useState(false);
+
+  useEffect(() => {
+    // Ricarica i dati solo se non freschi (throttle 2 min) per evitare 14 letture Firestore ad ogni navigazione
+    refreshDataIfStale();
+  }, []);
+
+
 
 
   
@@ -963,7 +977,9 @@ export default function Commesse() {
     };
 
     const isPMOrRespOfCommessa = checkIsUserPmOrResp(targetCommessa);
-    const canDirectlyManage = isAdmin || isDev || isSoci(myAssociatedName) || isPMOrRespOfCommessa;
+    const isUserCoordinator = (coordinatori || []).some(c => c && c.email && userEmail && c.email.toLowerCase().trim() === userEmail.toLowerCase().trim());
+    const isSelfPerson = areNamesEqual(personName, myAssociatedName);
+    const canDirectlyManage = isAdmin || isDev || isSoci(myAssociatedName) || isPMOrRespOfCommessa || (isUserCoordinator && isSelfPerson);
 
     if (e.button === 1) {
       // Rotellina (Middle Click) -> Nuova Scheda
@@ -1089,30 +1105,46 @@ export default function Commesse() {
         createdAt: new Date().toISOString()
       });
 
-      const coordAreaEmails = (coordinatori || [])
+      const targetEmails = new Set<string>();
+
+      // Email dei coordinatori dell'area
+      (coordinatori || [])
         .filter(c => c.area === reqAreaTarget && c.email)
-        .map(c => c.email.toLowerCase());
-      
-      if (coordAreaEmails.length > 0) {
+        .forEach(c => targetEmails.add(c.email.toLowerCase()));
+
+      // Email del Responsabile e PM della commessa
+      if (commObj) {
+        if (commObj.responsabile) {
+          const respDip = dipendenti.find(d => areNamesEqual(d.nome, commObj.responsabile));
+          if (respDip?.email) targetEmails.add(respDip.email.toLowerCase());
+        }
+        const pmArray = Array.isArray(commObj.pm) ? commObj.pm : (commObj.pm ? [commObj.pm] : []);
+        pmArray.forEach((pmName: string) => {
+          const pmDip = dipendenti.find(d => areNamesEqual(d.nome, pmName));
+          if (pmDip?.email) targetEmails.add(pmDip.email.toLowerCase());
+        });
+      }
+
+      if (targetEmails.size > 0) {
         const richiedente = myAssociatedName || userEmail;
-        const subject = `[Richiesta Personale] Richiesta risorsa ${reqAreaTarget} per commessa ${commName}`;
+        const subject = `[Richiesta Inserimento Commessa] Richiesta risorsa ${reqPreferredResource || reqAreaTarget} per commessa ${commName}`;
         const htmlBody = `
           <div style="font-family: Arial, sans-serif; color: #1e293b; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px;">
-            <h2 style="color: #4f46e5; margin-top: 0;">📥 Nuova Richiesta Personale</h2>
-            <p>Ciao Coordinatore,</p>
-            <p>È stata ricevuta una nuova richiesta di personale per l'area <strong>${reqAreaTarget}</strong>.</p>
+            <h2 style="color: #d97706; margin-top: 0;">✉️ Nuova Richiesta Inserimento su Commessa</h2>
+            <p>Ciao,</p>
+            <p>È stata inviata una richiesta di inserimento personale per la commessa <strong>${commName}</strong>.</p>
             <table border="0" cellpadding="6" cellspacing="0" style="font-size:13px;color:#374151;width:100%">
               <tr><td style="font-weight:bold;width:180px">Commessa:</td><td>${commName}</td></tr>
               <tr><td style="font-weight:bold">Richiedente:</td><td>${richiedente} (${userEmail})</td></tr>
+              <tr><td style="font-weight:bold">Risorsa da Inserire:</td><td><strong style="color:#d97706">${reqPreferredResource || 'Non specificata'}</strong></td></tr>
               <tr><td style="font-weight:bold">Periodo:</td><td>dal ${reqDataInizio} al ${reqDataFine}</td></tr>
               <tr><td style="font-weight:bold">Carico Richiesto:</td><td>${reqPercentuale}%</td></tr>
-              ${reqPreferredResource ? `<tr><td style="font-weight:bold">Risorsa Preferita:</td><td><strong style="color:#4f46e5">${reqPreferredResource}</strong></td></tr>` : ''}
               ${reqNota ? `<tr><td style="font-weight:bold">Nota:</td><td><em>${reqNota}</em></td></tr>` : ''}
             </table>
-            <p style="margin-top:16px">Accedi alla <strong>Pianificazione del Personale e Carichi</strong> per gestire questa richiesta e assegnare la risorsa.</p>
+            <p style="margin-top:16px">Accedi alla <strong>Pianificazione Aziendale</strong> per verificare ed approvare la richiesta.</p>
           </div>
         `;
-        for (const email of coordAreaEmails) {
+        for (const email of Array.from(targetEmails)) {
           if (email.toLowerCase() !== userEmail.toLowerCase()) {
             await queueMail(email, subject, htmlBody);
           }
@@ -1165,6 +1197,21 @@ export default function Commesse() {
   const activeWeeks = useMemo(() => {
     return generateWeeksExtended(baseDate, zoomWeeks);
   }, [baseDate, zoomWeeks]);
+
+  const weeksRangeMap = useMemo(() => {
+    const map = new Map<string, { wkStartMs: number; wkEndMs: number }>();
+    activeWeeks.forEach(wk => {
+      if (wk.dateObj) {
+        const wkStart = new Date(wk.dateObj);
+        wkStart.setHours(0, 0, 0, 0);
+        const wkEnd = new Date(wkStart);
+        wkEnd.setDate(wkStart.getDate() + 6);
+        wkEnd.setHours(23, 59, 59, 999);
+        map.set(wk.id, { wkStartMs: wkStart.getTime(), wkEndMs: wkEnd.getTime() });
+      }
+    });
+    return map;
+  }, [activeWeeks]);
 
   const getMonthYearLabel = (dateObj?: Date) => {
     if (!dateObj) return '';
@@ -1877,9 +1924,33 @@ export default function Commesse() {
     return (coordinatori || []).some(c => c && c.email && typeof c.email === 'string' && c.email.toLowerCase().trim() === clean);
   }, [userEmail, coordinatori]);
 
+  const isUserPmOrRespOfCommessa = (cObj: any): boolean => {
+    if (!cObj) return false;
+    const respStr = String(cObj.responsabile || '').toLowerCase().trim();
+    const pmList: any[] = Array.isArray(cObj.pm) ? cObj.pm : (cObj.pm ? [cObj.pm] : []);
+    const targets = [respStr, ...pmList.map(p => String(p || '').toLowerCase().trim())].filter(Boolean);
+
+    if (targets.length === 0) return false;
+
+    if (myAssociatedName && targets.some(t => areNamesEqual(t, myAssociatedName))) return true;
+
+    if (userEmail) {
+      const emailClean = userEmail.toLowerCase().trim();
+      const username = emailClean.split('@')[0];
+      if (targets.some(t => t.includes(emailClean) || (username.length >= 4 && t.includes(username)))) return true;
+    }
+
+    return false;
+  };
+
   const canAccessCatalogo = useMemo(() => {
-    return isAdmin || isDev || isGestoreCommesse || isSoci(myAssociatedName) || isCoordinatoreQualsiasi;
-  }, [isAdmin, isDev, isGestoreCommesse, myAssociatedName, isCoordinatoreQualsiasi]);
+    return isAdmin || isDev || isGestoreCommesse || isSoci(myAssociatedName);
+  }, [isAdmin, isDev, isGestoreCommesse, myAssociatedName]);
+
+  const canAccessAltreCommesseTab = useMemo(() => {
+    if (isSoci(myAssociatedName)) return false;
+    return isCoordinatoreQualsiasi || isAdmin || isDev;
+  }, [isCoordinatoreQualsiasi, isAdmin, isDev, myAssociatedName]);
 
   const canManageCatalogo = useMemo(() => {
     return isAdmin || isDev || isGestoreCommesse || isSoci(myAssociatedName);
@@ -2707,7 +2778,7 @@ export default function Commesse() {
       </div>
       
       {/* TAB BAR (Per Admin, Soci, Coordinatori, Sviluppatori e Responsabili) */}
-      {canAccessCatalogo && (
+      {(canAccessCatalogo || canAccessAltreCommesseTab) && (
         <div className="flex border-b border-gray-200 gap-2 no-print">
           <button
             type="button"
@@ -2720,17 +2791,34 @@ export default function Commesse() {
           >
             🗓️ Consultazione Commesse
           </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('gestione')}
-            className={`px-5 py-3 font-bold text-sm rounded-t-2xl transition-all cursor-pointer ${
-              activeTab === 'gestione'
-                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-200/50'
-                : 'bg-gray-50 text-gray-650 hover:bg-gray-100'
-            }`}
-          >
-            📁 Gestione Catalogo
-          </button>
+
+          {canAccessCatalogo && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('gestione')}
+              className={`px-5 py-3 font-bold text-sm rounded-t-2xl transition-all cursor-pointer ${
+                activeTab === 'gestione'
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-200/50'
+                  : 'bg-gray-50 text-gray-650 hover:bg-gray-100'
+              }`}
+            >
+              📁 Gestione Catalogo
+            </button>
+          )}
+
+          {canAccessAltreCommesseTab && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('altre-commesse')}
+              className={`px-5 py-3 font-bold text-sm rounded-t-2xl transition-all cursor-pointer ${
+                activeTab === 'altre-commesse'
+                  ? 'bg-amber-600 text-white shadow-md shadow-amber-200/50'
+                  : 'bg-gray-50 text-gray-650 hover:bg-gray-100'
+              }`}
+            >
+              ✉️ Altre Commesse (Richiesta)
+            </button>
+          )}
         </div>
       )}
 
@@ -3017,18 +3105,21 @@ export default function Commesse() {
               className="w-full overflow-auto scrollbar-thin"
               style={{ maxHeight: `${tableHeight}px` }}
             >
-              <table className="w-full text-left border-separate border-spacing-0 text-xs">
+              <table 
+                className="w-full text-left border-separate border-spacing-0 text-xs"
+                style={{ minWidth: `${240 + activeWeeks.length * parseInt(weekColumnMinWidth)}px` }}
+              >
                 <thead className="sticky top-0 z-30 bg-white shadow-sm border-b-2 border-gray-200">
                   {/* Month Group Header Row */}
-                  <tr className="bg-gray-50 border-b text-[11px] font-black text-gray-500 text-center uppercase tracking-wider" style={{ height: '40px' }}>
+                  <tr className="bg-gray-50 border-b text-[11px] font-black text-gray-500 text-center uppercase tracking-wider" style={{ height: '40px', minHeight: '40px', maxHeight: '40px' }}>
                     <th 
-                      className="p-0 pl-2.5 text-left sticky left-0 top-0 z-35 bg-gray-50 shadow-[1px_0_0_0_#e5e7eb] font-black truncate"
-                      style={{ width: '240px', minWidth: '240px', maxWidth: '240px', height: '40px', lineHeight: '40px' }}
+                      className="p-0 text-center sticky left-0 top-0 z-35 bg-gray-50 shadow-[1px_0_0_0_#e5e7eb] font-black truncate whitespace-nowrap"
+                      style={{ width: '240px', minWidth: '240px', maxWidth: '240px', height: '40px', minHeight: '40px', maxHeight: '40px', lineHeight: '40px' }}
                     >
                       Mesi
                     </th>
                     {monthSpans.map((span, idx) => (
-                      <th key={idx} colSpan={span.colSpan} className="p-0 border-l border-gray-200 text-center bg-gray-50 font-black sticky top-0 z-30" style={{ height: '40px', lineHeight: '40px' }}>
+                      <th key={idx} colSpan={span.colSpan} className="p-0 px-1 border-l border-gray-200 text-center bg-gray-50 font-black sticky top-0 z-30 truncate whitespace-nowrap overflow-hidden" style={{ height: '40px', minHeight: '40px', maxHeight: '40px', lineHeight: '40px' }}>
                         {span.label}
                       </th>
                     ))}
@@ -3134,7 +3225,9 @@ export default function Commesse() {
                           {activeWeeks.map((wk, wIndex) => {
                             const assignedPeople = getAssignmentsForCommessaInWeek(comm.id, wk.id);
                             const isCurrentWeek = wk.id === `${new Date().getFullYear()}-W${getWeekNumber(new Date())}`;
-                            const isWithinRange = isWeekWithinRange(wk.dateObj, comm.dataInizio, comm.dataFine);
+                            const commRange = commesseDateRangeMap.get(comm.id);
+                            const wkRange = weeksRangeMap.get(wk.id);
+                            const isWithinRange = !!(commRange && wkRange && wkRange.wkStartMs <= commRange.endMs && wkRange.wkEndMs >= commRange.startMs);
                             const commColor = (comm.tipologia && TIPOLOGIA_COLORS[comm.tipologia]) || comm.colore || '#3b82f6';
                             const cellBg = isWithinRange ? hexToRgba(commColor, 0.08) : undefined;
                             
@@ -3172,7 +3265,7 @@ export default function Commesse() {
                                 className={`group/weekcell relative ${isUltraNarrow ? 'p-1' : 'p-2'} border-l border-b border-gray-100 align-top ${
                                   isCurrentWeek ? 'ring-2 ring-inset ring-blue-300' : ''
                                 } ${priorityBorderStyle} cursor-pointer hover:bg-indigo-100/70 hover:ring-2 hover:ring-inset hover:ring-indigo-400 hover:shadow-md transition-all`}
-                                style={{ backgroundColor: cellBg, minWidth: weekColumnMinWidth, width: weekColumnMinWidth }}
+                                style={{ backgroundColor: cellBg, minWidth: weekColumnMinWidth }}
                               >
                                 <div 
                                   className="flex flex-col"
@@ -3251,7 +3344,7 @@ export default function Commesse() {
                                            onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
                                            onAuxClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
                                            onClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
-                                           className={`text-[9px] font-black text-center py-1 px-0.5 rounded-md border flex items-center justify-center shadow-sm select-none cursor-pointer hover:ring-2 hover:ring-indigo-400 transition-all ${
+                                           className={`text-[8.5px] font-black text-center py-0.5 px-0.5 rounded border flex items-center justify-center shadow-2xs select-none cursor-pointer hover:ring-2 hover:ring-indigo-400 transition-all ${
                                              isAllWeekOnLeave
                                                ? 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100'
                                                : hasLeaves 
@@ -3273,7 +3366,7 @@ export default function Commesse() {
                                            onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
                                            onAuxClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
                                            onClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
-                                           className={`text-[10px] font-bold py-1 px-1.5 rounded-md border flex items-center justify-between gap-1 shadow-sm truncate select-none w-full cursor-pointer hover:ring-2 hover:ring-indigo-400 transition-all ${
+                                           className={`text-[9px] font-bold py-0.5 px-1 rounded border flex items-center justify-between gap-0.5 shadow-2xs truncate select-none w-full cursor-pointer hover:ring-2 hover:ring-indigo-400 transition-all ${
                                              isAllWeekOnLeave
                                                ? 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100'
                                                : hasLeaves 
@@ -3283,8 +3376,8 @@ export default function Commesse() {
                                            title={tooltipText}
                                          >
                                            <span className="truncate text-left">{initials}</span>
-                                           <span className="font-extrabold text-[9px] text-indigo-655 shrink-0 text-right">{displayHoursText}</span>
-                                           {hasLeaves && <span className="text-[8px] text-amber-500 shrink-0 ml-0.5" title={`Assenze: ${leavesFormatted}`}>⚠️</span>}
+                                           <span className="font-extrabold text-[8.5px] text-indigo-655 shrink-0 text-right">{displayHoursText}</span>
+                                           {hasLeaves && <span className="text-[7.5px] text-amber-500 shrink-0 ml-0.5" title={`Assenze: ${leavesFormatted}`}>⚠️</span>}
                                          </div>
                                        );
                                      }
@@ -3295,7 +3388,7 @@ export default function Commesse() {
                                          onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
                                          onAuxClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
                                          onClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
-                                         className={`text-[11px] p-1.5 rounded-lg border flex items-center justify-between gap-1 shadow-sm w-full select-none cursor-pointer hover:ring-2 hover:ring-indigo-400 transition-all hover:scale-[1.01] ${
+                                         className={`text-[10px] p-1 rounded-md border flex items-center justify-between gap-1 shadow-2xs w-full select-none cursor-pointer hover:ring-2 hover:ring-indigo-400 transition-all hover:scale-[1.01] ${
                                            isAllWeekOnLeave
                                              ? 'bg-amber-50/90 text-amber-950 border-amber-200 hover:bg-amber-100'
                                              : 'bg-indigo-50/80 text-indigo-950 border-indigo-100/60 hover:bg-indigo-100'
@@ -3386,27 +3479,20 @@ export default function Commesse() {
                       <input
                         type="text"
                         placeholder="Digita per cercare un cliente per codice o ragione sociale..."
-                        value={selectedClient ? selectedClient.nome : clientSearchText}
+                        value={isClientDropdownOpen ? clientSearchText : (selectedClient ? selectedClient.nome : clientSearchText)}
                         onChange={e => {
                           setClientSearchText(e.target.value);
-                          if (selectedClient) setSelectedClient(null);
                           setIsClientDropdownOpen(true);
                         }}
-                        onFocus={() => setIsClientDropdownOpen(true)}
-                        className="w-full p-2.5 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs"
+                        onFocus={() => {
+                          setClientSearchText('');
+                          setIsClientDropdownOpen(true);
+                        }}
+                        className="w-full p-2.5 pr-8 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs cursor-pointer"
                       />
-                      {selectedClient && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedClient(null);
-                            setClientSearchText('');
-                          }}
-                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-red-500 hover:text-red-700 font-extrabold text-[10px] bg-red-50 px-2 py-1 rounded-lg transition"
-                        >
-                          Rimuovi
-                        </button>
-                      )}
+                      <div className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+                        <ChevronDown className="w-4 h-4" />
+                      </div>
                     </div>
                     <button
                       type="button"
@@ -3423,33 +3509,46 @@ export default function Commesse() {
                   {isClientDropdownOpen && (
                     <>
                       <div className="fixed inset-0 z-10" onClick={() => setIsClientDropdownOpen(false)}></div>
-                      <div className="absolute left-0 right-0 z-20 mt-1 max-h-56 overflow-y-auto bg-white border border-gray-150 rounded-xl shadow-xl divide-y divide-gray-50">
-                        {(() => {
-                          const search = clientSearchText.toLowerCase();
-                          const filtered = clientiList.filter(c =>
-                            c.nome.toLowerCase().includes(search) || c.codice.includes(search)
-                          );
-                          if (filtered.length === 0) {
-                            return <div className="p-3 text-xs text-gray-450 italic font-bold">Nessun cliente trovato</div>;
-                          }
-                          return filtered.map(c => (
-                            <button
-                              key={c.codice}
-                              type="button"
-                              onClick={() => {
-                                setSelectedClient(c);
-                                setClientSearchText(c.nome);
-                                setIsClientDropdownOpen(false);
-                              }}
-                              className="w-full text-left px-3 py-2 hover:bg-emerald-50 text-xs font-semibold text-gray-700 transition-colors flex flex-col gap-0.5 cursor-pointer"
-                            >
-                              <span className="truncate w-full font-bold text-gray-800">{c.nome}</span>
-                              <span className="text-[9.5px] text-emerald-650 font-semibold italic">
-                                Cod. Cliente: {c.codice}
-                              </span>
-                            </button>
-                          ));
-                        })()}
+                      <div className="absolute left-0 right-0 z-20 mt-1 bg-white border border-gray-200 rounded-xl shadow-2xl overflow-hidden">
+                        <div className="max-h-56 overflow-y-auto divide-y divide-gray-50 p-1">
+                          {(() => {
+                            const search = clientSearchText.toLowerCase();
+                            const filtered = clientiList.filter(c =>
+                              c.nome.toLowerCase().includes(search) || c.codice.includes(search)
+                            );
+                            if (filtered.length === 0) {
+                              return (
+                                <div className="p-3 text-xs text-gray-400 italic text-center">
+                                  Nessun cliente trovato. <br />
+                                  Usa il tasto <strong>"+ Aggiungi Cliente"</strong> per registrarlo.
+                                </div>
+                              );
+                            }
+                            return filtered.map(c => {
+                              const isSelected = selectedClient?.codice === c.codice;
+                              return (
+                                <div
+                                  key={c.codice}
+                                  ref={el => {
+                                    if (el && isSelected && el.parentElement) {
+                                      el.parentElement.scrollTop = el.offsetTop;
+                                    }
+                                  }}
+                                  onClick={() => {
+                                    setSelectedClient(c);
+                                    setClientSearchText(c.nome);
+                                    setIsClientDropdownOpen(false);
+                                  }}
+                                  className={`p-2.5 text-xs cursor-pointer transition flex items-center justify-between rounded-lg ${
+                                    isSelected ? 'bg-emerald-100/90 font-black text-emerald-950' : 'hover:bg-emerald-50 text-gray-700 font-bold'
+                                  }`}
+                                >
+                                  <span>{isSelected ? '✓ ' : ''}{c.codice} - {c.nome}</span>
+                                </div>
+                              );
+                            });
+                          })()}
+                        </div>
                       </div>
                     </>
                   )}
@@ -4326,6 +4425,283 @@ export default function Commesse() {
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* TAB 3: ALTRE COMMESSE - RICHIESTA PER COORDINATORI */}
+      {(activeTab === 'altre-commesse' && canAccessAltreCommesseTab) && (
+        <div className="space-y-8">
+          <section className="bg-gradient-to-br from-amber-50 via-orange-50/40 to-slate-50 p-6 sm:p-8 rounded-3xl border border-amber-200/80 shadow-sm">
+            <div className="flex items-center gap-3 border-b border-amber-200/80 pb-4 mb-6">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500 text-white flex items-center justify-center font-black text-xl shadow-md shrink-0">
+                ✉️
+              </div>
+              <div>
+                <h3 className="text-xl font-extrabold text-amber-950">Richiesta Inserimento su Altre Commesse Aperte</h3>
+                <p className="text-xs text-amber-800 font-semibold mt-0.5">
+                  Seleziona dal menu a tendina la commessa gestita da altri responsabili su cui desideri inserire personale e compila i dettagli di richiesta.
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleSubmitRequest} className="bg-white p-6 sm:p-8 rounded-2xl border border-amber-200/80 shadow-sm space-y-6">
+              
+              {/* SELETTORE COMMESSA RICERCABILE */}
+              <div className="space-y-2">
+                <label className="block text-xs font-black uppercase text-amber-950 tracking-wider">
+                  1. Cerca e Seleziona Commessa Aperta dal Menu a Tendina *
+                </label>
+                
+                <div className="relative">
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="Cerca per nome commessa, cliente, codice o responsabile..."
+                      value={isAltreCommessaDropdownOpen ? altreCommessaSearchText : (selectedAltreCommessa ? selectedAltreCommessa.nome : altreCommessaSearchText)}
+                      onChange={e => {
+                        setAltreCommessaSearchText(e.target.value);
+                        setIsAltreCommessaDropdownOpen(true);
+                      }}
+                      onFocus={() => {
+                        setAltreCommessaSearchText('');
+                        setIsAltreCommessaDropdownOpen(true);
+                      }}
+                      className="w-full p-4 pr-10 border border-amber-300 rounded-xl bg-amber-50/20 font-extrabold text-xs text-gray-850 outline-none focus:ring-2 focus:ring-amber-500 shadow-inner cursor-pointer"
+                    />
+                    <div className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+                      <ChevronDown className="w-4 h-4" />
+                    </div>
+                  </div>
+
+                  {/* MENU A TENDINA CON RISULTATI DELLA RICERCA */}
+                  {isAltreCommessaDropdownOpen && (
+                    <>
+                      <div className="fixed inset-0 z-10" onClick={() => setIsAltreCommessaDropdownOpen(false)}></div>
+                      <div className="absolute left-0 right-0 z-20 mt-1.5 bg-white border border-amber-300 rounded-xl shadow-2xl overflow-hidden">
+                        <div className="max-h-72 overflow-y-auto divide-y divide-slate-100 p-1">
+                          {(() => {
+                            const query = altreCommessaSearchText.toLowerCase().trim();
+                            const availableCommesse = commesse.filter(c => (!c.stato || c.stato !== 'Chiusa') && !isUserPmOrRespOfCommessa(c));
+                            const filtered = availableCommesse.filter(c => {
+                              if (!query) return true;
+                              const name = (c.nome || '').toLowerCase();
+                              const client = (c.cliente || '').toLowerCase();
+                              const resp = (c.responsabile || '').toLowerCase();
+                              const codice = (c.codiceCommessa || '').toLowerCase();
+                              return name.includes(query) || client.includes(query) || resp.includes(query) || codice.includes(query);
+                            });
+
+                            if (filtered.length === 0) {
+                              return (
+                                <div className="p-4 text-xs text-gray-400 italic text-center">
+                                  Nessuna commessa aperta trovata per "{altreCommessaSearchText}".
+                                </div>
+                              );
+                            }
+
+                            return filtered.map(c => {
+                              const respName = c.responsabile || 'Non assegnato';
+                              const pmStr = Array.isArray(c.pm) ? c.pm.join(', ') : (c.pm || '');
+                              const isSelected = selectedAltreCommessa?.id === c.id;
+                              return (
+                                <div
+                                  key={c.id}
+                                  ref={el => {
+                                    if (el && isSelected && el.parentElement) {
+                                      el.parentElement.scrollTop = el.offsetTop;
+                                    }
+                                  }}
+                                  onClick={() => {
+                                    setSelectedAltreCommessa(c);
+                                    setAltreCommessaSearchText(c.nome);
+                                    setReqCommessaId(c.id);
+                                    const myDipObj = dipendenti.find(d => d.email && d.email.toLowerCase() === userEmail.toLowerCase()) || dipendenti.find(d => areNamesEqual(d.nome, myAssociatedName));
+                                    const myArea = myDipObj?.macroArea || 'Disegnatori';
+                                    setReqAreaTarget(myArea);
+                                    setReqPreferredResource(myAssociatedName || myDipObj?.nome || '');
+                                    setIsAltreCommessaDropdownOpen(false);
+                                  }}
+                                  className={`p-3.5 cursor-pointer transition flex items-center justify-between gap-3 text-xs rounded-lg ${
+                                    isSelected ? 'bg-amber-100/90 font-black text-amber-950' : 'hover:bg-amber-50'
+                                  }`}
+                                >
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <span className="w-3 h-3 rounded-full shrink-0 shadow-2xs" style={{ backgroundColor: c.colore || '#6366f1' }}></span>
+                                  <div className="flex flex-col truncate">
+                                    <span className="font-bold text-gray-900 truncate">
+                                      {isSelected ? '✓ ' : ''}{c.nome}
+                                    </span>
+                                    <span className="text-[10px] text-gray-500">Cliente: {c.cliente || '-'}</span>
+                                  </div>
+                                </div>
+                                <span className="font-extrabold text-[10.5px] text-amber-900 bg-amber-100/80 px-2 py-0.5 rounded-md shrink-0">
+                                  👤 Resp: {respName} {pmStr ? `(PM: ${pmStr})` : ''}
+                                </span>
+                              </div>
+                            );
+                          });
+                        })()}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* ANTEPRIMA DETTAGLI COMMESSA SELEZIONATA */}
+                {selectedAltreCommessa && (
+                  <div className="mt-3 bg-amber-50/70 p-4 rounded-xl border border-amber-200/80 flex items-center justify-between flex-wrap gap-3 text-xs animate-in fade-in duration-150">
+                    <div className="flex items-center gap-2">
+                      <span className="w-3 h-3 rounded-full" style={{ backgroundColor: selectedAltreCommessa.colore || '#6366f1' }}></span>
+                      <strong className="text-gray-900">{selectedAltreCommessa.nome}</strong>
+                    </div>
+                    <div className="flex gap-4 text-gray-600 flex-wrap">
+                      <span>Cliente: <strong className="text-gray-800">{selectedAltreCommessa.cliente || '-'}</strong></span>
+                      <span>Responsabile: <strong className="text-amber-900">{selectedAltreCommessa.responsabile || '-'}</strong></span>
+                      {selectedAltreCommessa.pm && (
+                        <span>PM: <strong className="text-gray-800">{Array.isArray(selectedAltreCommessa.pm) ? selectedAltreCommessa.pm.join(', ') : selectedAltreCommessa.pm}</strong></span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* SEZIONE CONFIGURAZIONE DETTAGLI RICHIESTA */}
+              <div className="border-t border-gray-100 pt-5">
+                <label className="block text-xs font-black uppercase text-amber-950 tracking-wider mb-4">
+                  2. Dettagli della Richiesta
+                </label>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* COLONNA SINISTRA */}
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Risorsa da Inserire (Precompilata con il tuo nome) *</label>
+                      <select
+                        required
+                        value={reqPreferredResource}
+                        onChange={e => setReqPreferredResource(e.target.value)}
+                        className="w-full p-3 border border-gray-200 bg-slate-50 focus:bg-white rounded-xl text-xs font-extrabold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 shadow-xs cursor-pointer"
+                      >
+                        <option value="">-- Seleziona Risorsa dell'Area --</option>
+                        {myAssociatedName && <option value={myAssociatedName}>👤 Me stesso ({myAssociatedName})</option>}
+                        {dipendenti
+                          .filter(d => !isSoci(d.nome) && (!reqAreaTarget || d.macroArea === reqAreaTarget) && d.nome !== myAssociatedName)
+                          .map(d => (
+                            <option key={d.id} value={d.nome}>{d.nome}</option>
+                          ))
+                        }
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Area di Riferimento *</label>
+                      <select
+                        required
+                        value={reqAreaTarget}
+                        onChange={e => {
+                          setReqAreaTarget(e.target.value);
+                          setReqPreferredResource('');
+                        }}
+                        className="w-full p-3 border border-gray-200 bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 shadow-xs cursor-pointer"
+                      >
+                        <option value="Disegnatori">Disegnatori</option>
+                        <option value="Ingegneria">Ingegneria</option>
+                        <option value="Sicurezza Cantieri">Sicurezza Cantieri</option>
+                        <option value="Consulenza Sicurezza">Consulenza Sicurezza</option>
+                        <option value="Amministrazione">Amministrazione</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Percentuale Carico Richiesta *</label>
+                      <select
+                        required
+                        value={reqPercentuale}
+                        onChange={e => setReqPercentuale(Number(e.target.value))}
+                        className="w-full p-3 border border-gray-200 bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 shadow-xs cursor-pointer"
+                      >
+                        {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
+                          <option key={pct} value={pct}>{pct}%</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* COLONNA DESTRA */}
+                  <div className="space-y-4 flex flex-col justify-between">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Settimana Inizio *</label>
+                        <select
+                          value={(() => {
+                            const match = selectableWeekOptions.find(o => o.mondayStr === reqDataInizio);
+                            return match ? match.id : (selectableWeekOptions[0]?.id || '');
+                          })()}
+                          onChange={e => {
+                            const id = e.target.value;
+                            const startOpt = selectableWeekOptions.find(o => o.id === id);
+                            if (startOpt) setReqDataInizio(startOpt.mondayStr);
+                          }}
+                          className="w-full p-3 border border-gray-200 bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 shadow-xs cursor-pointer"
+                        >
+                          {selectableWeekOptions.map(opt => (
+                            <option key={`tab-req-start-${opt.id}`} value={opt.id}>{opt.label}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Settimana Fine *</label>
+                        <select
+                          value={(() => {
+                            const match = selectableWeekOptions.find(o => o.sundayStr === reqDataFine);
+                            return match ? match.id : (selectableWeekOptions[0]?.id || '');
+                          })()}
+                          onChange={e => {
+                            const id = e.target.value;
+                            const endOpt = selectableWeekOptions.find(o => o.id === id);
+                            if (endOpt) setReqDataFine(endOpt.sundayStr);
+                          }}
+                          className="w-full p-3 border border-gray-200 bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 shadow-xs cursor-pointer"
+                        >
+                          {selectableWeekOptions.map(opt => (
+                            <option key={`tab-req-end-${opt.id}`} value={opt.id}>{opt.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1 flex items-center justify-between">
+                        <span>Nota per il Responsabile di Commessa</span>
+                        <span className="text-[10px] text-gray-400 font-semibold italic">(Facoltativa)</span>
+                      </label>
+                      <textarea
+                        placeholder="Es. Inserimento per supporto alla progettazione..."
+                        value={reqNota}
+                        onChange={e => setReqNota(e.target.value)}
+                        rows={3}
+                        className="w-full p-3 border border-gray-200 bg-slate-50 focus:bg-white rounded-xl text-xs font-semibold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 shadow-inner resize-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* PULSANTE INVIA RICHIESTA */}
+              <div className="flex justify-end pt-4 border-t border-gray-100">
+                <button
+                  type="submit"
+                  disabled={isSubmittingRequest || !reqCommessaId}
+                  className="px-8 py-4 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white font-extrabold text-xs rounded-xl shadow-md hover:shadow-lg transition active:scale-95 disabled:opacity-50 cursor-pointer flex items-center gap-2"
+                >
+                  <Send className="w-4 h-4" />
+                  <span>{isSubmittingRequest ? 'Invio in corso...' : '✉️ Invia Richiesta al Responsabile'}</span>
+                </button>
+              </div>
+
+            </form>
+          </section>
         </div>
       )}
 

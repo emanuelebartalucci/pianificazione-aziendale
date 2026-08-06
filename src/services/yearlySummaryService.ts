@@ -78,16 +78,31 @@ export async function rebuildYearlySummary(
       });
       requests = histItems;
     } else if (year === 2026 && historicalLeavesData && Array.isArray(historicalLeavesData)) {
-      // Per il 2026 uniamo lo storico Excel (Gen-Giu) con le richieste correnti su Firestore
+      // Per il 2026 uniamo lo storico Excel (Gen-Giu) con le richieste correnti su Firestore.
+      // Il JSON storico ha dati Gen-Giu 2026; includiamo tutto ciò che ricade nel 2026 evitando duplicati.
       const existingIds = new Set(requests.map(r => `${r.dipendenteName}_${r.dataInizio}_${r.tipo}`));
       const hist2026 = historicalLeavesData.filter((r: any) => {
         const dInizio = r.dataInizio || r.data || '';
         const dFine = r.dataFine || r.data || r.dataInizio || '';
+        const rStato = r.stato || 'Approvato';
+        const rNote = r.note || '';
         const key = `${r.dipendenteName}_${r.dataInizio}_${r.tipo}`;
-        return dFine >= '2026-01-01' && dInizio <= '2026-06-30' && !existingIds.has(key);
+        // Includi tutto ciò che ricade (anche parzialmente) nel 2026 e non è già presente
+        return rStato === 'Approvato' && rNote !== 'Chiusure Aziendali' &&
+               dFine >= '2026-01-01' && dInizio <= '2026-12-31' && !existingIds.has(key);
       });
       requests = [...requests, ...hist2026];
     }
+
+    const areNamesEqual = (n1?: string | null, n2?: string | null): boolean => {
+      if (!n1 || !n2) return false;
+      const clean1 = n1.toLowerCase().trim().replace(/\s+/g, ' ');
+      const clean2 = n2.toLowerCase().trim().replace(/\s+/g, ' ');
+      if (clean1 === clean2) return true;
+      const p1 = clean1.split(' ').sort().join(' ');
+      const p2 = clean2.split(' ').sort().join(' ');
+      return p1 === p2;
+    };
 
     const employeeStats: Record<string, { ferie: number; permessi: number; malattia: number; smart: number; totale: number }> = {};
     const monthlyTrend: Record<string, number[]> = {};
@@ -101,8 +116,11 @@ export async function rebuildYearlySummary(
     });
 
     requests.forEach(req => {
-      const dipNameClean = (req.dipendenteName || '').trim().toLowerCase();
-      if (!dipNameClean) return;
+      const rawReqName = (req.dipendenteName || '').trim();
+      if (!rawReqName) return;
+
+      const matchedDip = dipendentiList.find(d => d.nome && areNamesEqual(d.nome, rawReqName));
+      const dipNameClean = matchedDip ? matchedDip.nome.trim().toLowerCase() : rawReqName.toLowerCase();
 
       if (!employeeStats[dipNameClean]) {
         employeeStats[dipNameClean] = { ferie: 0, permessi: 0, malattia: 0, smart: 0, totale: 0 };
@@ -189,16 +207,28 @@ export async function rebuildYearlySummary(
       monthlyTrend[key] = monthlyTrend[key].map(v => Math.round(v * 10) / 10);
     });
 
+    // Firestore non accetta valori undefined: convertiamo tutto in null ricorsivamente
+    const sanitizeForFirestore = (obj: any): any => {
+      if (obj === undefined) return null;
+      if (obj === null || typeof obj !== 'object') return obj;
+      if (Array.isArray(obj)) return obj.map(sanitizeForFirestore);
+      const result: Record<string, any> = {};
+      for (const [key, value] of Object.entries(obj)) {
+        result[key] = sanitizeForFirestore(value);
+      }
+      return result;
+    };
+
     const compressedRequests = requests.map(r => ({
-      id: r.id,
-      dipendenteName: r.dipendenteName,
-      tipo: r.tipo,
-      stato: r.stato,
+      id: r.id || null,
+      dipendenteName: r.dipendenteName || '',
+      tipo: r.tipo || '',
+      stato: r.stato || 'Approvato',
       dataInizio: r.dataInizio || r.data || '',
       dataFine: r.dataFine || r.data || '',
       frazioneTipo: r.frazioneTipo || 'giornata',
-      oraInizio: r.oraInizio,
-      oraFine: r.oraFine,
+      oraInizio: r.oraInizio || null,
+      oraFine: r.oraFine || null,
       note: r.note || ''
     }));
 
@@ -211,12 +241,12 @@ export async function rebuildYearlySummary(
     };
 
     const docRef = doc(db, 'storico_annuale_ferie', String(year));
-    await setDoc(docRef, summaryPayload);
+    await setDoc(docRef, sanitizeForFirestore(summaryPayload));
 
     console.log(`Documento di Sintesi Annuale ${year} rigenerato con successo su Firestore (storico_annuale_ferie/${year})!`);
     return summaryPayload;
-  } catch (err) {
-    console.error(`Errore durante la rigenerazione della sintesi annuale per il ${year}:`, err);
+  } catch (err: any) {
+    console.error(`Errore durante la rigenerazione della sintesi annuale per il ${year}:`, err?.message || err);
     return null;
   }
 }

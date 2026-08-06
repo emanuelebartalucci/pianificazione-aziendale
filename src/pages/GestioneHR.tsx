@@ -146,7 +146,7 @@ export default function GestioneHR() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
 
   // 1. Frasi Benvenuto
-  const [greetingsList, setGreetingsList] = useState<{ id: string; testo: string }[]>([]);
+  const [greetingsList, setGreetingsList] = useState<{ id: string; testo: string; createdAt?: string }[]>([]);
   const [newGreetingText, setNewGreetingText] = useState('');
   const [editingGreetingId, setEditingGreetingId] = useState<string | null>(null);
   const [editingGreetingText, setEditingGreetingText] = useState('');
@@ -204,8 +204,37 @@ export default function GestioneHR() {
     try {
       // Frasi di Benvenuto
       const greetSnap = await getDocs(collection(db, 'dashboard_greetings'));
-      const greetList: { id: string; testo: string }[] = [];
-      greetSnap.forEach(d => greetList.push({ id: d.id, testo: d.data().testo }));
+      const greetList: { id: string; testo: string; time: number; createdAt?: string }[] = [];
+
+      const parseGreetingTime = (data: any): number => {
+        const c = data.createdAt || data.timestamp || data.data;
+        if (!c) return 0;
+        if (typeof c === 'number') return c;
+        if (typeof c === 'string') {
+          const t = new Date(c).getTime();
+          return isNaN(t) ? 0 : t;
+        }
+        if (typeof c === 'object') {
+          if (typeof c.toMillis === 'function') return c.toMillis();
+          if (typeof c.seconds === 'number') return c.seconds * 1000;
+        }
+        return 0;
+      };
+
+      greetSnap.forEach(d => {
+        const data = d.data();
+        greetList.push({
+          id: d.id,
+          testo: data.testo || '',
+          time: parseGreetingTime(data),
+          createdAt: typeof data.createdAt === 'string' ? data.createdAt : undefined
+        });
+      });
+
+      // Ordinamento dalla più recente alla meno recente (time desc).
+      // Le nuove frasi con timestamp recente vanno SEMPRE in cima.
+      greetList.sort((a, b) => b.time - a.time);
+
       setGreetingsList(greetList);
 
       // Clima
@@ -258,7 +287,10 @@ export default function GestioneHR() {
     e.preventDefault();
     if (!newGreetingText.trim()) return;
     try {
-      await addDoc(collection(db, 'dashboard_greetings'), { testo: newGreetingText.trim() });
+      await addDoc(collection(db, 'dashboard_greetings'), {
+        testo: newGreetingText.trim(),
+        createdAt: new Date().toISOString()
+      });
       setNewGreetingText('');
       await loadData();
       showToast("Frase di benvenuto aggiunta!");
@@ -279,8 +311,12 @@ export default function GestioneHR() {
       "Grazie per il tuo prezioso contributo quotidiano."
     ];
     try {
-      for (const phrase of defaultPhrases) {
-        await addDoc(collection(db, 'dashboard_greetings'), { testo: phrase });
+      const now = Date.now();
+      for (let i = 0; i < defaultPhrases.length; i++) {
+        await addDoc(collection(db, 'dashboard_greetings'), {
+          testo: defaultPhrases[i],
+          createdAt: new Date(now + i * 1000).toISOString()
+        });
       }
       await loadData();
       showToast("Frasi predefinite caricate!");
@@ -292,7 +328,10 @@ export default function GestioneHR() {
   const handleSaveEditGreeting = async (id: string) => {
     if (!editingGreetingText.trim()) return;
     try {
-      await setDoc(doc(db, 'dashboard_greetings', id), { testo: editingGreetingText.trim() });
+      await setDoc(doc(db, 'dashboard_greetings', id), {
+        testo: editingGreetingText.trim(),
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
       setEditingGreetingId(null);
       await loadData();
       showToast("Frase modificata!");

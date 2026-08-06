@@ -1,6 +1,6 @@
-// Production deploy trigger test - v1.0.8
-export const APP_VERSION = "v1.0.8";
-export const APP_RELEASE_DATE = "05/08/2026";
+// Production deploy release - v1.0.9
+export const APP_VERSION = "v1.0.9";
+export const APP_RELEASE_DATE = "06/08/2026";
 
 export const getPrintDateString = () => {
   const d = new Date();
