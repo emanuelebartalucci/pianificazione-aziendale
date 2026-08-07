@@ -2340,8 +2340,8 @@ export default function Impostazioni() {
                           if (freshTmpl) {
                             setEditSubject(freshTmpl.defaultSubject);
                             setEditBody(freshTmpl.defaultBody);
-                            const updated = { ...savedTemplates, [selectedTemplateId]: { subject: freshTmpl.defaultSubject, body: freshTmpl.defaultBody } };
-                            setSavedTemplates(updated);
+                            const updated = { ...customTemplates, [selectedTemplateId]: { subject: freshTmpl.defaultSubject, body: freshTmpl.defaultBody } };
+                            setCustomTemplates(updated);
                             await saveEmailTemplates(updated);
                             showToast(`Nuova Grafica Premium applicata al modello "${freshTmpl.label}"!`, "success");
                           }
@@ -2696,8 +2696,8 @@ export default function Impostazioni() {
                           onClick={async () => {
                             setEditSubject(currentTmplDef.defaultSubject);
                             setEditBody(currentTmplDef.defaultBody);
-                            const updated = { ...savedTemplates, [selectedTemplateId]: { subject: currentTmplDef.defaultSubject, body: currentTmplDef.defaultBody } };
-                            setSavedTemplates(updated);
+                             const updated = { ...customTemplates, [selectedTemplateId]: { subject: currentTmplDef.defaultSubject, body: currentTmplDef.defaultBody } };
+                            setCustomTemplates(updated);
                             await saveEmailTemplates(updated);
                             showToast(`Nuova Grafica Premium applicata al modello!`, "success");
                           }}

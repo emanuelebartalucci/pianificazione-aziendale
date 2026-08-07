@@ -343,8 +343,7 @@ export default function Commesse() {
   const [newCommessaGiornateProject, setNewCommessaGiornateProject] = useState(0);
   const [newCommessaGiornateJunior, setNewCommessaGiornateJunior] = useState(0);
 
-  // States for Editing Projects Split
-  const [editProgetti, setEditProgetti] = useState<CommessaProgetto[]>([]);
+  // (editProgetti stato rimosso — gestito localmente nelle modali)
 
   // Searchable Client Dropdown States (Form Nuova Commessa)
   const [selectedClient, setSelectedClient] = useState<{ codice: string; nome: string } | null>(null);
@@ -2266,11 +2265,10 @@ export default function Commesse() {
     if (!commToResend) return;
     try {
       const { subject, htmlBody } = generateCommessaAperturaEmailContent(commToResend);
-      await sendEmailNotification({
-        to: ['synergiesflow@ingegno06.it'],
-        subject: subject,
-        body: htmlBody
-      });
+      const recipients = await getCommesseNotificationEmails();
+      for (const rec of recipients) {
+        await queueMail(rec, subject, htmlBody, undefined, { isSystemNotification: true });
+      }
       showToast("E-mail di apertura commessa re-inviata con successo!", "success");
     } catch (err) {
       console.error("Errore durante il re-invio dell'e-mail di apertura:", err);
@@ -2435,11 +2433,10 @@ export default function Commesse() {
     if (!commToResend) return;
     try {
       const { subject, htmlBody } = generateCommessaChiusuraEmailContent(commToResend);
-      await sendEmailNotification({
-        to: ['synergiesflow@ingegno06.it'],
-        subject: subject,
-        body: htmlBody
-      });
+      const recipients = await getCommesseNotificationEmails();
+      for (const rec of recipients) {
+        await queueMail(rec, subject, htmlBody, undefined, { isSystemNotification: true });
+      }
       showToast("E-mail di chiusura commessa re-inviata con successo!", "success");
     } catch (err) {
       console.error("Errore durante il re-invio dell'e-mail di chiusura:", err);
@@ -2540,7 +2537,7 @@ export default function Commesse() {
       setNewCommessaGiornateJunior(0);
 
       await refreshData();
-      setIsFormOpen(false);
+      setActiveTab('consultazione');
       showToast("Nuova commessa registrata con successo nel catalogo!", "success");
     } catch (err) {
       console.error("Errore durante il salvataggio della nuova commessa:", err);
@@ -2548,6 +2545,7 @@ export default function Commesse() {
     }
   };
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleResendOpeningEmail = async (targetCommessa: any, currentEditProgetti?: CommessaProgetto[]) => {
     try {
       showToast("Invio e-mail di apertura in corso...");
