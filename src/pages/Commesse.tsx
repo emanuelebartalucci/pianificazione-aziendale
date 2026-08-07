@@ -475,7 +475,7 @@ export default function Commesse() {
   const [catalogoClienteFilter, setCatalogoClienteFilter] = useState<string>('');
   const [catalogoAnnoFilter, setCatalogoAnnoFilter] = useState<string>('');
   const [catalogoTipologiaFilter, setCatalogoTipologiaFilter] = useState<string>('');
-  const [catalogoSortBy, setCatalogoSortBy] = useState<'codice' | 'anno' | 'tipologia' | 'titolo' | 'cliente' | 'stato' | 'responsabile' | 'pm'>('codice');
+  const [catalogoSortBy, setCatalogoSortBy] = useState<'codice' | 'anno' | 'tipologia' | 'titolo' | 'cliente' | 'stato' | 'responsabile' | 'pm' | 'dataApertura'>('codice');
   const [catalogoSortDir, setCatalogoSortDir] = useState<'asc' | 'desc'>('asc');
   const [showNewCommessaForm, _setShowNewCommessaForm] = useState(true);
   
@@ -2542,128 +2542,6 @@ export default function Commesse() {
     } catch (err) {
       console.error("Errore durante il salvataggio della nuova commessa:", err);
       showToast("Errore durante il salvataggio della nuova commessa.", "error");
-    }
-  };
-
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const handleResendOpeningEmail = async (targetCommessa: any, currentEditProgetti?: CommessaProgetto[]) => {
-    try {
-      showToast("Invio e-mail di apertura in corso...");
-      const c = targetCommessa;
-      const codiceCommessa = c.codiceCommessa || (c.nome ? c.nome.split(' - ')[0] : '');
-      const titoloCommessa = c.titolo || (c.nome && c.nome.includes(' - ') ? c.nome.split(' - ').slice(1).join(' - ') : c.nome);
-
-      const savedTemplates = await loadSavedEmailTemplates();
-      const customTpl = savedTemplates['commessa_apertura'];
-
-      let progettiHtml = '';
-      const progettiList = (currentEditProgetti && currentEditProgetti.length > 0)
-        ? currentEditProgetti
-        : (Array.isArray(c.progetti) ? c.progetti : []);
-
-      progettiList.forEach((p: any, index: number) => {
-        let sgqInfo = '';
-        if (p.sgq === 'SI' || p.isSGQ) {
-          const vList = Array.isArray(p.verificatori) ? p.verificatori.join(', ') : (p.verificatori || p.verificatoreValidatore || '-');
-          sgqInfo = `<strong>SGQ:</strong> Sì<br/><strong>Verif./Valid.:</strong> ${vList || '-'}<br/><strong>Compilatore:</strong> ${p.compilatore || p.compilatoreRDP || '-'}`;
-        } else {
-          sgqInfo = `<strong>SGQ:</strong> No<br/><strong>Giornate:</strong> Senior: ${p.giornateSenior || 0} gg | Project: ${p.giornateProject || 0} gg | Junior: ${p.giornateJunior || 0} gg`;
-        }
-        const formattedDesc = (p.descrizione || p.nome || '').replace(/\n/g, '<br/>');
-        const rawUtenti = p.utentiDaAbilitare || p.utentiAbilitati || p.utentiDaAbilitareCategoria || [];
-        const utentiList = Array.isArray(rawUtenti) ? rawUtenti : (typeof rawUtenti === 'string' ? rawUtenti.split(',') : []);
-        const utentiAbilitareList = utentiList.length > 0
-          ? utentiList.map((u: string) => u.trim()).filter(Boolean).join(', ')
-          : 'Nessuno specificato';
-
-        progettiHtml += `
-          <tr style="background-color: ${index % 2 === 0 ? '#f9fafb' : '#ffffff'}; border-bottom: 1px solid #e5e7eb;">
-            <td style="padding: 10px; font-weight: 600; font-size: 13px; line-height: 1.45; color: #1f2937;">${formattedDesc || '(Nessuna descrizione)'}</td>
-            <td style="padding: 10px; font-size: 13px; vertical-align: top; color: #374151;">${p.pm || p.responsabile || 'Non assegnato'}</td>
-            <td style="padding: 10px; font-size: 12px; line-height: 1.45; vertical-align: top; color: #047857; font-weight: 700; background-color: #ecfdf5;">${utentiAbilitareList}</td>
-            <td style="padding: 10px; font-size: 12px; line-height: 1.5; vertical-align: top; color: #374151;">${sgqInfo}</td>
-          </tr>
-        `;
-      });
-
-      const tabellaProgettiFullHtml = `
-        <table border="0" cellpadding="0" cellspacing="0" style="width: 100%; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; font-family: inherit;">
-          <thead style="background-color: #f3f4f6;">
-            <tr>
-              <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Descrizione Progetto</th>
-              <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Project Manager</th>
-              <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Utenti da Abilitare</th>
-              <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Configurazione / SGQ</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${progettiHtml || '<tr><td colspan="4" style="padding: 10px; text-align: center; color: #9ca3af;">Nessun progetto specificato</td></tr>'}
-          </tbody>
-        </table>
-      `;
-
-      let mailSubject = `[Nuova Commessa] Aperta commessa: ${c.nome || `${codiceCommessa} - ${titoloCommessa}`}`;
-      let finalMailBody = '';
-
-      const giornateSenior = c.giornateSeniorProject || 0;
-      const giornateProject = c.giornateProject || 0;
-      const giornateJunior = c.giornateJuniorProject || 0;
-
-      if (customTpl && customTpl.body) {
-        if (customTpl.subject) {
-          mailSubject = substitutePlaceholders(customTpl.subject, {
-            '{CODICE_COMMESSA}': codiceCommessa,
-            '{NOME_COMMESSA}': titoloCommessa
-          });
-        }
-        finalMailBody = substitutePlaceholders(customTpl.body, {
-          '{CODICE_COMMESSA}': codiceCommessa,
-          '{NOME_COMMESSA}': titoloCommessa,
-          '{CLIENTE}': c.cliente || 'Non specificato',
-          '{TIPOLOGIA}': TIPOLOGIE_COMMESSE[c.tipologia] || c.tipologia || 'Non specificata',
-          '{ANNO}': String(c.anno || ''),
-          '{APERTA_DA}': c.apertaDa || (myAssociatedName ? `${myAssociatedName} (${userEmail})` : userEmail),
-          '{DATA_INIZIO}': c.dataInizio ? formatDate(c.dataInizio) : 'Non specificata',
-          '{DATA_FINE}': c.dataFine ? formatDate(c.dataFine) : 'Non specificata',
-          '{RESPONSABILE}': c.responsabile || 'Non assegnato',
-          '{GIORNATE_STIMATE}': `Senior: ${giornateSenior} gg | Project: ${giornateProject} gg | Junior: ${giornateJunior} gg`,
-          '{TABELLA_PROGETTI}': tabellaProgettiFullHtml
-        });
-      } else {
-        finalMailBody = `
-          <p>Ciao,</p>
-          <p>Ti comunichiamo che è stata aperta una nuova commessa sulla piattaforma di pianificazione con i seguenti dettagli:</p>
-          <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 15px 0;" />
-          <table border="0" cellpadding="5" cellspacing="0" style="font-size: 14px; color: #374151; width: 100%;">
-            <tr><td style="font-weight: bold; width: 220px;">Codice Commessa:</td><td>${codiceCommessa}</td></tr>
-            <tr><td style="font-weight: bold;">Titolo:</td><td>${titoloCommessa}</td></tr>
-            <tr><td style="font-weight: bold;">Cliente:</td><td>${c.cliente || 'Non specificato'}</td></tr>
-            <tr><td style="font-weight: bold;">Tipologia:</td><td>${TIPOLOGIE_COMMESSE[c.tipologia] || c.tipologia || 'Non specificata'}</td></tr>
-            <tr><td style="font-weight: bold;">Anno:</td><td>${c.anno || 'Non specificato'}</td></tr>
-            <tr><td style="font-weight: bold;">Aperta da:</td><td><strong style="color: #047857;">${c.apertaDa || (myAssociatedName ? `${myAssociatedName} (${userEmail})` : userEmail)}</strong></td></tr>
-            <tr><td style="font-weight: bold;">Data Inizio:</td><td>${c.dataInizio ? formatDate(c.dataInizio) : 'Non specificata'}</td></tr>
-            <tr><td style="font-weight: bold;">Data Fine:</td><td>${c.dataFine ? formatDate(c.dataFine) : 'Non specificata'}</td></tr>
-            <tr><td style="font-weight: bold;">Responsabile Commessa:</td><td>${c.responsabile || 'Non assegnato'}</td></tr>
-            <tr><td style="font-weight: bold;">Giornate Totali Stimate (No SGQ):</td><td>Senior: ${giornateSenior} gg | Project: ${giornateProject} gg | Junior: ${giornateJunior} gg</td></tr>
-          </table>
-          
-          <h3 style="color: #065f46; font-size: 16px; margin-top: 25px; margin-bottom: 10px;">Dettagli Progetti & SGQ</h3>
-          ${tabellaProgettiFullHtml}
-
-          <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 25px 0;" />
-          <p>Puoi ora procedere all'apertura di questa commessa sul gestionale aziendale.</p>
-        `;
-      }
-
-      const creationRecipients = await getCommesseNotificationEmails();
-      for (const rec of creationRecipients) {
-        await queueMail(rec, mailSubject, finalMailBody, undefined, { isSystemNotification: true });
-      }
-
-      showToast(`Notifica e-mail di apertura commessa (${codiceCommessa}) inviata con successo!`, "success");
-    } catch (err) {
-      console.error("Errore reinvio mail apertura commessa:", err);
-      showToast("Errore durante il reinvio dell'e-mail di apertura.", "error");
     }
   };
 
