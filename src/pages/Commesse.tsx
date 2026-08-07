@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, doc, setDoc, addDoc, deleteDoc, getDocs, runTransaction } from 'firebase/firestore';
-import { Briefcase, ChevronLeft, ChevronRight, ChevronDown, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw, Printer, Plus, UserCheck, MoveVertical, Building2, Send } from 'lucide-react';
+import { Briefcase, ChevronLeft, ChevronRight, ChevronDown, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw, Printer, Plus, UserCheck, MoveVertical, Building2, Send, Info, Mail } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays } from '../utils/date';
 import { queueMail } from '../utils/mailSender';
 import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
@@ -330,36 +330,63 @@ export default function Commesse() {
   const [newCommessaDataFine, setNewCommessaDataFine] = useState('');
   const [newCommessaResponsabile, setNewCommessaResponsabile] = useState('');
 
-  // Split in Progetti states
-  const [newCommessaProgetti, setNewCommessaProgetti] = useState<CommessaProgetto[]>([
-    {
-      descrizione: 'FORMAZIONE - Attività formative sulla commessa',
-      pm: '',
-      utentiDaAbilitare: [],
-      sgq: 'NO',
-      verificatori: [],
-      compilatore: '',
-      giornateSenior: 0,
-      giornateProject: 0,
-      giornateJunior: 0
-    }
+  // Stati per la creazione Nuova Commessa e Progetti
+  const [newCommessaProgettiDescrizioni, setNewCommessaProgettiDescrizioni] = useState<string[]>([
+    'FORMAZIONE - Attività formative sulla commessa'
   ]);
-
-  const handleUpdateProgettoField = (index: number, fields: Partial<CommessaProgetto>) => {
-    setNewCommessaProgetti(prev => prev.map((p, idx) => idx === index ? { ...p, ...fields } : p));
-  };
+  const [newCommessaPM, setNewCommessaPM] = useState('');
+  const [newCommessaUtentiDaAbilitare, setNewCommessaUtentiDaAbilitare] = useState<string[]>([]);
+  const [newCommessaSGQ, setNewCommessaSGQ] = useState<'SI' | 'NO'>('NO');
+  const [newCommessaVerificatori, setNewCommessaVerificatori] = useState<string[]>([]);
+  const [newCommessaCompilatore, setNewCommessaCompilatore] = useState('');
+  const [newCommessaGiornateSenior, setNewCommessaGiornateSenior] = useState(0);
+  const [newCommessaGiornateProject, setNewCommessaGiornateProject] = useState(0);
+  const [newCommessaGiornateJunior, setNewCommessaGiornateJunior] = useState(0);
 
   // States for Editing Projects Split
   const [editProgetti, setEditProgetti] = useState<CommessaProgetto[]>([]);
 
-  const handleUpdateEditProgettoField = (index: number, fields: Partial<CommessaProgetto>) => {
-    setEditProgetti(prev => prev.map((p, idx) => idx === index ? { ...p, ...fields } : p));
-  };
-
-  // Searchable Client Dropdown States
+  // Searchable Client Dropdown States (Form Nuova Commessa)
   const [selectedClient, setSelectedClient] = useState<{ codice: string; nome: string } | null>(null);
   const [clientSearchText, setClientSearchText] = useState('');
   const [isClientDropdownOpen, setIsClientDropdownOpen] = useState(false);
+
+  // Stati Modale Modifica Catalogo Commessa Completa & Info Modal Sola Lettura
+  const [editingCommessa, setEditingCommessa] = useState<any | null>(null);
+  const [infoModalCommessa, setInfoModalCommessa] = useState<any | null>(null);
+
+  const [editTitolo, setEditTitolo] = useState('');
+  const [editCliente, setEditCliente] = useState('');
+  const [editAnno, setEditAnno] = useState('');
+  const [editTipologia, setEditTipologia] = useState('');
+  const [editStato, setEditStato] = useState<'Aperta' | 'Chiusa'>('Aperta');
+  const [editDataInizio, setEditDataInizio] = useState('');
+  const [editDataFine, setEditDataFine] = useState('');
+  const [editResponsabile, setEditResponsabile] = useState('');
+  const [editProgettiDescrizioni, setEditProgettiDescrizioni] = useState<string[]>([]);
+  const [editPM, setEditPM] = useState('');
+  const [editUtentiDaAbilitare, setEditUtentiDaAbilitare] = useState<string[]>([]);
+  const [editSGQ, setEditSGQ] = useState<'SI' | 'NO'>('NO');
+  const [editVerificatori, setEditVerificatori] = useState<string[]>([]);
+  const [editCompilatore, setEditCompilatore] = useState('');
+  const [editGiornateSenior, setEditGiornateSenior] = useState<number>(0);
+  const [editGiornateProject, setEditGiornateProject] = useState<number>(0);
+  const [editGiornateJunior, setEditGiornateJunior] = useState<number>(0);
+  // Searchable Filter Dropdowns per Catalogo Commesse
+  const [isCatClienteOpen, setIsCatClienteOpen] = useState(false);
+  const [catClienteSearch, setCatClienteSearch] = useState('');
+
+  const [isCatRespOpen, setIsCatRespOpen] = useState(false);
+  const [catRespSearch, setCatRespSearch] = useState('');
+
+  const [isCatPMOpen, setIsCatPMOpen] = useState(false);
+  const [catPMSearch, setCatPMSearch] = useState('');
+
+  const [isCatAnnoOpen, setIsCatAnnoOpen] = useState(false);
+  const [catAnnoSearch, setCatAnnoSearch] = useState('');
+
+  const [isCatTipologiaOpen, setIsCatTipologiaOpen] = useState(false);
+  const [catTipologiaSearch, setCatTipologiaSearch] = useState('');
 
   // Searchable Altre Commesse Dropdown States (per Coordinatori)
   const [altreCommessaSearchText, setAltreCommessaSearchText] = useState('');
@@ -409,6 +436,27 @@ export default function Commesse() {
         setClientSearchText((createdDoc as any).nome);
         setIsClientDropdownOpen(false);
         showToast(`Cliente ${(createdDoc as any).codice} - ${(createdDoc as any).nome} aggiunto ed impostato!`, "success");
+
+        // Notifica E-mail al sistema per nuovo cliente inserito
+        try {
+          const clientSubject = `[Nuovo Cliente] Registrato cliente: ${(createdDoc as any).nome}`;
+          const clientHtmlBody = `
+            <p>Ciao,</p>
+            <p>Ti comunichiamo che è stato censito un nuovo cliente nell'anagrafica aziendale:</p>
+            <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 15px 0;" />
+            <table border="0" cellpadding="5" cellspacing="0" style="font-size: 14px; color: #374151; width: 100%;">
+              <tr><td style="font-weight: bold; width: 180px;">Codice Cliente:</td><td><strong>${(createdDoc as any).codice}</strong></td></tr>
+              <tr><td style="font-weight: bold;">Ragione Sociale:</td><td><strong>${(createdDoc as any).nome}</strong></td></tr>
+              <tr><td style="font-weight: bold;">Registrato da:</td><td>${myAssociatedName || userEmail}</td></tr>
+            </table>
+          `;
+          const recipients = await getCommesseNotificationEmails();
+          for (const rec of recipients) {
+            await queueMail(rec, clientSubject, clientHtmlBody, undefined, { isSystemNotification: true });
+          }
+        } catch (errClientMail) {
+          console.error("Errore invio mail nuovo cliente:", errClientMail);
+        }
       }
       setNewClientNome('');
       setIsNewClientModalOpen(false);
@@ -520,14 +568,6 @@ export default function Commesse() {
 
 
   
-  // Stati per la modifica dei dettagli della commessa (Responsabile, PM, Date)
-  const [editingCommessa, setEditingCommessa] = useState<any | null>(null);
-  const [editResponsabile, setEditResponsabile] = useState('');
-  const [editDataInizio, setEditDataInizio] = useState('');
-  const [editDataFine, setEditDataFine] = useState('');
-  const [editStato, setEditStato] = useState('Aperta');
-  const [savingEdit, setSavingEdit] = useState(false);
-
   const [isCommessaDropdownOpen, setIsCommessaDropdownOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
 
@@ -1544,277 +1584,7 @@ export default function Commesse() {
     return map;
   }, [approvedLeaves, activeWeeks]);
 
-  const handleOpenEditModal = (comm: any) => {
-    setEditingCommessa(comm);
-    
-    // Find matching employee in dipendenti to use their official database name formatting
-    const respDip = dipendenti.find(d => areNamesEqual(d.nome, comm.responsabile));
-    setEditResponsabile(respDip ? respDip.nome : (comm.responsabile || ''));
-    
 
-    // Inizializzazione progetti split in modifica (con fallback per commesse legacy)
-    const defaultPm = Array.isArray(comm.pm) ? (comm.pm[0] || '') : (comm.pm || '');
-    const hasProgetti = Array.isArray(comm.progetti) && comm.progetti.length > 0;
-    const defaultTitolo = comm.titolo || (comm.nome && comm.nome.includes(' - ') ? comm.nome.split(' - ').slice(1).join(' - ') : comm.nome) || 'Progetto Commessa';
-    const initialProgetti = (hasProgetti ? comm.progetti : [
-      {
-        descrizione: 'ATTIVITÀ PRINCIPALE - ' + defaultTitolo,
-        pm: defaultPm,
-        utentiDaAbilitare: [],
-        sgq: 'NO',
-        verificatori: [],
-        compilatore: '',
-        giornateSenior: Number(comm.giornateSeniorProject) || 0,
-        giornateProject: Number(comm.giornateProject) || 0,
-        giornateJunior: Number(comm.giornateJuniorProject) || 0
-      }
-    ]).map((p: any) => {
-      let vArr: string[] = [];
-      if (p.verificatori) {
-        if (Array.isArray(p.verificatori)) {
-          vArr = p.verificatori;
-        } else {
-          vArr = [p.verificatori];
-        }
-      }
-      let uArr: string[] = [];
-      if (p.utentiDaAbilitare) {
-        uArr = Array.isArray(p.utentiDaAbilitare) ? p.utentiDaAbilitare : [p.utentiDaAbilitare];
-      } else if (p.utentiAbilitati) {
-        uArr = Array.isArray(p.utentiAbilitati) ? p.utentiAbilitati : [p.utentiAbilitati];
-      }
-      const pmDip = dipendenti.find(d => areNamesEqual(d.nome, p.pm));
-      return {
-        ...p,
-        pm: pmDip ? pmDip.nome : (p.pm || ''),
-        utentiDaAbilitare: uArr,
-        verificatori: vArr
-      };
-    });
-    setEditProgetti(initialProgetti);
-    
-    setEditDataInizio(comm.dataInizio || '');
-    setEditDataFine(comm.dataFine || '');
-    setEditStato(comm.stato || 'Aperta');
-  };
-
-
-
-  const handleSaveCommessaDetails = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingCommessa) return;
-
-    if (editDataInizio && editDataFine && editDataInizio > editDataFine) {
-      showToast("La data di inizio non può essere successiva alla data di fine.", "error");
-      return;
-    }
-
-    setSavingEdit(true);
-    try {
-      const docRef = doc(db, 'catalogo_commesse', editingCommessa.id);
-
-      // Calcolo dinamico dei totali dai progetti in modifica
-      const totalSeniorDays = editProgetti.reduce((acc, p) => acc + (p.sgq === 'NO' ? Number(p.giornateSenior) || 0 : 0), 0);
-      const totalProjectDays = editProgetti.reduce((acc, p) => acc + (p.sgq === 'NO' ? Number(p.giornateProject) || 0 : 0), 0);
-      const totalJuniorDays = editProgetti.reduce((acc, p) => acc + (p.sgq === 'NO' ? Number(p.giornateJunior) || 0 : 0), 0);
-      const pmsUnivoci = Array.from(new Set(editProgetti.map(p => p.pm).filter(name => name !== '')));
-
-      // Rileva se la commessa viene chiusa adesso (transizione verso "Chiusa")
-      const wasAlreadyClosed = (editingCommessa as any).stato === 'Chiusa';
-      const isClosingNow = editStato === 'Chiusa' && !wasAlreadyClosed;
-
-      // Data di chiusura: sempre la data odierna al momento della chiusura; non viene mai sovrascritta se già presente
-      const todayIso = new Date().toISOString().slice(0, 10);
-      const existingDataChiusura = (editingCommessa as any).dataChiusura || null;
-      const dataChiusura = editStato === 'Chiusa'
-        ? (existingDataChiusura || todayIso)
-        : null;
-
-      const updates: Record<string, any> = {
-        responsabile: editResponsabile,
-        pm: pmsUnivoci,
-        giornateSeniorProject: totalSeniorDays,
-        giornateProject: totalProjectDays,
-        giornateJuniorProject: totalJuniorDays,
-        dataInizio: editDataInizio,
-        dataFine: editDataFine,
-        stato: editStato,
-        progetti: editProgetti,
-        ...(dataChiusura ? { dataChiusura } : {})
-      };
-
-      await setDoc(docRef, updates, { merge: true });
-
-      // --- Pulizia assegnazioni future se la commessa viene chiusa ora ---
-      if (isClosingNow) {
-        const chiusuraDate = new Date(todayIso);
-        chiusuraDate.setHours(0, 0, 0, 0);
-
-        let settimaneRipulite = 0;
-        const targetDocIds: string[] = [];
-
-        // Filtra in memoria le chiavi interessate senza fare full-scan Firestore
-        for (const [docId, lista] of Object.entries(assignments)) {
-          if (!Array.isArray(lista)) continue;
-          if (!lista.some((ass: any) => ass.commessaId === editingCommessa.id)) continue;
-
-          const match = docId.match(/^(.+)-(\d{4}-W\d{1,2})$/);
-          if (!match) continue;
-
-          const weekId = match[2]; // es. "2026-W32"
-          const [yearStr, weekStr] = weekId.split('-W');
-          const year = parseInt(yearStr);
-          const week = parseInt(weekStr);
-
-          // Calcola il lunedì della settimana weekId (algoritmo ISO)
-          const jan4 = new Date(year, 0, 4);
-          const jan4Day = jan4.getDay() || 7;
-          const weekStart = new Date(jan4);
-          weekStart.setDate(jan4.getDate() - jan4Day + 1 + (week - 1) * 7);
-          weekStart.setHours(0, 0, 0, 0);
-
-          // Mantieni la settimana corrente, rimuovi solo quelle strettamente future
-          if (weekStart > chiusuraDate) {
-            targetDocIds.push(docId);
-          }
-        }
-
-        for (const docId of targetDocIds) {
-          const currentLista: any[] = assignments[docId] || [];
-          const updatedLista = currentLista.filter(
-            (ass: any) => ass.commessaId !== editingCommessa.id
-          );
-
-          if (updatedLista.length === currentLista.length) continue;
-
-          settimaneRipulite++;
-          if (updatedLista.length === 0) {
-            await deleteDoc(doc(db, 'assegnazioni', docId));
-          } else {
-            await setDoc(doc(db, 'assegnazioni', docId), { lista: updatedLista });
-          }
-        }
-
-        if (settimaneRipulite > 0) {
-          showToast(
-            `Commessa chiusa. Rimosse assegnazioni future su ${settimaneRipulite} settimane.`,
-            'success'
-          );
-        } else {
-          showToast('Commessa chiusa. Nessuna assegnazione futura da rimuovere.', 'success');
-        }
-
-        // Invia notifica e-mail di chiusura commessa a synergiesflow@ingegno06.it
-        try {
-          const whoClosed = myAssociatedName ? `${myAssociatedName} (${userEmail})` : userEmail;
-          const closureMailSubject = `[Notifica Chiusura] Chiusa commessa: ${editingCommessa.codiceCommessa || ''} - ${editingCommessa.nome}`;
-          
-          let progettiClosureHtml = '';
-          if (Array.isArray(editProgetti) && editProgetti.length > 0) {
-            editProgetti.forEach((p: any, index: number) => {
-              progettiClosureHtml += `
-                <tr style="background-color: ${index % 2 === 0 ? '#f9fafb' : '#ffffff'};">
-                  <td style="padding: 8px 10px; border-bottom: 1px solid #e5e7eb; font-weight: 600; font-size: 13px; color: #1f2937;">${p.descrizione || '(Senza descrizione)'}</td>
-                  <td style="padding: 8px 10px; border-bottom: 1px solid #e5e7eb; font-size: 13px; color: #4b5563;">${p.pm || 'Non assegnato'}</td>
-                  <td style="padding: 8px 10px; border-bottom: 1px solid #e5e7eb; font-size: 12px; color: #047857; font-weight: 600;">${(p.utentiDaAbilitare || []).join(', ') || 'Nessuno'}</td>
-                </tr>
-              `;
-            });
-          }
-
-          const closureMailBody = `
-            <p>Ciao,</p>
-            <p>Ti comunichiamo che la seguente commessa è stata <strong>CONTRASSEGNATA COME CHIUSA</strong> sulla piattaforma di pianificazione:</p>
-            <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 15px 0;" />
-            <table border="0" cellpadding="5" cellspacing="0" style="font-size: 14px; color: #374151; width: 100%;">
-              <tr><td style="font-weight: bold; width: 180px;">Codice Commessa:</td><td>${editingCommessa.codiceCommessa || 'N/D'}</td></tr>
-              <tr><td style="font-weight: bold;">Titolo / Nome:</td><td>${editingCommessa.nome}</td></tr>
-              <tr><td style="font-weight: bold;">Cliente:</td><td>${editingCommessa.cliente || 'Non specificato'}</td></tr>
-              <tr><td style="font-weight: bold;">Data Chiusura:</td><td>${dataChiusura ? new Date(dataChiusura).toLocaleDateString('it-IT') : new Date().toLocaleDateString('it-IT')}</td></tr>
-              <tr><td style="font-weight: bold;">Chiusa da:</td><td><strong style="color: #b91c1c;">${whoClosed}</strong></td></tr>
-              <tr><td style="font-weight: bold;">Responsabile Commessa:</td><td>${editResponsabile || 'Non assegnato'}</td></tr>
-              <tr><td style="font-weight: bold;">Project Manager (PM):</td><td>${pmsUnivoci.join(', ') || 'Non assegnato'}</td></tr>
-            </table>
-            
-            ${progettiClosureHtml ? `
-              <h3 style="color: #991b1b; font-size: 15px; margin-top: 20px; margin-bottom: 10px;">Progetti della Commessa</h3>
-              <table border="0" cellpadding="0" cellspacing="0" style="width: 100%; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden;">
-                <thead style="background-color: #f9fafb;">
-                  <tr>
-                    <th style="padding: 8px 10px; text-align: left; font-size: 12px; font-weight: bold; color: #374151;">Progetto</th>
-                    <th style="padding: 8px 10px; text-align: left; font-size: 12px; font-weight: bold; color: #374151;">PM</th>
-                    <th style="padding: 8px 10px; text-align: left; font-size: 12px; font-weight: bold; color: #374151;">Utenti Abilitati</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${progettiClosureHtml}
-                </tbody>
-              </table>
-            ` : ''}
-            <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;" />
-            <p style="font-size: 12px; color: #6b7280;">Nota: Le eventuali assegnazioni di ore pianificate per questa commessa nelle settimane successive a oggi sono state automaticamente rimosse.</p>
-          `;
-
-          const closureRecipients = await getCommesseNotificationEmails();
-          for (const rec of closureRecipients) {
-            await queueMail(rec, closureMailSubject, closureMailBody, undefined, { isSystemNotification: true });
-          }
-        } catch (errMail) {
-          console.error("Errore durante l'invio dell'email di chiusura commessa:", errMail);
-        }
-      }
-
-      // Invia notifiche email se sono state fatte assegnazioni (escludendo l'auto-assegnazione)
-      if (editResponsabile && editResponsabile !== editingCommessa.responsabile) {
-        const respDip = dipendenti.find(d => d.nome === editResponsabile);
-        const isSelfResp = (respDip?.email?.toLowerCase() === userEmail?.toLowerCase()) || areNamesEqual(editResponsabile, myAssociatedName);
-        if (respDip && respDip.email && !isSelfResp) {
-          const subject = `[Notifica] Abilitazione Funzioni Responsabile - Commessa ${editingCommessa.nome}`;
-          const htmlBody = `
-            <p>Ciao <strong>${editResponsabile}</strong>,</p>
-            <p>Sei stato assegnato come <strong>Responsabile</strong> per la commessa <strong>${editingCommessa.nome}</strong>.</p>
-            ${editDataInizio ? `<p>Periodo previsto: dal <strong>${formatDate(editDataInizio)}</strong> al <strong>${formatDate(editDataFine)}</strong>.</p>` : ''}
-            <p>Puoi procedere all'assegnazione e pianificazione delle risorse per questa commessa direttamente dall'applicazione.</p>
-          `;
-          const plainText = `Ciao ${editResponsabile},\n\nSei stato assegnato come Responsabile per la commessa ${editingCommessa.nome}.\n\nPuoi procedere alla pianificazione dall'applicazione.\n\nQuesta è una notifica automatica.`;
-          await queueMail(respDip.email.toLowerCase(), subject, htmlBody, plainText);
-        }
-      }
-
-      // Notifica ai PM aggiunti (escludendo l'auto-assegnazione)
-      const oldPMs = Array.isArray(editingCommessa.pm)
-        ? editingCommessa.pm
-        : (editingCommessa.pm ? [editingCommessa.pm] : []);
-      const addedPMs = pmsUnivoci.filter((p: string) => !oldPMs.includes(p));
-
-      for (const addedPM of addedPMs) {
-        const pmDip = dipendenti.find(d => d.nome === addedPM);
-        const isSelfPM = (pmDip?.email?.toLowerCase() === userEmail?.toLowerCase()) || areNamesEqual(addedPM, myAssociatedName);
-        if (pmDip && pmDip.email && !isSelfPM) {
-          const subject = `[Notifica] Abilitazione Funzioni PM - Commessa ${editingCommessa.nome}`;
-          const htmlBody = `
-            <p>Ciao <strong>${addedPM}</strong>,</p>
-            <p>Sei stato assegnato come <strong>Project Manager (PM)</strong> per la commessa <strong>${editingCommessa.nome}</strong>.</p>
-            ${editDataInizio ? `<p>Periodo previsto: dal <strong>${formatDate(editDataInizio)}</strong> al <strong>${formatDate(editDataFine)}</strong>.</p>` : ''}
-            <p>Puoi procedere al monitoraggio e pianificazione delle risorse per questa commessa dall'applicazione.</p>
-          `;
-          const plainText = `Ciao ${addedPM},\n\nSei stato assegnato come Project Manager (PM) per la commessa ${editingCommessa.nome}.\n\nPuoi procedere alla pianificazione dall'applicazione.\n\nQuesta è una notifica automatica.`;
-          await queueMail(pmDip.email.toLowerCase(), subject, htmlBody, plainText);
-        }
-      }
-
-      await refreshData();
-      setEditingCommessa(null);
-      if (!isClosingNow) {
-        showToast("Dettagli commessa salvati con successo!", "success");
-      }
-    } catch (err) {
-      console.error("Errore salvataggio dettagli commessa:", err);
-      showToast("Si è verificato un errore durante il salvataggio.", "error");
-    } finally {
-      setSavingEdit(false);
-    }
-  };
 
   const shiftPeriod = (weeksOffset: number) => {
     setBaseDate(prev => addDays(prev, weeksOffset * 7));
@@ -1864,8 +1634,9 @@ export default function Commesse() {
     return '';
   };
 
-  const getParsedField = (c: any, field: 'anno' | 'tipologia') => {
+  const getParsedField = (c: any, field: 'anno' | 'tipologia' | 'titolo') => {
     if (field === 'tipologia') return getCommessaTipologiaCode(c);
+    if (field === 'titolo') return c.titolo || (c.nome && c.nome.includes(' - ') ? c.nome.split(' - ').slice(1).join(' - ') : c.nome) || '';
     if (c.anno) return c.anno;
     if (!c.codiceCommessa) return '';
     const match = c.codiceCommessa.match(/^([A-Za-z]+)(\d{2})/);
@@ -2059,6 +1830,128 @@ export default function Commesse() {
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'it', { sensitivity: 'base' }));
   }, [commesseGestibili]);
 
+  const handleOpenInfoModal = (c: any) => {
+    setInfoModalCommessa(c);
+  };
+
+  const handleOpenEditModal = (c: any) => {
+    setEditingCommessa(c);
+    const extractedTitle = (c as any).titolo || (c.nome && c.nome.includes(' - ') ? c.nome.split(' - ').slice(1).join(' - ') : c.nome) || '';
+    setEditTitolo(extractedTitle);
+    setEditCliente((c as any).cliente || '');
+    setEditAnno(getParsedField(c, 'anno') || new Date().getFullYear().toString());
+    setEditTipologia(getCommessaTipologiaCode(c) || 'A');
+    setEditStato((c as any).stato || 'Aperta');
+    setEditDataInizio((c as any).dataInizio || '');
+    setEditDataFine((c as any).dataFine || '');
+
+    // Normalizzazione Responsabile con nome ufficiale
+    const rawResp = (c as any).responsabile || '';
+    const respOfficial = getOfficialName(rawResp) || rawResp;
+    const matchedResp = responsabiliMacroAreeList.find(r => areNamesEqual(r.nome, respOfficial) || areNamesEqual(r.nome, rawResp));
+    setEditResponsabile(matchedResp ? matchedResp.nome : respOfficial);
+
+    const progettiList: CommessaProgetto[] = Array.isArray(c.progetti) && c.progetti.length > 0 ? c.progetti : [];
+    
+    // Normalizzazione PM con nome ufficiale
+    const rawPm = (progettiList.length > 0 && progettiList[0].pm) 
+      ? progettiList[0].pm 
+      : (Array.isArray(c.pm) ? c.pm[0] || '' : c.pm || '');
+    const pmOfficial = getOfficialName(rawPm) || rawPm;
+    const matchedPM = pmsList.find(p => areNamesEqual(p.nome, pmOfficial) || areNamesEqual(p.nome, rawPm));
+    setEditPM(matchedPM ? matchedPM.nome : pmOfficial);
+
+    if (progettiList.length > 0) {
+      setEditProgettiDescrizioni(progettiList.map(p => p.descrizione || ''));
+      const p0 = progettiList[0];
+
+      const rawUtenti = Array.isArray(p0.utentiDaAbilitare) ? p0.utentiDaAbilitare : (Array.isArray((p0 as any).utentiAbilitati) ? (p0 as any).utentiAbilitati : []);
+      const normalizedUtenti = rawUtenti.map((u: string) => {
+        const off = getOfficialName(u);
+        const found = dipendenti.find(d => areNamesEqual(d.nome, off) || areNamesEqual(d.nome, u));
+        return found ? found.nome : (off || u);
+      }).filter(Boolean);
+      setEditUtentiDaAbilitare(normalizedUtenti);
+
+      setEditSGQ(p0.sgq || 'NO');
+      setEditVerificatori(Array.isArray(p0.verificatori) ? p0.verificatori : []);
+      setEditCompilatore(p0.compilatore || '');
+      setEditGiornateSenior(p0.giornateSenior || 0);
+      setEditGiornateProject(p0.giornateProject || 0);
+      setEditGiornateJunior(p0.giornateJunior || 0);
+    } else {
+      setEditProgettiDescrizioni(['FORMAZIONE - Attività formative sulla commessa']);
+      setEditUtentiDaAbilitare([]);
+      setEditSGQ('NO');
+      setEditVerificatori([]);
+      setEditCompilatore('');
+      setEditGiornateSenior(c.giornateSeniorProject || 0);
+      setEditGiornateProject(c.giornateProject || 0);
+      setEditGiornateJunior(c.giornateJuniorProject || 0);
+    }
+  };
+
+  const handleSaveEditCommessa = async () => {
+    if (!editingCommessa) return;
+    if (!editTitolo.trim()) {
+      showToast("Il titolo della commessa non può essere vuoto.", "error");
+      return;
+    }
+
+    const cod = editingCommessa.codiceCommessa || (editingCommessa.nome ? editingCommessa.nome.split(' - ')[0] : '');
+    const newNome = cod ? `${cod} - ${editTitolo.trim()}` : editTitolo.trim();
+    const calculatedColor = TIPOLOGIA_COLORS[editTipologia] || editingCommessa.colore || '#64748b';
+
+    const finalProgetti: CommessaProgetto[] = editProgettiDescrizioni
+      .filter(desc => desc && desc.trim().length > 0)
+      .map(desc => ({
+        descrizione: desc.trim(),
+        pm: editPM,
+        utentiDaAbilitare: editUtentiDaAbilitare,
+        sgq: editSGQ,
+        verificatori: editVerificatori,
+        compilatore: editCompilatore,
+        giornateSenior: editSGQ === 'NO' ? editGiornateSenior : 0,
+        giornateProject: editSGQ === 'NO' ? editGiornateProject : 0,
+        giornateJunior: editSGQ === 'NO' ? editGiornateJunior : 0
+      }));
+
+    const totalSeniorDays = editSGQ === 'NO' ? (Number(editGiornateSenior) || 0) * finalProgetti.length : 0;
+    const totalProjectDays = editSGQ === 'NO' ? (Number(editGiornateProject) || 0) * finalProgetti.length : 0;
+    const totalJuniorDays = editSGQ === 'NO' ? (Number(editGiornateJunior) || 0) * finalProgetti.length : 0;
+    const pmsUnivoci = editPM ? [editPM] : [];
+
+    try {
+      const docRef = doc(db, 'catalogo_commesse', editingCommessa.id);
+      const updatedPayload = {
+        nome: newNome,
+        titolo: editTitolo.trim(),
+        cliente: editCliente,
+        anno: editAnno,
+        tipologia: editTipologia,
+        stato: editStato,
+        colore: calculatedColor,
+        dataInizio: editDataInizio || '',
+        dataFine: editDataFine || '',
+        responsabile: editResponsabile || '',
+        pm: pmsUnivoci,
+        giornateSeniorProject: totalSeniorDays,
+        giornateProject: totalProjectDays,
+        giornateJuniorProject: totalJuniorDays,
+        progetti: finalProgetti
+      };
+
+      await setDoc(docRef, updatedPayload, { merge: true });
+
+      showToast("Commessa aggiornata con successo nel catalogo!", "success");
+      setEditingCommessa(null);
+      await refreshData();
+    } catch (err) {
+      console.error("Errore durante l'aggiornamento della commessa:", err);
+      showToast("Si è verificato un errore durante l'aggiornamento della commessa.", "error");
+    }
+  };
+
   const selectableTipologieCatalogo = useMemo(() => {
     const set = new Set<string>();
     Object.keys(TIPOLOGIE_COMMESSE).forEach(k => set.add(k));
@@ -2154,6 +2047,9 @@ export default function Commesse() {
         const pmArrayB = Array.isArray(b.pm) ? b.pm : (b.pm ? [b.pm] : []);
         valA = pmArrayA.map(p => getOfficialName(p)).join(', ');
         valB = pmArrayB.map(p => getOfficialName(p)).join(', ');
+      } else if (catalogoSortBy === 'dataApertura') {
+        valA = (a as any).dataApertura || '';
+        valB = (b as any).dataApertura || '';
       }
 
       const cmp = valA.localeCompare(valB, 'it', { numeric: true, sensitivity: 'base' });
@@ -2174,7 +2070,7 @@ export default function Commesse() {
     catalogoSortDir
   ]);
 
-  const handleColumnHeaderSort = (field: 'codice' | 'anno' | 'tipologia' | 'titolo' | 'cliente' | 'stato' | 'responsabile' | 'pm') => {
+  const handleColumnHeaderSort = (field: 'codice' | 'anno' | 'tipologia' | 'titolo' | 'cliente' | 'stato' | 'responsabile' | 'pm' | 'dataApertura') => {
     if (catalogoSortBy === field) {
       setCatalogoSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
     } else {
@@ -2215,6 +2111,342 @@ export default function Commesse() {
     setCatalogoSortDir('asc');
   };
 
+  const generateCommessaAperturaEmailContent = (commData: any, openedByText?: string) => {
+    const cod = commData.codiceCommessa || (commData.nome ? commData.nome.split(' - ')[0] : 'COMMESSA');
+    const title = commData.titolo || (commData.nome && commData.nome.includes(' - ') ? commData.nome.split(' - ').slice(1).join(' - ') : commData.nome) || 'Commessa';
+    const client = commData.cliente || 'Non specificato';
+    const dataAperturaStr = commData.dataApertura 
+      ? new Date(commData.dataApertura).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : new Date().toLocaleDateString('it-IT');
+    const dataInizioStr = commData.dataInizio ? new Date(commData.dataInizio).toLocaleDateString('it-IT') : 'Non specificata';
+    const dataFineStr = commData.dataFine ? new Date(commData.dataFine).toLocaleDateString('it-IT') : 'Non specificata';
+    const respStr = commData.responsabile ? getOfficialName(commData.responsabile) : 'Non assegnato';
+    const tipologiaStr = TIPOLOGIE_COMMESSE[commData.tipologia] || commData.tipologia || 'Standard';
+    const userOpened = openedByText || commData.apertaDa || (myAssociatedName ? `${myAssociatedName} (${userEmail})` : userEmail);
+
+    const progettiList: CommessaProgetto[] = Array.isArray(commData.progetti) && commData.progetti.length > 0
+      ? commData.progetti
+      : [{ descrizione: title }];
+
+    // Dettagli condivisi generali
+    const p0 = progettiList[0] || {};
+    const pmStr = p0.pm ? getOfficialName(p0.pm) : (Array.isArray(commData.pm) ? commData.pm.map((p: string) => getOfficialName(p)).join(', ') : (commData.pm ? getOfficialName(commData.pm) : 'Non assegnato'));
+    
+    const utentiAbilitatiArr = Array.isArray(p0.utentiDaAbilitare) && p0.utentiDaAbilitare.length > 0
+      ? p0.utentiDaAbilitare
+      : (Array.isArray((commData as any).utentiAbilitati) ? (commData as any).utentiAbilitati : []);
+    const utentiStr = utentiAbilitatiArr.length > 0
+      ? utentiAbilitatiArr.map((u: string) => getOfficialName(u)).join(', ')
+      : 'Tutti gli utenti abilitati di commessa';
+
+    let sgqDetailsStr = '';
+    if (p0.sgq === 'SI') {
+      const vList = Array.isArray(p0.verificatori) ? p0.verificatori.map((v: string) => getOfficialName(v)).join(', ') : (p0.verificatori || '-');
+      sgqDetailsStr = `<strong style="color: #15803d;">✓ SGQ ABILITATO</strong> (Validatori: ${vList || '-'} | Compilatore: ${p0.compilatore ? getOfficialName(p0.compilatore) : '-'})`;
+    } else {
+      const sDays = p0.giornateSenior ?? commData.giornateSeniorProject ?? 0;
+      const pDays = p0.giornateProject ?? commData.giornateProject ?? 0;
+      const jDays = p0.giornateJunior ?? commData.giornateJuniorProject ?? 0;
+      sgqDetailsStr = `SGQ non abilitato (Giornate Stimate: Senior: <strong>${sDays}</strong> gg | Project: <strong>${pDays}</strong> gg | Junior: <strong>${jDays}</strong> gg)`;
+    }
+
+    // Lista dei progetti (elenco pulito di sole descrizioni)
+    let progettiListHtml = '';
+    progettiList.forEach((p, idx) => {
+      progettiListHtml += `<li style="margin-bottom: 6px;">${p.descrizione || `Progetto #${idx + 1}`}</li>`;
+    });
+
+    const mailSubject = `[Apertura Commessa] ${cod} - ${title}`;
+    const mailHtmlBody = `
+      <div style="font-family: 'Segoe UI', Arial, sans-serif; color: #1e293b; max-width: 780px; margin: 0 auto; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.08);">
+        
+        <div style="background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #1e3a8a 100%); padding: 26px; color: #ffffff;">
+          <table border="0" cellpadding="0" cellspacing="0" style="width: 100%;">
+            <tr>
+              <td>
+                <div style="font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #93c5fd; margin-bottom: 6px;">
+                  Scheda Apertura Nuova Commessa
+                </div>
+                <h1 style="margin: 0; font-size: 22px; font-weight: 900; color: #ffffff; line-height: 1.25;">
+                  ${cod} — ${title}
+                </h1>
+                <div style="margin-top: 10px; font-size: 13px; color: #e2e8f0; font-weight: 600;">
+                  💼 Cliente: <strong style="color: #ffffff;">${client}</strong>
+                </div>
+              </td>
+              <td style="text-align: right; vertical-align: top; width: 110px;">
+                <span style="background-color: #10b981; color: #ffffff; padding: 6px 14px; border-radius: 20px; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; display: inline-block;">
+                  🟢 APERTA
+                </span>
+              </td>
+            </tr>
+          </table>
+        </div>
+
+        <div style="padding: 26px;">
+          
+          <p style="font-size: 13px; color: #334155; margin-top: 0; margin-bottom: 20px; line-height: 1.5; font-weight: 600;">
+            Notifica di apertura nuova commessa sulla piattaforma di pianificazione aziendale con i seguenti dettagli:
+          </p>
+
+          <h3 style="margin-top: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.8px; color: #1e1b4b; border-bottom: 2px solid #6366f1; padding-bottom: 8px; margin-bottom: 16px; font-weight: 900;">
+            📋 Anagrafica Generale & Impostazioni Commessa
+          </h3>
+
+          <table border="0" cellpadding="10" cellspacing="0" style="width: 100%; font-size: 13px; color: #334155; border-collapse: collapse; margin-bottom: 26px; background-color: #f8fafc; border-radius: 12px; overflow: hidden; border: 1px solid #e2e8f0;">
+            <tr style="border-bottom: 1px solid #e2e8f0;">
+              <td style="font-weight: bold; width: 220px; color: #475569; background-color: #f1f5f9;">Codice Commessa:</td>
+              <td style="font-weight: 900; color: #0f172a; font-size: 14px;">${cod}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #e2e8f0;">
+              <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Titolo Commessa:</td>
+              <td style="font-weight: 800; color: #0f172a;">${title}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #e2e8f0;">
+              <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Cliente:</td>
+              <td style="font-weight: 800; color: #1d4ed8;">${client}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #e2e8f0;">
+              <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Data Apertura Registrata:</td>
+              <td style="font-weight: 800; color: #047857;">${dataAperturaStr}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #e2e8f0;">
+              <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Anno di Riferimento:</td>
+              <td style="font-weight: 700; color: #0f172a;">${commData.anno || 'N/D'}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #e2e8f0;">
+              <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Tipologia Commessa:</td>
+              <td style="font-weight: 700; color: #0f172a;">${tipologiaStr}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #e2e8f0;">
+              <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Periodo di Esecuzione:</td>
+              <td style="font-weight: 700; color: #334155;">Da: <strong>${dataInizioStr}</strong> a: <strong>${dataFineStr}</strong></td>
+            </tr>
+            <tr style="border-bottom: 1px solid #e2e8f0;">
+              <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Responsabile Commessa:</td>
+              <td style="font-weight: 800; color: #0f172a;">${respStr}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #e2e8f0;">
+              <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Project Manager (PM):</td>
+              <td style="font-weight: 800; color: #312e81;">${pmStr}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #e2e8f0;">
+              <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Utenti Abilitati sulla Commessa:</td>
+              <td style="font-weight: 700; color: #047857;">${utentiStr}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #e2e8f0;">
+              <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Gestione SGQ / Giornate Stimate:</td>
+              <td style="font-weight: 700; color: #334155;">${sgqDetailsStr}</td>
+            </tr>
+            <tr>
+              <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Registrata / Aperta Da:</td>
+              <td style="font-weight: 600; color: #64748b;">${userOpened}</td>
+            </tr>
+          </table>
+
+          <h3 style="margin-top: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.8px; color: #1e1b4b; border-bottom: 2px solid #6366f1; padding-bottom: 8px; margin-bottom: 16px; font-weight: 900;">
+            🔀 Elenco Progetti della Commessa (${progettiList.length})
+          </h3>
+
+          <div style="background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; padding: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
+            <ul style="margin: 0; padding-left: 20px; font-size: 13px; color: #0f172a; line-height: 1.8; font-weight: 700;">
+              ${progettiListHtml}
+            </ul>
+          </div>
+
+        </div>
+
+      </div>
+    `;
+
+    return { subject: mailSubject, htmlBody: mailHtmlBody };
+  };
+
+  const handleReinvioMailApertura = async (commToResend: any) => {
+    if (!commToResend) return;
+    try {
+      const { subject, htmlBody } = generateCommessaAperturaEmailContent(commToResend);
+      await sendEmailNotification({
+        to: ['synergiesflow@ingegno06.it'],
+        subject: subject,
+        body: htmlBody
+      });
+      showToast("E-mail di apertura commessa re-inviata con successo!", "success");
+    } catch (err) {
+      console.error("Errore durante il re-invio dell'e-mail di apertura:", err);
+      showToast("Si è verificato un errore durante il re-invio dell'e-mail.", "error");
+    }
+  };
+
+  const generateCommessaChiusuraEmailContent = (commData: any, closedByText?: string) => {
+    const cod = commData.codiceCommessa || (commData.nome ? commData.nome.split(' - ')[0] : 'COMMESSA');
+    const title = commData.titolo || (commData.nome && commData.nome.includes(' - ') ? commData.nome.split(' - ').slice(1).join(' - ') : commData.nome) || 'Commessa';
+    const client = commData.cliente || 'Non specificato';
+    const dataChiusuraStr = commData.dataChiusura 
+      ? new Date(commData.dataChiusura).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : new Date().toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const dataInizioStr = commData.dataInizio ? new Date(commData.dataInizio).toLocaleDateString('it-IT') : 'Non specificata';
+    const dataFineStr = commData.dataFine ? new Date(commData.dataFine).toLocaleDateString('it-IT') : 'Non specificata';
+    const respStr = commData.responsabile ? getOfficialName(commData.responsabile) : 'Non assegnato';
+    const tipologiaStr = TIPOLOGIE_COMMESSE[commData.tipologia] || commData.tipologia || 'Standard';
+    const userClosed = closedByText || commData.chiusaDa || (myAssociatedName ? `${myAssociatedName} (${userEmail})` : userEmail);
+
+    const progettiList: CommessaProgetto[] = Array.isArray(commData.progetti) && commData.progetti.length > 0
+      ? commData.progetti
+      : [{ descrizione: title }];
+
+    const p0 = progettiList[0] || {};
+    const pmStr = p0.pm ? getOfficialName(p0.pm) : (Array.isArray(commData.pm) ? commData.pm.map((p: string) => getOfficialName(p)).join(', ') : (commData.pm ? getOfficialName(commData.pm) : 'Non assegnato'));
+    
+    const utentiAbilitatiArr = Array.isArray(p0.utentiDaAbilitare) && p0.utentiDaAbilitare.length > 0
+      ? p0.utentiDaAbilitare
+      : (Array.isArray((commData as any).utentiAbilitati) ? (commData as any).utentiAbilitati : []);
+    const utentiStr = utentiAbilitatiArr.length > 0
+      ? utentiAbilitatiArr.map((u: string) => getOfficialName(u)).join(', ')
+      : 'Tutti gli utenti abilitati di commessa';
+
+    let sgqDetailsStr = '';
+    if (p0.sgq === 'SI') {
+      const vList = Array.isArray(p0.verificatori) ? p0.verificatori.map((v: string) => getOfficialName(v)).join(', ') : (p0.verificatori || '-');
+      sgqDetailsStr = `<strong style="color: #15803d;">✓ SGQ ABILITATO</strong> (Validatori: ${vList || '-'} | Compilatore: ${p0.compilatore ? getOfficialName(p0.compilatore) : '-'})`;
+    } else {
+      const sDays = p0.giornateSenior ?? commData.giornateSeniorProject ?? 0;
+      const pDays = p0.giornateProject ?? commData.giornateProject ?? 0;
+      const jDays = p0.giornateJunior ?? commData.giornateJuniorProject ?? 0;
+      sgqDetailsStr = `SGQ non abilitato (Giornate Stimate: Senior: <strong>${sDays}</strong> gg | Project: <strong>${pDays}</strong> gg | Junior: <strong>${jDays}</strong> gg)`;
+    }
+
+    let progettiListHtml = '';
+    progettiList.forEach((p, idx) => {
+      progettiListHtml += `<li style="margin-bottom: 6px;">${p.descrizione || `Progetto #${idx + 1}`}</li>`;
+    });
+
+    const mailSubject = `[Chiusura Commessa] ${cod} - ${title}`;
+    const mailHtmlBody = `
+      <div style="font-family: 'Segoe UI', Arial, sans-serif; color: #1e293b; max-width: 780px; margin: 0 auto; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.08);">
+        
+        <div style="background: linear-gradient(135deg, #0f172a 0%, #4c0519 50%, #881337 100%); padding: 26px; color: #ffffff;">
+          <table border="0" cellpadding="0" cellspacing="0" style="width: 100%;">
+            <tr>
+              <td>
+                <div style="font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #fecdd3; margin-bottom: 6px;">
+                  Scheda Chiusura Commessa
+                </div>
+                <h1 style="margin: 0; font-size: 22px; font-weight: 900; color: #ffffff; line-height: 1.25;">
+                  ${cod} — ${title}
+                </h1>
+                <div style="margin-top: 10px; font-size: 13px; color: #ffe4e6; font-weight: 600;">
+                  💼 Cliente: <strong style="color: #ffffff;">${client}</strong>
+                </div>
+              </td>
+              <td style="text-align: right; vertical-align: top; width: 110px;">
+                <span style="background-color: #e11d48; color: #ffffff; padding: 6px 14px; border-radius: 20px; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; display: inline-block;">
+                  🔴 CHIUSA
+                </span>
+              </td>
+            </tr>
+          </table>
+        </div>
+
+        <div style="padding: 26px;">
+          
+          <p style="font-size: 13px; color: #334155; margin-top: 0; margin-bottom: 20px; line-height: 1.5; font-weight: 600;">
+            Notifica di avvenuta chiusura della commessa sulla piattaforma di pianificazione aziendale con i seguenti dettagli:
+          </p>
+
+          <h3 style="margin-top: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.8px; color: #881337; border-bottom: 2px solid #f43f5e; padding-bottom: 8px; margin-bottom: 16px; font-weight: 900;">
+            📋 Anagrafica Generale & Impostazioni Commessa
+          </h3>
+
+          <table border="0" cellpadding="10" cellspacing="0" style="width: 100%; font-size: 13px; color: #334155; border-collapse: collapse; margin-bottom: 26px; background-color: #fff1f2; border-radius: 12px; overflow: hidden; border: 1px solid #fecdd3;">
+            <tr style="border-bottom: 1px solid #fecdd3;">
+              <td style="font-weight: bold; width: 220px; color: #881337; background-color: #ffe4e6;">Codice Commessa:</td>
+              <td style="font-weight: 900; color: #0f172a; font-size: 14px;">${cod}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #fecdd3;">
+              <td style="font-weight: bold; color: #881337; background-color: #ffe4e6;">Titolo Commessa:</td>
+              <td style="font-weight: 800; color: #0f172a;">${title}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #fecdd3;">
+              <td style="font-weight: bold; color: #881337; background-color: #ffe4e6;">Cliente:</td>
+              <td style="font-weight: 800; color: #1d4ed8;">${client}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #fecdd3;">
+              <td style="font-weight: bold; color: #881337; background-color: #ffe4e6;">Data Chiusura Registrata:</td>
+              <td style="font-weight: 800; color: #be123c;">${dataChiusuraStr}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #fecdd3;">
+              <td style="font-weight: bold; color: #881337; background-color: #ffe4e6;">Anno di Riferimento:</td>
+              <td style="font-weight: 700; color: #0f172a;">${commData.anno || 'N/D'}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #fecdd3;">
+              <td style="font-weight: bold; color: #881337; background-color: #ffe4e6;">Tipologia Commessa:</td>
+              <td style="font-weight: 700; color: #0f172a;">${tipologiaStr}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #fecdd3;">
+              <td style="font-weight: bold; color: #881337; background-color: #ffe4e6;">Periodo di Esecuzione:</td>
+              <td style="font-weight: 700; color: #334155;">Da: <strong>${dataInizioStr}</strong> a: <strong>${dataFineStr}</strong></td>
+            </tr>
+            <tr style="border-bottom: 1px solid #fecdd3;">
+              <td style="font-weight: bold; color: #881337; background-color: #ffe4e6;">Responsabile Commessa:</td>
+              <td style="font-weight: 800; color: #0f172a;">${respStr}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #fecdd3;">
+              <td style="font-weight: bold; color: #881337; background-color: #ffe4e6;">Project Manager (PM):</td>
+              <td style="font-weight: 800; color: #312e81;">${pmStr}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #fecdd3;">
+              <td style="font-weight: bold; color: #881337; background-color: #ffe4e6;">Utenti Abilitati sulla Commessa:</td>
+              <td style="font-weight: 700; color: #047857;">${utentiStr}</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #fecdd3;">
+              <td style="font-weight: bold; color: #881337; background-color: #ffe4e6;">Gestione SGQ / Giornate Stimate:</td>
+              <td style="font-weight: 700; color: #334155;">${sgqDetailsStr}</td>
+            </tr>
+            <tr>
+              <td style="font-weight: bold; color: #881337; background-color: #ffe4e6;">Registrata / Chiusa Da:</td>
+              <td style="font-weight: 700; color: #be123c;">${userClosed}</td>
+            </tr>
+          </table>
+
+          <h3 style="margin-top: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.8px; color: #881337; border-bottom: 2px solid #f43f5e; padding-bottom: 8px; margin-bottom: 16px; font-weight: 900;">
+            🔀 Elenco Progetti della Commessa (${progettiList.length})
+          </h3>
+
+          <div style="background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; padding: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
+            <ul style="margin: 0; padding-left: 20px; font-size: 13px; color: #0f172a; line-height: 1.8; font-weight: 700;">
+              ${progettiListHtml}
+            </ul>
+          </div>
+
+          <div style="margin-top: 20px; padding: 12px 16px; background-color: #fef2f2; border: 1px solid #fecdd3; border-radius: 12px; font-size: 12px; color: #9f1239; font-weight: 600;">
+            ℹ️ Nota: Le eventuali assegnazioni di ore pianificate per questa commessa nelle settimane successive alla chiusura sono state automaticamente rimosse.
+          </div>
+
+        </div>
+
+      </div>
+    `;
+
+    return { subject: mailSubject, htmlBody: mailHtmlBody };
+  };
+
+  const handleReinvioMailChiusura = async (commToResend: any) => {
+    if (!commToResend) return;
+    try {
+      const { subject, htmlBody } = generateCommessaChiusuraEmailContent(commToResend);
+      await sendEmailNotification({
+        to: ['synergiesflow@ingegno06.it'],
+        subject: subject,
+        body: htmlBody
+      });
+      showToast("E-mail di chiusura commessa re-inviata con successo!", "success");
+    } catch (err) {
+      console.error("Errore durante il re-invio dell'e-mail di chiusura:", err);
+      showToast("Si è verificato un errore durante il re-invio dell'e-mail.", "error");
+    }
+  };
+
   const handleAddCommessa = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedClient || !newCommessaTitolo) {
@@ -2236,12 +2468,28 @@ export default function Commesse() {
     }
 
     const calculatedColor = TIPOLOGIA_COLORS[newCommessaTipologia] || '#64748b';
+    const dataAperturaIso = new Date().toISOString();
+
+    // Costruzione dell'array dei progetti associando le descrizioni alle impostazioni comuni della commessa
+    const finalProgetti: CommessaProgetto[] = newCommessaProgettiDescrizioni
+      .filter(desc => desc && desc.trim().length > 0)
+      .map(desc => ({
+        descrizione: desc.trim(),
+        pm: newCommessaPM,
+        utentiDaAbilitare: newCommessaUtentiDaAbilitare,
+        sgq: newCommessaSGQ,
+        verificatori: newCommessaVerificatori,
+        compilatore: newCommessaCompilatore,
+        giornateSenior: newCommessaSGQ === 'NO' ? newCommessaGiornateSenior : 0,
+        giornateProject: newCommessaSGQ === 'NO' ? newCommessaGiornateProject : 0,
+        giornateJunior: newCommessaSGQ === 'NO' ? newCommessaGiornateJunior : 0
+      }));
 
     // Calcolo totali giornate e elenco PM univoci
-    const totalSeniorDays = newCommessaProgetti.reduce((acc, p) => acc + (p.sgq === 'NO' ? Number(p.giornateSenior) || 0 : 0), 0);
-    const totalProjectDays = newCommessaProgetti.reduce((acc, p) => acc + (p.sgq === 'NO' ? Number(p.giornateProject) || 0 : 0), 0);
-    const totalJuniorDays = newCommessaProgetti.reduce((acc, p) => acc + (p.sgq === 'NO' ? Number(p.giornateJunior) || 0 : 0), 0);
-    const pmsUnivoci = Array.from(new Set(newCommessaProgetti.map(p => p.pm).filter(name => name !== '')));
+    const totalSeniorDays = newCommessaSGQ === 'NO' ? (Number(newCommessaGiornateSenior) || 0) * finalProgetti.length : 0;
+    const totalProjectDays = newCommessaSGQ === 'NO' ? (Number(newCommessaGiornateProject) || 0) * finalProgetti.length : 0;
+    const totalJuniorDays = newCommessaSGQ === 'NO' ? (Number(newCommessaGiornateJunior) || 0) * finalProgetti.length : 0;
+    const pmsUnivoci = newCommessaPM ? [newCommessaPM] : [];
 
     try {
       const payload = {
@@ -2253,6 +2501,7 @@ export default function Commesse() {
         cliente: selectedClient.nome,
         stato: 'Aperta',
         colore: calculatedColor,
+        dataApertura: dataAperturaIso,
         dataInizio: newCommessaDataInizio || '',
         dataFine: newCommessaDataFine || '',
         responsabile: newCommessaResponsabile || '',
@@ -2260,103 +2509,13 @@ export default function Commesse() {
         giornateSeniorProject: totalSeniorDays,
         giornateProject: totalProjectDays,
         giornateJuniorProject: totalJuniorDays,
-        progetti: newCommessaProgetti
+        progetti: finalProgetti
       };
       
       await addDoc(collection(db, 'catalogo_commesse'), payload);
       
-      // Invio notifica e-mail apertura commessa ad synergiesflow@ingegno06.it
-      const savedTemplates = await loadSavedEmailTemplates();
-      const customTpl = savedTemplates['commessa_apertura'];
-
-      let progettiHtml = '';
-      payload.progetti.forEach((p, index) => {
-        let sgqInfo = '';
-        if (p.sgq === 'SI') {
-          const vList = Array.isArray(p.verificatori) ? p.verificatori.join(', ') : (p.verificatori || '-');
-          sgqInfo = `<strong>SGQ:</strong> Sì<br/><strong>Verif./Valid.:</strong> ${vList || '-'}<br/><strong>Compilatore:</strong> ${p.compilatore || '-'}`;
-        } else {
-          sgqInfo = `<strong>SGQ:</strong> No<br/><strong>Giornate:</strong> Senior: ${p.giornateSenior} gg | Project: ${p.giornateProject} gg | Junior: ${p.giornateJunior} gg`;
-        }
-        const formattedDesc = (p.descrizione || '').replace(/\n/g, '<br/>');
-        const utentiAbilitareList = (Array.isArray(p.utentiDaAbilitare) && p.utentiDaAbilitare.length > 0)
-          ? p.utentiDaAbilitare.join(', ')
-          : 'Nessuno specificato';
-
-        progettiHtml += `
-          <tr style="background-color: ${index % 2 === 0 ? '#f9fafb' : '#ffffff'};">
-            <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-weight: 600; font-size: 13px; line-height: 1.45;">${formattedDesc || '(Nessuna descrizione)'}</td>
-            <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 13px; vertical-align: top;">${p.pm || 'Non assegnato'}</td>
-            <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 12px; line-height: 1.45; vertical-align: top; color: #047857; font-weight: 600;">${utentiAbilitareList}</td>
-            <td style="padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 12px; line-height: 1.5; vertical-align: top;">${sgqInfo}</td>
-          </tr>
-        `;
-      });
-
-      const tabellaProgettiFullHtml = `
-        <table border="0" cellpadding="0" cellspacing="0" style="width: 100%; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; font-family: inherit;">
-          <thead style="background-color: #f3f4f6;">
-            <tr>
-              <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Descrizione Progetto</th>
-              <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Project Manager</th>
-              <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Utenti da Abilitare</th>
-              <th style="padding: 10px; text-align: left; font-size: 12px; font-weight: bold; color: #4b5563; border-bottom: 1px solid #e5e7eb;">Configurazione / SGQ</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${progettiHtml}
-          </tbody>
-        </table>
-      `;
-
-      let mailSubject = `[Nuova Commessa] Aperta commessa: ${payload.nome}`;
-      let finalMailBody = '';
-
-      if (customTpl && customTpl.body) {
-        if (customTpl.subject) {
-          mailSubject = substitutePlaceholders(customTpl.subject, {
-            '{CODICE_COMMESSA}': payload.codiceCommessa,
-            '{NOME_COMMESSA}': payload.titolo
-          });
-        }
-        finalMailBody = substitutePlaceholders(customTpl.body, {
-          '{CODICE_COMMESSA}': payload.codiceCommessa,
-          '{NOME_COMMESSA}': payload.titolo,
-          '{CLIENTE}': payload.cliente,
-          '{TIPOLOGIA}': TIPOLOGIE_COMMESSE[payload.tipologia] || payload.tipologia,
-          '{ANNO}': String(payload.anno),
-          '{APERTA_DA}': myAssociatedName ? `${myAssociatedName} (${userEmail})` : userEmail,
-          '{DATA_INIZIO}': payload.dataInizio ? new Date(payload.dataInizio).toLocaleDateString('it-IT') : 'Non specificata',
-          '{DATA_FINE}': payload.dataFine ? new Date(payload.dataFine).toLocaleDateString('it-IT') : 'Non specificata',
-          '{RESPONSABILE}': payload.responsabile || 'Non assegnato',
-          '{GIORNATE_STIMATE}': `Senior: ${payload.giornateSeniorProject} gg | Project: ${payload.giornateProject} gg | Junior: ${payload.giornateJuniorProject} gg`,
-          '{TABELLA_PROGETTI}': tabellaProgettiFullHtml
-        });
-      } else {
-        finalMailBody = `
-          <p>Ciao,</p>
-          <p>Ti comunichiamo che è stata aperta una nuova commessa sulla piattaforma di pianificazione con i seguenti dettagli:</p>
-          <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 15px 0;" />
-          <table border="0" cellpadding="5" cellspacing="0" style="font-size: 14px; color: #374151; width: 100%;">
-            <tr><td style="font-weight: bold; width: 220px;">Codice Commessa:</td><td>${payload.codiceCommessa}</td></tr>
-            <tr><td style="font-weight: bold;">Titolo:</td><td>${payload.titolo}</td></tr>
-            <tr><td style="font-weight: bold;">Cliente:</td><td>${payload.cliente}</td></tr>
-            <tr><td style="font-weight: bold;">Tipologia:</td><td>${TIPOLOGIE_COMMESSE[payload.tipologia] || payload.tipologia}</td></tr>
-            <tr><td style="font-weight: bold;">Anno:</td><td>${payload.anno}</td></tr>
-            <tr><td style="font-weight: bold;">Aperta da:</td><td><strong style="color: #047857;">${myAssociatedName ? `${myAssociatedName} (${userEmail})` : userEmail}</strong></td></tr>
-            <tr><td style="font-weight: bold;">Data Inizio:</td><td>${payload.dataInizio ? new Date(payload.dataInizio).toLocaleDateString('it-IT') : 'Non specificata'}</td></tr>
-            <tr><td style="font-weight: bold;">Data Fine:</td><td>${payload.dataFine ? new Date(payload.dataFine).toLocaleDateString('it-IT') : 'Non specificata'}</td></tr>
-            <tr><td style="font-weight: bold;">Responsabile Commessa:</td><td>${payload.responsabile || 'Non assegnato'}</td></tr>
-            <tr><td style="font-weight: bold;">Giornate Totali Stimate (No SGQ):</td><td>Senior: ${payload.giornateSeniorProject} gg | Project: ${payload.giornateProject} gg | Junior: ${payload.giornateJuniorProject} gg</td></tr>
-          </table>
-          
-          <h3 style="color: #065f46; font-size: 16px; margin-top: 25px; margin-bottom: 10px;">Dettagli Progetti & SGQ</h3>
-          ${tabellaProgettiFullHtml}
-
-          <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 25px 0;" />
-          <p>Puoi ora procedere all'apertura di questa commessa sul gestionale separato aziendale.</p>
-        `;
-      }
+      // Invio notifica e-mail apertura commessa ad synergiesflow@ingegno06.it ed ai referenti
+      const { subject: mailSubject, htmlBody: finalMailBody } = generateCommessaAperturaEmailContent(payload);
 
       const creationRecipients = await getCommesseNotificationEmails();
       for (const rec of creationRecipients) {
@@ -2370,25 +2529,22 @@ export default function Commesse() {
       setNewCommessaDataFine('');
       setNewCommessaLettera('A');
       setNewCommessaResponsabile('');
-      setNewCommessaProgetti([
-        {
-          descrizione: 'FORMAZIONE - Attività formative sulla commessa',
-          pm: '',
-          utentiDaAbilitare: [],
-          sgq: 'NO',
-          verificatori: [],
-          compilatore: '',
-          giornateSenior: 0,
-          giornateProject: 0,
-          giornateJunior: 0
-        }
-      ]);
-      
+      setNewCommessaProgettiDescrizioni(['FORMAZIONE - Attività formative sulla commessa']);
+      setNewCommessaPM('');
+      setNewCommessaUtentiDaAbilitare([]);
+      setNewCommessaSGQ('NO');
+      setNewCommessaVerificatori([]);
+      setNewCommessaCompilatore('');
+      setNewCommessaGiornateSenior(0);
+      setNewCommessaGiornateProject(0);
+      setNewCommessaGiornateJunior(0);
+
       await refreshData();
-      showToast("Commessa salvata nel catalogo con successo!", "success");
+      setIsFormOpen(false);
+      showToast("Nuova commessa registrata con successo nel catalogo!", "success");
     } catch (err) {
-      console.error("Errore salvataggio commessa:", err);
-      showToast("Si è verificato un errore durante il salvataggio.", "error");
+      console.error("Errore durante il salvataggio della nuova commessa:", err);
+      showToast("Errore durante il salvataggio della nuova commessa.", "error");
     }
   };
 
@@ -3181,22 +3337,13 @@ export default function Commesse() {
                               <div className="min-w-0 flex-1 text-left">
                                 <div className="flex items-center gap-1.5 justify-between">
                                   <div className="whitespace-normal break-words font-extrabold text-xs text-gray-800" title={comm.nome}>{comm.nome}</div>
-                                  {(() => {
-                                    const pmArray = Array.isArray(comm.pm) ? comm.pm : (comm.pm ? [comm.pm] : []);
-                                    const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
-                                    const isResp = areNamesEqual(comm.responsabile, myAssociatedName);
-                                    const canEdit = isAdmin || isPM || isResp;
-                                    
-                                    return canEdit && (
-                                      <button 
-                                        onClick={() => handleOpenEditModal(comm)}
-                                        className="text-gray-400 hover:text-blue-600 p-1 rounded transition-colors shrink-0 cursor-pointer"
-                                        title="Modifica dettagli (Responsabile, PM, Date)"
-                                      >
-                                        <Pencil className="w-3 h-3" />
-                                      </button>
-                                    );
-                                  })()}
+                                  <button 
+                                    onClick={() => handleOpenInfoModal(comm)}
+                                    className="text-gray-400 hover:text-blue-600 p-1 rounded transition-colors shrink-0 cursor-pointer"
+                                    title="Visualizza dettagli e specifiche commessa"
+                                  >
+                                    <Info className="w-3.5 h-3.5 text-slate-400 hover:text-blue-600" />
+                                  </button>
                                 </div>
                                 <div className="text-[9.5px] text-indigo-655 font-bold italic mt-0.5">
                                   💼 Cliente: {comm.cliente || 'Nessun cliente'}
@@ -3638,204 +3785,254 @@ export default function Commesse() {
 
                 {/* Sezione Dettagli Progetto & SGQ */}
                 <div className="bg-gradient-to-br from-indigo-50/50 to-emerald-50/50 p-5 rounded-2xl border border-indigo-100/60 space-y-4">
-                  <div className="flex justify-between items-center">
+                  <div className="flex justify-between items-center border-b border-indigo-100/80 pb-2">
                     <h4 className="text-xs font-black text-indigo-950 uppercase tracking-wide flex items-center gap-1.5">
                       🔀 Dettagli Progetto & SGQ
                     </h4>
                   </div>
 
-                  <div className="space-y-4">
-                    {newCommessaProgetti.map((progetto, idx) => (
-                      <div key={idx} className="bg-white p-4 rounded-xl border border-gray-150 space-y-3 relative shadow-sm">
-                        <div>
-                          <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Descrizione Progetto</label>
-                          <textarea
-                            required
-                            rows={3}
-                            placeholder="Inserisci la descrizione o l'identificativo del progetto (puoi andare a capo)..."
-                            value={progetto.descrizione}
-                            onChange={e => handleUpdateProgettoField(idx, { descrizione: e.target.value })}
-                            className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-semibold text-gray-700 text-xs resize-y"
-                          />
+                  {/* SUB-BLOCCO PROGETTI */}
+                  <div className="bg-white p-4 rounded-xl border border-gray-200 space-y-3 shadow-xs">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-gray-150 pb-2">
+                      <label className="block text-xs font-black text-indigo-950 uppercase tracking-wide">
+                        Progetti
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNewCommessaProgettiDescrizioni(prev => [...prev, '']);
+                        }}
+                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs transition shadow-xs active:scale-95 flex items-center gap-1.5 cursor-pointer shrink-0"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Aggiungi Progetto</span>
+                      </button>
+                    </div>
+
+                    {/* Box Nota d'Aiuto */}
+                    <div className="bg-blue-50/90 border border-blue-200/80 p-3 rounded-xl text-xs text-blue-900 flex items-start gap-2.5 shadow-2xs">
+                      <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                      <span className="leading-relaxed">
+                        <strong>Nota Progetti:</strong> Il progetto di Formazione è inserito di default all'apertura del form, ma è liberamente modificabile o eliminabile tramite il pulsante del cestino.
+                      </span>
+                    </div>
+
+                    {/* Lista delle descrizioni progetti */}
+                    <div className="space-y-2.5 pt-1">
+                      {newCommessaProgettiDescrizioni.length === 0 ? (
+                        <div className="text-[11px] text-gray-400 italic p-2 border border-dashed border-gray-200 rounded-xl text-center">
+                          Nessun progetto inserito. Clicca su "+ Aggiungi Progetto" per inserire un progetto.
                         </div>
-
-                        {/* RIGA 2: PM | SELETTORE UTENTI DA ABILITARE | LISTA UTENTI SELEZIONATI */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
-                          {/* Colonna 1: Project Manager */}
-                          <div>
-                            <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Project Manager (Opzionale)</label>
-                            <select
-                              value={progetto.pm}
-                              onChange={e => handleUpdateProgettoField(idx, { pm: e.target.value })}
-                              className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs h-[38px]"
-                            >
-                              <option value="">-- Nessun PM --</option>
-                              {pmsList.map(pm => (
-                                <option key={pm.id} value={pm.nome}>{pm.nome}</option>
-                              ))}
-                            </select>
-                          </div>
-
-                          {/* Colonna 2: Selettore Utenti da Abilitare */}
-                          <div>
-                            <label className="block text-[9px] font-bold text-indigo-900 mb-1 ml-1">Utenti da Abilitare (Tutte le Categorie)</label>
-                            <select
-                              value=""
+                      ) : (
+                        newCommessaProgettiDescrizioni.map((desc, idx) => (
+                          <div key={idx} className="flex items-center gap-2">
+                            <span className="text-[10px] font-black text-gray-500 w-16 shrink-0 text-right">
+                              Prog. #{idx + 1}
+                            </span>
+                            <input
+                              type="text"
+                              required
+                              placeholder="Inserisci la descrizione o l'identificativo del progetto..."
+                              value={desc}
                               onChange={e => {
                                 const val = e.target.value;
-                                const current = progetto.utentiDaAbilitare || [];
-                                if (val && !current.includes(val)) {
-                                  handleUpdateProgettoField(idx, { utentiDaAbilitare: [...current, val] });
-                                }
+                                setNewCommessaProgettiDescrizioni(prev => prev.map((item, i) => i === idx ? val : item));
                               }}
-                              className="w-full p-2 border border-indigo-200 rounded-lg bg-indigo-50/40 focus:bg-white outline-none focus:ring-1 focus:ring-emerald-400 font-bold text-gray-700 text-xs h-[38px]"
+                              className="flex-1 p-2.5 border border-gray-200 rounded-xl outline-none font-semibold text-gray-800 text-xs bg-gray-50/50 focus:bg-white focus:ring-2 focus:ring-indigo-400"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setNewCommessaProgettiDescrizioni(prev => prev.filter((_, i) => i !== idx));
+                              }}
+                              className="text-gray-400 hover:text-red-600 p-2 rounded-xl hover:bg-red-50 transition cursor-pointer shrink-0"
+                              title="Rimuovi questo progetto"
                             >
-                              <option value="">+ Seleziona Utente da Abilitare...</option>
-                              {dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')) && !isTechnicalUser(d) && !(progetto.utentiDaAbilitare || []).includes(d.nome)).map(d => (
-                                <option key={d.id} value={d.nome}>{d.nome} {d.macroArea ? `(${d.macroArea})` : ''}</option>
-                              ))}
-                            </select>
+                              <Trash2 className="w-4 h-4 text-red-500" />
+                            </button>
                           </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
 
-                          {/* Colonna 3: Lista Ordinata Utenti Selezionati (Dove prima c'era Abilitato SGQ) */}
-                          <div>
-                            <label className="block text-[9px] font-bold text-emerald-950 mb-1 ml-1">
-                              Utenti Selezionati ({progetto.utentiDaAbilitare?.length || 0})
-                            </label>
-                            <div className="bg-emerald-50/50 p-2 border border-emerald-100 rounded-lg min-h-[38px] max-h-[120px] overflow-y-auto flex flex-wrap gap-1">
-                              {(!progetto.utentiDaAbilitare || progetto.utentiDaAbilitare.length === 0) ? (
-                                <span className="text-[10px] text-gray-400 italic p-1">Nessun utente selezionato</span>
-                              ) : (
-                                progetto.utentiDaAbilitare.map(uName => (
-                                  <div key={uName} className="flex items-center gap-1.5 bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-lg text-[10px] font-bold text-emerald-900 shadow-2xs">
-                                    <span>{uName}</span>
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        const updatedList = (progetto.utentiDaAbilitare || []).filter(x => x !== uName);
-                                        handleUpdateProgettoField(idx, { utentiDaAbilitare: updatedList });
-                                      }}
-                                      className="text-emerald-600 hover:text-emerald-800 transition cursor-pointer font-black"
-                                    >
-                                      ✕
-                                    </button>
-                                  </div>
-                                ))
-                              )}
-                            </div>
-                          </div>
-                        </div>
+                  {/* CAMPI COMUNI DELLA COMMESSA */}
+                  <div className="bg-white p-4 rounded-xl border border-gray-200 space-y-4 shadow-xs">
+                    <div className="text-[11px] font-black text-slate-800 uppercase tracking-wide border-b border-gray-150 pb-2">
+                      ⚙️ Configurazioni Comuni per i Progetti della Commessa
+                    </div>
 
-                        {/* RIGA 3: ABILITATO SGQ SOTTO */}
-                        <div className="pt-2 border-t border-gray-150/60 flex items-center gap-3">
-                          <div className="w-full sm:w-1/3">
-                            <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Abilitato SGQ</label>
-                            <select
-                              value={progetto.sgq}
-                              onChange={e => handleUpdateProgettoField(idx, { sgq: e.target.value as 'SI' | 'NO' })}
-                              className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs h-[38px]"
-                            >
-                              <option value="NO">NO</option>
-                              <option value="SI">SI</option>
-                            </select>
-                          </div>
-                        </div>
-
-                        {progetto.sgq === 'SI' ? (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-indigo-50/30 p-3 rounded-lg border border-indigo-100/50">
-                            <div>
-                              <label className="block text-[9px] font-bold text-indigo-900 mb-1.5 ml-1">Verificatori / Validatori</label>
-                              <div className="flex flex-wrap gap-1 mb-2">
-                                {(!progetto.verificatori || progetto.verificatori.length === 0) ? (
-                                  <span className="text-[10px] text-gray-400 italic ml-1">Nessun validatore</span>
-                                ) : (
-                                  progetto.verificatori.map(vName => (
-                                    <div key={vName} className="flex items-center gap-1.5 bg-indigo-100 border border-indigo-200 px-2 py-0.5 rounded-lg text-[10px] font-bold text-indigo-900 shadow-sm animate-in fade-in zoom-in-95 duration-150">
-                                      <span>{vName}</span>
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          const updatedList = progetto.verificatori.filter(x => x !== vName);
-                                          handleUpdateProgettoField(idx, { verificatori: updatedList });
-                                        }}
-                                        className="text-indigo-450 hover:text-indigo-700 transition cursor-pointer"
-                                      >
-                                        ✕
-                                      </button>
-                                    </div>
-                                  ))
-                                )}
-                              </div>
-                              <select
-                                value=""
-                                onChange={e => {
-                                  const val = e.target.value;
-                                  if (val && !progetto.verificatori.includes(val)) {
-                                    handleUpdateProgettoField(idx, { verificatori: [...progetto.verificatori, val] });
-                                  }
-                                }}
-                                className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
-                              >
-                                <option value="">+ Aggiungi Validatore...</option>
-                                {dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')) && !isTechnicalUser(d) && !progetto.verificatori.includes(d.nome)).map(d => (
-                                  <option key={d.id} value={d.nome}>{d.nome}</option>
-                                ))}
-                              </select>
-                            </div>
-
-                            <div>
-                              <label className="block text-[9px] font-bold text-indigo-900 mb-1 ml-1">Compilatore (Facoltativo)</label>
-                              <select
-                                value={progetto.compilatore}
-                                onChange={e => handleUpdateProgettoField(idx, { compilatore: e.target.value })}
-                                className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
-                              >
-                                <option value="">-- Nessuno --</option>
-                                {dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')) && !isTechnicalUser(d)).map(d => (
-                                  <option key={d.id} value={d.nome}>{d.nome}</option>
-                                ))}
-                              </select>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="grid grid-cols-3 gap-2 bg-emerald-50/30 p-3 rounded-lg border border-emerald-100/50">
-                            <div>
-                              <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1 text-center">Senior Project</label>
-                              <input
-                                type="number"
-                                min={0}
-                                placeholder="0"
-                                value={progetto.giornateSenior || ''}
-                                onChange={e => handleUpdateProgettoField(idx, { giornateSenior: Number(e.target.value) || 0 })}
-                                className="w-full p-2 border border-emerald-100 rounded-lg bg-white text-center font-bold text-gray-700 text-xs outline-none focus:ring-1 focus:ring-emerald-400"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1 text-center">Project</label>
-                              <input
-                                type="number"
-                                min={0}
-                                placeholder="0"
-                                value={progetto.giornateProject || ''}
-                                onChange={e => handleUpdateProgettoField(idx, { giornateProject: Number(e.target.value) || 0 })}
-                                className="w-full p-2 border border-emerald-100 rounded-lg bg-white text-center font-bold text-gray-700 text-xs outline-none focus:ring-1 focus:ring-emerald-400"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1 text-center">Junior Project</label>
-                              <input
-                                type="number"
-                                min={0}
-                                placeholder="0"
-                                value={progetto.giornateJunior || ''}
-                                onChange={e => handleUpdateProgettoField(idx, { giornateJunior: Number(e.target.value) || 0 })}
-                                className="w-full p-2 border border-emerald-100 rounded-lg bg-white text-center font-bold text-gray-700 text-xs outline-none focus:ring-1 focus:ring-emerald-400"
-                              />
-                            </div>
-                          </div>
-                        )}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
+                      {/* Colonna 1: Project Manager */}
+                      <div>
+                        <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Project Manager (Opzionale)</label>
+                        <select
+                          value={newCommessaPM}
+                          onChange={e => setNewCommessaPM(e.target.value)}
+                          className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs h-[38px]"
+                        >
+                          <option value="">-- Nessun PM --</option>
+                          {pmsList.map(pm => (
+                            <option key={pm.id} value={pm.nome}>{pm.nome}</option>
+                          ))}
+                        </select>
                       </div>
-                    ))}
+
+                      {/* Colonna 2: Selettore Utenti da Abilitare */}
+                      <div>
+                        <label className="block text-[9px] font-bold text-indigo-900 mb-1 ml-1">Utenti da Abilitare (Tutte le Categorie)</label>
+                        <select
+                          value=""
+                          onChange={e => {
+                            const val = e.target.value;
+                            if (val && !newCommessaUtentiDaAbilitare.includes(val)) {
+                              setNewCommessaUtentiDaAbilitare(prev => [...prev, val]);
+                            }
+                          }}
+                          className="w-full p-2 border border-indigo-200 rounded-lg bg-indigo-50/40 focus:bg-white outline-none focus:ring-1 focus:ring-emerald-400 font-bold text-gray-700 text-xs h-[38px]"
+                        >
+                          <option value="">+ Seleziona Utente da Abilitare...</option>
+                          {dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')) && !isTechnicalUser(d) && !newCommessaUtentiDaAbilitare.includes(d.nome)).map(d => (
+                            <option key={d.id} value={d.nome}>{d.nome} {d.macroArea ? `(${d.macroArea})` : ''}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Colonna 3: Lista Utenti Selezionati */}
+                      <div>
+                        <label className="block text-[9px] font-bold text-emerald-950 mb-1 ml-1">
+                          Utenti Selezionati ({newCommessaUtentiDaAbilitare.length})
+                        </label>
+                        <div className="bg-emerald-50/50 p-2 border border-emerald-100 rounded-lg min-h-[38px] max-h-[120px] overflow-y-auto flex flex-wrap gap-1">
+                          {newCommessaUtentiDaAbilitare.length === 0 ? (
+                            <span className="text-[10px] text-gray-400 italic p-1">Nessun utente selezionato</span>
+                          ) : (
+                            newCommessaUtentiDaAbilitare.map(uName => (
+                              <div key={uName} className="flex items-center gap-1.5 bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-lg text-[10px] font-bold text-emerald-900 shadow-2xs">
+                                <span>{uName}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setNewCommessaUtentiDaAbilitare(prev => prev.filter(x => x !== uName));
+                                  }}
+                                  className="text-emerald-600 hover:text-emerald-800 transition cursor-pointer font-black"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* ABILITATO SGQ */}
+                    <div className="pt-2 border-t border-gray-150/60 flex items-center gap-3">
+                      <div className="w-full sm:w-1/3">
+                        <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Abilitato SGQ</label>
+                        <select
+                          value={newCommessaSGQ}
+                          onChange={e => setNewCommessaSGQ(e.target.value as 'SI' | 'NO')}
+                          className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs h-[38px]"
+                        >
+                          <option value="NO">NO</option>
+                          <option value="SI">SI</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {newCommessaSGQ === 'SI' ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-indigo-50/30 p-3 rounded-lg border border-indigo-100/50">
+                        <div>
+                          <label className="block text-[9px] font-bold text-indigo-900 mb-1.5 ml-1">Verificatori / Validatori</label>
+                          <div className="flex flex-wrap gap-1 mb-2">
+                            {newCommessaVerificatori.length === 0 ? (
+                              <span className="text-[10px] text-gray-400 italic ml-1">Nessun validatore</span>
+                            ) : (
+                              newCommessaVerificatori.map(vName => (
+                                <div key={vName} className="flex items-center gap-1.5 bg-indigo-100 border border-indigo-200 px-2 py-0.5 rounded-lg text-[10px] font-bold text-indigo-900 shadow-sm animate-in fade-in zoom-in-95 duration-150">
+                                  <span>{vName}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setNewCommessaVerificatori(prev => prev.filter(x => x !== vName));
+                                    }}
+                                    className="text-indigo-450 hover:text-indigo-700 transition cursor-pointer"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                          <select
+                            value=""
+                            onChange={e => {
+                              const val = e.target.value;
+                              if (val && !newCommessaVerificatori.includes(val)) {
+                                setNewCommessaVerificatori(prev => [...prev, val]);
+                              }
+                            }}
+                            className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
+                          >
+                            <option value="">+ Aggiungi Validatore...</option>
+                            {dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')) && !isTechnicalUser(d) && !newCommessaVerificatori.includes(d.nome)).map(d => (
+                              <option key={d.id} value={d.nome}>{d.nome}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-[9px] font-bold text-indigo-900 mb-1 ml-1">Compilatore (Facoltativo)</label>
+                          <select
+                            value={newCommessaCompilatore}
+                            onChange={e => setNewCommessaCompilatore(e.target.value)}
+                            className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
+                          >
+                            <option value="">-- Nessuno --</option>
+                            {dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')) && !isTechnicalUser(d)).map(d => (
+                              <option key={d.id} value={d.nome}>{d.nome}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-3 gap-2 bg-emerald-50/30 p-3 rounded-lg border border-emerald-100/50">
+                        <div>
+                          <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1 text-center">Senior Project</label>
+                          <input
+                            type="number"
+                            min={0}
+                            placeholder="0"
+                            value={newCommessaGiornateSenior || ''}
+                            onChange={e => setNewCommessaGiornateSenior(Number(e.target.value) || 0)}
+                            className="w-full p-2 border border-emerald-100 rounded-lg bg-white text-center font-bold text-gray-700 text-xs outline-none focus:ring-1 focus:ring-emerald-400"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1 text-center">Project</label>
+                          <input
+                            type="number"
+                            min={0}
+                            placeholder="0"
+                            value={newCommessaGiornateProject || ''}
+                            onChange={e => setNewCommessaGiornateProject(Number(e.target.value) || 0)}
+                            className="w-full p-2 border border-emerald-100 rounded-lg bg-white text-center font-bold text-gray-700 text-xs outline-none focus:ring-1 focus:ring-emerald-400"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1 text-center">Junior Project</label>
+                          <input
+                            type="number"
+                            min={0}
+                            placeholder="0"
+                            value={newCommessaGiornateJunior || ''}
+                            onChange={e => setNewCommessaGiornateJunior(Number(e.target.value) || 0)}
+                            className="w-full p-2 border border-emerald-100 rounded-lg bg-white text-center font-bold text-gray-700 text-xs outline-none focus:ring-1 focus:ring-emerald-400"
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -3847,7 +4044,7 @@ export default function Commesse() {
           )}
 
             {/* PANNELLO FILTRI IN 2 RIGHE E SPAZIATO */}
-            <div className="mb-4 bg-white/85 backdrop-blur-md p-4 rounded-2xl border border-emerald-100/90 shadow-sm space-y-3">
+            <div className="mb-4 bg-white/85 backdrop-blur-md p-4 rounded-2xl border border-emerald-100/90 shadow-sm space-y-3 relative z-30">
               {/* RIGA 1: RICERCA TESTUALE + CONTATORE COMMESSE + STAMPA & ESPORTA + SELETTORE STATO */}
               <div className="flex flex-wrap items-center justify-between gap-3">
                 {/* Campo di ricerca */}
@@ -3926,82 +4123,292 @@ export default function Commesse() {
                 </div>
               </div>
 
-              {/* RIGA 2: FILTRI SPECIFICI (CLIENTE, RESPONSABILE, PM, ANNO, TIPOLOGIA, RESET) */}
+              {/* RIGA 2: FILTRI SPECIFICI RICERCABILI (CLIENTE, RESPONSABILE, PM, ANNO, TIPOLOGIA, RESET) */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 pt-2.5 border-t border-emerald-100/60 items-center">
-                {/* Cliente */}
-                <div>
+                
+                {/* 1. Cliente Ricercabile */}
+                <div className="relative">
                   <label className="block text-[9.5px] font-extrabold text-gray-500 mb-1 ml-0.5 uppercase tracking-wide">Cliente</label>
-                  <select
-                    value={catalogoClienteFilter}
-                    onChange={e => setCatalogoClienteFilter(e.target.value)}
+                  <input
+                    type="text"
+                    placeholder="-- Tutti i Clienti --"
+                    value={isCatClienteOpen ? catClienteSearch : (catalogoClienteFilter || '')}
+                    onFocus={() => {
+                      setIsCatClienteOpen(true);
+                      setCatClienteSearch(catalogoClienteFilter || '');
+                    }}
+                    onChange={e => {
+                      setCatClienteSearch(e.target.value);
+                      if (!isCatClienteOpen) setIsCatClienteOpen(true);
+                    }}
                     className="w-full p-2 border border-emerald-100 rounded-xl bg-white focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs shadow-xs"
-                  >
-                    <option value="">-- Tutti i Clienti --</option>
-                    {selectableClientiCatalogo.map(c => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
+                  />
+                  {isCatClienteOpen && (
+                    <>
+                      <div className="fixed inset-0 z-[9999]" onClick={() => setIsCatClienteOpen(false)}></div>
+                      <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-emerald-200 rounded-xl shadow-2xl z-[10000] max-h-56 overflow-y-auto p-1.5 space-y-0.5 animate-in fade-in zoom-in-95 duration-100">
+                        <div
+                          onClick={() => {
+                            setCatalogoClienteFilter('');
+                            setIsCatClienteOpen(false);
+                          }}
+                          className={`p-2 text-xs cursor-pointer transition rounded-lg font-bold ${
+                            !catalogoClienteFilter ? 'bg-emerald-100 text-emerald-950 font-black' : 'hover:bg-emerald-50 text-gray-600'
+                          }`}
+                        >
+                          {!catalogoClienteFilter ? '✓ ' : ''}-- Tutti i Clienti --
+                        </div>
+                        {selectableClientiCatalogo
+                          .filter(c => c.toLowerCase().includes((catClienteSearch || '').toLowerCase()))
+                          .map(c => {
+                            const isSelected = catalogoClienteFilter.trim().toLowerCase() === c.trim().toLowerCase();
+                            return (
+                              <div
+                                key={c}
+                                onClick={() => {
+                                  setCatalogoClienteFilter(c);
+                                  setIsCatClienteOpen(false);
+                                }}
+                                className={`p-2 text-xs cursor-pointer transition rounded-lg ${
+                                  isSelected ? 'bg-emerald-100 text-emerald-950 font-black' : 'hover:bg-emerald-50 text-gray-700 font-bold'
+                                }`}
+                              >
+                                {isSelected ? '✓ ' : ''}{c}
+                              </div>
+                            );
+                          })}
+                      </div>
+                    </>
+                  )}
                 </div>
 
-                {/* Responsabile */}
-                <div>
+                {/* 2. Responsabile Ricercabile */}
+                <div className="relative">
                   <label className="block text-[9.5px] font-extrabold text-gray-500 mb-1 ml-0.5 uppercase tracking-wide">Responsabile</label>
-                  <select
-                    value={catalogoRespFilter}
-                    onChange={e => setCatalogoRespFilter(e.target.value)}
+                  <input
+                    type="text"
+                    placeholder="-- Tutti i Responsabili --"
+                    value={isCatRespOpen ? catRespSearch : (catalogoRespFilter || '')}
+                    onFocus={() => {
+                      setIsCatRespOpen(true);
+                      setCatRespSearch(catalogoRespFilter || '');
+                    }}
+                    onChange={e => {
+                      setCatRespSearch(e.target.value);
+                      if (!isCatRespOpen) setIsCatRespOpen(true);
+                    }}
                     className="w-full p-2 border border-emerald-100 rounded-xl bg-white focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs shadow-xs"
-                  >
-                    <option value="">-- Tutti i Responsabili --</option>
-                    {selectableResponsabiliCatalogo.map(r => (
-                      <option key={r} value={r}>{r}</option>
-                    ))}
-                  </select>
+                  />
+                  {isCatRespOpen && (
+                    <>
+                      <div className="fixed inset-0 z-[9999]" onClick={() => setIsCatRespOpen(false)}></div>
+                      <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-emerald-200 rounded-xl shadow-2xl z-[10000] max-h-56 overflow-y-auto p-1.5 space-y-0.5 animate-in fade-in zoom-in-95 duration-100">
+                        <div
+                          onClick={() => {
+                            setCatalogoRespFilter('');
+                            setIsCatRespOpen(false);
+                          }}
+                          className={`p-2 text-xs cursor-pointer transition rounded-lg font-bold ${
+                            !catalogoRespFilter ? 'bg-emerald-100 text-emerald-950 font-black' : 'hover:bg-emerald-50 text-gray-600'
+                          }`}
+                        >
+                          {!catalogoRespFilter ? '✓ ' : ''}-- Tutti i Responsabili --
+                        </div>
+                        {selectableResponsabiliCatalogo
+                          .filter(r => r.toLowerCase().includes((catRespSearch || '').toLowerCase()))
+                          .map(r => {
+                            const isSelected = areNamesEqual(catalogoRespFilter, r);
+                            return (
+                              <div
+                                key={r}
+                                onClick={() => {
+                                  setCatalogoRespFilter(r);
+                                  setIsCatRespOpen(false);
+                                }}
+                                className={`p-2 text-xs cursor-pointer transition rounded-lg ${
+                                  isSelected ? 'bg-emerald-100 text-emerald-950 font-black' : 'hover:bg-emerald-50 text-gray-700 font-bold'
+                                }`}
+                              >
+                                {isSelected ? '✓ ' : ''}{r}
+                              </div>
+                            );
+                          })}
+                      </div>
+                    </>
+                  )}
                 </div>
 
-                {/* PM */}
-                <div>
+                {/* 3. PM Ricercabile */}
+                <div className="relative">
                   <label className="block text-[9.5px] font-extrabold text-gray-500 mb-1 ml-0.5 uppercase tracking-wide">Project Manager (PM)</label>
-                  <select
-                    value={catalogoPMFilter}
-                    onChange={e => setCatalogoPMFilter(e.target.value)}
+                  <input
+                    type="text"
+                    placeholder="-- Tutti i PM --"
+                    value={isCatPMOpen ? catPMSearch : (catalogoPMFilter || '')}
+                    onFocus={() => {
+                      setIsCatPMOpen(true);
+                      setCatPMSearch(catalogoPMFilter || '');
+                    }}
+                    onChange={e => {
+                      setCatPMSearch(e.target.value);
+                      if (!isCatPMOpen) setIsCatPMOpen(true);
+                    }}
                     className="w-full p-2 border border-emerald-100 rounded-xl bg-white focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs shadow-xs"
-                  >
-                    <option value="">-- Tutti i PM --</option>
-                    {selectablePMsCatalogo.map(pm => (
-                      <option key={pm} value={pm}>{pm}</option>
-                    ))}
-                  </select>
+                  />
+                  {isCatPMOpen && (
+                    <>
+                      <div className="fixed inset-0 z-[9999]" onClick={() => setIsCatPMOpen(false)}></div>
+                      <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-emerald-200 rounded-xl shadow-2xl z-[10000] max-h-56 overflow-y-auto p-1.5 space-y-0.5 animate-in fade-in zoom-in-95 duration-100">
+                        <div
+                          onClick={() => {
+                            setCatalogoPMFilter('');
+                            setIsCatPMOpen(false);
+                          }}
+                          className={`p-2 text-xs cursor-pointer transition rounded-lg font-bold ${
+                            !catalogoPMFilter ? 'bg-emerald-100 text-emerald-950 font-black' : 'hover:bg-emerald-50 text-gray-600'
+                          }`}
+                        >
+                          {!catalogoPMFilter ? '✓ ' : ''}-- Tutti i PM --
+                        </div>
+                        {selectablePMsCatalogo
+                          .filter(pm => pm.toLowerCase().includes((catPMSearch || '').toLowerCase()))
+                          .map(pm => {
+                            const isSelected = areNamesEqual(catalogoPMFilter, pm);
+                            return (
+                              <div
+                                key={pm}
+                                onClick={() => {
+                                  setCatalogoPMFilter(pm);
+                                  setIsCatPMOpen(false);
+                                }}
+                                className={`p-2 text-xs cursor-pointer transition rounded-lg ${
+                                  isSelected ? 'bg-emerald-100 text-emerald-950 font-black' : 'hover:bg-emerald-50 text-gray-700 font-bold'
+                                }`}
+                              >
+                                {isSelected ? '✓ ' : ''}{pm}
+                              </div>
+                            );
+                          })}
+                      </div>
+                    </>
+                  )}
                 </div>
 
-                {/* Anno */}
-                <div>
+                {/* 4. Anno Ricercabile */}
+                <div className="relative">
                   <label className="block text-[9.5px] font-extrabold text-gray-500 mb-1 ml-0.5 uppercase tracking-wide">Anno</label>
-                  <select
-                    value={catalogoAnnoFilter}
-                    onChange={e => setCatalogoAnnoFilter(e.target.value)}
+                  <input
+                    type="text"
+                    placeholder="-- Tutti gli Anni --"
+                    value={isCatAnnoOpen ? catAnnoSearch : (catalogoAnnoFilter || '')}
+                    onFocus={() => {
+                      setIsCatAnnoOpen(true);
+                      setCatAnnoSearch(catalogoAnnoFilter || '');
+                    }}
+                    onChange={e => {
+                      setCatAnnoSearch(e.target.value);
+                      if (!isCatAnnoOpen) setIsCatAnnoOpen(true);
+                    }}
                     className="w-full p-2 border border-emerald-100 rounded-xl bg-white focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs shadow-xs"
-                  >
-                    <option value="">-- Tutti gli Anni --</option>
-                    {selectableAnniCatalogo.map(a => (
-                      <option key={a} value={a}>{a}</option>
-                    ))}
-                  </select>
+                  />
+                  {isCatAnnoOpen && (
+                    <>
+                      <div className="fixed inset-0 z-[9999]" onClick={() => setIsCatAnnoOpen(false)}></div>
+                      <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-emerald-200 rounded-xl shadow-2xl z-[10000] max-h-56 overflow-y-auto p-1.5 space-y-0.5 animate-in fade-in zoom-in-95 duration-100">
+                        <div
+                          onClick={() => {
+                            setCatalogoAnnoFilter('');
+                            setIsCatAnnoOpen(false);
+                          }}
+                          className={`p-2 text-xs cursor-pointer transition rounded-lg font-bold ${
+                            !catalogoAnnoFilter ? 'bg-emerald-100 text-emerald-950 font-black' : 'hover:bg-emerald-50 text-gray-600'
+                          }`}
+                        >
+                          {!catalogoAnnoFilter ? '✓ ' : ''}-- Tutti gli Anni --
+                        </div>
+                        {selectableAnniCatalogo
+                          .filter(a => a.toLowerCase().includes((catAnnoSearch || '').toLowerCase()))
+                          .map(a => {
+                            const isSelected = catalogoAnnoFilter === a;
+                            return (
+                              <div
+                                key={a}
+                                onClick={() => {
+                                  setCatalogoAnnoFilter(a);
+                                  setIsCatAnnoOpen(false);
+                                }}
+                                className={`p-2 text-xs cursor-pointer transition rounded-lg ${
+                                  isSelected ? 'bg-emerald-100 text-emerald-950 font-black' : 'hover:bg-emerald-50 text-gray-700 font-bold'
+                                }`}
+                              >
+                                {isSelected ? '✓ ' : ''}{a}
+                              </div>
+                            );
+                          })}
+                      </div>
+                    </>
+                  )}
                 </div>
 
-                {/* Tipologia & Reset */}
+                {/* 5. Tipologia Ricercabile & Reset */}
                 <div className="flex gap-2 items-end">
-                  <div className="flex-1">
+                  <div className="flex-1 relative">
                     <label className="block text-[9.5px] font-extrabold text-gray-500 mb-1 ml-0.5 uppercase tracking-wide">Tipologia</label>
-                    <select
-                      value={catalogoTipologiaFilter}
-                      onChange={e => setCatalogoTipologiaFilter(e.target.value)}
+                    <input
+                      type="text"
+                      placeholder="-- Tutte le Tipologie --"
+                      value={isCatTipologiaOpen ? catTipologiaSearch : (catalogoTipologiaFilter ? `${catalogoTipologiaFilter} - ${TIPOLOGIE_COMMESSE[catalogoTipologiaFilter] || catalogoTipologiaFilter}` : '')}
+                      onFocus={() => {
+                        setIsCatTipologiaOpen(true);
+                        setCatTipologiaSearch(catalogoTipologiaFilter || '');
+                      }}
+                      onChange={e => {
+                        setCatTipologiaSearch(e.target.value);
+                        if (!isCatTipologiaOpen) setIsCatTipologiaOpen(true);
+                      }}
                       className="w-full p-2 border border-emerald-100 rounded-xl bg-white focus:ring-2 focus:ring-emerald-400 outline-none font-bold text-gray-700 text-xs shadow-xs"
-                    >
-                      <option value="">-- Tutte le Tipologie --</option>
-                      {selectableTipologieCatalogo.map(tip => (
-                        <option key={tip} value={tip}>{tip} - {TIPOLOGIE_COMMESSE[tip] || tip}</option>
-                      ))}
-                    </select>
+                    />
+                    {isCatTipologiaOpen && (
+                      <>
+                        <div className="fixed inset-0 z-[9999]" onClick={() => setIsCatTipologiaOpen(false)}></div>
+                        <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-emerald-200 rounded-xl shadow-2xl z-[10000] max-h-56 overflow-y-auto p-1.5 space-y-0.5 animate-in fade-in zoom-in-95 duration-100">
+                          <div
+                            onClick={() => {
+                              setCatalogoTipologiaFilter('');
+                              setIsCatTipologiaOpen(false);
+                            }}
+                            className={`p-2 text-xs cursor-pointer transition rounded-lg font-bold ${
+                              !catalogoTipologiaFilter ? 'bg-emerald-100 text-emerald-950 font-black' : 'hover:bg-emerald-50 text-gray-600'
+                            }`}
+                          >
+                            {!catalogoTipologiaFilter ? '✓ ' : ''}-- Tutte le Tipologie --
+                          </div>
+                          {selectableTipologieCatalogo
+                            .filter(tip => {
+                              const search = (catTipologiaSearch || '').toLowerCase();
+                              const desc = (TIPOLOGIE_COMMESSE[tip] || '').toLowerCase();
+                              return tip.toLowerCase().includes(search) || desc.includes(search);
+                            })
+                            .map(tip => {
+                              const isSelected = catalogoTipologiaFilter === tip;
+                              return (
+                                <div
+                                  key={tip}
+                                  onClick={() => {
+                                    setCatalogoTipologiaFilter(tip);
+                                    setIsCatTipologiaOpen(false);
+                                  }}
+                                  className={`p-2 text-xs cursor-pointer transition rounded-lg ${
+                                    isSelected ? 'bg-emerald-100 text-emerald-950 font-black' : 'hover:bg-emerald-50 text-gray-700 font-bold'
+                                  }`}
+                                >
+                                  {isSelected ? '✓ ' : ''}{tip} - {TIPOLOGIE_COMMESSE[tip] || tip}
+                                </div>
+                              );
+                            })}
+                        </div>
+                      </>
+                    )}
                   </div>
                   {hasActiveCatalogoFilters && (
                     <button
@@ -4014,6 +4421,7 @@ export default function Commesse() {
                     </button>
                   )}
                 </div>
+
               </div>
             </div>
 
@@ -4036,6 +4444,9 @@ export default function Commesse() {
                     <th className="p-2.5 cursor-pointer hover:bg-emerald-200 transition" onClick={() => handleColumnHeaderSort('cliente')}>
                       Cliente {catalogoSortBy === 'cliente' ? (catalogoSortDir === 'asc' ? '↑' : '↓') : '↕'}
                     </th>
+                    <th className="p-2.5 cursor-pointer hover:bg-emerald-200 transition" onClick={() => handleColumnHeaderSort('dataApertura')}>
+                      Data Apertura {catalogoSortBy === 'dataApertura' ? (catalogoSortDir === 'asc' ? '↑' : '↓') : '↕'}
+                    </th>
                     <th className="p-2.5 text-center cursor-pointer hover:bg-emerald-200 transition" onClick={() => handleColumnHeaderSort('stato')}>
                       Stato {catalogoSortBy === 'stato' ? (catalogoSortDir === 'asc' ? '↑' : '↓') : '↕'}
                     </th>
@@ -4051,7 +4462,7 @@ export default function Commesse() {
                 <tbody className="divide-y divide-emerald-50/60 font-medium text-emerald-950">
                   {filteredAndSortedCatalogoCommesse.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="p-8 text-center text-gray-400 font-bold italic">
+                      <td colSpan={10} className="p-8 text-center text-gray-400 font-bold italic">
                         Nessuna commessa trovata con i filtri selezionati.
                       </td>
                     </tr>
@@ -4073,6 +4484,9 @@ export default function Commesse() {
                           <td className="p-2.5">{computedTipologia}</td>
                           <td className="p-2.5 max-w-[200px] truncate" title={(c as any).titolo || c.nome}>{(c as any).titolo || c.nome}</td>
                           <td className="p-2.5 max-w-[150px] truncate" title={(c as any).cliente || ''}>{(c as any).cliente || ''}</td>
+                          <td className="p-2.5 whitespace-nowrap text-gray-600 font-semibold">
+                            {(c as any).dataApertura ? new Date((c as any).dataApertura).toLocaleDateString('it-IT') : '-'}
+                          </td>
                           <td className="p-2.5 text-center">
                             <span className={`px-2 py-0.5 rounded-full font-black text-[9px] uppercase tracking-wider ${
                               (c as any).stato === 'Aperta' || !c.hasOwnProperty('stato') ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-650'
@@ -4115,315 +4529,644 @@ export default function Commesse() {
         </div>
       )}
 
+      {/* MODALE MODIFICA COMPLETA COMMESSA (GESTIONE CATALOGO) */}
       {editingCommessa && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2rem] shadow-2xl max-w-5xl w-full border border-gray-150 p-6 flex flex-col gap-6 animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center shrink-0">
-              <h3 className="text-xl font-black text-gray-900 flex items-center gap-2">
-                <Briefcase className="w-6 h-6 text-blue-600" />
-                <span>Modifica Commessa e Split Progetti</span>
-              </h3>
-              <button onClick={() => setEditingCommessa(null)} className="text-gray-400 hover:text-gray-600 p-1.5 rounded-xl hover:bg-gray-100 transition">
+          <div className="bg-white rounded-[2rem] shadow-2xl max-w-4xl w-full border border-gray-150 flex flex-col max-h-[90vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            
+            {/* Header Modale (Fisso in alto) */}
+            <div className="flex justify-between items-center shrink-0 border-b border-gray-100 p-6 pb-4 bg-white rounded-t-[2rem]">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-2xl border border-indigo-100">
+                  <Pencil className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-gray-900 tracking-tight">
+                    Modifica Commessa nel Catalogo
+                  </h3>
+                  <p className="text-xs text-gray-500 font-semibold">
+                    Gestisci periodo, responsabile, progetti e dettagli operativi della commessa
+                  </p>
+                </div>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setEditingCommessa(null)} 
+                className="text-gray-400 hover:text-gray-600 p-2 rounded-xl hover:bg-gray-100 transition cursor-pointer"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="bg-blue-50 border border-blue-100 p-4 rounded-2xl shrink-0">
-              <div className="text-[11px] font-bold uppercase tracking-wider text-blue-500">Commessa in modifica</div>
-              <div className="font-extrabold text-blue-900 text-sm mt-0.5">{editingCommessa.nome}</div>
-            </div>
-
-            <form onSubmit={handleSaveCommessaDetails} className="flex-1 flex flex-col gap-6 min-h-0">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
-                {/* COLONNA SINISTRA: Informazioni Generali */}
-                <div className="space-y-4 md:col-span-1 md:border-r md:pr-6 md:border-gray-150">
-                  <h4 className="text-xs font-black text-gray-900 uppercase tracking-wide">Dettagli Commessa</h4>
-                  
-                  <div>
-                    <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Responsabile</label>
-                    <select 
-                      value={editResponsabile} 
-                      onChange={e => setEditResponsabile(e.target.value)}
-                      className="w-full p-3 border-none bg-gray-50 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-bold text-gray-700"
-                    >
-                      <option value="">-- Nessuno --</option>
-                      {(() => {
-                        const list = [...responsabiliMacroAreeList];
-                        if (editResponsabile && !list.some(d => d.nome === editResponsabile)) {
-                          const current = dipendenti.find(d => d.nome === editResponsabile);
-                          if (current) list.push(current);
-                        }
-                        return list.map(d => <option key={d.id} value={d.nome}>{d.nome}</option>);
-                      })()}
-                    </select>
+            {/* Body Modale (Scrollabile Internamente, protetto dentro la finestra arrotondata) */}
+            <div className="p-6 overflow-y-auto flex-1 space-y-5">
+              
+              {/* Banner Codice Commessa & Stato */}
+              <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-blue-900 p-4 rounded-2xl text-white shadow-md flex justify-between items-center">
+                <div>
+                  <div className="text-[10px] font-black uppercase tracking-wider text-blue-300">
+                    Codice Commessa (Non Modificabile)
                   </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Stato</label>
-                    <select 
-                      value={editStato} 
-                      onChange={e => setEditStato(e.target.value)}
-                      className="w-full p-3 border-none bg-gray-50 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-bold text-gray-700"
-                    >
-                      <option value="Aperta">Aperta</option>
-                      <option value="Chiusa">Chiusa</option>
-                    </select>
+                  <div className="font-black text-xl text-white">
+                    {editingCommessa.codiceCommessa || (editingCommessa.nome ? editingCommessa.nome.split(' - ')[0] : 'Commessa')}
                   </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-slate-300">Stato commessa:</span>
+                  <select
+                    value={editStato}
+                    onChange={e => setEditStato(e.target.value as 'Aperta' | 'Chiusa')}
+                    className={`px-3 py-1 rounded-xl text-xs font-black uppercase border-0 outline-none cursor-pointer shadow-sm ${
+                      editStato === 'Chiusa' ? 'bg-rose-500 text-white' : 'bg-emerald-500 text-white'
+                    }`}
+                  >
+                    <option value="Aperta" className="bg-white text-gray-900 font-bold">🟢 Aperta</option>
+                    <option value="Chiusa" className="bg-white text-gray-900 font-bold">🔴 Chiusa</option>
+                  </select>
+                </div>
+              </div>
 
-                  <div>
-                    <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Data Inizio (Opzionale)</label>
-                    <input 
-                      type="date" 
-                      value={editDataInizio} 
-                      onChange={e => setEditDataInizio(e.target.value)}
-                      className="w-full p-3 border-none bg-gray-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-semibold text-gray-650"
+              {/* Blocco Dati Anagrafici Congelati (Non Modificabili per preservare l'integrità del codice) */}
+              <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/80 space-y-3">
+                <div className="flex justify-between items-center border-b border-slate-200 pb-2">
+                  <span className="text-[10.5px] font-black text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
+                    🔒 Dati Anagrafici Strutturali (Non Modificabili)
+                  </span>
+                  <span className="text-[9.5px] text-slate-400 font-bold italic">
+                    Generati all'apertura per garantire l'univocità del codice
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                  {/* Titolo Commessa */}
+                  <div className="sm:col-span-2">
+                    <label className="block text-[9.5px] font-bold text-slate-500 mb-1 ml-0.5">Titolo Commessa</label>
+                    <input
+                      type="text"
+                      disabled
+                      value={editTitolo}
+                      className="w-full p-2.5 border border-slate-200 rounded-xl bg-slate-100 text-slate-600 font-bold text-xs cursor-not-allowed shadow-2xs"
+                      title="Il titolo anagrafico della commessa non è modificabile dopo la registrazione"
                     />
                   </div>
 
+                  {/* Cliente */}
                   <div>
-                    <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Data Fine (Opzionale)</label>
-                    <input 
-                      type="date" 
-                      value={editDataFine} 
-                      onChange={e => setEditDataFine(e.target.value)}
-                      className="w-full p-3 border-none bg-gray-50 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500 shadow-inner font-semibold text-gray-650"
+                    <label className="block text-[9.5px] font-bold text-slate-500 mb-1 ml-0.5">Cliente</label>
+                    <input
+                      type="text"
+                      disabled
+                      value={editCliente || 'Non specificato'}
+                      className="w-full p-2.5 border border-slate-200 rounded-xl bg-slate-100 text-slate-600 font-bold text-xs cursor-not-allowed shadow-2xs"
+                      title="Il cliente della commessa non è modificabile dopo la registrazione"
+                    />
+                  </div>
+
+                  {/* Anno & Tipologia */}
+                  <div>
+                    <label className="block text-[9.5px] font-bold text-slate-500 mb-1 ml-0.5">Anno & Tipologia</label>
+                    <input
+                      type="text"
+                      disabled
+                      value={`${editAnno} • Tip. ${editTipologia}`}
+                      className="w-full p-2.5 border border-slate-200 rounded-xl bg-slate-100 text-slate-600 font-bold text-xs cursor-not-allowed shadow-2xs"
+                      title="Anno e tipologia non sono modificabili dopo la registrazione"
                     />
                   </div>
                 </div>
+              </div>
 
-                {/* COLONNA DESTRA: Dettagli Progetto & SGQ */}
-                <div className="space-y-4 md:col-span-2">
-                  <div className="bg-gradient-to-br from-indigo-50/50 to-emerald-50/50 p-5 rounded-2xl border border-indigo-100/60 space-y-4">
-                    <div className="flex justify-between items-center">
-                      <h4 className="text-xs font-black text-indigo-950 uppercase tracking-wide flex items-center gap-1.5">
-                        🔀 Dettagli Progetto & SGQ
-                      </h4>
+              {/* Form Periodo & Responsabile (Modificabili) */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-white p-4 rounded-2xl border border-gray-200 shadow-xs">
+                
+                {/* Data Inizio */}
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-700 mb-1 ml-1">Data Inizio</label>
+                  <input
+                    type="date"
+                    value={editDataInizio}
+                    onChange={e => setEditDataInizio(e.target.value)}
+                    className="w-full p-2.5 border border-gray-200 rounded-xl bg-gray-50/50 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 font-bold text-gray-800 text-xs"
+                  />
+                </div>
+
+                {/* Data Fine */}
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-700 mb-1 ml-1">Data Fine</label>
+                  <input
+                    type="date"
+                    value={editDataFine}
+                    onChange={e => setEditDataFine(e.target.value)}
+                    className="w-full p-2.5 border border-gray-200 rounded-xl bg-gray-50/50 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 font-bold text-gray-800 text-xs"
+                  />
+                </div>
+
+                {/* Responsabile Commessa */}
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-700 mb-1 ml-1">Responsabile Commessa</label>
+                  <select
+                    value={editResponsabile}
+                    onChange={e => setEditResponsabile(e.target.value)}
+                    className="w-full p-2.5 border border-gray-200 rounded-xl bg-gray-50/50 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 font-bold text-gray-800 text-xs"
+                  >
+                    <option value="">-- Nessuno --</option>
+                    {responsabiliMacroAreeList.map(r => (
+                      <option key={r.id} value={r.nome}>{r.nome}</option>
+                    ))}
+                  </select>
+                </div>
+
+              </div>
+
+              {/* Sezione Dettagli Progetto & SGQ (Modificabili) */}
+              <div className="bg-gradient-to-br from-indigo-50/50 to-emerald-50/50 p-5 rounded-2xl border border-indigo-100/60 space-y-4">
+                <div className="flex justify-between items-center border-b border-indigo-100/80 pb-2">
+                  <h4 className="text-xs font-black text-indigo-950 uppercase tracking-wide flex items-center gap-1.5">
+                    🔀 Dettagli Progetto & SGQ
+                  </h4>
+                </div>
+
+                {/* SUB-BLOCCO PROGETTI */}
+                <div className="bg-white p-4 rounded-xl border border-gray-200 space-y-3 shadow-xs">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-gray-150 pb-2">
+                    <label className="block text-xs font-black text-indigo-950 uppercase tracking-wide">
+                      Progetti
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditProgettiDescrizioni(prev => [...prev, '']);
+                      }}
+                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs transition shadow-xs active:scale-95 flex items-center gap-1.5 cursor-pointer shrink-0"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Aggiungi Progetto</span>
+                    </button>
+                  </div>
+
+                  <div className="space-y-2.5 pt-1">
+                    {editProgettiDescrizioni.length === 0 ? (
+                      <div className="text-[11px] text-gray-400 italic p-2 border border-dashed border-gray-200 rounded-xl text-center">
+                        Nessun progetto inserito. Clicca su "Aggiungi Progetto" per inserire un progetto.
+                      </div>
+                    ) : (
+                      editProgettiDescrizioni.map((desc, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <span className="text-[10px] font-black text-gray-500 w-16 shrink-0 text-right">
+                            Prog. #{idx + 1}
+                          </span>
+                          <input
+                            type="text"
+                            required
+                            placeholder="Inserisci la descrizione o l'identificativo del progetto..."
+                            value={desc}
+                            onChange={e => {
+                              const val = e.target.value;
+                              setEditProgettiDescrizioni(prev => prev.map((item, i) => i === idx ? val : item));
+                            }}
+                            className="flex-1 p-2.5 border border-gray-200 rounded-xl outline-none font-semibold text-gray-800 text-xs bg-gray-50/50 focus:bg-white focus:ring-2 focus:ring-indigo-400"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditProgettiDescrizioni(prev => prev.filter((_, i) => i !== idx));
+                            }}
+                            className="text-gray-400 hover:text-red-600 p-2 rounded-xl hover:bg-red-50 transition cursor-pointer shrink-0"
+                            title="Rimuovi questo progetto"
+                          >
+                            <Trash2 className="w-4 h-4 text-red-500" />
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                {/* CAMPI COMUNI DELLA COMMESSA */}
+                <div className="bg-white p-4 rounded-xl border border-gray-200 space-y-4 shadow-xs">
+                  <div className="text-[11px] font-black text-slate-800 uppercase tracking-wide border-b border-gray-150 pb-2">
+                    ⚙️ Configurazioni Comuni per i Progetti della Commessa
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
+                    {/* Project Manager */}
+                    <div>
+                      <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Project Manager (Opzionale)</label>
+                      <select
+                        value={editPM}
+                        onChange={e => setEditPM(e.target.value)}
+                        className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs h-[38px]"
+                      >
+                        <option value="">-- Nessun PM --</option>
+                        {pmsList.map(pm => (
+                          <option key={pm.id} value={pm.nome}>{pm.nome}</option>
+                        ))}
+                      </select>
                     </div>
 
-                    <div className="space-y-4">
-                      {editProgetti.map((progetto, idx) => (
-                        <div key={idx} className="bg-white p-4 rounded-xl border border-gray-150 space-y-3 relative shadow-sm">
-                          <div>
-                            <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Descrizione Progetto</label>
-                            <textarea
-                              required
-                              rows={3}
-                              placeholder="Inserisci la descrizione o l'identificativo del progetto (puoi andare a capo)..."
-                              value={progetto.descrizione}
-                              onChange={e => handleUpdateEditProgettoField(idx, { descrizione: e.target.value })}
-                              className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-semibold text-gray-700 text-xs resize-y"
-                            />
-                          </div>
+                    {/* Selettore Utenti da Abilitare */}
+                    <div>
+                      <label className="block text-[9px] font-bold text-indigo-900 mb-1 ml-1">Utenti da Abilitare (Tutte le Categorie)</label>
+                      <select
+                        value=""
+                        onChange={e => {
+                          const val = e.target.value;
+                          if (val && !editUtentiDaAbilitare.includes(val)) {
+                            setEditUtentiDaAbilitare(prev => [...prev, val]);
+                          }
+                        }}
+                        className="w-full p-2 border border-indigo-200 rounded-lg bg-indigo-50/40 focus:bg-white outline-none focus:ring-1 focus:ring-emerald-400 font-bold text-gray-700 text-xs h-[38px]"
+                      >
+                        <option value="">+ Seleziona Utente da Abilitare...</option>
+                        {dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')) && !isTechnicalUser(d) && !editUtentiDaAbilitare.includes(d.nome)).map(d => (
+                          <option key={d.id} value={d.nome}>{d.nome} {d.macroArea ? `(${d.macroArea})` : ''}</option>
+                        ))}
+                      </select>
+                    </div>
 
-                          {/* RIGA 2: PM | SELETTORE UTENTI DA ABILITARE | LISTA UTENTI SELEZIONATI */}
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
-                            {/* Colonna 1: Project Manager */}
-                            <div>
-                              <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Project Manager (Opzionale)</label>
-                              <select
-                                value={progetto.pm}
-                                onChange={e => handleUpdateEditProgettoField(idx, { pm: e.target.value })}
-                                className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs h-[38px]"
-                              >
-                                <option value="">-- Nessun PM --</option>
-                                {pmsList.map(pm => (
-                                  <option key={pm.id} value={pm.nome}>{pm.nome}</option>
-                                ))}
-                              </select>
-                            </div>
-
-                            {/* Colonna 2: Selettore Utenti da Abilitare */}
-                            <div>
-                              <label className="block text-[9px] font-bold text-indigo-900 mb-1 ml-1">Utenti da Abilitare (Tutte le Categorie)</label>
-                              <select
-                                value=""
-                                onChange={e => {
-                                  const val = e.target.value;
-                                  const current = progetto.utentiDaAbilitare || [];
-                                  if (val && !current.includes(val)) {
-                                    handleUpdateEditProgettoField(idx, { utentiDaAbilitare: [...current, val] });
-                                  }
+                    {/* Lista Utenti Selezionati */}
+                    <div>
+                      <label className="block text-[9px] font-bold text-emerald-950 mb-1 ml-1">
+                        Utenti Selezionati ({editUtentiDaAbilitare.length})
+                      </label>
+                      <div className="bg-emerald-50/50 p-2 border border-emerald-100 rounded-lg min-h-[38px] max-h-[120px] overflow-y-auto flex flex-wrap gap-1">
+                        {editUtentiDaAbilitare.length === 0 ? (
+                          <span className="text-[10px] text-gray-400 italic p-1">Nessun utente selezionato</span>
+                        ) : (
+                          editUtentiDaAbilitare.map(uName => (
+                            <div key={uName} className="flex items-center gap-1.5 bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-lg text-[10px] font-bold text-emerald-900 shadow-2xs">
+                              <span>{uName}</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditUtentiDaAbilitare(prev => prev.filter(x => x !== uName));
                                 }}
-                                className="w-full p-2 border border-indigo-200 rounded-lg bg-indigo-50/40 focus:bg-white outline-none focus:ring-1 focus:ring-emerald-400 font-bold text-gray-700 text-xs h-[38px]"
+                                className="text-emerald-600 hover:text-emerald-800 transition cursor-pointer font-black"
                               >
-                                <option value="">+ Seleziona Utente da Abilitare...</option>
-                                {dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')) && !isTechnicalUser(d) && !(progetto.utentiDaAbilitare || []).includes(d.nome)).map(d => (
-                                  <option key={d.id} value={d.nome}>{d.nome} {d.macroArea ? `(${d.macroArea})` : ''}</option>
-                                ))}
-                              </select>
+                                ✕
+                              </button>
                             </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
 
-                            {/* Colonna 3: Lista Ordinata Utenti Selezionati */}
-                            <div>
-                              <label className="block text-[9px] font-bold text-emerald-950 mb-1 ml-1">
-                                Utenti Selezionati ({progetto.utentiDaAbilitare?.length || 0})
-                              </label>
-                              <div className="bg-emerald-50/50 p-2 border border-emerald-100 rounded-lg min-h-[38px] max-h-[120px] overflow-y-auto flex flex-wrap gap-1">
-                                {(!progetto.utentiDaAbilitare || progetto.utentiDaAbilitare.length === 0) ? (
-                                  <span className="text-[10px] text-gray-400 italic p-1">Nessun utente selezionato</span>
-                                ) : (
-                                  progetto.utentiDaAbilitare.map(uName => (
-                                    <div key={uName} className="flex items-center gap-1.5 bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-lg text-[10px] font-bold text-emerald-900 shadow-2xs">
-                                      <span>{uName}</span>
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          const updatedList = (progetto.utentiDaAbilitare || []).filter(x => x !== uName);
-                                          handleUpdateEditProgettoField(idx, { utentiDaAbilitare: updatedList });
-                                        }}
-                                        className="text-emerald-600 hover:text-emerald-800 transition cursor-pointer font-black"
-                                      >
-                                        ✕
-                                      </button>
-                                    </div>
-                                  ))
-                                )}
-                              </div>
-                            </div>
-                          </div>
+                  {/* ABILITATO SGQ */}
+                  <div className="pt-2 border-t border-gray-150/60 flex items-center gap-3">
+                    <div className="w-full sm:w-1/3">
+                      <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Abilitato SGQ</label>
+                      <select
+                        value={editSGQ}
+                        onChange={e => setEditSGQ(e.target.value as 'SI' | 'NO')}
+                        className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs h-[38px]"
+                      >
+                        <option value="NO">NO</option>
+                        <option value="SI">SI</option>
+                      </select>
+                    </div>
+                  </div>
 
-                          {/* RIGA 3: ABILITATO SGQ SOTTO */}
-                          <div className="pt-2 border-t border-gray-150/60 flex items-center gap-3">
-                            <div className="w-full sm:w-1/3">
-                              <label className="block text-[9px] font-bold text-gray-500 mb-1 ml-1">Abilitato SGQ</label>
-                              <select
-                                value={progetto.sgq}
-                                onChange={e => handleUpdateEditProgettoField(idx, { sgq: e.target.value as 'SI' | 'NO' })}
-                                className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50/50 focus:bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs h-[38px]"
-                              >
-                                <option value="NO">NO</option>
-                                <option value="SI">SI</option>
-                              </select>
-                            </div>
-                          </div>
-
-                          {progetto.sgq === 'SI' ? (
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-indigo-50/30 p-3 rounded-lg border border-indigo-100/50">
-                              <div>
-                                <label className="block text-[9px] font-bold text-indigo-900 mb-1.5 ml-1">Verificatori / Validatori</label>
-                                <div className="flex flex-wrap gap-1 mb-2">
-                                  {(!progetto.verificatori || progetto.verificatori.length === 0) ? (
-                                    <span className="text-[10px] text-gray-400 italic ml-1">Nessun validatore</span>
-                                  ) : (
-                                    progetto.verificatori.map(vName => (
-                                      <div key={vName} className="flex items-center gap-1.5 bg-indigo-100 border border-indigo-200 px-2 py-0.5 rounded-lg text-[10px] font-bold text-indigo-900 shadow-sm animate-in fade-in zoom-in-95 duration-150">
-                                        <span>{vName}</span>
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            const updatedList = (progetto.verificatori || []).filter(x => x !== vName);
-                                            handleUpdateEditProgettoField(idx, { verificatori: updatedList });
-                                          }}
-                                          className="text-indigo-455 hover:text-indigo-700 transition cursor-pointer"
-                                        >
-                                          ✕
-                                        </button>
-                                      </div>
-                                    ))
-                                  )}
-                                </div>
-                                <select
-                                  value=""
-                                  onChange={e => {
-                                    const val = e.target.value;
-                                    const currentList = progetto.verificatori || [];
-                                    if (val && !currentList.includes(val)) {
-                                      handleUpdateEditProgettoField(idx, { verificatori: [...currentList, val] });
-                                    }
-                                  }}
-                                  className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
-                                >
-                                  <option value="">+ Aggiungi Validatore...</option>
-                                  {dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')) && !isTechnicalUser(d) && !(progetto.verificatori || []).includes(d.nome)).map(d => (
-                                    <option key={d.id} value={d.nome}>{d.nome}</option>
-                                  ))}
-                                </select>
-                              </div>
-
-                              <div>
-                                <label className="block text-[9px] font-bold text-indigo-900 mb-1 ml-1">Compilatore (Facoltativo)</label>
-                                <select
-                                  value={progetto.compilatore || ''}
-                                  onChange={e => handleUpdateEditProgettoField(idx, { compilatore: e.target.value })}
-                                  className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
-                                >
-                                  <option value="">-- Nessuno --</option>
-                                  {dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')) && !isTechnicalUser(d)).map(d => (
-                                    <option key={d.id} value={d.nome}>{d.nome}</option>
-                                  ))}
-                                </select>
-                              </div>
-                            </div>
+                  {editSGQ === 'SI' ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-indigo-50/30 p-3 rounded-lg border border-indigo-100/50">
+                      <div>
+                        <label className="block text-[9px] font-bold text-indigo-900 mb-1.5 ml-1">Verificatori / Validatori</label>
+                        <div className="flex flex-wrap gap-1 mb-2">
+                          {editVerificatori.length === 0 ? (
+                            <span className="text-[10px] text-gray-400 italic ml-1">Nessun validatore</span>
                           ) : (
-                            <div className="grid grid-cols-3 gap-2 bg-emerald-50/30 p-3 rounded-lg border border-emerald-100/50">
-                              <div>
-                                <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1 text-center">Senior Project</label>
-                                <input
-                                  type="number"
-                                  min={0}
-                                  placeholder="0"
-                                  value={progetto.giornateSenior || ''}
-                                  onChange={e => handleUpdateEditProgettoField(idx, { giornateSenior: Number(e.target.value) || 0 })}
-                                  className="w-full p-2 border border-emerald-100 rounded-lg bg-white text-center font-bold text-gray-700 text-xs outline-none focus:ring-1 focus:ring-emerald-400"
-                                />
+                            editVerificatori.map(vName => (
+                              <div key={vName} className="flex items-center gap-1.5 bg-indigo-100 border border-indigo-200 px-2 py-0.5 rounded-lg text-[10px] font-bold text-indigo-900 shadow-sm animate-in fade-in zoom-in-95 duration-150">
+                                <span>{vName}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditVerificatori(prev => prev.filter(x => x !== vName));
+                                  }}
+                                  className="text-indigo-450 hover:text-indigo-700 transition cursor-pointer"
+                                >
+                                  ✕
+                                </button>
                               </div>
-                              <div>
-                                <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1 text-center">Project</label>
-                                <input
-                                  type="number"
-                                  min={0}
-                                  placeholder="0"
-                                  value={progetto.giornateProject || ''}
-                                  onChange={e => handleUpdateEditProgettoField(idx, { giornateProject: Number(e.target.value) || 0 })}
-                                  className="w-full p-2 border border-emerald-100 rounded-lg bg-white text-center font-bold text-gray-700 text-xs outline-none focus:ring-1 focus:ring-emerald-400"
-                                />
+                            ))
+                          )}
+                        </div>
+                        <select
+                          value=""
+                          onChange={e => {
+                            const val = e.target.value;
+                            if (val && !editVerificatori.includes(val)) {
+                              setEditVerificatori(prev => [...prev, val]);
+                            }
+                          }}
+                          className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
+                        >
+                          <option value="">+ Aggiungi Validatore...</option>
+                          {dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')) && !isTechnicalUser(d) && !editVerificatori.includes(d.nome)).map(d => (
+                            <option key={d.id} value={d.nome}>{d.nome}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[9px] font-bold text-indigo-900 mb-1 ml-1">Compilatore (Facoltativo)</label>
+                        <select
+                          value={editCompilatore}
+                          onChange={e => setEditCompilatore(e.target.value)}
+                          className="w-full p-2 border border-indigo-100 rounded-lg bg-white outline-none focus:ring-1 focus:ring-indigo-400 font-bold text-gray-700 text-xs"
+                        >
+                          <option value="">-- Nessuno --</option>
+                          {dipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= new Date().toLocaleDateString('sv-SE')) && !isTechnicalUser(d)).map(d => (
+                            <option key={d.id} value={d.nome}>{d.nome}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-2 bg-emerald-50/30 p-3 rounded-lg border border-emerald-100/50">
+                      <div>
+                        <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1 text-center">Senior Project</label>
+                        <input
+                          type="number"
+                          min={0}
+                          placeholder="0"
+                          value={editGiornateSenior || ''}
+                          onChange={e => setEditGiornateSenior(Number(e.target.value) || 0)}
+                          className="w-full p-2 border border-emerald-100 rounded-lg bg-white text-center font-bold text-gray-700 text-xs outline-none focus:ring-1 focus:ring-emerald-400"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1 text-center">Project</label>
+                        <input
+                          type="number"
+                          min={0}
+                          placeholder="0"
+                          value={editGiornateProject || ''}
+                          onChange={e => setEditGiornateProject(Number(e.target.value) || 0)}
+                          className="w-full p-2 border border-emerald-100 rounded-lg bg-white text-center font-bold text-gray-700 text-xs outline-none focus:ring-1 focus:ring-emerald-400"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1 text-center">Junior Project</label>
+                        <input
+                          type="number"
+                          min={0}
+                          placeholder="0"
+                          value={editGiornateJunior || ''}
+                          onChange={e => setEditGiornateJunior(Number(e.target.value) || 0)}
+                          className="w-full p-2 border border-emerald-100 rounded-lg bg-white text-center font-bold text-gray-700 text-xs outline-none focus:ring-1 focus:ring-emerald-400"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+            </div>
+
+            {/* Footer Modale: Annulla, Re-invia E-mail & Salva (Fisso in basso) */}
+            <div className="flex justify-between items-center p-6 pt-4 border-t border-gray-150 bg-white rounded-b-[2rem] shrink-0 gap-3 flex-wrap">
+              <button 
+                type="button" 
+                onClick={() => setEditingCommessa(null)} 
+                className="py-2.5 px-5 rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-100 text-xs font-extrabold transition cursor-pointer"
+              >
+                Annulla
+              </button>
+
+              <div className="flex items-center gap-3">
+                {editStato === 'Chiusa' ? (
+                  <button 
+                    type="button" 
+                    onClick={() => handleReinvioMailChiusura(editingCommessa)} 
+                    className="py-2.5 px-4 rounded-xl border border-rose-200 text-rose-700 bg-rose-50 hover:bg-rose-100 text-xs font-black transition cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-xs"
+                    title="Invia nuovamente l'e-mail riepilogativa di chiusura per questa commessa"
+                  >
+                    <Mail className="w-4 h-4 text-rose-600" />
+                    <span>Re-invia E-mail Chiusura</span>
+                  </button>
+                ) : (
+                  <button 
+                    type="button" 
+                    onClick={() => handleReinvioMailApertura(editingCommessa)} 
+                    className="py-2.5 px-4 rounded-xl border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 text-xs font-black transition cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-xs"
+                    title="Invia nuovamente l'e-mail riepilogativa di apertura per questa commessa"
+                  >
+                    <Mail className="w-4 h-4 text-indigo-600" />
+                    <span>Re-invia E-mail Apertura</span>
+                  </button>
+                )}
+
+                <button 
+                  type="button" 
+                  onClick={handleSaveEditCommessa} 
+                  className="py-2.5 px-6 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black shadow-md transition cursor-pointer flex items-center gap-2 active:scale-95"
+                >
+                  💾 Salva Modifiche Commessa
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* MODALE SCHEDA INFORMATIVA COMMESSA (SOLA LETTURA PER CONSULTAZIONE) */}
+      {infoModalCommessa && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2rem] shadow-2xl max-w-4xl w-full border border-gray-150 flex flex-col max-h-[90vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            
+            {/* Header Modale */}
+            <div className="flex justify-between items-center shrink-0 border-b border-gray-100 p-6 pb-4 bg-white rounded-t-[2rem]">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-blue-50 text-blue-600 rounded-2xl border border-blue-100">
+                  <Briefcase className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-gray-900 tracking-tight">
+                    Scheda Informativa Commessa
+                  </h3>
+                  <p className="text-xs text-gray-500 font-semibold">
+                    Dettagli strutturali e progetti associati (Sola Lettura)
+                  </p>
+                </div>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setInfoModalCommessa(null)} 
+                className="text-gray-400 hover:text-gray-600 p-2 rounded-xl hover:bg-gray-100 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Body Modale Scrollabile Interno */}
+            <div className="p-6 overflow-y-auto flex-1 space-y-5">
+
+              {/* Banner Nome e Codice Commessa */}
+              <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-blue-900 p-5 rounded-2xl text-white shadow-md">
+                <div className="text-[10px] font-black uppercase tracking-wider text-blue-300 mb-1">
+                  {infoModalCommessa.codiceCommessa || infoModalCommessa.codice || 'Commessa'} • {TIPOLOGIE_COMMESSE[infoModalCommessa.tipologia] || infoModalCommessa.tipologia || 'Tipologia N/D'}
+                </div>
+                <div className="font-black text-lg text-white leading-snug">
+                  {infoModalCommessa.nome}
+                </div>
+                <div className="text-xs text-blue-200 mt-2 font-medium flex items-center gap-2">
+                  <span>💼 Cliente: <strong>{infoModalCommessa.cliente || 'Non specificato'}</strong></span>
+                </div>
+              </div>
+
+              {/* Griglia Dettagli Sola Lettura */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                
+                {/* Card Responsabile & PM */}
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200/70 space-y-3">
+                  <div className="text-xs font-black text-slate-800 uppercase tracking-wide border-b border-slate-200 pb-2">
+                    👤 Responsabile & Management
+                  </div>
+                  <div className="text-xs">
+                    <span className="text-slate-500 font-medium">Responsabile:</span>
+                    <div className="font-extrabold text-slate-900 text-sm mt-0.5">
+                      {infoModalCommessa.responsabile || 'Non assegnato'}
+                    </div>
+                  </div>
+                  <div className="text-xs pt-1 border-t border-slate-200/60">
+                    <span className="text-slate-500 font-medium">Project Manager (PM):</span>
+                    <div className="font-extrabold text-indigo-900 text-xs mt-1 flex flex-wrap gap-1">
+                      {(() => {
+                        const pmList = Array.isArray(infoModalCommessa.pm) ? infoModalCommessa.pm : (infoModalCommessa.pm ? [infoModalCommessa.pm] : []);
+                        if (pmList.length === 0) return <span className="text-slate-400 italic font-normal">Nessun PM assegnato</span>;
+                        return pmList.map((pm: string) => (
+                          <span key={pm} className="bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-md font-bold">
+                            {pm}
+                          </span>
+                        ));
+                      })()}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Card Stato & Date */}
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200/70 space-y-3">
+                  <div className="text-xs font-black text-slate-800 uppercase tracking-wide border-b border-slate-200 pb-2">
+                    📅 Periodo & Stato
+                  </div>
+                  <div className="text-xs flex items-center justify-between">
+                    <span className="text-slate-500 font-medium">Stato Commessa:</span>
+                    <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-black ${
+                      infoModalCommessa.stato === 'Chiusa' ? 'bg-rose-100 text-rose-800 border border-rose-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                    }`}>
+                      {infoModalCommessa.stato || 'Aperta'}
+                    </span>
+                  </div>
+                  <div className="text-xs pt-1 border-t border-slate-200/60 space-y-1">
+                    <div>Data Inizio: <strong className="text-slate-800">{infoModalCommessa.dataInizio ? formatDate(infoModalCommessa.dataInizio) : 'N/D'}</strong></div>
+                    <div>Data Fine: <strong className="text-slate-800">{infoModalCommessa.dataFine ? formatDate(infoModalCommessa.dataFine) : 'N/D'}</strong></div>
+                  </div>
+                </div>
+
+                {/* Card Aperta Da / Info Sistema */}
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200/70 space-y-3">
+                  <div className="text-xs font-black text-slate-800 uppercase tracking-wide border-b border-slate-200 pb-2">
+                    ℹ️ Informazioni Registrazione
+                  </div>
+                  <div className="text-xs text-slate-600 space-y-1">
+                    <div>Aperta da: <strong className="text-slate-800">{infoModalCommessa.apertaDa || 'N/D'}</strong></div>
+                    <div>Anno Riferimento: <strong className="text-slate-800">{infoModalCommessa.anno || 'N/D'}</strong></div>
+                    {infoModalCommessa.dataApertura && (
+                      <div>Data Apertura: <strong className="text-emerald-800">{new Date(infoModalCommessa.dataApertura).toLocaleDateString('it-IT')}</strong></div>
+                    )}
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Sezione Dettaglio Progetti & SGQ (Sola Lettura) */}
+              <div className="bg-gradient-to-br from-indigo-50/40 to-slate-50 p-5 rounded-2xl border border-indigo-100/70 space-y-3">
+                <h4 className="text-xs font-black text-indigo-950 uppercase tracking-wide flex items-center gap-1.5 border-b border-indigo-100 pb-2">
+                  🔀 Dettaglio Progetti & Utenti Abilitati
+                </h4>
+
+                <div className="space-y-3">
+                  {(!Array.isArray(infoModalCommessa.progetti) || infoModalCommessa.progetti.length === 0) ? (
+                    <p className="text-xs text-slate-400 italic">Nessun dettaglio progetto specificato per questa commessa.</p>
+                  ) : (
+                    infoModalCommessa.progetti.map((progetto: any, idx: number) => {
+                      const utenti = progetto.utentiDaAbilitare || progetto.utentiAbilitati || [];
+                      const verificatori = progetto.verificatori || [];
+
+                      return (
+                        <div key={idx} className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-xs space-y-2.5">
+                          <div className="font-extrabold text-slate-900 text-xs sm:text-sm">
+                            {progetto.descrizione || '(Nessuna descrizione)'}
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 text-xs pt-2 border-t border-slate-100">
+                            <div>
+                              <span className="text-slate-400 text-[10px] font-bold uppercase block">Project Manager</span>
+                              <span className="font-bold text-slate-800">{progetto.pm || 'Non assegnato'}</span>
+                            </div>
+
+                            <div>
+                              <span className="text-slate-400 text-[10px] font-bold uppercase block">Abilitazione SGQ</span>
+                              <span className={`font-black ${progetto.sgq === 'SI' ? 'text-indigo-700' : 'text-slate-600'}`}>
+                                {progetto.sgq === 'SI' ? '✓ SI (SGQ Abilitato)' : 'NO'}
+                              </span>
+                            </div>
+
+                            <div>
+                              <span className="text-slate-400 text-[10px] font-bold uppercase block">Giornate Stimate</span>
+                              <span className="font-bold text-slate-700">
+                                Senior: {progetto.giornateSenior || 0} gg | Project: {progetto.giornateProject || 0} gg | Junior: {progetto.giornateJunior || 0} gg
+                              </span>
+                            </div>
+                          </div>
+
+                          {utenti.length > 0 && (
+                            <div className="pt-2 border-t border-slate-100">
+                              <span className="text-[10px] font-bold text-emerald-800 uppercase block mb-1">Utenti Abilitati sul Progetto</span>
+                              <div className="flex flex-wrap gap-1">
+                                {utenti.map((u: string) => (
+                                  <span key={u} className="bg-emerald-50 text-emerald-800 border border-emerald-200/80 px-2 py-0.5 rounded-md text-[10px] font-bold">
+                                    {u}
+                                  </span>
+                                ))}
                               </div>
-                              <div>
-                                <label className="block text-[9px] font-bold text-emerald-900 mb-1 ml-1 text-center">Junior Project</label>
-                                <input
-                                  type="number"
-                                  min={0}
-                                  placeholder="0"
-                                  value={progetto.giornateJunior || ''}
-                                  onChange={e => handleUpdateEditProgettoField(idx, { giornateJunior: Number(e.target.value) || 0 })}
-                                  className="w-full p-2 border border-emerald-100 rounded-lg bg-white text-center font-bold text-gray-700 text-xs outline-none focus:ring-1 focus:ring-emerald-400"
-                                />
+                            </div>
+                          )}
+
+                          {progetto.sgq === 'SI' && verificatori.length > 0 && (
+                            <div className="pt-1">
+                              <span className="text-[10px] font-bold text-indigo-800 uppercase block mb-1">Verificatori / Validatori SGQ</span>
+                              <div className="flex flex-wrap gap-1">
+                                {verificatori.map((v: string) => (
+                                  <span key={v} className="bg-indigo-50 text-indigo-800 border border-indigo-200/80 px-2 py-0.5 rounded-md text-[10px] font-bold">
+                                    {v}
+                                  </span>
+                                ))}
                               </div>
                             </div>
                           )}
                         </div>
-                      ))}
-                    </div>
-                  </div>
+                      );
+                    })
+                  )}
                 </div>
               </div>
 
-              <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-gray-150 shrink-0">
-                <button 
-                  type="button" 
-                  onClick={() => setEditingCommessa(null)} 
-                  className="py-3 px-4 rounded-xl border border-gray-200 text-xs font-bold text-gray-650 hover:bg-gray-50 transition cursor-pointer"
-                >
-                  Annulla
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleResendOpeningEmail(editingCommessa, editProgetti)}
-                  className="py-3 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
-                  title="Invia nuovamente l'e-mail ufficiale di notifica apertura commessa agli indirizzi configurati nelle Impostazioni"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  <span>Re-invia E-mail Apertura</span>
-                </button>
-                <button 
-                  type="submit" 
-                  disabled={savingEdit}
-                  className="py-3 px-4 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 transition active:scale-95 disabled:opacity-50 cursor-pointer"
-                >
-                  {savingEdit ? 'Salvataggio...' : 'Salva Modifiche'}
-                </button>
-              </div>
-            </form>
+            </div>
+
+            {/* Footer Modale: Solo Chiudi (Fisso in basso) */}
+            <div className="flex justify-end items-center p-6 pt-4 border-t border-gray-150 bg-white rounded-b-[2rem] shrink-0">
+              <button 
+                type="button" 
+                onClick={() => setInfoModalCommessa(null)} 
+                className="py-2.5 px-6 rounded-xl bg-gray-800 hover:bg-gray-900 text-white text-xs font-extrabold transition cursor-pointer"
+              >
+                Chiudi
+              </button>
+            </div>
+
           </div>
         </div>
       )}

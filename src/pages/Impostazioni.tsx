@@ -1,9 +1,10 @@
 import { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, addDoc, doc, setDoc, deleteDoc, getDocs, updateDoc } from 'firebase/firestore';
-import { Shield, UserCheck, Star, Users, Plus, Trash2, Settings, Printer, Building2, Search, Pencil, X, Mail, Eye, Send, Code, Save, Briefcase, UserX, Crown } from 'lucide-react';
+import { Shield, UserCheck, Star, Users, Plus, Trash2, Settings, Printer, Building2, Search, Pencil, X, Mail, Eye, Send, Code, Briefcase, UserX, Crown } from 'lucide-react';
 import ConfirmModal from '../components/ConfirmModal';
 import { wrapMailTemplate } from '../utils/mailTemplate';
 import { queueMail } from '../utils/mailSender';
@@ -104,7 +105,6 @@ export default function Impostazioni() {
 
   const [commesseNotifyEmails, setCommesseNotifyEmails] = useState<string[]>(['synergieflow@ingegno06.it']);
   const [newCommessaNotifyEmailInput, setNewCommessaNotifyEmailInput] = useState('');
-  const [savingCommesseEmails, setSavingCommesseEmails] = useState(false);
 
   const currentTmplDef = useMemo(() => {
     return EMAIL_TEMPLATES_LIST.find(t => t.id === selectedTemplateId) || EMAIL_TEMPLATES_LIST[0];
@@ -2119,40 +2119,49 @@ export default function Impostazioni() {
               </div>
             </section>
 
-            {/* Destinatari Notifiche Commesse (Apertura & Chiusura) */}
-            <section className="bg-gradient-to-br from-emerald-50/80 to-teal-50 p-6 rounded-3xl border border-emerald-200 shadow-sm space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-emerald-200/60 pb-3">
-                <div>
-                  <h3 className="text-xl font-bold text-emerald-950 flex items-center gap-2">
-                    <Mail className="w-6 h-6 text-emerald-600" /> Destinatari Notifiche Commesse (Apertura & Chiusura)
-                  </h3>
-                  <p className="text-xs text-emerald-800/80 mt-1">
-                    Aggiungi uno o più indirizzi e-mail a cui inviare le notifiche automatiche quando una commessa viene <strong>aperta</strong> o <strong>chiusa</strong>. Se una persona è in ferie, gli altri indirizzi in lista continueranno a ricevere regolarmente le comunicazioni.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    setSavingCommesseEmails(true);
-                    try {
-                      await saveCommesseNotificationEmails(commesseNotifyEmails);
-                      showToast("Elenco destinatari e-mail commesse salvato con successo!", "success");
-                    } catch (err) {
-                      console.error(err);
-                      showToast("Errore durante il salvataggio degli indirizzi e-mail.", "error");
-                    } finally {
-                      setSavingCommesseEmails(false);
-                    }
-                  }}
-                  disabled={savingCommesseEmails}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl shadow-sm transition text-xs flex items-center gap-1.5 shrink-0 cursor-pointer disabled:opacity-50"
-                >
-                  <Save className="w-4 h-4" /> {savingCommesseEmails ? 'Salvataggio...' : 'Salva Destinatari'}
-                </button>
+            {/* Destinatari Notifiche Commesse & Clienti */}
+            <section className="bg-gradient-to-br from-emerald-50/80 to-teal-50 p-6 rounded-3xl border border-emerald-200 shadow-sm space-y-5">
+              <div className="border-b border-emerald-200/60 pb-3">
+                <h3 className="text-xl font-bold text-emerald-950 flex items-center gap-2">
+                  <Mail className="w-6 h-6 text-emerald-600" /> Destinatari Notifiche Commesse & Clienti
+                </h3>
+                <p className="text-xs text-emerald-800/80 mt-1">
+                  Aggiungi o rimuovi gli indirizzi e-mail a cui inviare le notifiche automatiche quando viene <strong>aperta</strong> o <strong>chiusa</strong> una commessa o viene inserito un <strong>nuovo cliente</strong> in anagrafica. Ogni modifica viene salvata automaticamente.
+                </p>
               </div>
 
-              {/* Form per inserire un nuovo indirizzo */}
-              <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
+              {/* Form per inserire un nuovo indirizzo con Invio o Pulsante */}
+              <form 
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  const targetEmail = newCommessaNotifyEmailInput.toLowerCase().trim();
+                  if (!targetEmail) {
+                    showToast("Inserisci un indirizzo e-mail valido.", "warning");
+                    return;
+                  }
+                  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(targetEmail)) {
+                    showToast("Il formato dell'indirizzo e-mail non è valido.", "warning");
+                    return;
+                  }
+                  if (commesseNotifyEmails.includes(targetEmail)) {
+                    showToast("Questo indirizzo e-mail è già presente nell'elenco.", "warning");
+                    return;
+                  }
+
+                  const updatedList = Array.from(new Set([...commesseNotifyEmails, targetEmail]));
+                  setCommesseNotifyEmails(updatedList);
+                  setNewCommessaNotifyEmailInput('');
+
+                  try {
+                    await saveCommesseNotificationEmails(updatedList);
+                    showToast(`Indirizzo ${targetEmail} aggiunto e salvato con successo!`, "success");
+                  } catch (err) {
+                    console.error("Errore salvataggio automatico email:", err);
+                    showToast("Errore durante il salvataggio automatico dell'indirizzo.", "error");
+                  }
+                }}
+                className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center"
+              >
                 <input
                   type="email"
                   placeholder="Es. synergieflow@ingegno06.it"
@@ -2161,54 +2170,58 @@ export default function Impostazioni() {
                   className="flex-1 px-4 py-2.5 bg-white border border-emerald-200 rounded-xl text-xs font-bold text-slate-800 placeholder-slate-400 outline-none focus:ring-2 focus:ring-emerald-500 shadow-sm"
                 />
                 <button
-                  type="button"
-                  onClick={() => {
-                    const cleaned = newCommessaNotifyEmailInput.toLowerCase().trim();
-                    if (!cleaned) {
-                      showToast("Inserisci un indirizzo e-mail valido.", "warning");
-                      return;
-                    }
-                    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleaned)) {
-                      showToast("Il formato dell'indirizzo e-mail non è valido.", "warning");
-                      return;
-                    }
-                    if (commesseNotifyEmails.includes(cleaned)) {
-                      showToast("Questo indirizzo e-mail è già presente nell'elenco.", "warning");
-                      return;
-                    }
-                    setCommesseNotifyEmails(prev => [...prev, cleaned]);
-                    setNewCommessaNotifyEmailInput('');
-                  }}
+                  type="submit"
                   className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-4 py-2.5 rounded-xl transition text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
                 >
                   <Plus className="w-4 h-4" /> Aggiungi Indirizzo
                 </button>
-              </div>
+              </form>
 
-              {/* Badge / Chips con gli indirizzi aggiunti */}
-              <div className="flex flex-wrap gap-2 pt-1">
+              {/* Elenco indirizzi censiti coordinato con il tab Ruoli & Permessi */}
+              <div className="bg-white rounded-2xl border border-emerald-200/80 shadow-xs overflow-hidden divide-y divide-emerald-100/80">
                 {commesseNotifyEmails.length === 0 ? (
-                  <span className="text-xs text-slate-400 italic font-medium">Nessun indirizzo impostato. Verrà usato di default synergieflow@ingegno06.it</span>
+                  <div className="p-4 text-xs text-slate-400 italic font-medium text-center">
+                    Nessun indirizzo e-mail presente nell'elenco dei destinatari.
+                  </div>
                 ) : (
-                  commesseNotifyEmails.map((email, idx) => (
-                    <span
-                      key={idx}
-                      className="inline-flex items-center gap-2 bg-white border border-emerald-300 text-emerald-900 font-extrabold text-xs px-3 py-1.5 rounded-xl shadow-xs"
-                    >
-                      <Mail className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>{email}</span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setCommesseNotifyEmails(prev => prev.filter((_, i) => i !== idx));
-                        }}
-                        className="text-slate-400 hover:text-rose-600 transition p-0.5 rounded cursor-pointer"
-                        title="Rimuovi indirizzo"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </span>
-                  ))
+                  commesseNotifyEmails.map((email, idx) => {
+                    const cleanEmail = email.toLowerCase().trim();
+                    const isSystem = cleanEmail === 'synergieflow@ingegno06.it' || cleanEmail === 'synergiesflow@ingegno06.it';
+                    const dipObj = dipendenti.find(d => (d.email || '').toLowerCase().trim() === cleanEmail);
+                    const labelName = isSystem ? 'Synergie Flow (Email Generica di Sistema)' : (dipObj ? dipObj.nome : cleanEmail);
+
+                    return (
+                      <div key={idx} className="p-3 sm:p-3.5 flex justify-between items-center text-xs hover:bg-emerald-50/40 transition-colors">
+                        <div className="flex items-center gap-3 min-w-0 pr-2">
+                          <div className={`p-2 rounded-xl shrink-0 ${isSystem ? 'bg-indigo-100 text-indigo-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                            <Mail className="w-4 h-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="font-extrabold text-slate-900 text-xs sm:text-sm truncate" title={labelName}>{labelName}</div>
+                            <div className="text-[11px] text-slate-500 font-semibold truncate" title={email}>{email}</div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const updatedList = commesseNotifyEmails.filter((_, i) => i !== idx);
+                            setCommesseNotifyEmails(updatedList);
+                            try {
+                              await saveCommesseNotificationEmails(updatedList);
+                              showToast(`Indirizzo ${email} rimosso con successo!`, "success");
+                            } catch (err) {
+                              console.error("Errore rimozione email:", err);
+                              showToast("Errore durante la rimozione dell'indirizzo.", "error");
+                            }
+                          }}
+                          className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-2 rounded-xl transition cursor-pointer shrink-0"
+                          title="Rimuovi questo indirizzo"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    );
+                  })
                 )}
               </div>
             </section>
@@ -2301,23 +2314,44 @@ export default function Impostazioni() {
                   </div>
 
                   {/* Pulsanti Azione Template */}
-                  <div className="flex gap-2 pt-2">
+                  <div className="flex flex-col gap-2 pt-2">
                     <button
                       type="button"
                       onClick={handleSaveCustomTemplate}
                       disabled={savingTemplate}
-                      className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-2.5 rounded-xl shadow transition text-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-2.5 rounded-xl shadow transition text-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
                     >
-                      {savingTemplate ? 'Salvataggio...' : '💾 Salva Modifiche'}
+                      {savingTemplate ? 'Salvataggio...' : '💾 Salva Modifiche Template'}
                     </button>
-                    <button
-                      type="button"
-                      onClick={handleResetTemplate}
-                      className="bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold px-3 py-2.5 rounded-xl transition text-xs cursor-pointer"
-                      title="Ripristina testo predefinito"
-                    >
-                      Ripristina
-                    </button>
+
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={handleResetTemplate}
+                        className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold py-2 rounded-xl transition text-xs cursor-pointer flex items-center justify-center gap-1"
+                        title="Ripristina layout predefinito per questo modello"
+                      >
+                        <span>↺ Ripristina</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const freshTmpl = EMAIL_TEMPLATES_LIST.find(t => t.id === selectedTemplateId);
+                          if (freshTmpl) {
+                            setEditSubject(freshTmpl.defaultSubject);
+                            setEditBody(freshTmpl.defaultBody);
+                            const updated = { ...savedTemplates, [selectedTemplateId]: { subject: freshTmpl.defaultSubject, body: freshTmpl.defaultBody } };
+                            setSavedTemplates(updated);
+                            await saveEmailTemplates(updated);
+                            showToast(`Nuova Grafica Premium applicata al modello "${freshTmpl.label}"!`, "success");
+                          }
+                        }}
+                        className="flex-1 bg-indigo-100 hover:bg-indigo-200 text-indigo-800 font-extrabold py-2 rounded-xl transition text-xs cursor-pointer flex items-center justify-center gap-1 border border-indigo-300"
+                        title="Carica la nuova veste grafica ultra-premium per questo modello"
+                      >
+                        <span>✨ Carica Nuova Grafica</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -2623,13 +2657,13 @@ export default function Impostazioni() {
         </div>
       )}
 
-      {/* Modale di Anteprima Grafica HTML Live per Template E-mail */}
-      {isMailPreviewModalOpen && (
-        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2rem] shadow-2xl max-w-4xl w-full max-h-[90vh] border border-gray-100 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-            <div className="p-5 bg-indigo-900 text-white flex justify-between items-center">
+      {/* Modale di Anteprima Grafica HTML Live per Template E-mail (Con Portal su document.body per centraggio assoluto) */}
+      {isMailPreviewModalOpen && createPortal(
+        <div className="fixed inset-0 bg-gray-900/70 backdrop-blur-md z-[999999] flex items-center justify-center p-4 sm:p-6 overflow-hidden">
+          <div className="bg-white rounded-[2rem] shadow-2xl max-w-4xl w-full h-[85vh] border border-gray-200 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="p-5 bg-indigo-900 text-white flex justify-between items-center shrink-0">
               <h3 className="font-extrabold text-base flex items-center gap-2">
-                <Eye className="w-5 h-5 text-indigo-300" /> Anteprima Grafica HTML: {currentTmplDef.label}
+                <Eye className="w-5 h-5 text-indigo-300" /> Anteprima Grafica HTML Live: {currentTmplDef.label}
               </h3>
               <button
                 type="button"
@@ -2639,24 +2673,50 @@ export default function Impostazioni() {
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="p-4 bg-gray-100 flex-1 overflow-y-auto">
+            <div className="p-4 bg-gray-100 flex-1 flex flex-col overflow-hidden min-h-0">
               {(() => {
                 const sampleVars: Record<string, string> = {};
                 currentTmplDef.placeholders.forEach(p => { sampleVars[p.code] = p.sample; });
-                const renderedSubj = substitutePlaceholders(editSubject, sampleVars);
-                const renderedBody = substitutePlaceholders(editBody, sampleVars);
+
+                const isLegacyBody = !editBody.includes('background: linear-gradient');
+                const bodyToRender = isLegacyBody ? currentTmplDef.defaultBody : editBody;
+                const subjToRender = isLegacyBody ? currentTmplDef.defaultSubject : editSubject;
+
+                const renderedSubj = substitutePlaceholders(subjToRender, sampleVars);
+                const renderedBody = substitutePlaceholders(bodyToRender, sampleVars);
                 const fullWrappedHtml = wrapMailTemplate(renderedSubj, renderedBody);
 
                 return (
-                  <iframe
-                    title="Full Mail Preview"
-                    srcDoc={fullWrappedHtml}
-                    className="w-full h-[650px] bg-white rounded-xl border border-gray-200 shadow-sm"
-                  />
+                  <div className="w-full flex-1 flex flex-col gap-2 min-h-0">
+                    {isLegacyBody && (
+                      <div className="bg-amber-100 border border-amber-300 text-amber-900 p-2.5 rounded-xl text-xs flex justify-between items-center font-bold shrink-0">
+                        <span>⚠️ È caricata una versione precedente salvata in precedenza. Clicca per caricare la nuova grafica:</span>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            setEditSubject(currentTmplDef.defaultSubject);
+                            setEditBody(currentTmplDef.defaultBody);
+                            const updated = { ...savedTemplates, [selectedTemplateId]: { subject: currentTmplDef.defaultSubject, body: currentTmplDef.defaultBody } };
+                            setSavedTemplates(updated);
+                            await saveEmailTemplates(updated);
+                            showToast(`Nuova Grafica Premium applicata al modello!`, "success");
+                          }}
+                          className="px-3 py-1 bg-amber-700 text-white rounded-lg text-[11px] font-black hover:bg-amber-800 transition cursor-pointer shrink-0 ml-2"
+                        >
+                          ✨ Carica Nuova Grafica Premium
+                        </button>
+                      </div>
+                    )}
+                    <iframe
+                      title="Full Mail Preview"
+                      srcDoc={fullWrappedHtml}
+                      className="w-full h-full border-0 bg-white rounded-xl shadow-sm"
+                    />
+                  </div>
                 );
               })()}
             </div>
-            <div className="p-4 bg-white border-t flex justify-end gap-3">
+            <div className="p-4 bg-white border-t flex justify-end gap-3 shrink-0">
               <button
                 type="button"
                 onClick={() => setIsMailPreviewModalOpen(false)}
@@ -2673,8 +2733,11 @@ export default function Impostazioni() {
                   try {
                     const sampleVars: Record<string, string> = {};
                     currentTmplDef.placeholders.forEach(p => { sampleVars[p.code] = p.sample; });
-                    const subj = substitutePlaceholders(editSubject, sampleVars);
-                    const body = substitutePlaceholders(editBody, sampleVars);
+                    const isLegacyBody = !editBody.includes('background: linear-gradient');
+                    const bodyToUse = isLegacyBody ? currentTmplDef.defaultBody : editBody;
+                    const subjToUse = isLegacyBody ? currentTmplDef.defaultSubject : editSubject;
+                    const subj = substitutePlaceholders(subjToUse, sampleVars);
+                    const body = substitutePlaceholders(bodyToUse, sampleVars);
                     await queueMail(recipient, subj, body);
                     showToast(`E-mail di prova inviata a ${recipient}!`, "success");
                   } catch (err) {
@@ -2690,7 +2753,8 @@ export default function Impostazioni() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
 

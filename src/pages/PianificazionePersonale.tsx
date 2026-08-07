@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth, isTechnicalUser, type Dipendente } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, doc, writeBatch, addDoc, updateDoc, deleteDoc, query, where, getDocs } from 'firebase/firestore';
+import { collection, doc, writeBatch, addDoc, updateDoc, deleteDoc, query, where, getDocs, onSnapshot } from 'firebase/firestore';
 import { Users, ChevronLeft, ChevronRight, ChevronDown, Save, Download, ZoomIn, ZoomOut, Trash2, Plus, RefreshCw, CalendarDays, FileText, X, UserCheck, MoveVertical, Clock, Pencil, ExternalLink } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays, isItalianHoliday } from '../utils/date';
 
@@ -160,9 +160,102 @@ export default function PianificazionePersonale() {
     userEmail = '',
     assegnazioni: globalAssignments = {},
     approvedLeaves = [],
-    richiesteDisegnatori = [],
+    richiesteDisegnatori: globalRichiesteDisegnatori = [],
     refreshDataIfStale
   } = useAuth();
+
+  // Sincronizzazione in tempo reale delle richieste di personale per prevenire latenze o disallineamenti
+  const [localRichiesteDisegnatori, setLocalRichiesteDisegnatori] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!user) return;
+    const unsub = onSnapshot(collection(db, 'richieste_disegnatori'), (snap) => {
+      const list: any[] = [];
+      snap.forEach(docSnap => {
+        list.push({ id: docSnap.id, ...docSnap.data() });
+      });
+      setLocalRichiesteDisegnatori(list);
+    });
+    return () => unsub();
+  }, [user]);
+
+  const richiesteDisegnatori = localRichiesteDisegnatori.length > 0 ? localRichiesteDisegnatori : globalRichiesteDisegnatori;
+
+  const isSelfRequester = (r: any): boolean => {
+    if (!r) return false;
+    const uClean = (userEmail || '').toLowerCase().trim();
+    const nClean = (myAssociatedName || '').toLowerCase().trim();
+
+    const reqEmail = (r.richiedenteEmail || r.email || '').toLowerCase().trim();
+    const reqName = (r.richiedenteNome || r.richiedente || r.dipendenteName || '').toLowerCase().trim();
+
+    // 1. Match diretto o parziale sull'email
+    if (uClean && reqEmail && (reqEmail === uClean || reqEmail.includes(uClean) || uClean.includes(reqEmail))) {
+      return true;
+    }
+
+    // 2. Match sul nome completo o con areNamesEqual
+    if (nClean && reqName) {
+      if (reqName === nClean || areNamesEqual(reqName, nClean)) return true;
+    }
+
+    // 3. Match dei token del nome sul nome utente o sull'email (es. "Taddei" o "Paolo" in "ptaddei@ingegno06.it")
+    if (reqName) {
+      const tokens = reqName.toLowerCase().split(/\s+/).filter((t: string) => t.length >= 3);
+      for (const tok of tokens) {
+        if (uClean.includes(tok) || (nClean && nClean.includes(tok))) return true;
+      }
+    }
+
+    if (reqEmail) {
+      const uTokens = reqEmail.split('@')[0].split(/[\._\-]/).filter((t: string) => t.length >= 3);
+      for (const tok of uTokens) {
+        if (uClean.includes(tok) || (nClean && nClean.includes(tok))) return true;
+      }
+    }
+
+    return false;
+  };
+
+  const canUserManageRequest = (r: any): boolean => {
+    if (!r || r.stato !== 'in_attesa') return false;
+
+    // 1. Il richiedente NON può MAI approvare o rifiutare le proprie richieste
+    if (isSelfRequester(r)) return false;
+
+    const commObj = commesse.find(c => c.id === r.commessaId);
+    const commResp = (r.commessaResponsabile || commObj?.responsabile || '').toLowerCase().trim();
+    const commPM = r.commessaPM || commObj?.pm;
+
+    const isCommessaManager = Boolean(
+      (commResp && (areNamesEqual(commResp, myAssociatedName) || (userEmail && commResp.includes(userEmail.split('@')[0])))) ||
+      (commPM && (
+        typeof commPM === 'string' 
+          ? areNamesEqual(commPM, myAssociatedName) 
+          : Array.isArray(commPM) && commPM.some((pmName: string) => areNamesEqual(pmName, myAssociatedName))
+      )) ||
+      isAdmin ||
+      isSoci(myAssociatedName)
+    );
+
+    // Se la richiesta ha una commessa specifica con un Responsabile o PM (o tipoRichiesta === 'inserimento_commessa'):
+    // È UNA RICHIESTA DI INSERIMENTO IN COMMESSA -> SOLO IL RESPONSABILE/PM DI QUELLA COMMESSA PUÒ GESTIRLA!
+    const isCommessaSpecific = Boolean(
+      r.tipoRichiesta === 'inserimento_commessa' || 
+      r.fonte === 'altre_commesse' || 
+      r.commessaResponsabile || 
+      (commObj && (commObj.responsabile || commObj.pm))
+    );
+
+    if (isCommessaSpecific) {
+      return isCommessaManager;
+    }
+
+    // 3. Se è una Richiesta Personale d'Area generica (senza commessa o per area libera):
+    // I Coordinatori dell'area della risorsa la gestiscono
+    const rArea = r.area || 'Disegnatori';
+    return myCoordinatedAreas.includes(rArea);
+  };
 
   useEffect(() => {
     // Ricarica i dati solo se non freschi (throttle 2 min) per evitare 14 letture Firestore ad ogni navigazione
@@ -346,19 +439,9 @@ export default function PianificazionePersonale() {
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const thirtyDaysAgoIso = thirtyDaysAgo.toISOString().slice(0, 10);
 
-    const userClean = (userEmail || '').toLowerCase().trim();
-    const nameClean = (myAssociatedName || '').toLowerCase().trim();
-
     return (richiesteDisegnatori || [])
       .filter((r: any) => {
-        const reqEmail = (r.richiedenteEmail || '').toLowerCase().trim();
-        const reqName = (r.richiedenteNome || '').toLowerCase().trim();
-
-        const isMine = 
-          (userClean && reqEmail && reqEmail === userClean) || 
-          (nameClean && reqName && (reqName === nameClean || areNamesEqual(r.richiedenteNome, myAssociatedName)));
-
-        if (!isMine) return false;
+        if (!isSelfRequester(r)) return false;
 
         // Le richieste ancora in lavorazione ("in_attesa") vengano SEMPRE mostrate a prescindere dalla data!
         if (r.stato === 'in_attesa') return true;
@@ -376,20 +459,21 @@ export default function PianificazionePersonale() {
   }, [richiesteDisegnatori, userEmail, myAssociatedName]);
 
   const handleDeleteSentRequest = async (req: any) => {
-    if (req.stato !== 'in_attesa') {
-      showToast("Puoi annullare solo le richieste che sono ancora in lavorazione.", "warning");
-      return;
-    }
+    const isPending = req.stato === 'in_attesa';
+    const actionTitle = isPending ? "Annulla Richiesta Personale" : "Elimina dallo Storico";
+    const actionMessage = isPending 
+      ? `Sei sicuro di voler annullare e cancellare la richiesta in lavorazione per la commessa "${req.commessaName}"?`
+      : `Sei sicuro di voler rimuovere definitivamente questa richiesta dallo storico?`;
 
     setConfirmConfig({
       isOpen: true,
-      title: "Annulla Richiesta Personale",
-      message: `Sei sicuro di voler annullare e cancellare la richiesta per la commessa "${req.commessaName}"?`,
+      title: actionTitle,
+      message: actionMessage,
       type: "warning",
       onConfirm: async () => {
         try {
           await deleteDoc(doc(db, 'richieste_disegnatori', req.id));
-          showToast("Richiesta annullata e rimossa con successo.", "success");
+          showToast(isPending ? "Richiesta annullata e rimossa con successo." : "Richiesta eliminata dallo storico.", "success");
           setConfirmConfig(prev => ({ ...prev, isOpen: false }));
         } catch (err) {
           console.error("Errore eliminazione richiesta:", err);
@@ -1068,10 +1152,18 @@ export default function PianificazionePersonale() {
     try {
       const commObj = commesse.find(c => c.id === reqCommessaId);
       const commName = commObj ? commObj.nome : '';
-      
+      const commResp = commObj ? (commObj.responsabile || '') : '';
+      const commPM = commObj ? (typeof commObj.pm === 'string' ? commObj.pm : (Array.isArray(commObj.pm) ? commObj.pm.join(', ') : '')) : '';
+
+      // Determina il tipo di richiesta: se ha una commessa specifica dove si chiede l'inserimento
+      const isCommessaInsertion = Boolean(reqCommessaId);
+      const finalTipo = isCommessaInsertion ? 'inserimento_commessa' : 'richiesta_area';
+
       await addDoc(collection(db, 'richieste_disegnatori'), {
         commessaId: reqCommessaId,
         commessaName: commName,
+        commessaResponsabile: commResp,
+        commessaPM: commPM,
         dataInizio: reqDataInizio,
         dataFine: reqDataFine,
         percentuale: Number(reqPercentuale),
@@ -1080,38 +1172,91 @@ export default function PianificazionePersonale() {
         richiedenteNome: myAssociatedName || user?.displayName || userEmail || '',
         richiedenteEmail: userEmail,
         stato: 'in_attesa',
-        area: reqAreaTarget
+        area: reqAreaTarget,
+        tipoRichiesta: finalTipo,
+        createdAt: new Date().toISOString()
       });
 
-      // Invia email ai coordinatori dell'area richiesta
-      const coordAreaEmails = coordinatori
-        .filter(c => c.area === reqAreaTarget && c.email)
-        .map(c => c.email.toLowerCase());
-      
-      if (coordAreaEmails.length > 0) {
-        const richiedente = myAssociatedName || userEmail;
-        const subject = `[Richiesta Personale] Richiesta risorsa ${reqAreaTarget} per commessa ${commName}`;
-        const htmlBody = `
-          <p>Ciao Coordinatore,</p>
-          <p>È stata ricevuta una nuova richiesta di personale dall'area <strong>${reqAreaTarget}</strong>.</p>
-          <table border="0" cellpadding="6" cellspacing="0" style="font-size:13px;color:#374151;width:100%">
-            <tr><td style="font-weight:bold;width:180px">Commessa:</td><td>${commName}</td></tr>
-            <tr><td style="font-weight:bold">Richiedente:</td><td>${richiedente} (${userEmail})</td></tr>
-            <tr><td style="font-weight:bold">Periodo:</td><td>${reqDataInizio} → ${reqDataFine}</td></tr>
-            <tr><td style="font-weight:bold">Carico Richiesto:</td><td>${reqPercentuale}%</td></tr>
-            ${reqPreferredResource ? `<tr><td style="font-weight:bold">Risorsa Preferita:</td><td><strong style="color:#4f46e5">${reqPreferredResource}</strong></td></tr>` : ''}
-            ${reqNota ? `<tr><td style="font-weight:bold">Nota:</td><td><em>${reqNota}</em></td></tr>` : ''}
-          </table>
-          <p style="margin-top:16px">Accedi alla <strong>Pianificazione del Personale e Carichi</strong> per gestire questa richiesta e assegnare la risorsa più adeguata.</p>
-        `;
-        for (const email of coordAreaEmails) {
-          if (email.toLowerCase() !== userEmail.toLowerCase()) {
+      const richiedente = myAssociatedName || userEmail;
+
+      if (finalTipo === 'inserimento_commessa') {
+        // Invio E-mail al RESPONSABILE DI COMMESSA ed ai PM della commessa
+        const managerEmails: string[] = [];
+        if (commResp) {
+          const respDip = dipendenti.find(d => d.nome && areNamesEqual(d.nome, commResp));
+          if (respDip && respDip.email) managerEmails.push(respDip.email.toLowerCase().trim());
+        }
+
+        if (commObj?.pm) {
+          const pmList = Array.isArray(commObj.pm) ? commObj.pm : [commObj.pm];
+          pmList.forEach(pName => {
+            const pmDip = dipendenti.find(d => d.nome && areNamesEqual(d.nome, pName));
+            if (pmDip && pmDip.email) managerEmails.push(pmDip.email.toLowerCase().trim());
+          });
+        }
+
+        coordinatori.forEach(c => {
+          if (c.email) {
+            const coordDip = dipendenti.find(d => d.email && d.email.toLowerCase().trim() === c.email.toLowerCase().trim());
+            const cName = coordDip ? coordDip.nome : '';
+            if (cName && (areNamesEqual(cName, commResp) || (commObj?.pm && String(commObj.pm).includes(cName)))) {
+              managerEmails.push(c.email.toLowerCase().trim());
+            }
+          }
+        });
+
+        const uniqueManagerEmails = Array.from(new Set(managerEmails)).filter(e => e && e !== userEmail.toLowerCase().trim());
+
+        if (uniqueManagerEmails.length > 0) {
+          const targetRes = reqPreferredResource || richiedente;
+          const subject = `[Richiesta Inserimento Commessa] ${commName} (${targetRes})`;
+          const htmlBody = `
+            <p>Ciao <strong>${commResp || 'Responsabile Commessa'}</strong>,</p>
+            <p>È stata inviata una richiesta di inserimento in programmazione per la commessa <strong>${commName}</strong> di cui sei responsabile/PM.</p>
+            <table border="0" cellpadding="6" cellspacing="0" style="font-size:13px;color:#374151;width:100%">
+              <tr><td style="font-weight:bold;width:180px">Commessa:</td><td>${commName}</td></tr>
+              <tr><td style="font-weight:bold">Richiedente:</td><td>${richiedente} (${userEmail})</td></tr>
+              <tr><td style="font-weight:bold">Risorsa da Inserire:</td><td><strong style="color:#4f46e5">${targetRes}</strong></td></tr>
+              <tr><td style="font-weight:bold">Periodo:</td><td>${reqDataInizio} → ${reqDataFine}</td></tr>
+              <tr><td style="font-weight:bold">Carico Richiesto:</td><td>${reqPercentuale}%</td></tr>
+              ${reqNota ? `<tr><td style="font-weight:bold">Nota:</td><td><em>${reqNota}</em></td></tr>` : ''}
+            </table>
+            <p style="margin-top:16px">Accedi alla <strong>Pianificazione del Personale e Carichi</strong> per approvare o rifiutare la richiesta di inserimento.</p>
+          `;
+          for (const email of uniqueManagerEmails) {
             await queueMail(email, subject, htmlBody);
+          }
+        }
+      } else {
+        // Invio E-mail ai Coordinatori dell'area richiesta
+        const coordAreaEmails = coordinatori
+          .filter(c => c.area === reqAreaTarget && c.email)
+          .map(c => c.email.toLowerCase());
+        
+        if (coordAreaEmails.length > 0) {
+          const subject = `[Richiesta Personale] Richiesta risorsa ${reqAreaTarget} per commessa ${commName}`;
+          const htmlBody = `
+            <p>Ciao Coordinatore,</p>
+            <p>È stata ricevuta una nuova richiesta di personale per l'area <strong>${reqAreaTarget}</strong>.</p>
+            <table border="0" cellpadding="6" cellspacing="0" style="font-size:13px;color:#374151;width:100%">
+              <tr><td style="font-weight:bold;width:180px">Commessa:</td><td>${commName}</td></tr>
+              <tr><td style="font-weight:bold">Richiedente:</td><td>${richiedente} (${userEmail})</td></tr>
+              <tr><td style="font-weight:bold">Periodo:</td><td>${reqDataInizio} → ${reqDataFine}</td></tr>
+              <tr><td style="font-weight:bold">Carico Richiesto:</td><td>${reqPercentuale}%</td></tr>
+              ${reqPreferredResource ? `<tr><td style="font-weight:bold">Risorsa Preferita:</td><td><strong style="color:#4f46e5">${reqPreferredResource}</strong></td></tr>` : ''}
+              ${reqNota ? `<tr><td style="font-weight:bold">Nota:</td><td><em>${reqNota}</em></td></tr>` : ''}
+            </table>
+            <p style="margin-top:16px">Accedi alla <strong>Pianificazione del Personale e Carichi</strong> per gestire questa richiesta.</p>
+          `;
+          for (const email of coordAreaEmails) {
+            if (email.toLowerCase() !== userEmail.toLowerCase()) {
+              await queueMail(email, subject, htmlBody);
+            }
           }
         }
       }
       
-      showToast(`Richiesta ${reqAreaTarget} inviata con successo!`, "success");
+      showToast(`Richiesta inviata con successo!`, "success");
       setIsRequestModalOpen(false);
       setReqCommessaId('');
       setReqDataInizio('');
@@ -1128,15 +1273,18 @@ export default function PianificazionePersonale() {
   };
 
   const handleApproveRequest = async (req: any) => {
+    if (!canUserManageRequest(req)) {
+      if (isSelfRequester(req)) {
+        showToast("Non puoi approvare o rifiutare una richiesta di personale che hai inviato tu stesso.", "error");
+      } else {
+        showToast("Non hai i permessi per approvare o rifiutare questa richiesta.", "error");
+      }
+      return;
+    }
+
     const isCancellation = Number(req.percentuale) === 0 || 
       (req.tipoRichiesta || '').toLowerCase().includes('annullamento') || 
       (req.tipoRichiesta || '').toLowerCase().includes('rimozione');
-
-    const reqArea = req.area || 'Disegnatori';
-    if (!myCoordinatedAreas.includes(reqArea)) {
-      showToast(`Solo i coordinatori dell'area ${reqArea} possono approvare questa richiesta.`, "error");
-      return;
-    }
 
     let risorsaNome = '';
     if (isCancellation) {
@@ -1283,9 +1431,12 @@ export default function PianificazionePersonale() {
   const handleRejectRequest = async (reqId: string) => {
     const targetReq = richiesteDisegnatori.find(r => r.id === reqId);
     if (targetReq) {
-      const rArea = targetReq.area || 'Disegnatori';
-      if (!myCoordinatedAreas.includes(rArea)) {
-        showToast(`Solo i coordinatori dell'area ${rArea} possono rifiutare questa richiesta.`, "error");
+      if (!canUserManageRequest(targetReq)) {
+        if (isSelfRequester(targetReq)) {
+          showToast("Non puoi approvare o rifiutare una richiesta che hai inviato tu stesso.", "error");
+        } else {
+          showToast("Non hai i permessi per rifiutare questa richiesta.", "error");
+        }
         return;
       }
     }
@@ -2701,21 +2852,14 @@ export default function PianificazionePersonale() {
           <div className="p-3 bg-indigo-100 rounded-2xl"><Users className="text-indigo-600 w-8 h-8" /></div>
           <div className="flex items-center gap-3">
             <span>Pianificazione del Personale e Carichi</span>
-            {myCoordinatedAreas.length > 0 &&
-              richiesteDisegnatori.filter(r => {
-                const rArea = r.area || 'Disegnatori';
-                return r.stato === 'in_attesa' && myCoordinatedAreas.includes(rArea);
-              }).length > 0 && (
+            {richiesteDisegnatori.filter(r => canUserManageRequest(r)).length > 0 && (
               <div className="inline-flex items-center gap-1.5 bg-gradient-to-r from-red-600 to-rose-600 text-white text-[11px] font-black px-3 py-1.5 rounded-2xl shadow-md animate-pulse ml-2 border border-red-400">
                 <span className="relative flex h-2 w-2">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
                 </span>
                 <span>
-                  {richiesteDisegnatori.filter(r => {
-                    const rArea = r.area || 'Disegnatori';
-                    return r.stato === 'in_attesa' && myCoordinatedAreas.includes(rArea);
-                  }).length} RICHIESTE IN ATTESA DA GESTIRE
+                  {richiesteDisegnatori.filter(r => canUserManageRequest(r)).length} RICHIESTE IN ATTESA DA GESTIRE
                 </span>
               </div>
             )}
@@ -2758,16 +2902,29 @@ export default function PianificazionePersonale() {
               </button>
             )}
 
-            {!isAdmin && !isSoci(myAssociatedName) && !isSoci(userEmail) && (
-              <button
-                type="button"
-                onClick={() => setShowMySentRequestsModal(true)}
-                className="flex items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 px-3.5 py-2 rounded-xl text-xs font-extrabold transition shadow-2xs active:scale-95 cursor-pointer ml-2"
-              >
-                <Clock className="w-4 h-4 text-indigo-600" />
-                <span>Storico Mie Richieste Inviate</span>
-              </button>
-            )}
+            {(() => {
+              const pendingCount = (myRecentSentRequests || []).filter((r: any) => r.stato === 'in_attesa').length;
+
+              return (
+                <button
+                  type="button"
+                  onClick={() => setShowMySentRequestsModal(true)}
+                  className="flex items-center gap-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 px-3.5 py-2 rounded-xl text-xs font-extrabold transition shadow-2xs active:scale-95 cursor-pointer ml-2"
+                >
+                  <Clock className="w-4 h-4 text-indigo-600" />
+                  <span>Storico Mie Richieste Inviate</span>
+                  {pendingCount > 0 && (
+                    <span className="inline-flex items-center gap-1 bg-amber-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-xs border border-amber-400 animate-pulse">
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-white"></span>
+                      </span>
+                      <span>{pendingCount} in lavorazione</span>
+                    </span>
+                  )}
+                </button>
+              );
+            })()}
           </div>
         </h2>
       </div>
@@ -2800,21 +2957,20 @@ export default function PianificazionePersonale() {
                 <div key={s.id} className="bg-white p-4 rounded-2xl border border-emerald-200 shadow-2xs flex flex-col justify-between gap-3">
                   <div className="space-y-1">
                     <div className="flex justify-between items-center">
-                      <span className="font-black text-sm text-gray-900">{s.risorsaNome}</span>
-                      <span className="bg-emerald-100 text-emerald-900 font-extrabold text-[10px] uppercase px-2 py-0.5 rounded-md">
+                      <span className="font-extrabold text-sm text-gray-900">{s.dipendenteNome}</span>
+                      <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
                         {s.macroArea}
                       </span>
                     </div>
-                    <div className="text-xs text-gray-600 font-medium">
-                      📅 Disponibile per: <strong className="text-gray-800">{s.settimanaLabel}</strong>
-                    </div>
-                    {s.nota && (
-                      <div className="text-[11px] italic text-gray-600 bg-slate-50 p-2 rounded-xl border border-slate-100 mt-1">
-                        &ldquo;{s.nota}&rdquo;
-                      </div>
+                    <p className="text-xs text-gray-600">
+                      Periodo: <strong className="text-gray-800">{s.dataInizio} → {s.dataFine}</strong>
+                    </p>
+                    {s.note && (
+                      <p className="text-xs text-gray-500 italic bg-gray-50 p-2 rounded-xl border border-gray-100">
+                        "{s.note}"
+                      </p>
                     )}
                   </div>
-
                   <button
                     type="button"
                     onClick={() => handleMarkSegnalazioneGestita(s.id)}
@@ -2831,12 +2987,8 @@ export default function PianificazionePersonale() {
 
       {/* SEZIONE GESTIONE RICHIESTE PERSONALE (per tutte le aree) */}
       {(() => {
-        // Determina quali richieste deve vedere l'utente loggato (solo se coordinatore dell'area)
-        const visibleReqs = richiesteDisegnatori.filter(r => {
-          if (r.stato !== 'in_attesa') return false;
-          const rArea = r.area || 'Disegnatori';
-          return myCoordinatedAreas.includes(rArea);
-        });
+        // Determina quali richieste può gestire l'utente loggato (in base a tipo richiesta, responsabile commessa o coordinatore d'area, ed escludendo le proprie)
+        const visibleReqs = richiesteDisegnatori.filter(r => canUserManageRequest(r));
 
         if (visibleReqs.length === 0) return null;
 
@@ -4414,6 +4566,15 @@ export default function PianificazionePersonale() {
                           >
                             {isAssignedValid ? "Aggiorna Assegnazione" : "Assegna Risorsa al Calendario"}
                           </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSentRequest(req)}
+                            title="Elimina definitivamente questa richiesta dallo storico"
+                            className="p-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl transition cursor-pointer active:scale-95"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -4518,8 +4679,8 @@ export default function PianificazionePersonale() {
                             }
                           </div>
 
-                          {req.stato === 'in_attesa' && (
-                            <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2">
+                            {req.stato === 'in_attesa' && (
                               <button
                                 type="button"
                                 onClick={() => handleStartEditSentRequest(req)}
@@ -4529,18 +4690,22 @@ export default function PianificazionePersonale() {
                                 <Pencil className="w-3.5 h-3.5 text-amber-700" />
                                 <span>Modifica</span>
                               </button>
+                            )}
 
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteSentRequest(req)}
-                                title="Annulla e cancella questa richiesta"
-                                className="flex items-center gap-1 bg-rose-50 hover:bg-rose-100 text-rose-900 border border-rose-200 px-3 py-1.5 rounded-xl text-xs font-extrabold transition cursor-pointer active:scale-95"
-                              >
-                                <Trash2 className="w-3.5 h-3.5 text-rose-600" />
-                                <span>Annulla</span>
-                              </button>
-                            </div>
-                          )}
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteSentRequest(req)}
+                              title={req.stato === 'in_attesa' ? "Annulla e cancella questa richiesta" : "Cancella dalla cronologia"}
+                              className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-extrabold transition cursor-pointer active:scale-95 ${
+                                req.stato === 'in_attesa' 
+                                  ? 'bg-rose-50 hover:bg-rose-100 text-rose-900 border border-rose-200' 
+                                  : 'bg-gray-100 hover:bg-rose-50 text-gray-600 hover:text-rose-700 border border-gray-200 hover:border-rose-200'
+                              }`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>{req.stato === 'in_attesa' ? 'Annulla' : 'Elimina dallo storico'}</span>
+                            </button>
+                          </div>
                         </div>
                       </div>
                     );

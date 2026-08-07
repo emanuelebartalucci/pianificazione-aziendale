@@ -245,32 +245,43 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
     }
   };
 
-  const [loadedMonths, setLoadedMonths] = useState<Set<string>>(() => {
-    const now = new Date();
-    const key = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    return new Set([key]);
-  });
+  const [loadedMonths, setLoadedMonths] = useState<Set<string>>(() => new Set<string>());
 
   const ensureMonthLoaded = async (year: number, month: number) => {
     const monthKey = `${year}-${String(month).padStart(2, '0')}`;
-    if (loadedMonths.has(monthKey) || loadedYears.has(year)) return;
+    if (loadedMonths.has(monthKey)) return;
 
     try {
       const startStr = `${year}-${String(month).padStart(2, '0')}-01`;
       const lastDay = new Date(year, month, 0).getDate();
       const endStr = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 
-      const qOld = query(
+      // Query mirata esclusivamente al mese selezionato per limitare al minimo le letture Firestore
+      const qRange = query(
         collection(db, 'richieste_ferie'),
         where('dataFine', '>=', startStr)
       );
-      const snap = await getDocs(qOld);
-      const fetched: RichiestaFerie[] = [];
-      snap.forEach(docSnap => {
+      const qSingle = query(
+        collection(db, 'richieste_ferie'),
+        where('data', '>=', startStr)
+      );
+
+      const [snapRange, snapSingle] = await Promise.all([
+        getDocs(qRange),
+        getDocs(qSingle)
+      ]);
+
+      const fetchedMap = new Map<string, RichiestaFerie>();
+
+      const processDoc = (docSnap: any) => {
+        if (fetchedMap.has(docSnap.id)) return;
         const data = docSnap.data();
         const dInizio = data.dataInizio || data.data || '';
-        if (dInizio <= endStr) {
-          fetched.push({
+        const dFine = data.dataFine || data.data || '';
+
+        // Filtro rigoroso sul mese specifico visualizzato
+        if (dInizio <= endStr && dFine >= startStr) {
+          fetchedMap.set(docSnap.id, {
             id: docSnap.id,
             dipendenteName: data.dipendenteName,
             data: data.data || '',
@@ -289,7 +300,12 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
             richiestaModifica: data.richiestaModifica || null
           });
         }
-      });
+      };
+
+      snapRange.forEach(processDoc);
+      snapSingle.forEach(processDoc);
+
+      const fetched = Array.from(fetchedMap.values());
 
       if (isHR || isAdmin) {
         setHrRichieste(prev => {
@@ -300,12 +316,22 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       }
 
       const myNameClean = (myAssociatedName || '').trim().toLowerCase();
+
+      // Merge delle proprie richieste del mese
+      setMyRichieste(prev => {
+        const existingIds = new Set(prev.map(p => p.id));
+        const newItems = fetched.filter(f => (f.dipendenteName || '').trim().toLowerCase() === myNameClean && !existingIds.has(f.id));
+        return [...prev, ...newItems];
+      });
+
+      // Merge delle richieste approvate altrui del mese
       setOthersApprovedRichieste(prev => {
         const existingIds = new Set(prev.map(p => p.id));
         const newItems = fetched.filter(f => f.stato === 'Approvato' && (f.dipendenteName || '').trim().toLowerCase() !== myNameClean && !existingIds.has(f.id));
         return [...prev, ...newItems];
       });
 
+      // Salva il mese scaricato nella cache locale
       setLoadedMonths(prev => new Set([...Array.from(prev), monthKey]));
     } catch (err) {
       console.error("Errore caricamento mese su richiesta:", err);
@@ -363,45 +389,54 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       }
       setChiusureAziendali(listClosures);
 
-      if (isHR || isAdmin) {
-        const now = new Date();
-        const startLimit = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+      // Carica SOLO il mese corrente al primo avvio per limitare le letture Firestore.
+      // I mesi successivi vengono caricati on-demand da ensureMonthLoaded al cambio mese.
+      const now = new Date();
+      const curYear = now.getFullYear();
+      const curMonth = now.getMonth() + 1;
+      const startLimit = `${curYear}-${String(curMonth).padStart(2, '0')}-01`;
+      const lastDay = new Date(curYear, curMonth, 0).getDate();
+      const endLimit = `${curYear}-${String(curMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+      const curMonthKey = `${curYear}-${String(curMonth).padStart(2, '0')}`;
 
-        const q = query(
-          collection(db, 'richieste_ferie'),
-          where('dataFine', '>=', startLimit)
-        );
-        const snapshot = await getDocs(q);
-        const list: RichiestaFerie[] = [];
-        snapshot.forEach(docSnap => {
-          const data = docSnap.data();
-          list.push({
-            id: docSnap.id,
-            dipendenteName: data.dipendenteName,
-            data: data.data || '',
-            tipo: mapRequestTipo(data.dipendenteName, docSnap.id, data.tipo),
-            stato: data.stato || 'In attesa',
-            frazioneTipo: data.frazioneTipo,
-            dataInizio: data.dataInizio,
-            dataFine: data.dataFine,
-            oraInizio: data.oraInizio,
-            oraFine: data.oraFine,
-            timestamp: data.timestamp,
-            note: data.note || '',
-            comunicazioneId: data.comunicazioneId || '',
-            pausaPranzo: data.pausaPranzo || false,
-            pausaPranzoOre: data.pausaPranzoOre || 0,
-            richiestaModifica: data.richiestaModifica || null
-          });
-        });
-        setHrRichieste(list);
+      const fetchAndMapDoc = (docSnap: any): RichiestaFerie | null => {
+        const data = docSnap.data();
+        const dInizio = data.dataInizio || data.data || '';
+        const dFine = data.dataFine || data.data || '';
+        if (dInizio > endLimit || dFine < startLimit) return null;
+        return {
+          id: docSnap.id,
+          dipendenteName: data.dipendenteName,
+          data: data.data || '',
+          tipo: mapRequestTipo(data.dipendenteName, docSnap.id, data.tipo),
+          stato: data.stato || 'In attesa',
+          frazioneTipo: data.frazioneTipo,
+          dataInizio: data.dataInizio,
+          dataFine: data.dataFine,
+          oraInizio: data.oraInizio,
+          oraFine: data.oraFine,
+          timestamp: data.timestamp,
+          note: data.note || '',
+          comunicazioneId: data.comunicazioneId || '',
+          pausaPranzo: data.pausaPranzo || false,
+          pausaPranzoOre: data.pausaPranzoOre || 0,
+          richiestaModifica: data.richiestaModifica || null
+        };
+      };
+
+      if (isHR || isAdmin) {
+        const qRange = query(collection(db, 'richieste_ferie'), where('dataFine', '>=', startLimit));
+        const qSingle = query(collection(db, 'richieste_ferie'), where('data', '>=', startLimit));
+        const [snapRange, snapSingle] = await Promise.all([getDocs(qRange), getDocs(qSingle)]);
+        const mapHR = new Map<string, RichiestaFerie>();
+        snapRange.forEach(d => { const r = fetchAndMapDoc(d); if (r) mapHR.set(r.id, r); });
+        snapSingle.forEach(d => { const r = fetchAndMapDoc(d); if (r && !mapHR.has(r.id)) mapHR.set(r.id, r); });
+        setHrRichieste(Array.from(mapHR.values()));
       }
 
       if (myAssociatedName) {
-        const qMy = query(
-          collection(db, 'richieste_ferie'),
-          where('dipendenteName', '==', myAssociatedName)
-        );
+        // Proprie richieste: tutte (senza limite di data, usate anche per storico personale e contatori)
+        const qMy = query(collection(db, 'richieste_ferie'), where('dipendenteName', '==', myAssociatedName));
         const mySnap = await getDocs(qMy);
         const listMy: RichiestaFerie[] = [];
         mySnap.forEach(docSnap => {
@@ -427,40 +462,25 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         });
         setMyRichieste(listMy);
 
-        const nowOthers = new Date();
-        const startLimitOthers = `${nowOthers.getFullYear()}-${String(nowOthers.getMonth() + 1).padStart(2, '0')}-01`;
-
-        const qOthers = query(
-          collection(db, 'richieste_ferie'),
-          where('dataFine', '>=', startLimitOthers)
-        );
-        const othersSnap = await getDocs(qOthers);
-        const listOthers: RichiestaFerie[] = [];
-        othersSnap.forEach(docSnap => {
+        // Richieste altrui approvate: solo mese corrente (il resto si carica con ensureMonthLoaded)
+        const qOthersRange = query(collection(db, 'richieste_ferie'), where('dataFine', '>=', startLimit));
+        const qOthersSingle = query(collection(db, 'richieste_ferie'), where('data', '>=', startLimit));
+        const [othersSnap, othersSingleSnap] = await Promise.all([getDocs(qOthersRange), getDocs(qOthersSingle)]);
+        const mapOthers = new Map<string, RichiestaFerie>();
+        const processOther = (docSnap: any) => {
+          if (mapOthers.has(docSnap.id)) return;
           const data = docSnap.data();
-          if (data.stato !== 'Approvato') return;
-          if (data.dipendenteName === myAssociatedName) return;
-          listOthers.push({
-            id: docSnap.id,
-            dipendenteName: data.dipendenteName,
-            data: data.data || '',
-            tipo: mapRequestTipo(data.dipendenteName, docSnap.id, data.tipo),
-            stato: data.stato || 'In attesa',
-            frazioneTipo: data.frazioneTipo,
-            dataInizio: data.dataInizio,
-            dataFine: data.dataFine,
-            oraInizio: data.oraInizio,
-            oraFine: data.oraFine,
-            timestamp: data.timestamp,
-            note: data.note || '',
-            comunicazioneId: data.comunicazioneId || '',
-            pausaPranzo: data.pausaPranzo || false,
-            pausaPranzoOre: data.pausaPranzoOre || 0,
-            richiestaModifica: data.richiestaModifica || null
-          });
-        });
-        setOthersApprovedRichieste(listOthers);
+          if (data.stato !== 'Approvato' || data.dipendenteName === myAssociatedName) return;
+          const r = fetchAndMapDoc(docSnap);
+          if (r) mapOthers.set(r.id, r);
+        };
+        othersSnap.forEach(processOther);
+        othersSingleSnap.forEach(processOther);
+        setOthersApprovedRichieste(Array.from(mapOthers.values()));
       }
+
+      // Segna il mese corrente come già caricato nella cache
+      setLoadedMonths(prev => new Set([...Array.from(prev), curMonthKey]));
 
       // Carica autorizzazioni weekend approvate per tutti
       const wkSnap = await getDocs(query(

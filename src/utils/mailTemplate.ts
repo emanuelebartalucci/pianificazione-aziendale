@@ -48,11 +48,11 @@ export function wrapMailTemplate(title: string, htmlContent: string): string {
             </tr>
           </table>
           
-          <!-- Footer -->
+          <!-- Footer Unificato -->
           <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 600px; width: 100%; text-align: center;">
             <tr>
-              <td style="padding: 10px 20px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; line-height: 1.5; color: #9ca3af; text-align: center;">
-                Questa è una notifica automatica inviata dal sistema Pianificazione Aziendale.<br />
+              <td style="padding: 14px 20px; font-family: Arial, Helvetica, sans-serif; font-size: 11px; line-height: 1.5; color: #9ca3af; text-align: center;">
+                E-mail automatica generata dal sistema di Pianificazione Aziendale.<br />
                 Si prega di non rispondere a questo messaggio.
               </td>
             </tr>

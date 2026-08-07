@@ -430,7 +430,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const myAssociatedName = myDip ? myDip.nome : (userEmail ? (
     userEmail.includes('ebartalucci') ? 'Emanuele Bartalucci' :
     userEmail.includes('aprofeti') ? 'Andrea Profeti' :
-    userEmail.includes('mcorbellini') ? 'Marco Corbellini' : null
+    userEmail.includes('mcorbellini') ? 'Marco Corbellini' :
+    userEmail.includes('taddei') ? 'Taddei Paolo' :
+    userEmail.includes('badalassi') ? 'Badalassi Federico' : null
   ) : null);
 
   const loadAssegnazioniForWeeks = async (requestedWeekIds: string[]) => {
