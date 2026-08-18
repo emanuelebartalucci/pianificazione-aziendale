@@ -21,6 +21,16 @@ interface Announcement {
   periods?: Array<{ tipo: 'singolo' | 'intervallo'; inizio: string; fine: string }>;
 }
 
+const areNamesEqual = (n1?: string | null, n2?: string | null): boolean => {
+  if (!n1 || !n2) return false;
+  const clean1 = n1.toLowerCase().trim().replace(/\s+/g, ' ');
+  const clean2 = n2.toLowerCase().trim().replace(/\s+/g, ' ');
+  if (clean1 === clean2) return true;
+  const w1 = clean1.split(' ').sort().join(' ');
+  const w2 = clean2.split(' ').sort().join(' ');
+  return w1 === w2;
+};
+
 export default function Dashboard() {
   const navigate = useNavigate();
 
@@ -635,10 +645,73 @@ export default function Dashboard() {
     return myCoords.map(c => c.area);
   }, [userEmail, coordinatori]);
 
+  const isSelfRequester = (r: any): boolean => {
+    if (!r) return false;
+    const uClean = (userEmail || '').toLowerCase().trim();
+    const nClean = (myAssociatedName || '').toLowerCase().trim();
+
+    const reqEmail = (r.richiedenteEmail || r.email || '').toLowerCase().trim();
+    const reqName = (r.richiedenteNome || r.richiedente || r.dipendenteName || '').toLowerCase().trim();
+
+    if (uClean && reqEmail && (reqEmail === uClean || reqEmail.includes(uClean) || uClean.includes(reqEmail))) {
+      return true;
+    }
+    if (nClean && reqName) {
+      if (reqName === nClean || areNamesEqual(reqName, nClean)) return true;
+    }
+    if (reqName) {
+      const tokens = reqName.toLowerCase().split(/\s+/).filter((t: string) => t.length >= 3);
+      for (const tok of tokens) {
+        if (uClean.includes(tok) || (nClean && nClean.includes(tok))) return true;
+      }
+    }
+    if (reqEmail) {
+      const uTokens = reqEmail.split('@')[0].split(/[\._\-]/).filter((t: string) => t.length >= 3);
+      for (const tok of uTokens) {
+        if (uClean.includes(tok) || (nClean && nClean.includes(tok))) return true;
+      }
+    }
+    return false;
+  };
+
+  const canUserManageRequest = (r: any): boolean => {
+    if (!r || r.stato !== 'in_attesa') return false;
+    if (isSelfRequester(r)) return false;
+
+    const commObj = (commesse || []).find(c => c.id === r.commessaId);
+    const commResp = (r.commessaResponsabile || commObj?.responsabile || '').toLowerCase().trim();
+    const commPM = r.commessaPM || commObj?.pm;
+
+    const isCommessaManager = Boolean(
+      (commResp && (areNamesEqual(commResp, myAssociatedName) || (userEmail && commResp.includes(userEmail.split('@')[0])))) ||
+      (commPM && (
+        typeof commPM === 'string' 
+          ? areNamesEqual(commPM, myAssociatedName) 
+          : Array.isArray(commPM) && commPM.some((pmName: string) => areNamesEqual(pmName, myAssociatedName))
+      )) ||
+      isAdmin ||
+      isSoci(myAssociatedName)
+    );
+
+    const isCommessaSpecific = Boolean(
+      r.tipoRichiesta === 'inserimento_commessa' || 
+      r.fonte === 'altre_commesse' || 
+      r.commessaResponsabile || 
+      (commObj && (commObj.responsabile || commObj.pm))
+    );
+
+    if (isCommessaSpecific) {
+      return isCommessaManager;
+    }
+
+    const rArea = r.area || 'Disegnatori';
+    return myCoordinatedAreas.includes(rArea);
+  };
+
   const [pendingCoordinatorRequestsCount, setPendingCoordinatorRequestsCount] = useState(0);
 
   useEffect(() => {
-    if (!userEmail || myCoordinatedAreas.length === 0) {
+    if (!userEmail) {
       setPendingCoordinatorRequestsCount(0);
       return;
     }
@@ -647,8 +720,7 @@ export default function Dashboard() {
       let count = 0;
       snap.forEach(docSnap => {
         const data = docSnap.data();
-        const rArea = data.area || 'Disegnatori';
-        if (myCoordinatedAreas.includes(rArea)) {
+        if (canUserManageRequest({ id: docSnap.id, ...data })) {
           count++;
         }
       });
@@ -656,7 +728,7 @@ export default function Dashboard() {
     }).catch(err => {
       console.error("Errore conteggio richieste disegnatori:", err);
     });
-  }, [userEmail, myCoordinatedAreas]);
+  }, [userEmail, myCoordinatedAreas, myAssociatedName, isAdmin, commesse]);
 
   const [pendingAvailabilityCount, setPendingAvailabilityCount] = useState(0);
 
