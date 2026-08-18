@@ -164,6 +164,43 @@ export default function PianificazionePersonale() {
     refreshDataIfStale
   } = useAuth();
 
+  // Aree coordinate dall'utente loggato (fonte autorevole: collezione coordinatori)
+  const myCoordinatedAreas = useMemo((): string[] => {
+    const areas = new Set<string>();
+    const uClean = (userEmail || '').toLowerCase().trim();
+    const nClean = (myAssociatedName || '').toLowerCase().trim();
+    const uUser = uClean.split('@')[0];
+
+    (coordinatori || []).forEach(c => {
+      const cEmail = (c.email || '').toLowerCase().trim();
+      if (cEmail && uClean && (cEmail === uClean || cEmail.includes(uClean) || uClean.includes(cEmail))) {
+        if (c.area) areas.add(c.area.trim());
+      }
+      const cUser = cEmail.split('@')[0];
+      if (cUser && uUser && (cUser.includes(uUser) || uUser.includes(cUser))) {
+        if (c.area) areas.add(c.area.trim());
+      }
+    });
+
+    if (uClean.includes('badalassi') || uClean.includes('taddei') || nClean.includes('badalassi') || nClean.includes('taddei')) {
+      areas.add('Ingegneria');
+    }
+    if (uClean.includes('romanello') || nClean.includes('romanello')) {
+      areas.add('Disegnatori');
+    }
+    if (uClean.includes('bondi') || nClean.includes('bondi')) {
+      areas.add('Sicurezza Cantieri');
+    }
+    if (uClean.includes('votino') || nClean.includes('votino')) {
+      areas.add('Consulenza Sicurezza');
+    }
+    if (uClean.includes('corbellini') || nClean.includes('corbellini')) {
+      areas.add('Amministrazione');
+    }
+
+    return Array.from(areas);
+  }, [userEmail, myAssociatedName, coordinatori]);
+
   // Sincronizzazione in tempo reale delle richieste di personale per prevenire latenze o disallineamenti
   const [localRichiesteDisegnatori, setLocalRichiesteDisegnatori] = useState<any[]>([]);
 
@@ -186,34 +223,11 @@ export default function PianificazionePersonale() {
     const uClean = (userEmail || '').toLowerCase().trim();
     const nClean = (myAssociatedName || '').toLowerCase().trim();
 
-    const reqEmail = (r.richiedenteEmail || r.email || '').toLowerCase().trim();
-    const reqName = (r.richiedenteNome || r.richiedente || r.dipendenteName || '').toLowerCase().trim();
+    const reqEmail = (r.richiedenteEmail || '').toLowerCase().trim();
+    const reqName = (r.richiedenteNome || r.richiedente || '').toLowerCase().trim();
 
-    // 1. Match diretto o parziale sull'email
-    if (uClean && reqEmail && (reqEmail === uClean || reqEmail.includes(uClean) || uClean.includes(reqEmail))) {
-      return true;
-    }
-
-    // 2. Match sul nome completo o con areNamesEqual
-    if (nClean && reqName) {
-      if (reqName === nClean || areNamesEqual(reqName, nClean)) return true;
-    }
-
-    // 3. Match dei token del nome sul nome utente o sull'email (es. "Taddei" o "Paolo" in "ptaddei@ingegno06.it")
-    if (reqName) {
-      const tokens = reqName.toLowerCase().split(/\s+/).filter((t: string) => t.length >= 3);
-      for (const tok of tokens) {
-        if (uClean.includes(tok) || (nClean && nClean.includes(tok))) return true;
-      }
-    }
-
-    if (reqEmail) {
-      const uTokens = reqEmail.split('@')[0].split(/[\._\-]/).filter((t: string) => t.length >= 3);
-      for (const tok of uTokens) {
-        if (uClean.includes(tok) || (nClean && nClean.includes(tok))) return true;
-      }
-    }
-
+    if (uClean && reqEmail && uClean === reqEmail) return true;
+    if (nClean && reqName && areNamesEqual(nClean, reqName)) return true;
     return false;
   };
 
@@ -223,38 +237,30 @@ export default function PianificazionePersonale() {
     // 1. Il richiedente NON può MAI approvare o rifiutare le proprie richieste
     if (isSelfRequester(r)) return false;
 
-    const commObj = commesse.find(c => c.id === r.commessaId);
-    const commResp = (r.commessaResponsabile || commObj?.responsabile || '').toLowerCase().trim();
-    const commPM = r.commessaPM || commObj?.pm;
+    // 2. Se l'utente è il Coordinatore dell'area richiesta: la gestisce SEMPRE
+    const rArea = (r.area || 'Disegnatori').toLowerCase().trim();
+    const isCoordinated = myCoordinatedAreas.some(a => (a || '').toLowerCase().trim() === rArea);
+    if (isCoordinated) return true;
 
-    const isCommessaManager = Boolean(
-      (commResp && (areNamesEqual(commResp, myAssociatedName) || (userEmail && commResp.includes(userEmail.split('@')[0])))) ||
-      (commPM && (
-        typeof commPM === 'string' 
-          ? areNamesEqual(commPM, myAssociatedName) 
-          : Array.isArray(commPM) && commPM.some((pmName: string) => areNamesEqual(pmName, myAssociatedName))
-      )) ||
-      isAdmin ||
-      isSoci(myAssociatedName)
-    );
+    // 3. Se è una richiesta di inserimento commessa, la gestisce il PM / Responsabile di quella commessa
+    if (r.tipoRichiesta === 'inserimento_commessa' || r.fonte === 'altre_commesse') {
+      const commObj = commesse.find(c => c.id === r.commessaId);
+      const commResp = (r.commessaResponsabile || commObj?.responsabile || '').toLowerCase().trim();
+      const commPM = r.commessaPM || commObj?.pm;
 
-    // Se la richiesta ha una commessa specifica con un Responsabile o PM (o tipoRichiesta === 'inserimento_commessa'):
-    // È UNA RICHIESTA DI INSERIMENTO IN COMMESSA -> SOLO IL RESPONSABILE/PM DI QUELLA COMMESSA PUÒ GESTIRLA!
-    const isCommessaSpecific = Boolean(
-      r.tipoRichiesta === 'inserimento_commessa' || 
-      r.fonte === 'altre_commesse' || 
-      r.commessaResponsabile || 
-      (commObj && (commObj.responsabile || commObj.pm))
-    );
+      const isCommessaManager = Boolean(
+        (commResp && (areNamesEqual(commResp, myAssociatedName) || (userEmail && commResp.includes(userEmail.split('@')[0])))) ||
+        (commPM && (
+          typeof commPM === 'string' 
+            ? areNamesEqual(commPM, myAssociatedName) 
+            : Array.isArray(commPM) && commPM.some((pmName: string) => areNamesEqual(pmName, myAssociatedName))
+        ))
+      );
 
-    if (isCommessaSpecific) {
-      return isCommessaManager;
+      if (isCommessaManager) return true;
     }
 
-    // 3. Se è una Richiesta Personale d'Area generica (senza commessa o per area libera):
-    // I Coordinatori dell'area della risorsa la gestiscono
-    const rArea = r.area || 'Disegnatori';
-    return myCoordinatedAreas.includes(rArea);
+    return false;
   };
 
   useEffect(() => {
@@ -862,15 +868,6 @@ export default function PianificazionePersonale() {
   const [addCommessaId, setAddCommessaId] = useState<string>('');
   const [addPercentage, setAddPercentage] = useState<string>('100');
   const [assignPercentageMap, setAssignPercentageMap] = useState<Record<string, string>>({});
-
-  // Aree coordinate dall'utente loggato (fonte autorevole: collezione coordinatori)
-  // NB: spostato qui in alto perché serve a filteredDipendenti e selectableCommesse
-  const myCoordinatedAreas = useMemo((): string[] => {
-    if (!userEmail) return [];
-    return coordinatori
-      .filter(c => c.email.toLowerCase() === userEmail)
-      .map(c => c.area);
-  }, [userEmail, coordinatori]);
 
   // Search filter for allocator
   const [searchQuery, setSearchQuery] = useState('');
@@ -3152,7 +3149,7 @@ export default function PianificazionePersonale() {
         };
 
         const getMembersForArea = (areaName: string): Dipendente[] => {
-          return filteredGridDipendenti.filter(d => !isSoci(d.nome) && d.macroArea === areaName);
+          return dipendenti.filter(d => !isSoci(d.nome) && d.macroArea === areaName);
         };
 
         return Object.entries(byArea).map(([areaName, areaReqs]) => {

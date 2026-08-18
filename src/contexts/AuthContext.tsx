@@ -206,13 +206,32 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         email: doc.data().email || '',
         area: doc.data().area || ''
       }));
-      if (!coordList.some(c => c.email?.toLowerCase().trim() === 'mcorbellini@ingegno06.it' && c.area === 'Amministrazione')) {
-        coordList.push({
-          id: 'default-mcorbellini-amministrazione',
-          email: 'mcorbellini@ingegno06.it',
-          area: 'Amministrazione'
-        });
-      }
+
+      const defaultCoordinators = [
+        { email: 'mcorbellini@ingegno06.it', area: 'Amministrazione' },
+        { email: 'fbadalassi@ingegno06.it', area: 'Ingegneria' },
+        { email: 'badalassi@ingegno06.it', area: 'Ingegneria' },
+        { email: 'ptaddei@ingegno06.it', area: 'Ingegneria' },
+        { email: 'taddei@ingegno06.it', area: 'Ingegneria' },
+        { email: 'aromanello@ingegno06.it', area: 'Disegnatori' },
+        { email: 'romanello@ingegno06.it', area: 'Disegnatori' },
+        { email: 'abondi@ingegno06.it', area: 'Sicurezza Cantieri' },
+        { email: 'bondi@ingegno06.it', area: 'Sicurezza Cantieri' },
+        { email: 'fvotino@ingegno06.it', area: 'Consulenza Sicurezza' },
+        { email: 'votino@ingegno06.it', area: 'Consulenza Sicurezza' },
+      ];
+
+      defaultCoordinators.forEach((def, idx) => {
+        const cleanEmail = def.email.toLowerCase().trim();
+        if (!coordList.some(c => (c.email || '').toLowerCase().trim() === cleanEmail && c.area === def.area)) {
+          coordList.push({
+            id: `default-coord-${idx}-${cleanEmail.split('@')[0]}`,
+            email: def.email,
+            area: def.area
+          });
+        }
+      });
+
       setCoordinatori(coordList);
 
       // 7. Commesse

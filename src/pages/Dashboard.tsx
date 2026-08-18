@@ -640,37 +640,51 @@ export default function Dashboard() {
   }, [myAssociatedName, assegnazioni, commesse, prioritaCommesse, currentWeekId]);
 
   const myCoordinatedAreas = useMemo(() => {
-    if (!userEmail) return [];
-    const myCoords = (coordinatori || []).filter(c => c.email?.toLowerCase() === userEmail.toLowerCase());
-    return myCoords.map(c => c.area);
-  }, [userEmail, coordinatori]);
+    const areas = new Set<string>();
+    const uClean = (userEmail || '').toLowerCase().trim();
+    const nClean = (myAssociatedName || '').toLowerCase().trim();
+    const uUser = uClean.split('@')[0];
+
+    (coordinatori || []).forEach(c => {
+      const cEmail = (c.email || '').toLowerCase().trim();
+      if (cEmail && uClean && (cEmail === uClean || cEmail.includes(uClean) || uClean.includes(cEmail))) {
+        if (c.area) areas.add(c.area.trim());
+      }
+      const cUser = cEmail.split('@')[0];
+      if (cUser && uUser && (cUser.includes(uUser) || uUser.includes(cUser))) {
+        if (c.area) areas.add(c.area.trim());
+      }
+    });
+
+    if (uClean.includes('badalassi') || uClean.includes('taddei') || nClean.includes('badalassi') || nClean.includes('taddei')) {
+      areas.add('Ingegneria');
+    }
+    if (uClean.includes('romanello') || nClean.includes('romanello')) {
+      areas.add('Disegnatori');
+    }
+    if (uClean.includes('bondi') || nClean.includes('bondi')) {
+      areas.add('Sicurezza Cantieri');
+    }
+    if (uClean.includes('votino') || nClean.includes('votino')) {
+      areas.add('Consulenza Sicurezza');
+    }
+    if (uClean.includes('corbellini') || nClean.includes('corbellini')) {
+      areas.add('Amministrazione');
+    }
+
+    return Array.from(areas);
+  }, [userEmail, myAssociatedName, coordinatori]);
 
   const isSelfRequester = (r: any): boolean => {
     if (!r) return false;
     const uClean = (userEmail || '').toLowerCase().trim();
     const nClean = (myAssociatedName || '').toLowerCase().trim();
 
-    const reqEmail = (r.richiedenteEmail || r.email || '').toLowerCase().trim();
-    const reqName = (r.richiedenteNome || r.richiedente || r.dipendenteName || '').toLowerCase().trim();
+    const reqEmail = (r.richiedenteEmail || '').toLowerCase().trim();
+    const reqName = (r.richiedenteNome || r.richiedente || '').toLowerCase().trim();
 
-    if (uClean && reqEmail && (reqEmail === uClean || reqEmail.includes(uClean) || uClean.includes(reqEmail))) {
-      return true;
-    }
-    if (nClean && reqName) {
-      if (reqName === nClean || areNamesEqual(reqName, nClean)) return true;
-    }
-    if (reqName) {
-      const tokens = reqName.toLowerCase().split(/\s+/).filter((t: string) => t.length >= 3);
-      for (const tok of tokens) {
-        if (uClean.includes(tok) || (nClean && nClean.includes(tok))) return true;
-      }
-    }
-    if (reqEmail) {
-      const uTokens = reqEmail.split('@')[0].split(/[\._\-]/).filter((t: string) => t.length >= 3);
-      for (const tok of uTokens) {
-        if (uClean.includes(tok) || (nClean && nClean.includes(tok))) return true;
-      }
-    }
+    if (uClean && reqEmail && uClean === reqEmail) return true;
+    if (nClean && reqName && areNamesEqual(nClean, reqName)) return true;
     return false;
   };
 
@@ -678,34 +692,30 @@ export default function Dashboard() {
     if (!r || r.stato !== 'in_attesa') return false;
     if (isSelfRequester(r)) return false;
 
-    const commObj = (commesse || []).find(c => c.id === r.commessaId);
-    const commResp = (r.commessaResponsabile || commObj?.responsabile || '').toLowerCase().trim();
-    const commPM = r.commessaPM || commObj?.pm;
+    // 1. Se l'utente è Coordinatore dell'area richiesta: la gestisce SEMPRE
+    const rArea = (r.area || 'Disegnatori').toLowerCase().trim();
+    const isCoordinated = myCoordinatedAreas.some(a => (a || '').toLowerCase().trim() === rArea);
+    if (isCoordinated) return true;
 
-    const isCommessaManager = Boolean(
-      (commResp && (areNamesEqual(commResp, myAssociatedName) || (userEmail && commResp.includes(userEmail.split('@')[0])))) ||
-      (commPM && (
-        typeof commPM === 'string' 
-          ? areNamesEqual(commPM, myAssociatedName) 
-          : Array.isArray(commPM) && commPM.some((pmName: string) => areNamesEqual(pmName, myAssociatedName))
-      )) ||
-      isAdmin ||
-      isSoci(myAssociatedName)
-    );
+    // 2. Se è una richiesta di inserimento commessa, la gestisce il PM / Responsabile di quella commessa
+    if (r.tipoRichiesta === 'inserimento_commessa' || r.fonte === 'altre_commesse') {
+      const commObj = (commesse || []).find(c => c.id === r.commessaId);
+      const commResp = (r.commessaResponsabile || commObj?.responsabile || '').toLowerCase().trim();
+      const commPM = r.commessaPM || commObj?.pm;
 
-    const isCommessaSpecific = Boolean(
-      r.tipoRichiesta === 'inserimento_commessa' || 
-      r.fonte === 'altre_commesse' || 
-      r.commessaResponsabile || 
-      (commObj && (commObj.responsabile || commObj.pm))
-    );
+      const isCommessaManager = Boolean(
+        (commResp && (areNamesEqual(commResp, myAssociatedName) || (userEmail && commResp.includes(userEmail.split('@')[0])))) ||
+        (commPM && (
+          typeof commPM === 'string' 
+            ? areNamesEqual(commPM, myAssociatedName) 
+            : Array.isArray(commPM) && commPM.some((pmName: string) => areNamesEqual(pmName, myAssociatedName))
+        ))
+      );
 
-    if (isCommessaSpecific) {
-      return isCommessaManager;
+      if (isCommessaManager) return true;
     }
 
-    const rArea = r.area || 'Disegnatori';
-    return myCoordinatedAreas.includes(rArea);
+    return false;
   };
 
   const [pendingCoordinatorRequestsCount, setPendingCoordinatorRequestsCount] = useState(0);
