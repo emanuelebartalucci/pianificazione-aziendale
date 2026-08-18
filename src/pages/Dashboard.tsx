@@ -33,7 +33,7 @@ export default function Dashboard() {
     }
   };
 
-  const { isAdmin, isHR, isDev, myAssociatedName, user, dipendenti, userEmail, assegnazioni, commesse, prioritaCommesse, coordinatori = [], richiesteDisegnatori = [] } = useAuth();
+  const { isAdmin, isHR, isDev, myAssociatedName, user, dipendenti, userEmail, assegnazioni, commesse, prioritaCommesse, coordinatori = [] } = useAuth();
 
   // States per le comunicazioni
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
@@ -635,14 +635,28 @@ export default function Dashboard() {
     return myCoords.map(c => c.area);
   }, [userEmail, coordinatori]);
 
-  const pendingCoordinatorRequestsCount = useMemo(() => {
-    if (!userEmail || myCoordinatedAreas.length === 0) return 0;
-    return (richiesteDisegnatori || []).filter((r: any) => {
-      if (r.stato !== 'in_attesa') return false;
-      const rArea = r.area || 'Disegnatori';
-      return myCoordinatedAreas.includes(rArea);
-    }).length;
-  }, [userEmail, myCoordinatedAreas, richiesteDisegnatori]);
+  const [pendingCoordinatorRequestsCount, setPendingCoordinatorRequestsCount] = useState(0);
+
+  useEffect(() => {
+    if (!userEmail || myCoordinatedAreas.length === 0) {
+      setPendingCoordinatorRequestsCount(0);
+      return;
+    }
+    const qReq = query(collection(db, 'richieste_disegnatori'), where('stato', '==', 'in_attesa'));
+    getDocs(qReq).then((snap) => {
+      let count = 0;
+      snap.forEach(docSnap => {
+        const data = docSnap.data();
+        const rArea = data.area || 'Disegnatori';
+        if (myCoordinatedAreas.includes(rArea)) {
+          count++;
+        }
+      });
+      setPendingCoordinatorRequestsCount(count);
+    }).catch(err => {
+      console.error("Errore conteggio richieste disegnatori:", err);
+    });
+  }, [userEmail, myCoordinatedAreas]);
 
   const [pendingAvailabilityCount, setPendingAvailabilityCount] = useState(0);
 

@@ -1,6 +1,7 @@
 import { db } from './firebase';
-import { collection, query, getDocs, doc, setDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, setDoc } from 'firebase/firestore';
 import historicalLeavesData from '../data/historicalLeavesData.json';
+import { isCollaboratore, isSoci } from '../pages/Impostazioni';
 
 export interface YearlySummaryData {
   year: number;
@@ -51,16 +52,21 @@ export async function rebuildYearlySummary(
       });
     } else {
       try {
-        const q = query(collection(db, 'richieste_ferie'));
+        const q = query(
+          collection(db, 'richieste_ferie'),
+          where('stato', '==', 'Approvato')
+        );
         const snap = await getDocs(q);
+        const mapDocs = new Map<string, any>();
         snap.forEach(d => {
           const data = d.data();
           const dInizio = data.dataInizio || data.data || '';
           const dFine = data.dataFine || data.data || data.dataInizio || '';
-          if (data.stato === 'Approvato' && data.note !== 'Chiusure Aziendali' && dFine >= startStr && dInizio <= endStr) {
-            requests.push({ id: d.id, ...data });
+          if (data.note !== 'Chiusure Aziendali' && dFine >= startStr && dInizio <= endStr) {
+            mapDocs.set(d.id, { id: d.id, ...data });
           }
         });
+        requests = Array.from(mapDocs.values());
       } catch (err) {
         console.error("Errore lettura Firestore per sintesi:", err);
       }
@@ -104,10 +110,13 @@ export async function rebuildYearlySummary(
       return p1 === p2;
     };
 
+    // Filtra ALL'ORIGINE solo i dipendenti veri e propri (i collaboratori P.IVA e i soci non hanno contatori ferie)
+    const onlyDipendenti = dipendentiList.filter(d => d.nome && !isCollaboratore(d.nome, dipendentiList) && !isSoci(d.nome));
+
     const employeeStats: Record<string, { ferie: number; permessi: number; malattia: number; smart: number; totale: number }> = {};
     const monthlyTrend: Record<string, number[]> = {};
 
-    dipendentiList.forEach(d => {
+    onlyDipendenti.forEach(d => {
       if (d.nome) {
         const clean = d.nome.trim().toLowerCase();
         employeeStats[clean] = { ferie: 0, permessi: 0, malattia: 0, smart: 0, totale: 0 };
@@ -119,8 +128,11 @@ export async function rebuildYearlySummary(
       const rawReqName = (req.dipendenteName || '').trim();
       if (!rawReqName) return;
 
-      const matchedDip = dipendentiList.find(d => d.nome && areNamesEqual(d.nome, rawReqName));
-      const dipNameClean = matchedDip ? matchedDip.nome.trim().toLowerCase() : rawReqName.toLowerCase();
+      // Includi nel documento di sintesi solo le statistiche relative al personale dipendente
+      const matchedDip = onlyDipendenti.find(d => d.nome && areNamesEqual(d.nome, rawReqName));
+      if (!matchedDip) return;
+
+      const dipNameClean = matchedDip.nome.trim().toLowerCase();
 
       if (!employeeStats[dipNameClean]) {
         employeeStats[dipNameClean] = { ferie: 0, permessi: 0, malattia: 0, smart: 0, totale: 0 };

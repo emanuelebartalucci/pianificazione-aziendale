@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth, isTechnicalUser, type Dipendente } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, doc, writeBatch, addDoc, updateDoc, deleteDoc, query, where, getDocs, onSnapshot } from 'firebase/firestore';
-import { Users, ChevronLeft, ChevronRight, ChevronDown, Save, Download, ZoomIn, ZoomOut, Trash2, Plus, RefreshCw, CalendarDays, FileText, X, UserCheck, MoveVertical, Clock, Pencil, ExternalLink } from 'lucide-react';
+import { collection, doc, writeBatch, addDoc, updateDoc, deleteDoc, query, where, getDocs, onSnapshot, limit } from 'firebase/firestore';
+import { Users, ChevronLeft, ChevronRight, ChevronDown, Save, Download, ZoomIn, ZoomOut, Trash2, Plus, RefreshCw, CalendarDays, FileText, X, UserCheck, MoveVertical, Clock, Pencil, ExternalLink, Calendar } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays, isItalianHoliday } from '../utils/date';
 
 import ConfirmModal from '../components/ConfirmModal';
@@ -1094,6 +1094,11 @@ export default function PianificazionePersonale() {
   const [historySelectedResource, setHistorySelectedResource] = useState<Record<string, string>>({});
   const [isAvailabilityModalOpen, setIsAvailabilityModalOpen] = useState(false);
   const [segnalazioniDisponibilita, setSegnalazioniDisponibilita] = useState<any[]>([]);
+  const [segnalazioneToManage, setSegnalazioneToManage] = useState<any | null>(null);
+  const [isConfirmManageOpen, setIsConfirmManageOpen] = useState(false);
+  const [isHistoryDisponibilitaOpen, setIsHistoryDisponibilitaOpen] = useState(false);
+  const [historyDisponibilitaList, setHistoryDisponibilitaList] = useState<any[]>([]);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
 
   const fetchSegnalazioni = async () => {
     try {
@@ -1113,13 +1118,72 @@ export default function PianificazionePersonale() {
     fetchSegnalazioni();
   }, []);
 
-  const handleMarkSegnalazioneGestita = async (id: string) => {
+  // Carica lo storico delle segnalazioni degli ultimi 30 giorni on-demand (zero spreco letture)
+  const fetchHistoryDisponibilita = async () => {
+    setIsHistoryLoading(true);
     try {
-      await updateDoc(doc(db, 'segnalazioni_disponibilita', id), { stato: 'gestita' });
-      showToast("Segnalazione segnata come gestita.", "success");
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const q = query(
+        collection(db, 'segnalazioni_disponibilita'),
+        limit(100)
+      );
+      const snap = await getDocs(q);
+      const list: any[] = [];
+      snap.forEach(docSnap => {
+        const data = docSnap.data();
+        const dateStr = data.timestamp || data.createdAt || '';
+        // Includi solo segnalazioni degli ultimi 30 giorni
+        if (!dateStr || dateStr >= thirtyDaysAgo) {
+          list.push({ id: docSnap.id, ...data });
+        }
+      });
+      list.sort((a, b) => (b.timestamp || b.createdAt || '').localeCompare(a.timestamp || a.createdAt || ''));
+      setHistoryDisponibilitaList(list);
+    } catch (err) {
+      console.error("Errore caricamento storico disponibilità:", err);
+    } finally {
+      setIsHistoryLoading(false);
+    }
+  };
+
+  const handleOpenHistoryDisponibilita = () => {
+    setIsHistoryDisponibilitaOpen(true);
+    fetchHistoryDisponibilita();
+  };
+
+  const handlePianificaRisorsaDaSegnalazione = (nomeRisorsa: string) => {
+    if (!nomeRisorsa) return;
+    setActiveTab('risorsa');
+    setSelectedResourceForTab(nomeRisorsa);
+    showToast(`Visualizzazione impostata sulla risorsa ${nomeRisorsa}.`);
+    // Scroll morbido verso la griglia di pianificazione
+    setTimeout(() => {
+      const el = document.getElementById('planning-view-section');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth' });
+      }
+    }, 100);
+  };
+
+  const handleConfirmGestione = async () => {
+    if (!segnalazioneToManage?.id) return;
+    try {
+      await updateDoc(doc(db, 'segnalazioni_disponibilita', segnalazioneToManage.id), { 
+        stato: 'gestita',
+        gestitaDa: myAssociatedName || userEmail || 'Coordinatore',
+        gestitaEmail: userEmail || '',
+        dataGestione: new Date().toISOString()
+      });
+      showToast(`Segnalazione di ${segnalazioneToManage.risorsaNome || segnalazioneToManage.dipendenteNome || 'risorsa'} archiviata nello storico.`, 'success');
+      setIsConfirmManageOpen(false);
+      setSegnalazioneToManage(null);
       await fetchSegnalazioni();
+      if (isHistoryDisponibilitaOpen) {
+        await fetchHistoryDisponibilita();
+      }
     } catch (err) {
       console.error("Errore aggiornamento segnalazione:", err);
+      showToast("Errore durante l'archiviazione della segnalazione.", "error");
     }
   };
 
@@ -1132,6 +1196,35 @@ export default function PianificazionePersonale() {
     setReqPreferredResource('');
     setReqNota('');
     setIsRequestModalOpen(true);
+  };
+
+  const handleReqModalDateChange = (dateStr: string, isStart: boolean) => {
+    if (!dateStr) return;
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return;
+    const monday = getStartOfWeek(d);
+    const mY = monday.getFullYear();
+    const mM = String(monday.getMonth() + 1).padStart(2, '0');
+    const mD = String(monday.getDate()).padStart(2, '0');
+    const monStr = `${mY}-${mM}-${mD}`;
+
+    const sunday = addDays(monday, 6);
+    const sY = sunday.getFullYear();
+    const sM = String(sunday.getMonth() + 1).padStart(2, '0');
+    const sD = String(sunday.getDate()).padStart(2, '0');
+    const sunStr = `${sY}-${sM}-${sD}`;
+
+    if (isStart) {
+      setReqDataInizio(monStr);
+      if (reqDataFine && reqDataFine < sunStr) {
+        setReqDataFine(sunStr);
+      }
+    } else {
+      setReqDataFine(sunStr);
+      if (reqDataInizio && reqDataInizio > monStr) {
+        setReqDataInizio(monStr);
+      }
+    }
   };
 
   const getWeekId = (d: Date): string => {
@@ -2902,6 +2995,19 @@ export default function PianificazionePersonale() {
               </button>
             )}
 
+            {/* Pulsante Storico Disponibilità per Coordinatori e Admin */}
+            {(myCoordinatedAreas.length > 0 || isAdmin || isSoci(myAssociatedName)) && (
+              <button
+                type="button"
+                onClick={handleOpenHistoryDisponibilita}
+                className="flex items-center gap-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 px-3.5 py-2 rounded-xl text-xs font-extrabold transition shadow-2xs active:scale-95 cursor-pointer ml-2"
+                title="Visualizza lo storico delle segnalazioni di disponibilità per la tua area (ultimi 30 giorni)"
+              >
+                <UserCheck className="w-4 h-4 text-emerald-600" />
+                <span>Storico Disponibilità (30gg)</span>
+              </button>
+            )}
+
             {(() => {
               const pendingCount = (myRecentSentRequests || []).filter((r: any) => r.stato === 'in_attesa').length;
 
@@ -2933,53 +3039,90 @@ export default function PianificazionePersonale() {
       {(() => {
         const visibleSegnalazioni = segnalazioniDisponibilita.filter(s => {
           if (s.stato !== 'in_attesa') return false;
-          return myCoordinatedAreas.includes(s.macroArea);
+          return isAdmin || isSoci(myAssociatedName) || myCoordinatedAreas.includes(s.macroArea);
         });
 
         if (visibleSegnalazioni.length === 0) return null;
 
         return (
           <div className="bg-emerald-50/90 border border-emerald-300 rounded-[2rem] p-5 shadow-sm space-y-3 no-print animate-in fade-in duration-200">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2.5">
                 <UserCheck className="w-5 h-5 text-emerald-700 animate-bounce" />
                 <h3 className="font-extrabold text-sm text-emerald-950">
                   🙋 Risorse Scariche che Richiedono Lavoro ({visibleSegnalazioni.length})
                 </h3>
               </div>
-              <span className="text-[11px] font-bold text-emerald-800 bg-emerald-100 px-3 py-1 rounded-full border border-emerald-200">
-                Coordinamento Area
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleOpenHistoryDisponibilita}
+                  className="text-xs font-bold text-emerald-800 hover:text-emerald-950 bg-emerald-100/90 hover:bg-emerald-200 px-3 py-1 rounded-xl border border-emerald-300 transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <span>📋 Storico Area (30gg)</span>
+                </button>
+                <span className="text-[11px] font-bold text-emerald-800 bg-emerald-100 px-3 py-1 rounded-full border border-emerald-200">
+                  Coordinamento Area
+                </span>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-              {visibleSegnalazioni.map(s => (
-                <div key={s.id} className="bg-white p-4 rounded-2xl border border-emerald-200 shadow-2xs flex flex-col justify-between gap-3">
-                  <div className="space-y-1">
-                    <div className="flex justify-between items-center">
-                      <span className="font-extrabold text-sm text-gray-900">{s.dipendenteNome}</span>
-                      <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
-                        {s.macroArea}
-                      </span>
-                    </div>
-                    <p className="text-xs text-gray-600">
-                      Periodo: <strong className="text-gray-800">{s.dataInizio} → {s.dataFine}</strong>
-                    </p>
-                    {s.note && (
-                      <p className="text-xs text-gray-500 italic bg-gray-50 p-2 rounded-xl border border-gray-100">
-                        "{s.note}"
+              {visibleSegnalazioni.map(s => {
+                const risorsaNome = s.risorsaNome || s.dipendenteNome || 'Risorsa';
+                const periodoLabel = s.settimanaLabel || (s.dataInizio && s.dataFine ? `${s.dataInizio} → ${s.dataFine}` : s.settimana || 'Periodo corrente');
+                const notaContent = s.nota || s.note || '';
+
+                return (
+                  <div key={s.id} className="bg-white p-4 rounded-2xl border border-emerald-200 shadow-xs flex flex-col justify-between gap-3 hover:border-emerald-300 transition-all">
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between items-center">
+                        <span className="font-extrabold text-sm text-gray-900">{risorsaNome}</span>
+                        <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                          {s.macroArea}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-600">
+                        Disponibilità: <strong className="text-emerald-950">{periodoLabel}</strong>
                       </p>
-                    )}
+                      {notaContent && (
+                        <p className="text-xs text-gray-600 italic bg-gray-50 p-2.5 rounded-xl border border-gray-100">
+                          &ldquo;{notaContent}&rdquo;
+                        </p>
+                      )}
+                      {s.timestamp && (
+                        <p className="text-[10px] text-gray-400 font-medium pt-0.5">
+                          Ricevuta: {new Date(s.timestamp).toLocaleDateString('it-IT')} alle {new Date(s.timestamp).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
+                      <button
+                        type="button"
+                        onClick={() => handlePianificaRisorsaDaSegnalazione(risorsaNome)}
+                        className="flex-1 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-extrabold text-xs rounded-xl shadow-xs transition cursor-pointer text-center flex items-center justify-center gap-1.5"
+                        title="Imposta la vista sulla risorsa per assegnarla alle commesse"
+                      >
+                        <Calendar className="w-3.5 h-3.5" />
+                        <span>Pianifica Risorsa</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSegnalazioneToManage(s);
+                          setIsConfirmManageOpen(true);
+                        }}
+                        className="py-2 px-3 bg-emerald-100 hover:bg-emerald-200 active:scale-95 text-emerald-900 border border-emerald-300 font-extrabold text-xs rounded-xl transition cursor-pointer text-center"
+                        title="Segna come gestita dopo aver assegnato il lavoro"
+                      >
+                        ✓ Gestita
+                      </button>
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => handleMarkSegnalazioneGestita(s.id)}
-                    className="w-full py-1.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow transition cursor-pointer text-center"
-                  >
-                    Segna come Gestita / Assegnato
-                  </button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         );
@@ -4382,47 +4525,76 @@ export default function PianificazionePersonale() {
 
                 {/* Colonna Destra */}
                 <div className="space-y-4 flex flex-col justify-between">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Settimana Inizio *</label>
-                      <select
-                        value={(() => {
-                          const match = selectableWeekOptions.find(o => o.mondayStr === reqDataInizio);
-                          return match ? match.id : selectedStartWeekId;
-                        })()}
-                        onChange={e => {
-                          const id = e.target.value;
-                          const startOpt = selectableWeekOptions.find(o => o.id === id);
-                          if (startOpt) setReqDataInizio(startOpt.mondayStr);
-                        }}
-                        className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
-                      >
-                        {selectableWeekOptions.map(opt => (
-                          <option key={`req-start-${opt.id}`} value={opt.id}>{opt.label}</option>
-                        ))}
-                      </select>
-                    </div>
+                  {/* SELEZIONE DA CALENDARIO DATE CON EVIDENZA SETTIMANA */}
+                  {(() => {
+                    const startOpt = selectableWeekOptions.find(o => o.mondayStr === reqDataInizio) || selectableWeekOptions[0];
+                    const endOpt = selectableWeekOptions.find(o => o.sundayStr === reqDataFine) || startOpt;
+                    const targetWeekIds = (reqDataInizio && reqDataFine) ? getWeeksSpannedByDates(reqDataInizio, reqDataFine) : [];
 
-                    <div>
-                      <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Settimana Fine *</label>
-                      <select
-                        value={(() => {
-                          const match = selectableWeekOptions.find(o => o.sundayStr === reqDataFine);
-                          return match ? match.id : selectedEndWeekId;
-                        })()}
-                        onChange={e => {
-                          const id = e.target.value;
-                          const endOpt = selectableWeekOptions.find(o => o.id === id);
-                          if (endOpt) setReqDataFine(endOpt.sundayStr);
-                        }}
-                        className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
-                      >
-                        {selectableWeekOptions.map(opt => (
-                          <option key={`req-end-${opt.id}`} value={opt.id}>{opt.label}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
+                    return (
+                      <div className="bg-white/90 p-4 rounded-2xl border border-indigo-100 shadow-xs space-y-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-[10px] font-black text-indigo-900 uppercase tracking-wider mb-1.5 ml-0.5">
+                              📅 DATA INIZIO (SCEGLI DA CALENDARIO)
+                            </label>
+                            <input
+                              type="date"
+                              value={reqDataInizio || startOpt?.mondayStr || ''}
+                              onChange={e => handleReqModalDateChange(e.target.value, true)}
+                              className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
+                            />
+                            {startOpt && (
+                              <div className="mt-2 p-2 bg-indigo-50/80 rounded-xl border border-indigo-100 flex items-center gap-2">
+                                <span className="text-xs">📌</span>
+                                <div className="flex flex-col">
+                                  <span className="text-[9.5px] font-black text-indigo-600 uppercase tracking-wider">Settimana di Inizio Riferimento</span>
+                                  <span className="text-xs font-black text-indigo-950">{startOpt.label}</span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-black text-indigo-900 uppercase tracking-wider mb-1.5 ml-0.5">
+                              📅 DATA FINE (SCEGLI DA CALENDARIO)
+                            </label>
+                            <input
+                              type="date"
+                              min={reqDataInizio || undefined}
+                              value={reqDataFine || endOpt?.sundayStr || ''}
+                              onChange={e => handleReqModalDateChange(e.target.value, false)}
+                              className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
+                            />
+                            {endOpt && (
+                              <div className="mt-2 p-2 bg-indigo-50/80 rounded-xl border border-indigo-100 flex items-center gap-2">
+                                <span className="text-xs">📌</span>
+                                <div className="flex flex-col">
+                                  <span className="text-[9.5px] font-black text-indigo-600 uppercase tracking-wider">Settimana di Fine Riferimento</span>
+                                  <span className="text-xs font-black text-indigo-950">{endOpt.label}</span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Dynamic Summary Banner */}
+                        {startOpt && endOpt && (
+                          <div className="flex flex-wrap items-center justify-between gap-2 bg-indigo-50/80 px-3 py-2 rounded-xl border border-indigo-100 text-xs font-bold text-indigo-900">
+                            <div className="flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full bg-indigo-600 animate-pulse"></span>
+                              <span>
+                                Durata Selezionata: <strong className="text-indigo-700 font-extrabold">{targetWeekIds.length} {targetWeekIds.length === 1 ? 'settimana' : 'settimane'}</strong>
+                              </span>
+                            </div>
+                            <span className="text-[11px] text-indigo-600/80 font-semibold">
+                              (da Lun {formatShortDate(new Date(reqDataInizio || startOpt.mondayStr))} a Dom {formatShortDate(new Date(reqDataFine || endOpt.sundayStr))})
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   <div>
                     <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1 flex items-center justify-between">
@@ -4780,42 +4952,77 @@ export default function PianificazionePersonale() {
                   </select>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-gray-800 mb-1">Settimana Inizio *</label>
-                  <select
-                    value={(() => {
-                      const match = selectableWeekOptions.find(o => o.mondayStr === reqDataInizio);
-                      return match ? match.id : selectedStartWeekId;
-                    })()}
-                    onChange={e => {
-                      const opt = selectableWeekOptions.find(o => o.id === e.target.value);
-                      if (opt) setReqDataInizio(opt.mondayStr);
-                    }}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
-                  >
-                    {selectableWeekOptions.map(opt => (
-                      <option key={`edit-wk-start-${opt.id}`} value={opt.id}>{opt.label}</option>
-                    ))}
-                  </select>
-                </div>
+                {/* SELEZIONE DA CALENDARIO DATE CON EVIDENZA SETTIMANA */}
+                <div className="sm:col-span-2">
+                  {(() => {
+                    const startOpt = selectableWeekOptions.find(o => o.mondayStr === reqDataInizio) || selectableWeekOptions[0];
+                    const endOpt = selectableWeekOptions.find(o => o.sundayStr === reqDataFine) || startOpt;
+                    const targetWeekIds = (reqDataInizio && reqDataFine) ? getWeeksSpannedByDates(reqDataInizio, reqDataFine) : [];
 
-                <div>
-                  <label className="block text-xs font-bold text-gray-800 mb-1">Settimana Fine *</label>
-                  <select
-                    value={(() => {
-                      const match = selectableWeekOptions.find(o => o.sundayStr === reqDataFine);
-                      return match ? match.id : selectedEndWeekId;
-                    })()}
-                    onChange={e => {
-                      const opt = selectableWeekOptions.find(o => o.id === e.target.value);
-                      if (opt) setReqDataFine(opt.sundayStr);
-                    }}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
-                  >
-                    {selectableWeekOptions.map(opt => (
-                      <option key={`edit-wk-end-${opt.id}`} value={opt.id}>{opt.label}</option>
-                    ))}
-                  </select>
+                    return (
+                      <div className="bg-slate-50/90 p-4 rounded-2xl border border-slate-200 shadow-xs space-y-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-[10px] font-black text-slate-800 uppercase tracking-wider mb-1.5 ml-0.5">
+                              📅 DATA INIZIO (SCEGLI DA CALENDARIO)
+                            </label>
+                            <input
+                              type="date"
+                              value={reqDataInizio || startOpt?.mondayStr || ''}
+                              onChange={e => handleReqModalDateChange(e.target.value, true)}
+                              className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
+                            />
+                            {startOpt && (
+                              <div className="mt-2 p-2 bg-amber-50/80 rounded-xl border border-amber-200/60 flex items-center gap-2">
+                                <span className="text-xs">📌</span>
+                                <div className="flex flex-col">
+                                  <span className="text-[9.5px] font-black text-amber-700 uppercase tracking-wider">Settimana di Inizio Riferimento</span>
+                                  <span className="text-xs font-black text-amber-950">{startOpt.label}</span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-black text-slate-800 uppercase tracking-wider mb-1.5 ml-0.5">
+                              📅 DATA FINE (SCEGLI DA CALENDARIO)
+                            </label>
+                            <input
+                              type="date"
+                              min={reqDataInizio || undefined}
+                              value={reqDataFine || endOpt?.sundayStr || ''}
+                              onChange={e => handleReqModalDateChange(e.target.value, false)}
+                              className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
+                            />
+                            {endOpt && (
+                              <div className="mt-2 p-2 bg-amber-50/80 rounded-xl border border-amber-200/60 flex items-center gap-2">
+                                <span className="text-xs">📌</span>
+                                <div className="flex flex-col">
+                                  <span className="text-[9.5px] font-black text-amber-700 uppercase tracking-wider">Settimana di Fine Riferimento</span>
+                                  <span className="text-xs font-black text-amber-950">{endOpt.label}</span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Dynamic Summary Banner */}
+                        {startOpt && endOpt && (
+                          <div className="flex flex-wrap items-center justify-between gap-2 bg-white px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-800">
+                            <div className="flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                              <span>
+                                Durata Selezionata: <strong className="text-amber-700 font-extrabold">{targetWeekIds.length} {targetWeekIds.length === 1 ? 'settimana' : 'settimane'}</strong>
+                              </span>
+                            </div>
+                            <span className="text-[11px] text-slate-500 font-semibold">
+                              (da Lun {formatShortDate(new Date(reqDataInizio || startOpt.mondayStr))} a Dom {formatShortDate(new Date(reqDataFine || endOpt.sundayStr))})
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 <div>
@@ -4900,6 +5107,228 @@ export default function PianificazionePersonale() {
           }
         }}
       />
+
+      {/* MODALE DI CONFERMA ARCHIVIAZIONE SEGNALAZIONE DISPONIBILITÀ */}
+      {isConfirmManageOpen && segnalazioneToManage && (
+        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-md flex items-center justify-center z-[9999] p-4 no-print animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md border border-gray-100 overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-5 bg-gradient-to-r from-emerald-600 to-teal-700 text-white flex justify-between items-center">
+              <div className="flex items-center gap-2.5">
+                <UserCheck className="w-5 h-5 text-white" />
+                <h3 className="text-base font-extrabold">Conferma Gestione Disponibilità</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsConfirmManageOpen(false);
+                  setSegnalazioneToManage(null);
+                }}
+                className="text-white/80 hover:text-white p-1 rounded-lg hover:bg-white/10 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="text-xs text-gray-600 leading-relaxed font-medium">
+                Confermi che la richiesta di disponibilità della risorsa è stata <strong>presa in carico o assegnata</strong>? La segnalazione verrà archiviata nello storico condiviso dell'area.
+              </p>
+
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-gray-500 font-semibold">Risorsa:</span>
+                  <span className="font-extrabold text-gray-900">{segnalazioneToManage.risorsaNome || segnalazioneToManage.dipendenteNome}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500 font-semibold">Macro-Area:</span>
+                  <span className="font-extrabold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">{segnalazioneToManage.macroArea}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500 font-semibold">Periodo:</span>
+                  <span className="font-extrabold text-gray-900">{segnalazioneToManage.settimanaLabel || (segnalazioneToManage.dataInizio && segnalazioneToManage.dataFine ? `${segnalazioneToManage.dataInizio} → ${segnalazioneToManage.dataFine}` : segnalazioneToManage.settimana || 'Periodo corrente')}</span>
+                </div>
+                {(segnalazioneToManage.nota || segnalazioneToManage.note) && (
+                  <div className="pt-2 border-t border-slate-200 text-gray-600 italic">
+                    &ldquo;{segnalazioneToManage.nota || segnalazioneToManage.note}&rdquo;
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-3 pt-3 border-t border-gray-150">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsConfirmManageOpen(false);
+                    setSegnalazioneToManage(null);
+                  }}
+                  className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-extrabold py-2.5 rounded-xl transition text-xs cursor-pointer"
+                >
+                  Annulla
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmGestione}
+                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-extrabold py-2.5 rounded-xl shadow-md transition text-xs cursor-pointer text-center"
+                >
+                  ✓ Conferma Archiviazione
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODALE STORICO DISPONIBILITÀ (ULTIMI 30 GIORNI - CONDIVISO AREA) */}
+      {isHistoryDisponibilitaOpen && (
+        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-md flex items-center justify-center z-[9999] p-4 no-print animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl border border-gray-100 max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-5 bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-700 text-white flex justify-between items-center shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-white/20 rounded-xl">
+                  <UserCheck className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold">Storico Segnalazioni Disponibilità</h3>
+                  <p className="text-[11px] text-white/80 font-medium">
+                    Condiviso per i Coordinatori di Area · Ultimi 30 giorni
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsHistoryDisponibilitaOpen(false)}
+                className="text-white/80 hover:text-white p-1.5 rounded-xl hover:bg-white/10 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-4 flex-1">
+              {isHistoryLoading ? (
+                <div className="flex flex-col items-center justify-center py-12 text-gray-400 gap-3">
+                  <RefreshCw className="w-6 h-6 animate-spin text-emerald-600" />
+                  <span className="text-xs font-bold">Caricamento storico in corso...</span>
+                </div>
+              ) : (() => {
+                const filteredHistory = historyDisponibilitaList.filter(s => 
+                  isAdmin || isSoci(myAssociatedName) || myCoordinatedAreas.includes(s.macroArea)
+                );
+
+                if (filteredHistory.length === 0) {
+                  return (
+                    <div className="text-center py-12 text-gray-400 font-medium text-xs bg-slate-50 rounded-2xl border border-slate-200 p-8">
+                      Nessuna segnalazione di disponibilità registrata negli ultimi 30 giorni per le tue macro-aree coordinate.
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="space-y-3">
+                    {filteredHistory.map(s => {
+                      const risorsaNome = s.risorsaNome || s.dipendenteNome || 'Risorsa';
+                      const periodoLabel = s.settimanaLabel || (s.dataInizio && s.dataFine ? `${s.dataInizio} → ${s.dataFine}` : s.settimana || 'Periodo corrente');
+                      const notaContent = s.nota || s.note || '';
+                      const isPending = s.stato === 'in_attesa';
+
+                      return (
+                        <div 
+                          key={s.id} 
+                          className={`p-4 rounded-2xl border transition-all ${
+                            isPending 
+                              ? 'bg-emerald-50/60 border-emerald-300 shadow-xs' 
+                              : 'bg-white border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2 mb-2">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-extrabold text-sm text-gray-900">{risorsaNome}</span>
+                              <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-slate-100 text-slate-800 border border-slate-200">
+                                {s.macroArea}
+                              </span>
+                              <span className={`text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full border ${
+                                isPending 
+                                  ? 'bg-amber-100 text-amber-800 border-amber-300' 
+                                  : 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                              }`}>
+                                {isPending ? '⏳ In Attesa di Assegnazione' : '✓ Gestita / Assegnata'}
+                              </span>
+                            </div>
+
+                            {s.timestamp && (
+                              <span className="text-[10.5px] text-gray-400 font-medium">
+                                Ricevuta: {new Date(s.timestamp).toLocaleDateString('it-IT')}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="text-xs text-gray-700 space-y-1">
+                            <p>
+                              Disponibilità: <strong className="text-gray-900">{periodoLabel}</strong>
+                            </p>
+                            {notaContent && (
+                              <p className="italic text-gray-500 bg-slate-50 p-2 rounded-xl border border-slate-100 text-[11.5px]">
+                                &ldquo;{notaContent}&rdquo;
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2 mt-3 pt-2.5 border-t border-slate-100 text-[11px]">
+                            <div>
+                              {!isPending && s.gestitaDa && (
+                                <span className="text-gray-500">
+                                  Gestita da <strong className="text-gray-800">{s.gestitaDa}</strong>
+                                  {s.dataGestione ? ` il ${new Date(s.dataGestione).toLocaleDateString('it-IT')} alle ${new Date(s.dataGestione).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}` : ''}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIsHistoryDisponibilitaOpen(false);
+                                  handlePianificaRisorsaDaSegnalazione(risorsaNome);
+                                }}
+                                className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 font-extrabold text-xs rounded-xl border border-indigo-200 transition cursor-pointer flex items-center gap-1"
+                              >
+                                <Calendar className="w-3.5 h-3.5 text-indigo-600" />
+                                <span>Pianifica</span>
+                              </button>
+
+                              {isPending && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSegnalazioneToManage(s);
+                                    setIsConfirmManageOpen(true);
+                                  }}
+                                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition cursor-pointer"
+                                >
+                                  ✓ Segna come Gestita
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsHistoryDisponibilitaOpen(false)}
+                className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 font-extrabold text-xs rounded-xl transition cursor-pointer"
+              >
+                Chiudi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

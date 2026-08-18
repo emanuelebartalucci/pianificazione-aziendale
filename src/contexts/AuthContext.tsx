@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, useRef, type ReactNode } from 'react';
 import { type User, onAuthStateChanged } from 'firebase/auth';
-import { collection, doc, addDoc, deleteDoc, getDoc, getDocs, query, where, onSnapshot, documentId } from 'firebase/firestore';
+import { collection, getDocs, query, where, onSnapshot, documentId } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
 
 const DEFAULT_ADMINS = ['aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it'];
@@ -82,6 +82,7 @@ interface AuthContextType {
   prioritaCommesse: Record<string, 'Alta' | 'Standard' | 'Bassa'>;
   refreshData: () => Promise<void>;
   refreshDataIfStale: () => Promise<void>;
+  loadAllCommesse?: () => Promise<void>;
   loadAssegnazioniForWeeks?: (requestedWeekIds: string[]) => Promise<void>;
 
   // Impersonificazione
@@ -153,7 +154,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         getDocs(collection(db, 'clienti')),
         getDocs(collection(db, 'assegnazioni')),
         getDocs(collection(db, 'chiusure_aziendali')),
-        getDocs(collection(db, 'richieste_disegnatori')),
+        getDocs(query(collection(db, 'richieste_disegnatori'), where('stato', '==', 'in_attesa'))),
         getDocs(collection(db, 'project_managers')),
         getDocs(collection(db, 'commerciali')),
         getDocs(query(collection(db, 'richieste_ferie'), where('stato', '==', 'Approvato')))
@@ -270,22 +271,36 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setApprovedLeaves(leavesList);
 
       // 15. Priorita commesse — gestita dal listener real-time (vedi useEffect sotto)
-
-      // Migrazione automatica HR
-      const legacyHrSnap = await getDoc(doc(db, 'configurazione_sistema', 'hr'));
-      if (legacyHrSnap.exists()) {
-        const legacyEmail = legacyHrSnap.data().email?.toLowerCase();
-        if (legacyEmail) {
-          try {
-            await addDoc(collection(db, 'hr'), { email: legacyEmail });
-            await deleteDoc(doc(db, 'configurazione_sistema', 'hr'));
-          } catch (err) {
-            console.error("Migration error:", err);
-          }
-        }
-      }
     } catch (err) {
       console.error("Errore nel caricamento dei dati di AuthContext:", err);
+    }
+  };
+
+  const loadAllCommesse = async () => {
+    try {
+      const allSnap = await getDocs(collection(db, 'catalogo_commesse'));
+      const commesseList = allSnap.docs.map(doc => ({
+        id: doc.id,
+        nome: doc.data().nome || '',
+        colore: doc.data().colore || '#3b82f6',
+        dataInizio: doc.data().dataInizio || '',
+        dataFine: doc.data().dataFine || '',
+        responsabile: doc.data().responsabile || '',
+        pm: doc.data().pm || '',
+        codiceCommessa: doc.data().codiceCommessa || '',
+        anno: doc.data().anno || '',
+        tipologia: doc.data().tipologia || '',
+        cliente: doc.data().cliente || '',
+        stato: doc.data().stato || 'Aperta',
+        giornateSeniorProject: doc.data().giornateSeniorProject,
+        giornateProject: doc.data().giornateProject,
+        giornateJuniorProject: doc.data().giornateJuniorProject,
+        apertaDa: doc.data().apertaDa || '',
+        progetti: doc.data().progetti || []
+      }));
+      setCommesse(commesseList.sort((a, b) => a.nome.localeCompare(b.nome)));
+    } catch (err) {
+      console.error("Errore caricamento catalogo completo commesse:", err);
     }
   };
 
@@ -480,6 +495,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       prioritaCommesse,
       refreshData,
       refreshDataIfStale,
+      loadAllCommesse,
       loadAssegnazioniForWeeks,
       impersonateUser,
       isRealDev,

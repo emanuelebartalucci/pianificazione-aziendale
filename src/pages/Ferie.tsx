@@ -263,7 +263,8 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       );
       const qSingle = query(
         collection(db, 'richieste_ferie'),
-        where('data', '>=', startStr)
+        where('data', '>=', startStr),
+        where('data', '<=', endStr)
       );
 
       const [snapRange, snapSingle] = await Promise.all([
@@ -426,7 +427,11 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
 
       if (isHR || isAdmin) {
         const qRange = query(collection(db, 'richieste_ferie'), where('dataFine', '>=', startLimit));
-        const qSingle = query(collection(db, 'richieste_ferie'), where('data', '>=', startLimit));
+        const qSingle = query(
+          collection(db, 'richieste_ferie'),
+          where('data', '>=', startLimit),
+          where('data', '<=', endLimit)
+        );
         const [snapRange, snapSingle] = await Promise.all([getDocs(qRange), getDocs(qSingle)]);
         const mapHR = new Map<string, RichiestaFerie>();
         snapRange.forEach(d => { const r = fetchAndMapDoc(d); if (r) mapHR.set(r.id, r); });
@@ -464,7 +469,11 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
 
         // Richieste altrui approvate: solo mese corrente (il resto si carica con ensureMonthLoaded)
         const qOthersRange = query(collection(db, 'richieste_ferie'), where('dataFine', '>=', startLimit));
-        const qOthersSingle = query(collection(db, 'richieste_ferie'), where('data', '>=', startLimit));
+        const qOthersSingle = query(
+          collection(db, 'richieste_ferie'),
+          where('data', '>=', startLimit),
+          where('data', '<=', endLimit)
+        );
         const [othersSnap, othersSingleSnap] = await Promise.all([getDocs(qOthersRange), getDocs(qOthersSingle)]);
         const mapOthers = new Map<string, RichiestaFerie>();
         const processOther = (docSnap: any) => {
@@ -916,16 +925,21 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
     });
   }, [counterYear, dipendenti]);
 
-  // Aggregazione contatori per tutte le risorse per l'anno selezionato (1 sola lettura da sintesi!)
+  // Aggregazione contatori per tutte le risorse dipendenti per l'anno selezionato (1 sola lettura da sintesi!)
   const allResourcesStats = useMemo(() => {
     if (!isHR && !isAdmin) return [];
 
+    // Filtra ALL'ORIGINE solo i dipendenti veri e propri (i collaboratori P.IVA e i soci non hanno contatori ferie)
+    const onlyDipendenti = dipendenti.filter(dip => {
+      const dipName = dip.nome || '';
+      return !isCollaboratore(dipName, dipendenti) && !isSoci(dipName);
+    });
+
     const summary = counterYearSummaries[counterYear];
     if (summary && summary.employeeStats && Object.keys(summary.employeeStats).length > 0) {
-      return dipendenti.map(dip => {
+      return onlyDipendenti.map(dip => {
         const dipName = dip.nome || '';
         const dipNameClean = dipName.trim().toLowerCase();
-        const isCollab = isCollaboratore(dipName, dipendenti) || isSoci(dipName);
         
         let stats = summary.employeeStats[dipNameClean];
         if (!stats) {
@@ -937,19 +951,17 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         const ferieHours = stats.ferie || 0;
         const permessoHours = stats.permessi || 0;
         const malattiaHours = stats.malattia || 0;
-        const assenzeGenericheHours = stats.totale || 0;
-        const totaleOreAssenze = isCollab ? assenzeGenericheHours : Math.round((ferieHours + permessoHours + malattiaHours) * 100) / 100;
+        const totaleOreAssenze = Math.round((ferieHours + permessoHours + malattiaHours) * 100) / 100;
 
         return {
           dip,
           dipName,
           email: dip.email || '',
           macroArea: dip.macroArea || 'Non specificata',
-          isCollab,
+          isCollab: false,
           ferieHours,
           permessoHours,
           malattiaHours,
-          assenzeGenericheHours,
           totaleOreAssenze
         };
       }).sort((a, b) => a.dipName.localeCompare(b.dipName));
@@ -960,9 +972,8 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       r.note !== 'Chiusure Aziendali'
     );
 
-    return dipendenti.map(dip => {
+    return onlyDipendenti.map(dip => {
       const dipName = dip.nome || '';
-      const isCollab = isCollaboratore(dipName, dipendenti) || isSoci(dipName);
 
       const userApprovedReqs = approvedTarget.filter(r => 
         r.dipendenteName?.trim().toLowerCase() === dipName.trim().toLowerCase()
@@ -971,7 +982,6 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       let ferieHours = 0;
       let permessoHours = 0;
       let malattiaHours = 0;
-      let assenzeGenericheHours = 0;
 
       userApprovedReqs.forEach(req => {
         const dates: string[] = [];
@@ -1036,33 +1046,26 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
           return;
         }
 
-        if (isCollab) {
-          assenzeGenericheHours += reqTotalHrs;
+        if (t === 'ferie' || t.includes('ferie')) {
+          ferieHours += reqTotalHrs;
+        } else if (t === 'malattia' || t.includes('malattia') || t.includes('maternita') || t.includes('maternità') || t.includes('infortunio')) {
+          malattiaHours += reqTotalHrs;
         } else {
-          if (t === 'ferie' || t.includes('ferie')) {
-            ferieHours += reqTotalHrs;
-          } else if (t === 'malattia' || t.includes('malattia') || t.includes('maternita') || t.includes('maternità') || t.includes('infortunio')) {
-            malattiaHours += reqTotalHrs;
-          } else {
-            permessoHours += reqTotalHrs;
-          }
+          permessoHours += reqTotalHrs;
         }
       });
 
-      const totaleOreAssenze = isCollab
-        ? Math.round(assenzeGenericheHours * 100) / 100
-        : Math.round((ferieHours + permessoHours + malattiaHours) * 100) / 100;
+      const totaleOreAssenze = Math.round((ferieHours + permessoHours + malattiaHours) * 100) / 100;
 
       return {
         dip,
         dipName,
         email: dip.email || '',
         macroArea: dip.macroArea || 'Non specificata',
-        isCollab,
+        isCollab: false,
         ferieHours: Math.round(ferieHours * 100) / 100,
         permessoHours: Math.round(permessoHours * 100) / 100,
         malattiaHours: Math.round(malattiaHours * 100) / 100,
-        assenzeGenericheHours: Math.round(assenzeGenericheHours * 100) / 100,
         totaleOreAssenze
       };
     }).sort((a, b) => a.dipName.localeCompare(b.dipName));
@@ -1089,25 +1092,21 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
   const handleExportCSV = () => {
     const headers = [
       "Risorsa",
-      "Tipo Profilo",
       "Macro Area",
       "Ore Ferie",
       "Giorni Ferie Equivalenti (~8h)",
       "Ore Permesso",
       "Ore Malattia/Maternita",
-      "Assenze Collaboratore P.IVA",
       "Totale Ore Assenze"
     ];
 
     const rows = filteredResourceStats.map(stat => [
       `"${stat.dipName.replace(/"/g, '""')}"`,
-      stat.isCollab ? "Collaboratore (P.IVA)" : "Dipendente",
       `"${stat.macroArea.replace(/"/g, '""')}"`,
       stat.ferieHours,
       (stat.ferieHours / 8).toFixed(1).replace('.', ','),
       stat.permessoHours,
       stat.malattiaHours,
-      stat.assenzeGenericheHours,
       stat.totaleOreAssenze
     ]);
 
@@ -1132,13 +1131,13 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
     const rowsHtml = filteredResourceStats.length === 0 ? `
       <tr>
         <td colspan="6" style="text-align: center; padding: 20px; color: #9ca3af; font-weight: 700;">
-          Nessun dato disponibile per i filtri selezionati.
+          Nessun dipendente trovato per i filtri selezionati.
         </td>
       </tr>
     ` : filteredResourceStats.map((stat, idx) => {
-      const ferieText = stat.isCollab ? '—' : `<strong>${stat.ferieHours} h</strong> <span class="days-sub">(~${(stat.ferieHours / 8).toFixed(1).replace('.0', '')} gg)</span>`;
-      const permessioniText = stat.isCollab ? '—' : `<strong>${stat.permessoHours} h</strong> <span class="days-sub">(~${(stat.permessoHours / 8).toFixed(1).replace('.0', '')} gg)</span>`;
-      const malattiaText = stat.isCollab ? '—' : `<strong>${stat.malattiaHours} h</strong> <span class="days-sub">(~${(stat.malattiaHours / 8).toFixed(1).replace('.0', '')} gg)</span>`;
+      const ferieText = `<strong>${stat.ferieHours} h</strong> <span class="days-sub">(~${(stat.ferieHours / 8).toFixed(1).replace('.0', '')} gg)</span>`;
+      const permessioniText = `<strong>${stat.permessoHours} h</strong> <span class="days-sub">(~${(stat.permessoHours / 8).toFixed(1).replace('.0', '')} gg)</span>`;
+      const malattiaText = `<strong>${stat.malattiaHours} h</strong> <span class="days-sub">(~${(stat.malattiaHours / 8).toFixed(1).replace('.0', '')} gg)</span>`;
       const totaleText = `<strong>${stat.totaleOreAssenze} h</strong> <span class="days-sub">(~${(stat.totaleOreAssenze / 8).toFixed(1).replace('.0', '')} gg)</span>`;
       const rowBg = idx % 2 === 1 ? 'background-color: #f9fafb;' : 'background-color: #ffffff;';
 
@@ -1146,7 +1145,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         <tr style="${rowBg}">
           <td style="padding: 5px 8px; border: 1px solid #d1d5db;">
             <div style="font-size: 10.5px; font-weight: 800; color: #111827;">${stat.dipName}</div>
-            <div style="font-size: 8.5px; font-weight: 600; color: #6b7280;">${stat.isCollab ? 'Collaboratore P.IVA' : 'Dipendente'}</div>
+            <div style="font-size: 8.5px; font-weight: 600; color: #2563eb;">Dipendente</div>
           </td>
           <td style="padding: 5px 8px; border: 1px solid #d1d5db; font-size: 10px; font-weight: 600; color: #374151;">
             ${stat.macroArea}
@@ -3260,10 +3259,8 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                               <BarChart2 className="w-3.5 h-3.5 text-indigo-500 opacity-60 group-hover:opacity-100 group-hover:scale-110 transition-all" />
                             </button>
                             <div className="flex items-center gap-1.5 mt-0.5">
-                              <span className={`px-1.5 py-0.2 rounded text-[9.5px] font-extrabold uppercase ${
-                                stat.isCollab ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'
-                              }`}>
-                                {stat.isCollab ? 'Collaboratore P.IVA' : 'Dipendente'}
+                              <span className="px-1.5 py-0.2 rounded text-[9.5px] font-extrabold uppercase bg-blue-100 text-blue-800">
+                                Dipendente
                               </span>
                               {stat.email && <span className="text-[10.5px] text-gray-400 font-normal">{stat.email}</span>}
                             </div>
@@ -3277,36 +3274,24 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                         </td>
 
                         <td className="p-3.5 text-center">
-                          {stat.isCollab ? (
-                            <span className="text-gray-400 font-medium">—</span>
-                          ) : (
-                            <div className="inline-flex flex-col items-center">
-                              <span className="text-sm font-black text-emerald-700">{stat.ferieHours} h</span>
-                              <span className="text-[10px] font-bold text-gray-500">~{(stat.ferieHours / 8).toFixed(1).replace('.0', '')} gg</span>
-                            </div>
-                          )}
+                          <div className="inline-flex flex-col items-center">
+                            <span className="text-sm font-black text-emerald-700">{stat.ferieHours} h</span>
+                            <span className="text-[10px] font-bold text-gray-500">~{(stat.ferieHours / 8).toFixed(1).replace('.0', '')} gg</span>
+                          </div>
                         </td>
 
                         <td className="p-3.5 text-center">
-                          {stat.isCollab ? (
-                            <span className="text-gray-400 font-medium">—</span>
-                          ) : (
-                            <div className="inline-flex flex-col items-center">
-                              <span className="text-sm font-black text-amber-700">{stat.permessoHours} h</span>
-                              <span className="text-[10px] font-bold text-gray-500">~{(stat.permessoHours / 8).toFixed(1).replace('.0', '')} gg</span>
-                            </div>
-                          )}
+                          <div className="inline-flex flex-col items-center">
+                            <span className="text-sm font-black text-amber-700">{stat.permessoHours} h</span>
+                            <span className="text-[10px] font-bold text-gray-500">~{(stat.permessoHours / 8).toFixed(1).replace('.0', '')} gg</span>
+                          </div>
                         </td>
 
                         <td className="p-3.5 text-center">
-                          {stat.isCollab ? (
-                            <span className="text-gray-400 font-medium">—</span>
-                          ) : (
-                            <div className="inline-flex flex-col items-center">
-                              <span className="text-sm font-black text-rose-700">{stat.malattiaHours} h</span>
-                              <span className="text-[10px] font-bold text-gray-500">~{(stat.malattiaHours / 8).toFixed(1).replace('.0', '')} gg</span>
-                            </div>
-                          )}
+                          <div className="inline-flex flex-col items-center">
+                            <span className="text-sm font-black text-rose-700">{stat.malattiaHours} h</span>
+                            <span className="text-[10px] font-bold text-gray-500">~{(stat.malattiaHours / 8).toFixed(1).replace('.0', '')} gg</span>
+                          </div>
                         </td>
 
                         <td className="p-3.5 text-center">
@@ -3328,48 +3313,29 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
           <>
             <div className="space-y-8 animate-in fade-in duration-200">
 
-        {/* Contatori Assenze Anno Corrente */}
-        <div className="mb-8 bg-gradient-to-r from-emerald-50/80 via-teal-50/60 to-indigo-50/80 p-5 rounded-3xl border border-emerald-100/90 shadow-sm animate-in fade-in zoom-in-95 duration-200">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4 border-b border-emerald-200/50 pb-3">
-            <div className="flex items-center gap-2">
-              <div className="p-2 bg-emerald-600 text-white rounded-xl shadow-xs">
-                <Clock className="w-4 h-4" />
-              </div>
-              <div>
-                <h3 className="text-sm font-black text-emerald-950 uppercase tracking-wide">
-                  Riepilogo Assenze Approvate {currentYear}
-                </h3>
-                <p className="text-[11px] font-semibold text-emerald-800/80">
-                  Risorsa: <strong className="text-emerald-950">{targetDipName || 'Seleziona risorsa'}</strong> {isCollaboratoreUser ? '(Collaboratore)' : '(Dipendente)'}
-                </p>
-              </div>
-            </div>
-            <span className="text-[10px] font-extrabold uppercase tracking-wider bg-white/80 text-emerald-800 px-3 py-1 rounded-full border border-emerald-200 shadow-2xs">
-              01 Gen - 31 Dic {currentYear}
-            </span>
-          </div>
-
-          {isCollaboratoreUser ? (
-            /* Vista per Collaboratori: Unico contatore generico Assenze */
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="bg-white/90 p-4 rounded-2xl border border-amber-200/80 shadow-xs flex items-center gap-4">
-                <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 font-extrabold text-xl flex items-center justify-center shrink-0">
-                  📅
+        {/* Contatori Assenze Anno Corrente (Solo Dipendenti) */}
+        {!isCollaboratoreUser && (
+          <div className="mb-8 bg-gradient-to-r from-emerald-50/80 via-teal-50/60 to-indigo-50/80 p-5 rounded-3xl border border-emerald-100/90 shadow-sm animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4 border-b border-emerald-200/50 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-emerald-600 text-white rounded-xl shadow-xs">
+                  <Clock className="w-4 h-4" />
                 </div>
                 <div>
-                  <span className="block text-[11px] font-extrabold text-amber-800 uppercase tracking-wider">Totale Ore Assenze</span>
-                  <div className="flex items-baseline gap-1.5 mt-0.5">
-                    <span className="text-2xl font-black text-amber-950">{yearlyStats.assenzeGenericheHours}</span>
-                    <span className="text-xs font-bold text-amber-800">ore</span>
-                    <span className="text-[11px] font-bold text-gray-500 ml-1">
-                      (~{(yearlyStats.assenzeGenericheHours / 8).toFixed(1).replace('.0', '')} gg)
-                    </span>
-                  </div>
+                  <h3 className="text-sm font-black text-emerald-950 uppercase tracking-wide">
+                    Riepilogo Assenze Approvate {currentYear}
+                  </h3>
+                  <p className="text-[11px] font-semibold text-emerald-800/80">
+                    Risorsa: <strong className="text-emerald-950">{targetDipName || 'Seleziona risorsa'}</strong> (Dipendente)
+                  </p>
                 </div>
               </div>
+              <span className="text-[10px] font-extrabold uppercase tracking-wider bg-white/80 text-emerald-800 px-3 py-1 rounded-full border border-emerald-200 shadow-2xs">
+                01 Gen - 31 Dic {currentYear}
+              </span>
             </div>
-          ) : (
-            /* Vista per Dipendenti: 3 Contatori specifici (Ferie, Permessi, Malattia) */
+
+            {/* 3 Contatori specifici per Dipendenti: Ferie, Permessi, Malattia */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               {/* Ore Ferie */}
               <div className="bg-white/90 p-4 rounded-2xl border border-emerald-200/80 shadow-xs flex items-center gap-3.5">
@@ -3422,8 +3388,8 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                 </div>
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
         
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-stretch">
           
@@ -3505,7 +3471,13 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                           type="date" 
                           required 
                           value={dataInizio}
-                          onChange={e => setDataInizio(e.target.value)}
+                          onChange={e => {
+                            const newStart = e.target.value;
+                            setDataInizio(newStart);
+                            if (dataFine && dataFine < newStart) {
+                              setDataFine(newStart);
+                            }
+                          }}
                           className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900 text-xs sm:text-sm"
                         />
                       </div>
@@ -3514,6 +3486,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                         <input 
                           type="date" 
                           required 
+                          min={dataInizio || undefined}
                           value={dataFine}
                           onChange={e => setDataFine(e.target.value)}
                           className="w-full p-3.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-green-500 transition shadow-inner font-medium text-green-900 text-xs sm:text-sm"
@@ -4305,7 +4278,13 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                       <input 
                         type="date"
                         value={modDataInizio}
-                        onChange={e => setModDataInizio(e.target.value)}
+                        onChange={e => {
+                          const newStart = e.target.value;
+                          setModDataInizio(newStart);
+                          if (modDataFine && modDataFine < newStart) {
+                            setModDataFine(newStart);
+                          }
+                        }}
                         className="w-full p-2.5 rounded-xl border border-slate-200 text-xs font-bold text-gray-800 bg-white outline-none focus:ring-2 focus:ring-indigo-500"
                       />
                     </div>
@@ -4314,6 +4293,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                       <label className="block text-xs font-bold text-gray-700 mb-1">Nuova Data Fine *</label>
                       <input 
                         type="date"
+                        min={modDataInizio || undefined}
                         value={modDataFine}
                         onChange={e => setModDataFine(e.target.value)}
                         className="w-full p-2.5 rounded-xl border border-slate-200 text-xs font-bold text-gray-800 bg-white outline-none focus:ring-2 focus:ring-indigo-500"

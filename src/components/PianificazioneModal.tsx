@@ -6,6 +6,15 @@ import { getStartOfWeek, addDays, getWeekNumber } from '../utils/date';
 import { addPendingNotification } from '../utils/pendingNotifications';
 import { queueMail } from '../utils/mailSender';
 import { isSoci } from '../pages/Impostazioni';
+
+const formatDate = (dateStr?: string): string => {
+  if (!dateStr) return '';
+  const parts = dateStr.split('-');
+  if (parts.length === 3) {
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  return dateStr;
+};
 import { 
   X, 
   CalendarDays, 
@@ -1814,48 +1823,121 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    {/* Settimana Inizio */}
-                    <div>
-                      <label className="block text-xs font-bold text-amber-950 mb-1">Settimana Inizio *</label>
-                      <select
-                        value={altreReqStartWeekId || selectedStartWeekId}
-                        onChange={e => setAltreReqStartWeekId(e.target.value)}
-                        className="w-full p-2 border border-amber-200 bg-white rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 shadow-2xs cursor-pointer"
-                      >
-                        {selectableWeekOptions.map(w => (
-                          <option key={w.id} value={w.id}>{w.label}</option>
-                        ))}
-                      </select>
-                    </div>
+                  {/* SELEZIONE DA CALENDARIO DATE CON EVIDENZA SETTIMANA */}
+                  {(() => {
+                    const altreStartOpt = selectableWeekOptions.find(o => o.id === (altreReqStartWeekId || selectedStartWeekId)) || selectableWeekOptions[0];
+                    const altreEndOpt = selectableWeekOptions.find(o => o.id === (altreReqEndWeekId || selectedEndWeekId)) || altreStartOpt;
+                    const altreTargetWeekIds = (altreStartOpt && altreEndOpt) ? getWeeksSpannedByDates(altreStartOpt.mondayStr, altreEndOpt.sundayStr) : [];
 
-                    {/* Settimana Fine */}
-                    <div>
-                      <label className="block text-xs font-bold text-amber-950 mb-1">Settimana Fine *</label>
-                      <select
-                        value={altreReqEndWeekId || selectedEndWeekId}
-                        onChange={e => setAltreReqEndWeekId(e.target.value)}
-                        className="w-full p-2 border border-amber-200 bg-white rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 shadow-2xs cursor-pointer"
-                      >
-                        {selectableWeekOptions.map(w => (
-                          <option key={w.id} value={w.id}>{w.label}</option>
-                        ))}
-                      </select>
-                    </div>
+                    const handleAltreReqDateChange = (dateStr: string, isStart: boolean) => {
+                      if (!dateStr) return;
+                      const d = new Date(dateStr);
+                      if (isNaN(d.getTime())) return;
+                      const monday = getStartOfWeek(d);
+                      const mY = monday.getFullYear();
+                      const mM = String(monday.getMonth() + 1).padStart(2, '0');
+                      const mD = String(monday.getDate()).padStart(2, '0');
+                      const monStr = `${mY}-${mM}-${mD}`;
 
-                    {/* Percentuale Carico */}
-                    <div>
-                      <label className="block text-xs font-bold text-amber-950 mb-1">Percentuale Carico *</label>
-                      <select
-                        value={altreReqPercentage}
-                        onChange={e => setAltreReqPercentage(e.target.value)}
-                        className="w-full p-2 border border-amber-200 bg-white rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 shadow-2xs cursor-pointer"
-                      >
-                        {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
-                          <option key={pct} value={pct}>{pct}%</option>
-                        ))}
-                      </select>
-                    </div>
+                      const matchedOpt = selectableWeekOptions.find(o => o.mondayStr === monStr);
+                      if (matchedOpt) {
+                        if (isStart) {
+                          setAltreReqStartWeekId(matchedOpt.id);
+                          const startIdx = selectableWeekOptions.findIndex(o => o.id === matchedOpt.id);
+                          const currentEndId = altreReqEndWeekId || selectedEndWeekId;
+                          const endIdx = selectableWeekOptions.findIndex(o => o.id === currentEndId);
+                          if (startIdx > endIdx) {
+                            setAltreReqEndWeekId(matchedOpt.id);
+                          }
+                        } else {
+                          const currentStartId = altreReqStartWeekId || selectedStartWeekId;
+                          const startIdx = selectableWeekOptions.findIndex(o => o.id === currentStartId);
+                          const endIdx = selectableWeekOptions.findIndex(o => o.id === matchedOpt.id);
+                          if (endIdx < startIdx) {
+                            setAltreReqStartWeekId(matchedOpt.id);
+                          }
+                          setAltreReqEndWeekId(matchedOpt.id);
+                        }
+                      }
+                    };
+
+                    return (
+                      <div className="bg-white/90 p-4 rounded-2xl border border-amber-200/80 shadow-xs space-y-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-[10px] font-black text-amber-900 uppercase tracking-wider mb-1.5 ml-0.5">
+                              📅 DATA INIZIO (SCEGLI DA CALENDARIO)
+                            </label>
+                            <input
+                              type="date"
+                              value={altreStartOpt?.mondayStr || ''}
+                              onChange={e => handleAltreReqDateChange(e.target.value, true)}
+                              className="w-full p-2.5 border border-amber-200 bg-amber-50/30 rounded-xl text-xs font-black text-amber-950 outline-none focus:ring-2 focus:ring-amber-500 shadow-2xs cursor-pointer"
+                            />
+                            {altreStartOpt && (
+                              <div className="mt-2 p-2 bg-amber-50/80 rounded-xl border border-amber-200/60 flex items-center gap-2">
+                                <span className="text-xs">📌</span>
+                                <div className="flex flex-col">
+                                  <span className="text-[9.5px] font-black text-amber-700 uppercase tracking-wider">Settimana di Inizio Riferimento</span>
+                                  <span className="text-xs font-black text-amber-950">{altreStartOpt.label}</span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-black text-amber-900 uppercase tracking-wider mb-1.5 ml-0.5">
+                              📅 DATA FINE (SCEGLI DA CALENDARIO)
+                            </label>
+                            <input
+                              type="date"
+                              min={altreStartOpt?.mondayStr || undefined}
+                              value={altreEndOpt?.sundayStr || ''}
+                              onChange={e => handleAltreReqDateChange(e.target.value, false)}
+                              className="w-full p-2.5 border border-amber-200 bg-amber-50/30 rounded-xl text-xs font-black text-amber-950 outline-none focus:ring-2 focus:ring-amber-500 shadow-2xs cursor-pointer"
+                            />
+                            {altreEndOpt && (
+                              <div className="mt-2 p-2 bg-amber-50/80 rounded-xl border border-amber-200/60 flex items-center gap-2">
+                                <span className="text-xs">📌</span>
+                                <div className="flex flex-col">
+                                  <span className="text-[9.5px] font-black text-amber-700 uppercase tracking-wider">Settimana di Fine Riferimento</span>
+                                  <span className="text-xs font-black text-amber-950">{altreEndOpt.label}</span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Dynamic Summary Banner */}
+                        {altreStartOpt && altreEndOpt && (
+                          <div className="flex flex-wrap items-center justify-between gap-2 bg-amber-50/90 px-3.5 py-2 rounded-xl border border-amber-200/80 text-xs font-bold text-amber-950">
+                            <div className="flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full bg-amber-600 animate-pulse"></span>
+                              <span>
+                                Durata Selezionata: <strong className="text-amber-800 font-extrabold">{altreTargetWeekIds.length} {altreTargetWeekIds.length === 1 ? 'settimana' : 'settimane'}</strong>
+                              </span>
+                            </div>
+                            <span className="text-[11px] text-amber-800/80 font-semibold">
+                              (da Lun {formatDate(altreStartOpt.mondayStr)} a Dom {formatDate(altreEndOpt.sundayStr)})
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* Percentuale Carico */}
+                  <div>
+                    <label className="block text-xs font-bold text-amber-950 mb-1">Percentuale Carico Richiesta *</label>
+                    <select
+                      value={altreReqPercentage}
+                      onChange={e => setAltreReqPercentage(e.target.value)}
+                      className="w-full p-2.5 border border-amber-200 bg-white rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 shadow-2xs cursor-pointer"
+                    >
+                      {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
+                        <option key={pct} value={pct}>{pct}%</option>
+                      ))}
+                    </select>
                   </div>
 
                   {/* Nota per il responsabile */}

@@ -39,13 +39,16 @@ export const ResourceAvailabilityModal: React.FC<ResourceAvailabilityModalProps>
       // 1. Salva documento in Firestore nella collezione 'segnalazioni_disponibilita'
       await addDoc(collection(db, 'segnalazioni_disponibilita'), {
         risorsaNome: myAssociatedName,
+        dipendenteNome: myAssociatedName,
         risorsaEmail: userEmail || '',
         macroArea: macroArea,
         settimana: `${currentYear}-W${currentWeekNum}`,
         settimanaLabel: weekLabel,
         nota: nota.trim(),
+        note: nota.trim(),
         stato: 'in_attesa',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        createdAt: new Date().toISOString()
       });
 
       // 2. Recupera email coordinatori di macroArea + fallback admin

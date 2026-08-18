@@ -202,6 +202,26 @@ const generateWeeksExtended = (baseDate: Date, numWeeks: number): WeekInfo[] => 
   return weeks;
 };
 
+// Calcola tutte le settimane comprese tra due date YYYY-MM-DD
+const getWeeksSpannedByDates = (startDateStr: string, endDateStr: string): string[] => {
+  if (!startDateStr || !endDateStr) return [];
+  const list: string[] = [];
+  const start = new Date(startDateStr);
+  const end = new Date(endDateStr);
+  
+  let curr = getStartOfWeek(start);
+  while (curr <= end) {
+    const wkNum = getWeekNumber(curr);
+    const y = curr.getFullYear();
+    const wkId = `${y}-W${wkNum}`;
+    if (!list.includes(wkId)) {
+      list.push(wkId);
+    }
+    curr = addDays(curr, 7);
+  }
+  return list;
+};
+
 export default function Commesse() {
   const { 
     isAdmin = false, 
@@ -217,6 +237,7 @@ export default function Commesse() {
     coordinatori = [], 
     pmsEmails = [],
     prioritaCommesse = {},
+    loadAllCommesse,
     refreshData,
     refreshDataIfStale
   } = useAuth();
@@ -577,337 +598,6 @@ export default function Commesse() {
     }, 4500);
   };
 
-  const handleImportCommesseChiuse = async () => {
-    const list = [
-      {
-        codiceCommessa: 'SF260260A',
-        anno: '2026',
-        tipologia: 'SF',
-        cliente: 'TENUTA DI CASTELFALFI S.P.A.',
-        titolo: 'FATTIBILITÀ ADEGUAMENTO IMPIANTI TERMICI LA SPINA FIENILE',
-        nome: 'SF260260A - TENUTA DI CASTELFALFI S.P.A. - FATTIBILITÀ ADEGUAMENTO IMPIANTI TERMICI LA SPINA FIENILE',
-        societa: 'INGEGNO P&C S.R.L.',
-        stato: 'Chiusa',
-        fatturazione: 'IMPORTO DEFINITO',
-        fatturabile: 'SI',
-        dataInizio: '2026-02-05',
-        dataFine: '2026-02-05',
-        dataChiusura: '2026-02-05',
-        responsabile: 'BADALASSI FEDERICO',
-        pm: [],
-        progetti: [
-          {
-            descrizione: 'FATTIBILITÀ ADEGUAMENTO IMPIANTI TERMICI LA SPINA FIENILE',
-            pm: '',
-            utentiDaAbilitare: [],
-            sgq: 'NO'
-          }
-        ]
-      },
-      {
-        codiceCommessa: 'SF260181A',
-        anno: '2026',
-        tipologia: 'SF',
-        cliente: 'POMEZIA ENGINEERING & FINANCE SERVICES S.P.A.',
-        titolo: 'PFTE SEPARAZIONE SCARICHI MENARINI POMEZIA',
-        nome: 'SF260181A - POMEZIA ENGINEERING & FINANCE SERVICES S.P.A. - PFTE SEPARAZIONE SCARICHI MENARINI POMEZIA',
-        societa: 'INGEGNO P&C S.R.L.',
-        stato: 'Chiusa',
-        fatturazione: 'IMPORTO DEFINITO',
-        fatturabile: 'SI',
-        dataInizio: '2026-01-28',
-        dataFine: '2026-01-28',
-        dataChiusura: '2026-01-28',
-        responsabile: 'PROFETI ANDREA',
-        pm: ['ROMANELLO ANDREA'],
-        progetti: [
-          {
-            descrizione: 'PFTE SEPARAZIONE SCARICHI MENARINI POMEZIA',
-            pm: 'ROMANELLO ANDREA',
-            utentiDaAbilitare: [],
-            sgq: 'NO'
-          }
-        ]
-      },
-      {
-        codiceCommessa: 'S260061B',
-        anno: '2026',
-        tipologia: 'S',
-        cliente: 'GSK VACCINES S.R.L.',
-        titolo: 'SICUREZZA RIPARAZIONE ARIA OSSIDAZIONE WWTP ROSIA',
-        nome: 'S260061B - GSK VACCINES S.R.L. - SICUREZZA RIPARAZIONE ARIA OSSIDAZIONE WWTP ROSIA',
-        societa: 'INGEGNO P&C S.R.L.',
-        stato: 'Chiusa',
-        fatturazione: 'IMPORTO DEFINITO',
-        fatturabile: 'SI',
-        dataInizio: '2026-02-03',
-        dataFine: '2026-02-03',
-        dataChiusura: '2026-02-03',
-        responsabile: 'PROFETI ANDREA',
-        pm: [],
-        progetti: [
-          {
-            descrizione: 'SICUREZZA RIPARAZIONE ARIA OSSIDAZIONE WWTP ROSIA',
-            pm: '',
-            utentiDaAbilitare: [],
-            sgq: 'NO'
-          }
-        ]
-      },
-      {
-        codiceCommessa: 'PE260305A',
-        anno: '2026',
-        tipologia: 'PE',
-        cliente: 'HOTEL MERIDIANA SRL',
-        titolo: 'CONSULENZA CONTENZIOSO RISCHIO IDRAULICO',
-        nome: 'PE260305A - HOTEL MERIDIANA SRL - CONSULENZA CONTENZIOSO RISCHIO IDRAULICO',
-        societa: 'INGEGNO P&C S.R.L.',
-        stato: 'Chiusa',
-        fatturazione: 'IMPORTO DEFINITO',
-        fatturabile: 'SI',
-        dataInizio: '2026-01-23',
-        dataFine: '2026-01-23',
-        dataChiusura: '2026-01-23',
-        responsabile: 'PROFETI ANDREA',
-        pm: ['TURI FRANCESCA'],
-        progetti: [
-          {
-            descrizione: 'CONSULENZA CONTENZIOSO RISCHIO IDRAULICO',
-            pm: 'TURI FRANCESCA',
-            utentiDaAbilitare: [],
-            sgq: 'NO'
-          }
-        ]
-      },
-      {
-        codiceCommessa: 'M26P406A',
-        anno: '2026',
-        tipologia: 'M',
-        cliente: 'PROFETI GUERRINO',
-        titolo: 'EDITING ABITAZIONE',
-        nome: 'M26P406A - PROFETI GUERRINO - EDITING ABITAZIONE',
-        societa: 'INGEGNO P&C S.R.L.',
-        stato: 'Chiusa',
-        fatturazione: '',
-        fatturabile: 'NO',
-        dataInizio: '2026-01-20',
-        dataFine: '2026-01-20',
-        dataChiusura: '2026-01-20',
-        responsabile: 'PROFETI ANDREA',
-        pm: ['ROMANELLO ANDREA'],
-        progetti: [
-          {
-            descrizione: 'EDITING ABITAZIONE',
-            pm: 'ROMANELLO ANDREA',
-            utentiDaAbilitare: [],
-            sgq: 'NO'
-          }
-        ]
-      },
-      {
-        codiceCommessa: 'CS260275A',
-        anno: '2026',
-        tipologia: 'CS',
-        cliente: 'TECNOWALL SRL',
-        titolo: 'ISTANZA OT23 - 2026',
-        nome: 'CS260275A - TECNOWALL SRL - ISTANZA OT23 - 2026',
-        societa: 'INGEGNO P&C S.R.L.',
-        stato: 'Chiusa',
-        fatturazione: 'IMPORTO DEFINITO',
-        fatturabile: 'SI',
-        dataInizio: '2026-01-26',
-        dataFine: '2026-01-26',
-        dataChiusura: '2026-01-26',
-        responsabile: 'VOTINO FEDERICA',
-        pm: [],
-        progetti: [
-          {
-            descrizione: 'ISTANZA OT23 - 2026',
-            pm: '',
-            utentiDaAbilitare: [],
-            sgq: 'NO'
-          }
-        ]
-      },
-      {
-        codiceCommessa: 'CS260207A',
-        anno: '2026',
-        tipologia: 'CS',
-        cliente: 'EUROINOX S.R.L.',
-        titolo: 'ISTANZA OT23 - 2026',
-        nome: 'CS260207A - EUROINOX S.R.L. - ISTANZA OT23 - 2026',
-        societa: 'INGEGNO P&C S.R.L.',
-        stato: 'Chiusa',
-        fatturazione: 'IMPORTO DEFINITO',
-        fatturabile: 'SI',
-        dataInizio: '2026-02-04',
-        dataFine: '2026-02-04',
-        dataChiusura: '2026-02-04',
-        responsabile: 'VOTINO FEDERICA',
-        pm: [],
-        progetti: [
-          {
-            descrizione: 'ISTANZA OT23 - 2026',
-            pm: '',
-            utentiDaAbilitare: [],
-            sgq: 'NO'
-          }
-        ]
-      },
-      {
-        codiceCommessa: 'CS260192A',
-        anno: '2026',
-        tipologia: 'CS',
-        cliente: '95 METRI QUADRI S.N.C. DI BENEDETTO & VERONICA TRONCI',
-        titolo: 'DENUNCIA VARIAZIONE TARI',
-        nome: 'CS260192A - 95 METRI QUADRI S.N.C. DI BENEDETTO & VERONICA TRONCI - DENUNCIA VARIAZIONE TARI',
-        societa: 'INGEGNO P&C S.R.L.',
-        stato: 'Chiusa',
-        fatturazione: 'IMPORTO DEFINITO',
-        fatturabile: 'SI',
-        dataInizio: '2026-03-16',
-        dataFine: '2026-03-16',
-        dataChiusura: '2026-03-16',
-        responsabile: 'VOTINO FEDERICA',
-        pm: [],
-        progetti: [
-          {
-            descrizione: 'DENUNCIA VARIAZIONE TARI',
-            pm: '',
-            utentiDaAbilitare: [],
-            sgq: 'NO'
-          }
-        ]
-      },
-      {
-        codiceCommessa: 'CS260168A',
-        anno: '2026',
-        tipologia: 'CS',
-        cliente: 'M.S. FORMAZIONE S.R.L.',
-        titolo: 'CONSULENZA ISO 9001:2015',
-        nome: 'CS260168A - M.S. FORMAZIONE S.R.L. - CONSULENZA ISO 9001:2015',
-        societa: 'INGEGNO P&C S.R.L.',
-        stato: 'Chiusa',
-        fatturazione: 'IMPORTO DEFINITO',
-        fatturabile: 'SI',
-        dataInizio: '2026-03-19',
-        dataFine: '2026-03-19',
-        dataChiusura: '2026-03-19',
-        responsabile: 'VOTINO FEDERICA',
-        pm: [],
-        progetti: [
-          {
-            descrizione: 'CONSULENZA ISO 9001:2015',
-            pm: '',
-            utentiDaAbilitare: [],
-            sgq: 'NO'
-          }
-        ]
-      },
-      {
-        codiceCommessa: 'CS260109A',
-        anno: '2026',
-        tipologia: 'CS',
-        cliente: 'DIGIONE S.R.L.',
-        titolo: 'AGGIORNAMENTO DVR AZIENDALE',
-        nome: 'CS260109A - DIGIONE S.R.L. - AGGIORNAMENTO DVR AZIENDALE',
-        societa: 'INGEGNO P&C S.R.L.',
-        stato: 'Chiusa',
-        fatturazione: 'IMPORTO DEFINITO',
-        fatturabile: 'SI',
-        dataInizio: '2026-01-15',
-        dataFine: '2026-01-15',
-        dataChiusura: '2026-01-15',
-        responsabile: 'VOTINO FEDERICA',
-        pm: [],
-        progetti: [
-          {
-            descrizione: 'AGGIORNAMENTO DVR AZIENDALE',
-            pm: '',
-            utentiDaAbilitare: [],
-            sgq: 'NO'
-          }
-        ]
-      },
-      {
-        codiceCommessa: 'CO260309A',
-        anno: '2026',
-        tipologia: 'CO',
-        cliente: 'DAF COSTRUZIONI STRADALI S.R.L.',
-        titolo: 'GARA RIMOZIONE RIFIUTI EX POLVERIERA PALLERONE AULLA',
-        nome: 'CO260309A - DAF COSTRUZIONI STRADALI S.R.L. - GARA RIMOZIONE RIFIUTI EX POLVERIERA PALLERONE AULLA',
-        societa: 'INGEGNO P&C S.R.L.',
-        stato: 'Chiusa',
-        fatturazione: 'IMPORTO DEFINITO',
-        fatturabile: 'SI',
-        dataInizio: '2026-03-05',
-        dataFine: '2026-03-05',
-        dataChiusura: '2026-03-05',
-        responsabile: 'PROFETI ANDREA',
-        pm: ['TURI FRANCESCA'],
-        progetti: [
-          {
-            descrizione: 'GARA RIMOZIONE RIFIUTI EX POLVERIERA PALLERONE AULLA',
-            pm: 'TURI FRANCESCA',
-            utentiDaAbilitare: [],
-            sgq: 'NO'
-          }
-        ]
-      },
-      {
-        codiceCommessa: 'A260061A',
-        anno: '2026',
-        tipologia: 'A',
-        cliente: 'GSK VACCINES S.R.L.',
-        titolo: 'CONSULENZA PARERE ADF NUOVI LABORATORI S59 SIENA',
-        nome: 'A260061A - GSK VACCINES S.R.L. - CONSULENZA PARERE ADF NUOVI LABORATORI S59 SIENA',
-        societa: 'INGEGNO P&C S.R.L.',
-        stato: 'Chiusa',
-        fatturazione: 'IMPORTO DEFINITO',
-        fatturabile: 'SI',
-        dataInizio: '2026-01-15',
-        dataFine: '2026-01-15',
-        dataChiusura: '2026-01-15',
-        responsabile: 'PROFETI ANDREA',
-        pm: ['TURI FRANCESCA'],
-        progetti: [
-          {
-            descrizione: 'CONSULENZA PARERE ADF NUOVI LABORATORI S59 SIENA',
-            pm: 'TURI FRANCESCA',
-            utentiDaAbilitare: [],
-            sgq: 'NO'
-          }
-        ]
-      }
-    ];
-
-    try {
-      for (const item of list) {
-        const existing = commesse.find((c: any) => c.codiceCommessa?.trim().toUpperCase() === item.codiceCommessa);
-        const docRef = doc(db, 'catalogo_commesse', existing ? existing.id : item.codiceCommessa);
-        await setDoc(docRef, item, { merge: true });
-      }
-      showToast("12 commesse chiuse inserite/aggiornate con successo!", "success");
-    } catch (err) {
-      console.error(err);
-      showToast("Errore durante l'inserimento delle commesse chiuse.", "error");
-    }
-  };
-
-  useEffect(() => {
-    if (commesse && commesse.length > 0) {
-      const targetCodes = ['SF260260A', 'SF260181A', 'S260061B', 'PE260305A', 'M26P406A', 'CS260275A', 'CS260207A', 'CS260192A', 'CS260168A', 'CS260109A', 'CO260309A', 'A260061A'];
-      const missingOrOpen = targetCodes.some(code => {
-        const found = commesse.find((c: any) => c.codiceCommessa?.trim().toUpperCase() === code);
-        return !found || found.stato !== 'Chiusa';
-      });
-
-      if (missingOrOpen) {
-        handleImportCommesseChiuse();
-      }
-    }
-  }, [commesse]);
-
   // Helper per calcolare le date di inizio e fine lunedì/domenica di una settimana ID
   const getWeekDateRange = (wkId: string) => {
     const parts = wkId.split('-W');
@@ -977,6 +667,35 @@ export default function Commesse() {
     }
     return options;
   }, []);
+
+  const handleReqDateInputChange = (dateStr: string, isStart: boolean) => {
+    if (!dateStr) return;
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return;
+    const monday = getStartOfWeek(d);
+    const mY = monday.getFullYear();
+    const mM = String(monday.getMonth() + 1).padStart(2, '0');
+    const mD = String(monday.getDate()).padStart(2, '0');
+    const monStr = `${mY}-${mM}-${mD}`;
+
+    const sunday = addDays(monday, 6);
+    const sY = sunday.getFullYear();
+    const sM = String(sunday.getMonth() + 1).padStart(2, '0');
+    const sD = String(sunday.getDate()).padStart(2, '0');
+    const sunStr = `${sY}-${sM}-${sD}`;
+
+    if (isStart) {
+      setReqDataInizio(monStr);
+      if (reqDataFine && reqDataFine < sunStr) {
+        setReqDataFine(sunStr);
+      }
+    } else {
+      setReqDataFine(sunStr);
+      if (reqDataInizio && reqDataInizio > monStr) {
+        setReqDataInizio(monStr);
+      }
+    }
+  };
 
   const [planningModal, setPlanningModal] = useState<{
     isOpen: boolean;
@@ -3973,7 +3692,10 @@ export default function Commesse() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setCatalogoStatoFilter('Tutte')}
+                      onClick={() => {
+                        setCatalogoStatoFilter('Tutte');
+                        loadAllCommesse?.();
+                      }}
                       className={`px-3 py-1.5 rounded-lg text-[10.5px] font-black transition-all cursor-pointer ${
                         catalogoStatoFilter === 'Tutte'
                           ? 'bg-emerald-600 text-white shadow-xs'
@@ -3985,7 +3707,10 @@ export default function Commesse() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setCatalogoStatoFilter('Chiusa')}
+                      onClick={() => {
+                        setCatalogoStatoFilter('Chiusa');
+                        loadAllCommesse?.();
+                      }}
                       className={`px-3 py-1.5 rounded-lg text-[10.5px] font-black transition-all cursor-pointer ${
                         catalogoStatoFilter === 'Chiusa'
                           ? 'bg-emerald-600 text-white shadow-xs'
@@ -5248,47 +4973,76 @@ export default function Commesse() {
 
                   {/* COLONNA DESTRA */}
                   <div className="space-y-4 flex flex-col justify-between">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Settimana Inizio *</label>
-                        <select
-                          value={(() => {
-                            const match = selectableWeekOptions.find(o => o.mondayStr === reqDataInizio);
-                            return match ? match.id : (selectableWeekOptions[0]?.id || '');
-                          })()}
-                          onChange={e => {
-                            const id = e.target.value;
-                            const startOpt = selectableWeekOptions.find(o => o.id === id);
-                            if (startOpt) setReqDataInizio(startOpt.mondayStr);
-                          }}
-                          className="w-full p-3 border border-gray-200 bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 shadow-xs cursor-pointer"
-                        >
-                          {selectableWeekOptions.map(opt => (
-                            <option key={`tab-req-start-${opt.id}`} value={opt.id}>{opt.label}</option>
-                          ))}
-                        </select>
-                      </div>
+                    {/* SELEZIONE DA CALENDARIO DATE CON EVIDENZA SETTIMANA */}
+                    {(() => {
+                      const startOpt = selectableWeekOptions.find(o => o.mondayStr === reqDataInizio) || selectableWeekOptions[0];
+                      const endOpt = selectableWeekOptions.find(o => o.sundayStr === reqDataFine) || startOpt;
+                      const targetWeekIds = (reqDataInizio && reqDataFine) ? getWeeksSpannedByDates(reqDataInizio, reqDataFine) : [];
 
-                      <div>
-                        <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Settimana Fine *</label>
-                        <select
-                          value={(() => {
-                            const match = selectableWeekOptions.find(o => o.sundayStr === reqDataFine);
-                            return match ? match.id : (selectableWeekOptions[0]?.id || '');
-                          })()}
-                          onChange={e => {
-                            const id = e.target.value;
-                            const endOpt = selectableWeekOptions.find(o => o.id === id);
-                            if (endOpt) setReqDataFine(endOpt.sundayStr);
-                          }}
-                          className="w-full p-3 border border-gray-200 bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 shadow-xs cursor-pointer"
-                        >
-                          {selectableWeekOptions.map(opt => (
-                            <option key={`tab-req-end-${opt.id}`} value={opt.id}>{opt.label}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
+                      return (
+                        <div className="bg-white/90 p-4 rounded-2xl border border-indigo-100 shadow-xs space-y-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-[10px] font-black text-indigo-900 uppercase tracking-wider mb-1.5 ml-0.5">
+                                📅 DATA INIZIO (SCEGLI DA CALENDARIO)
+                              </label>
+                              <input
+                                type="date"
+                                value={reqDataInizio || startOpt?.mondayStr || ''}
+                                onChange={e => handleReqDateInputChange(e.target.value, true)}
+                                className="w-full p-2.5 border border-indigo-200 bg-indigo-50/30 rounded-xl text-xs font-black text-indigo-950 outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs cursor-pointer"
+                              />
+                              {startOpt && (
+                                <div className="mt-2 p-2 bg-indigo-50/80 rounded-xl border border-indigo-100 flex items-center gap-2">
+                                  <span className="text-xs">📌</span>
+                                  <div className="flex flex-col">
+                                    <span className="text-[9.5px] font-black text-indigo-600 uppercase tracking-wider">Settimana di Inizio Riferimento</span>
+                                    <span className="text-xs font-black text-indigo-950">{startOpt.label}</span>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-black text-indigo-900 uppercase tracking-wider mb-1.5 ml-0.5">
+                                📅 DATA FINE (SCEGLI DA CALENDARIO)
+                              </label>
+                              <input
+                                type="date"
+                                min={reqDataInizio || undefined}
+                                value={reqDataFine || endOpt?.sundayStr || ''}
+                                onChange={e => handleReqDateInputChange(e.target.value, false)}
+                                className="w-full p-2.5 border border-indigo-200 bg-indigo-50/30 rounded-xl text-xs font-black text-indigo-950 outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs cursor-pointer"
+                              />
+                              {endOpt && (
+                                <div className="mt-2 p-2 bg-indigo-50/80 rounded-xl border border-indigo-100 flex items-center gap-2">
+                                  <span className="text-xs">📌</span>
+                                  <div className="flex flex-col">
+                                    <span className="text-[9.5px] font-black text-indigo-600 uppercase tracking-wider">Settimana di Fine Riferimento</span>
+                                    <span className="text-xs font-black text-indigo-950">{endOpt.label}</span>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Dynamic Summary Banner */}
+                          {startOpt && endOpt && (
+                            <div className="flex flex-wrap items-center justify-between gap-2 bg-indigo-50/80 px-3 py-2 rounded-xl border border-indigo-100 text-xs font-bold text-indigo-900">
+                              <div className="flex items-center gap-2">
+                                <span className="w-2 h-2 rounded-full bg-indigo-600 animate-pulse"></span>
+                                <span>
+                                  Durata Selezionata: <strong className="text-indigo-700 font-extrabold">{targetWeekIds.length} {targetWeekIds.length === 1 ? 'settimana' : 'settimane'}</strong>
+                                </span>
+                              </div>
+                              <span className="text-[11px] text-indigo-600/80 font-semibold">
+                                (da Lun {formatDate(reqDataInizio || startOpt.mondayStr)} a Dom {formatDate(reqDataFine || endOpt.sundayStr)})
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
 
                     <div>
                       <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1 flex items-center justify-between">
@@ -5427,47 +5181,76 @@ export default function Commesse() {
 
                   {/* Colonna Destra */}
                   <div className="space-y-4 flex flex-col justify-between">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Settimana Inizio *</label>
-                        <select
-                          value={(() => {
-                            const match = selectableWeekOptions.find(o => o.mondayStr === reqDataInizio);
-                            return match ? match.id : (selectableWeekOptions[0]?.id || '');
-                          })()}
-                          onChange={e => {
-                            const id = e.target.value;
-                            const startOpt = selectableWeekOptions.find(o => o.id === id);
-                            if (startOpt) setReqDataInizio(startOpt.mondayStr);
-                          }}
-                          className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
-                        >
-                          {selectableWeekOptions.map(opt => (
-                            <option key={`req-start-${opt.id}`} value={opt.id}>{opt.label}</option>
-                          ))}
-                        </select>
-                      </div>
+                    {/* SELEZIONE DA CALENDARIO DATE CON EVIDENZA SETTIMANA */}
+                    {(() => {
+                      const startOpt = selectableWeekOptions.find(o => o.mondayStr === reqDataInizio) || selectableWeekOptions[0];
+                      const endOpt = selectableWeekOptions.find(o => o.sundayStr === reqDataFine) || startOpt;
+                      const targetWeekIds = (reqDataInizio && reqDataFine) ? getWeeksSpannedByDates(reqDataInizio, reqDataFine) : [];
 
-                      <div>
-                        <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Settimana Fine *</label>
-                        <select
-                          value={(() => {
-                            const match = selectableWeekOptions.find(o => o.sundayStr === reqDataFine);
-                            return match ? match.id : (selectableWeekOptions[0]?.id || '');
-                          })()}
-                          onChange={e => {
-                            const id = e.target.value;
-                            const endOpt = selectableWeekOptions.find(o => o.id === id);
-                            if (endOpt) setReqDataFine(endOpt.sundayStr);
-                          }}
-                          className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
-                        >
-                          {selectableWeekOptions.map(opt => (
-                            <option key={`req-end-${opt.id}`} value={opt.id}>{opt.label}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
+                      return (
+                        <div className="bg-white/90 p-4 rounded-2xl border border-indigo-100 shadow-xs space-y-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-[10px] font-black text-indigo-900 uppercase tracking-wider mb-1.5 ml-0.5">
+                                📅 DATA INIZIO (SCEGLI DA CALENDARIO)
+                              </label>
+                              <input
+                                type="date"
+                                value={reqDataInizio || startOpt?.mondayStr || ''}
+                                onChange={e => handleReqDateInputChange(e.target.value, true)}
+                                className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
+                              />
+                              {startOpt && (
+                                <div className="mt-2 p-2 bg-indigo-50/80 rounded-xl border border-indigo-100 flex items-center gap-2">
+                                  <span className="text-xs">📌</span>
+                                  <div className="flex flex-col">
+                                    <span className="text-[9.5px] font-black text-indigo-600 uppercase tracking-wider">Settimana di Inizio Riferimento</span>
+                                    <span className="text-xs font-black text-indigo-950">{startOpt.label}</span>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-black text-indigo-900 uppercase tracking-wider mb-1.5 ml-0.5">
+                                📅 DATA FINE (SCEGLI DA CALENDARIO)
+                              </label>
+                              <input
+                                type="date"
+                                min={reqDataInizio || undefined}
+                                value={reqDataFine || endOpt?.sundayStr || ''}
+                                onChange={e => handleReqDateInputChange(e.target.value, false)}
+                                className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
+                              />
+                              {endOpt && (
+                                <div className="mt-2 p-2 bg-indigo-50/80 rounded-xl border border-indigo-100 flex items-center gap-2">
+                                  <span className="text-xs">📌</span>
+                                  <div className="flex flex-col">
+                                    <span className="text-[9.5px] font-black text-indigo-600 uppercase tracking-wider">Settimana di Fine Riferimento</span>
+                                    <span className="text-xs font-black text-indigo-950">{endOpt.label}</span>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Dynamic Summary Banner */}
+                          {startOpt && endOpt && (
+                            <div className="flex flex-wrap items-center justify-between gap-2 bg-indigo-50/80 px-3 py-2 rounded-xl border border-indigo-100 text-xs font-bold text-indigo-900">
+                              <div className="flex items-center gap-2">
+                                <span className="w-2 h-2 rounded-full bg-indigo-600 animate-pulse"></span>
+                                <span>
+                                  Durata Selezionata: <strong className="text-indigo-700 font-extrabold">{targetWeekIds.length} {targetWeekIds.length === 1 ? 'settimana' : 'settimane'}</strong>
+                                </span>
+                              </div>
+                              <span className="text-[11px] text-indigo-600/80 font-semibold">
+                                (da Lun {formatDate(reqDataInizio || startOpt.mondayStr)} a Dom {formatDate(reqDataFine || endOpt.sundayStr)})
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
 
                     <div>
                       <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1 flex items-center justify-between">

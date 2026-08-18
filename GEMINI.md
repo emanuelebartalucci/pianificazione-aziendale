@@ -17,9 +17,9 @@ Dopo ogni modifica di codice o rilascio di funzionalità, **DEVI SEMPRE AGGIORNA
 ---
 
 ## 🏷️ 3. Procedura di Versionamento
-- **SOLO SU RICHIESTA DELL'UTENTE**: Aggiorna il numero di versione e la data nel footer dell'app (`src/config/version.ts`) **SOLTANTO QUANDO L'UTENTE LO CHIEDE ESPLICITAMENTE** (es. "aggiorna la versione della webapp", "rilascia una nuova versione").
-- **NON incrementare la versione ad ogni singola modifica o richiesta**: Durante le lavorazioni ordinarie mantieni invariata la versione esistente finché l'utente non richiede un rilascio formale.
-- Quando l'utente richiede un rilascio o nuovo numero di versione: incrementa la versione (es. v1.0.8 → v1.0.9) e aggiorna i riferimenti nei documenti generati.
+- **Avvio di un Nuovo Branch di Versione o Richiesta Esplicita**: Aggiorna subito il numero di versione e la data nel footer dell'app (`src/config/version.ts`) e nei documenti di progetto all'inizio dei lavori quando si passa o si lavora su un nuovo branch di versione (es. branch `v1.0.10`) oppure quando l'utente richiede esplicitamente un incremento di versione.
+- **Stabilità della Versione durante lo Sviluppo sul Branch**: Durante le lavorazioni ordinarie all'interno dello stesso branch/versione, mantieni invariata la versione esistente finché non si passa a un nuovo branch di rilascio o l'utente richiede un nuovo avanzamento di versione.
+- **Allineamento Documenti**: Quando la versione viene aggiornata, allinea contestualmente i riferimenti in `File Utili/Guida Web App.md`, `File Utili/Changelog_Pianificazione_Aziendale.md` e nei file `.docx` rigenerati.
 
 ---
 
