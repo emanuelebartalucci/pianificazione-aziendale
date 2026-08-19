@@ -534,12 +534,10 @@ export default function Commesse() {
 
 
 
-
-  
   const selectableClientiPerFiltro = useMemo(() => {
     const set = new Set<string>();
     commesse.forEach(c => {
-      if (c.cliente) set.add(c.cliente.trim());
+      if ((c.stato || 'Aperta') !== 'Chiusa' && c.cliente) set.add(c.cliente.trim());
     });
     return Array.from(set).sort();
   }, [commesse]);
@@ -547,7 +545,7 @@ export default function Commesse() {
   const selectablePMPerFiltro = useMemo(() => {
     const names: string[] = [];
     commesse.forEach(c => {
-      if (c.responsabile && c.responsabile.trim()) {
+      if ((c.stato || 'Aperta') !== 'Chiusa' && c.responsabile && c.responsabile.trim()) {
         const raw = c.responsabile.trim();
         const matchedDip = dipendenti.find(d => areNamesEqual(d.nome, raw));
         const canonicalName = matchedDip ? matchedDip.nome : raw;
@@ -562,7 +560,7 @@ export default function Commesse() {
   const selectableTipologiePerFiltro = useMemo(() => {
     const set = new Set<string>();
     commesse.forEach(c => {
-      if (c.tipologia) set.add(c.tipologia.trim());
+      if ((c.stato || 'Aperta') !== 'Chiusa' && c.tipologia) set.add(c.tipologia.trim());
     });
     return Array.from(set).sort();
   }, [commesse]);
@@ -1038,9 +1036,9 @@ export default function Commesse() {
     document.body.removeChild(link);
   };
 
-  // Filtra commesse con filtri avanzati ed in ordine alfabetico
+  // Filtra commesse con filtri avanzati ed in ordine alfabetico (solo commesse Aperte nella timeline/pianificazione)
   const filteredCommesse = useMemo(() => {
-    let list = commesse;
+    let list = commesse.filter(c => (c.stato || 'Aperta') !== 'Chiusa');
 
     // Filtro per multi-selezione commesse
     if (selectedCommessaIdsFilter.length > 0) {
@@ -2715,7 +2713,7 @@ export default function Commesse() {
                             <button
                               type="button"
                               onClick={() => {
-                                const filteredComms = commesse.filter(c => {
+                                const filteredComms = commesse.filter(c => (c.stato || 'Aperta') !== 'Chiusa').filter(c => {
                                   const query = commessaTextQuery.toLowerCase().trim();
                                   if (!query) return true;
                                   return (c.nome || '').toLowerCase().includes(query) || (c.cliente || '').toLowerCase().includes(query);
@@ -2741,7 +2739,7 @@ export default function Commesse() {
                             {(() => {
                               const search = commessaTextQuery.toLowerCase().trim();
                               
-                              let listToDisplay = commesse;
+                              let listToDisplay = commesse.filter(c => (c.stato || 'Aperta') !== 'Chiusa');
                               if (!isAdmin && myAssociatedName) {
                                 const assignedCommessaIds = new Set<string>();
                                 Object.entries(assignments).forEach(([key, listAss]) => {
