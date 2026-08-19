@@ -863,7 +863,7 @@ export default function Presenze() {
           getDocs(query(collection(db, 'richieste_weekend'), where('data', '>=', sixtyDaysAgoIso))),
           getDocs(query(collection(db, 'presenze'), where('stato', '==', 'Inviato'))),
           getDocs(query(collection(db, 'presenze'), where('richiestaSblocco.stato', '==', 'In attesa'))),
-          getDocs(query(collection(db, 'richieste_weekend'), where('stato', '==', 'In attesa')))
+          getDocs(query(collection(db, 'richieste_weekend'), where('stato', 'in', ['In attesa', 'Richiesta Annullamento', 'Richiesta Modifica'])))
         ]);
 
         const dataMap: Record<string, RapportinoPresenze> = {};

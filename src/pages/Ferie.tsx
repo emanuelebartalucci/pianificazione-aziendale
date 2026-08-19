@@ -113,7 +113,7 @@ interface FerieContentProps {
 }
 
 const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: FerieContentProps) => {
-  const { userEmail, coordinatori = [], commesse = [], isDev, refreshData } = useAuth();
+  const { userEmail, coordinatori = [], commesse = [], isDev, hrEmails = [], refreshData } = useAuth();
   const [viewMode, setViewMode] = useState<'calendario' | 'tabella'>('calendario');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' | 'info' } | null>(null);
   const [chiusureAziendali, setChiusureAziendali] = useState<Array<{ dataInizio: string; dataFine: string }>>([]);
@@ -1812,7 +1812,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
     }
     setModLoading(true);
     try {
-      const isHROrAdminAction = isHR || isAdmin;
+      const isHROrAdminAction = isHR;
 
       if (isHROrAdminAction) {
         if (modTipoAzione === 'annullamento') {
@@ -1898,8 +1898,8 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
           richiestaModifica: payloadModifica
         });
 
-        // Invia notifica email all'HR (Chiara)
-        const hrEmails = ['chiara@ingegno06.it', 'aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it'];
+        // Invia notifica email all'HR
+        const targetHREmails = hrEmails && hrEmails.length > 0 ? hrEmails : ['cballerini@ingegno06.it'];
         const subject = `[Notifica HR] ${newStato} da parte di ${modifyingRequest.dipendenteName}`;
         const dateDesc = modifyingRequest.dataInizio && modifyingRequest.dataFine && modifyingRequest.dataInizio !== modifyingRequest.dataFine
           ? `dal ${formatDate(modifyingRequest.dataInizio)} al ${formatDate(modifyingRequest.dataFine)}`
@@ -1922,7 +1922,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         `;
         const plainText = `Ciao HR Team,\n\nRichiesta ${newStato} da parte di ${modifyingRequest.dipendenteName}.\nMotivazione: ${modMotivazione.trim()}\n\nAccedi alla piattaforma per gestire la richiesta.`;
 
-        for (const email of hrEmails) {
+        for (const email of targetHREmails) {
           await queueMail(email, subject, htmlBody, plainText);
         }
 
@@ -2669,7 +2669,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
               hourSuffix = ' GI';
             }
 
-            const isPowerUser = isHR || isAdmin;
+            const isPowerUser = isHR;
 
             // Finestra informativa dettagliata (tooltip al passaggio del mouse)
             let itemTitle = `${req.dipendenteName} - ${t.label}`;
@@ -4148,7 +4148,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                               }
                             }
 
-                            const isClickable = !!req && (isHR || isAdmin) && !isSpecialDay && !isCessato;
+                            const isClickable = !!req && isHR && !isSpecialDay && !isCessato;
 
                             return (
                               <td 

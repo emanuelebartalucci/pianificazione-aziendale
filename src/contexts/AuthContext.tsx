@@ -61,6 +61,7 @@ interface AuthContextType {
   loading: boolean;
   isAdmin: boolean;
   isHR: boolean;
+  hrEmails: string[];
   isDev: boolean;
   // isSenior mantenuto nell'interfaccia per retrocompatibilità (Navbar badge), ma sempre false
   isSenior: boolean;
@@ -495,6 +496,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       loading,
       isAdmin,
       isHR,
+      hrEmails: dynamicHrs,
       isDev,
       isSenior,
       myAssociatedName,

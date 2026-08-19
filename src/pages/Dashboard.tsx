@@ -247,9 +247,9 @@ export default function Dashboard() {
       // 5. Notifiche HR
       if (isHR) {
         const [ferieSnap, presenzeSnap, weekendSnap, sugSnap] = await Promise.all([
-          getDocs(query(collection(db, 'richieste_ferie'), where('stato', '==', 'In attesa'))),
+          getDocs(query(collection(db, 'richieste_ferie'), where('stato', 'in', ['In attesa', 'Richiesta Annullamento', 'Richiesta Modifica']))),
           getDocs(query(collection(db, 'presenze'), where('stato', '==', 'Inviato'))),
-          getDocs(query(collection(db, 'richieste_weekend'), where('stato', '==', 'In attesa'))),
+          getDocs(query(collection(db, 'richieste_weekend'), where('stato', 'in', ['In attesa', 'Richiesta Annullamento', 'Richiesta Modifica']))),
           getDocs(query(collection(db, 'suggerimenti'), where('stato', '==', 'In attesa')))
         ]);
 
@@ -258,7 +258,7 @@ export default function Dashboard() {
         ferieSnap.forEach(docSnap => {
           const data = docSnap.data();
           const dateLimit = data.dataFine || data.dataInizio || data.data || '';
-          if (!dateLimit || dateLimit >= todayStr) {
+          if (!dateLimit || dateLimit >= todayStr || data.stato === 'Richiesta Annullamento' || data.stato === 'Richiesta Modifica') {
             pendingFerie++;
           }
         });
@@ -285,7 +285,7 @@ export default function Dashboard() {
     return () => {
       window.removeEventListener('app-refresh-dashboard', handleRefresh);
     };
-  }, [myAssociatedName, isHR, isAdmin, user?.uid]);
+  }, [myAssociatedName, isHR, isAdmin, user?.uid, userEmail]);
 
   const applyCorporateClosuresToEmployees = async (_noticeId: string, _periods: Array<{ tipo: 'singolo' | 'intervallo'; inizio: string; fine: string }>) => {
     // Rimossa la propagazione automatica delle ferie per le chiusure aziendali
