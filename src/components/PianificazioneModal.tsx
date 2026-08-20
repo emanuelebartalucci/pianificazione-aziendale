@@ -4,8 +4,8 @@ import { db } from '../services/firebase';
 import { doc, writeBatch, collection, addDoc } from 'firebase/firestore';
 import { getStartOfWeek, addDays, getWeekNumber } from '../utils/date';
 import { addPendingNotification } from '../utils/pendingNotifications';
-import { queueMail } from '../utils/mailSender';
 import { isSoci } from '../pages/Impostazioni';
+import { createUserNotification } from '../utils/userNotificationService';
 
 const formatDate = (dateStr?: string): string => {
   if (!dateStr) return '';
@@ -92,7 +92,8 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     assegnazioni = {},
     pmsEmails = [],
     prioritaCommesse = {},
-    approvedLeaves = []
+    approvedLeaves = [],
+    refreshData
   } = useAuth();
 
   const [activeTab, setActiveTab] = useState<'commessa' | 'risorsa' | 'sostituisci' | 'altre-commesse'>(initialTab);
@@ -304,8 +305,15 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     if (isAdmin || isDev || isSoci(myAssociatedName)) {
       return openCommesse;
     }
-    return openCommesse.filter(c => isUserPmOrResp(c));
-  }, [commesse, isAdmin, isDev, myAssociatedName, userEmail, myDip]);
+    const filtered = openCommesse.filter(c => isUserPmOrResp(c));
+    if (initialCommessaId && !filtered.some(c => c.id === initialCommessaId)) {
+      const initComm = commesse.find(c => c.id === initialCommessaId);
+      if (initComm) {
+        return [initComm, ...filtered];
+      }
+    }
+    return filtered;
+  }, [commesse, isAdmin, isDev, myAssociatedName, userEmail, myDip, initialCommessaId]);
 
   // Verifica se l'utente collegato è PM o Responsabile della commessa attualmente selezionata
   const isPmOfSelectedCommessa = useMemo(() => {
@@ -314,9 +322,9 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     return isUserPmOrResp(comm);
   }, [selectedCommessaId, commesse, userEmail, myAssociatedName, myDip]);
 
-  // Dipendenti direttamente assegnabili (Admin vedono tutti; Coordinatori/PM vedono solo la propria area di appartenenza)
+  // Dipendenti direttamente assegnabili (Admin, Dev e Soci vedono tutti; Coordinatori/PM vedono solo la propria area di appartenenza)
   const selectableDipendentiForUser = useMemo(() => {
-    if (isAdmin) return filteredDipendenti;
+    if (isAdmin || isDev || isSoci(myAssociatedName)) return filteredDipendenti;
     if (myCoordinatedAreas.length > 0) {
       return filteredDipendenti.filter(d => d.macroArea && myCoordinatedAreas.includes(d.macroArea));
     }
@@ -324,7 +332,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
       return filteredDipendenti.filter(d => d.macroArea === myDip.macroArea);
     }
     return filteredDipendenti;
-  }, [filteredDipendenti, isAdmin, myCoordinatedAreas, myDip]);
+  }, [filteredDipendenti, isAdmin, isDev, myAssociatedName, myCoordinatedAreas, myDip]);
 
   // Helper date e settimane
   const getWeeksSpannedByDates = (startStr: string, endStr: string): string[] => {
@@ -439,7 +447,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     const assignedNames = new Set(Object.keys(assignedMap));
     let assignedList = Object.values(assignedMap);
 
-    if (!isAdmin && isPM && myDip?.macroArea && myCoordinatedAreas.length === 0) {
+    if (!isAdmin && !isDev && !isSoci(myAssociatedName) && isPM && myDip?.macroArea && myCoordinatedAreas.length === 0) {
       assignedList = assignedList.filter(r => {
         const dipObj = filteredDipendenti.find(d => d.nome === r.nome);
         return dipObj?.macroArea === myDip.macroArea;
@@ -452,7 +460,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
       risorseAssegnateAllaCommessa: assignedList,
       risorseNonAssegnateAllaCommessa: nonAssignedList
     };
-  }, [selectedCommessaId, allocDataInizio, allocDataFine, draftAssignments, filteredDipendenti, selectableDipendentiForUser, isAdmin, isPM, myDip, myCoordinatedAreas]);
+  }, [selectedCommessaId, allocDataInizio, allocDataFine, draftAssignments, filteredDipendenti, selectableDipendentiForUser, isAdmin, isDev, isSoci, myAssociatedName, isPM, myDip, myCoordinatedAreas]);
 
   // Commesse Assegnate alla Risorsa nel periodo (usa la bozza locale draftAssignments)
   const commesseAssegnateAllaRisorsa = useMemo(() => {
@@ -777,6 +785,18 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
       const isCoordinatoreUser = (coordinatori || []).some(c => c.email?.toLowerCase() === userEmail?.toLowerCase()) || myCoordinatedAreas.length > 0;
       const coordSelfChangesByCommessa: Record<string, { commessaName: string; weekLabels: string[]; pmsAndRespEmails: string[] }> = {};
 
+      interface ChangeItem {
+        type: 'aggiunto' | 'rimosso' | 'modificato';
+        commessaId: string;
+        commessaName: string;
+        weekId: string;
+        weekLabel: string;
+        oldPct?: number;
+        newPct?: number;
+      }
+
+      const affectedEmployees = new Map<string, { email: string; name: string; changes: ChangeItem[] }>();
+
       allKeys.forEach(key => {
         const currentList = draftAssignments[key] || [];
         const dbList = assegnazioni[key] || [];
@@ -798,12 +818,63 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
           if (parts.length >= 3) {
             const resName = parts.slice(0, -2).join('-');
             const wkId = parts.slice(-2).join('-');
-            const targetDip = dipendenti.find(d => d.nome === resName);
+            const targetDip = dipendenti.find(d => areNamesEqual(d.nome, resName) || (d.email && d.email.toLowerCase() === resName.toLowerCase()));
             const isSelfRes = (targetDip?.email?.toLowerCase() === (userEmail || '').toLowerCase()) || areNamesEqual(resName, myAssociatedName || undefined);
             
             if (targetDip && targetDip.email && !isSelfRes) {
-              const wkLabel = `Sett. ${wkId.split('-W')[1] || ''}`;
-              addPendingNotification(resName, targetDip.email, wkLabel, `Aggiornate assegnazioni commessa`, userEmail || undefined, myAssociatedName || undefined);
+              const emailKey = targetDip.email.toLowerCase();
+              if (!affectedEmployees.has(emailKey)) {
+                affectedEmployees.set(emailKey, { email: targetDip.email, name: targetDip.nome || resName, changes: [] });
+              }
+              const empRecord = affectedEmployees.get(emailKey)!;
+
+              const matchedWkOpt = selectableWeekOptions.find(o => o.id === wkId);
+              const wkLabel = matchedWkOpt ? matchedWkOpt.label : `Sett. ${wkId.split('-W')[1] || wkId}`;
+
+              // Rileva variazioni puntuali per ciascuna commessa
+              const allCommIds = new Set([
+                ...currentList.map((a: any) => a.commessaId),
+                ...dbList.map((a: any) => a.commessaId)
+              ]);
+
+              allCommIds.forEach(commId => {
+                const currItem = currentList.find((a: any) => a.commessaId === commId);
+                const dbItem = dbList.find((a: any) => a.commessaId === commId);
+                const commObj = commesse.find(c => c.id === commId);
+                const commName = commObj?.nome || currItem?.commessaName || dbItem?.commessaName || commId;
+
+                if (currItem && !dbItem) {
+                  empRecord.changes.push({
+                    type: 'aggiunto',
+                    commessaId: commId,
+                    commessaName: commName,
+                    weekId: wkId,
+                    weekLabel: wkLabel,
+                    newPct: currItem.percentuale
+                  });
+                } else if (!currItem && dbItem) {
+                  empRecord.changes.push({
+                    type: 'rimosso',
+                    commessaId: commId,
+                    commessaName: commName,
+                    weekId: wkId,
+                    weekLabel: wkLabel,
+                    oldPct: dbItem.percentuale
+                  });
+                } else if (currItem && dbItem && currItem.percentuale !== dbItem.percentuale) {
+                  empRecord.changes.push({
+                    type: 'modificato',
+                    commessaId: commId,
+                    commessaName: commName,
+                    weekId: wkId,
+                    weekLabel: wkLabel,
+                    oldPct: dbItem.percentuale,
+                    newPct: currItem.percentuale
+                  });
+                }
+              });
+
+              addPendingNotification(targetDip.nome || resName, targetDip.email, `Sett. ${wkId.split('-W')[1] || ''}`, `Aggiornate assegnazioni commessa`, userEmail || undefined, myAssociatedName || undefined);
             }
 
             // Traccia notifiche per Coordinatori su commesse altrui
@@ -865,25 +936,65 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
 
       if (writeCount > 0) {
         await batch.commit();
+        if (refreshData) {
+          await refreshData();
+        }
 
-        // Spedisci notifiche email ai responsabili/PM per le variazioni del Coordinatore
-        for (const commId of Object.keys(coordSelfChangesByCommessa)) {
-          const item = coordSelfChangesByCommessa[commId];
-          if (item.pmsAndRespEmails.length > 0) {
-            const subject = `[Pianificazione] Aggiornamento percentuale Coordinatore su commessa ${item.commessaName}`;
-            const htmlBody = `
-              <div style="font-family: Arial, sans-serif; color: #1e293b; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px;">
-                <h2 style="color: #4f46e5; margin-top: 0;">ℹ️ Variazione Carico da Coordinatore</h2>
-                <p>Ciao,</p>
-                <p>Ti informiamo che il coordinatore <strong>${myAssociatedName || userEmail}</strong> ha aggiornato la propria percentuale di presenza sulla tua commessa <strong>${item.commessaName}</strong>.</p>
-                <p><strong>Settimane interessate:</strong> ${item.weekLabels.join(', ')}</p>
-                <p style="margin-top:16px;">Accedi alla <strong>Pianificazione del Personale e Carichi</strong> per visualizzare il dettaglio aggiornato.</p>
-              </div>
-            `;
-            for (const email of item.pmsAndRespEmails) {
-              await queueMail(email, subject, htmlBody).catch(e => console.error("Errore invio mail a responsabile:", e));
+        // Invia notifiche personali informative specifiche alle risorse coinvolte
+        for (const info of affectedEmployees.values()) {
+          if (info.changes.length === 0) continue;
+
+          const singleCommName = info.changes.length === 1 ? info.changes[0].commessaName : '';
+          const directLink = singleCommName ? `/commesse?search=${encodeURIComponent(singleCommName)}` : '/commesse';
+
+          const allRimosso = info.changes.every(c => c.type === 'rimosso');
+          const allAggiunto = info.changes.every(c => c.type === 'aggiunto');
+          const allModificato = info.changes.every(c => c.type === 'modificato');
+
+          let notifTitle = '📅 Pianificazione Aggiornata';
+          let notifMsg = '';
+
+          if (allRimosso) {
+            notifTitle = '🔴 Rimozione da Commessa';
+            if (info.changes.length === 1) {
+              const c = info.changes[0];
+              notifMsg = `Sei stato rimosso dalla commessa "${c.commessaName}" (${c.weekLabel}).`;
+            } else {
+              notifMsg = `Sei stato rimosso dalle seguenti commesse:\n` + info.changes.map(c => `• "${c.commessaName}" (${c.weekLabel})`).join('\n');
             }
+          } else if (allAggiunto) {
+            notifTitle = '🟢 Nuova Assegnazione Commessa';
+            if (info.changes.length === 1) {
+              const c = info.changes[0];
+              notifMsg = `Sei stato assegnato alla commessa "${c.commessaName}" (${c.weekLabel}) con impegno del ${c.newPct}%.`;
+            } else {
+              notifMsg = `Sei stato assegnato alle seguenti commesse:\n` + info.changes.map(c => `• "${c.commessaName}" (${c.weekLabel}) - ${c.newPct}%`).join('\n');
+            }
+          } else if (allModificato) {
+            notifTitle = '📊 Variazione Impegno Commessa';
+            if (info.changes.length === 1) {
+              const c = info.changes[0];
+              notifMsg = `Il tuo impegno sulla commessa "${c.commessaName}" (${c.weekLabel}) è stato modificato da ${c.oldPct}% a ${c.newPct}%.`;
+            } else {
+              notifMsg = `Modifiche impegno commesse:\n` + info.changes.map(c => `• "${c.commessaName}" (${c.weekLabel}): ${c.oldPct}% → ${c.newPct}%`).join('\n');
+            }
+          } else {
+            notifTitle = '📅 Pianificazione Aggiornata';
+            notifMsg = `Aggiornamenti sulle tue commesse:\n` + info.changes.map(c => {
+              if (c.type === 'rimosso') return `• Rimosso da "${c.commessaName}" (${c.weekLabel})`;
+              if (c.type === 'aggiunto') return `• Assegnato a "${c.commessaName}" (${c.weekLabel}) al ${c.newPct}%`;
+              return `• "${c.commessaName}" (${c.weekLabel}): ${c.oldPct}% → ${c.newPct}%`;
+            }).join('\n');
           }
+
+          await createUserNotification({
+            destinatarioEmail: info.email,
+            destinatarioNome: info.name,
+            titolo: notifTitle,
+            messaggio: notifMsg,
+            tipo: 'pianificazione_aggiornata',
+            link: directLink
+          });
         }
       }
 
@@ -1734,41 +1845,6 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                         stato: 'in_attesa',
                         createdAt: new Date().toISOString()
                       });
-
-                      if (targetComm) {
-                        const pmsAndRespNames = [targetComm.responsabile, ...(Array.isArray(targetComm.pm) ? targetComm.pm : [targetComm.pm])].filter(Boolean);
-                        const recipientEmails: string[] = [];
-                        pmsAndRespNames.forEach(t => {
-                          const matchedDip = dipendenti.find(d => d.email && (areNamesEqual(d.nome, String(t)) || d.email.toLowerCase().includes(String(t).toLowerCase())));
-                          if (matchedDip?.email && matchedDip.email.toLowerCase() !== userEmail.toLowerCase()) {
-                            if (!recipientEmails.includes(matchedDip.email.toLowerCase())) {
-                              recipientEmails.push(matchedDip.email.toLowerCase());
-                            }
-                          }
-                        });
-
-                        if (recipientEmails.length > 0) {
-                          const subject = `[Pianificazione] Richiesta inserimento risorsa in commessa ${commName}`;
-                          const htmlBody = `
-                            <div style="font-family: Arial, sans-serif; color: #1e293b; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px;">
-                              <h2 style="color: #d97706; margin-top: 0;">📥 Richiesta Inserimento in Commessa</h2>
-                              <p>Ciao,</p>
-                              <p>Il coordinatore <strong>${myAssociatedName || userEmail}</strong> ha inviato una richiesta di inserimento per la risorsa <strong>${resTarget}</strong> sulla tua commessa <strong>${commName}</strong>.</p>
-                              <table border="0" cellpadding="6" cellspacing="0" style="font-size:13px;color:#374151;width:100%;margin-top:12px;">
-                                <tr><td style="font-weight:bold;width:180px">Commessa:</td><td>${commName}</td></tr>
-                                <tr><td style="font-weight:bold">Risorsa Proposta:</td><td><strong style="color:#4f46e5">${resTarget}</strong></td></tr>
-                                <tr><td style="font-weight:bold">Periodo:</td><td>dal ${dataInizio} al ${dataFine} (${startOpt?.label || ''} - ${endOpt?.label || ''})</td></tr>
-                                <tr><td style="font-weight:bold">Carico Richiesto:</td><td>${altreReqPercentage}%</td></tr>
-                                ${altreReqNota ? `<tr><td style="font-weight:bold">Nota:</td><td><em>${altreReqNota}</em></td></tr>` : ''}
-                              </table>
-                              <p style="margin-top:16px;">Accedi alla <strong>Pianificazione del Personale e Carichi</strong> per valutare ed approvare la richiesta.</p>
-                            </div>
-                          `;
-                          for (const email of recipientEmails) {
-                            await queueMail(email, subject, htmlBody).catch(e => console.error("Errore invio mail richiesta:", e));
-                          }
-                        }
-                      }
 
                       alert(`Richiesta per la commessa "${commName}" inoltrata con successo al responsabile!`);
                       setAltreReqCommessaId('');

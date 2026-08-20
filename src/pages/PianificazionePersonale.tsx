@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useAuth, isTechnicalUser, type Dipendente } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, doc, writeBatch, addDoc, updateDoc, deleteDoc, query, where, getDocs, onSnapshot, limit } from 'firebase/firestore';
@@ -11,7 +12,7 @@ import { ResourceAvailabilityModal } from '../components/ResourceAvailabilityMod
 import { addPendingNotification, getPendingNotifications, clearPendingNotifications, sendAllPendingNotifications } from '../utils/pendingNotifications';
 import { isCollaboratore, isSoci } from './Impostazioni';
 import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
-import { queueMail } from '../utils/mailSender';
+import { createUserNotification } from '../utils/userNotificationService';
 
 const MACRO_AREE = ['Disegnatori', 'Ingegneria', 'Sicurezza Cantieri', 'Consulenza Sicurezza', 'Amministrazione'] as const;
 type MacroArea = typeof MACRO_AREE[number];
@@ -152,6 +153,7 @@ export default function PianificazionePersonale() {
   const { 
     isAdmin = false, 
     isDev = false,
+    impersonatedEmail = null,
     dipendenti = [], 
     commesse = [], 
     coordinatori = [], 
@@ -166,6 +168,7 @@ export default function PianificazionePersonale() {
 
   // Aree coordinate dall'utente loggato (fonte autorevole: collezione coordinatori)
   const myCoordinatedAreas = useMemo((): string[] => {
+    if (isDev && !impersonatedEmail) return [];
     const areas = new Set<string>();
     const uClean = (userEmail || '').toLowerCase().trim();
     const nClean = (myAssociatedName || '').toLowerCase().trim();
@@ -233,6 +236,7 @@ export default function PianificazionePersonale() {
 
   const canUserManageRequest = (r: any): boolean => {
     if (!r || r.stato !== 'in_attesa') return false;
+    if (isDev && !impersonatedEmail) return false;
 
     // 1. Il richiedente NON può MAI approvare o rifiutare le proprie richieste
     if (isSelfRequester(r)) return false;
@@ -635,6 +639,16 @@ export default function PianificazionePersonale() {
       }, 100);
     }
   }, [commesse, selectableWeekOptions]);
+
+  // Tooltip galleggiante intelligente fuori dal flusso (Portal) per evitare tagli o overflow
+  const [hoveredCellTooltip, setHoveredCellTooltip] = useState<{
+    rect: DOMRect;
+    dipNome: string;
+    wkLabel: string;
+    list: { commessaName: string; percentuale: number }[];
+    leaves: { giorno: string; dettagli: string }[];
+    isFullLeave: boolean;
+  } | null>(null);
 
   // Auto-cleaner per eliminare automaticamente le assegnazioni residue su risorse in ferie per l'intera settimana
   // (Disattivato in useEffect per evitare loop continui di re-render)
@@ -1098,6 +1112,10 @@ export default function PianificazionePersonale() {
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
 
   const fetchSegnalazioni = async () => {
+    if (isDev && !impersonatedEmail) {
+      setSegnalazioniDisponibilita([]);
+      return;
+    }
     try {
       const qDisp = query(collection(db, 'segnalazioni_disponibilita'), where('stato', '==', 'in_attesa'));
       const snap = await getDocs(qDisp);
@@ -1112,8 +1130,12 @@ export default function PianificazionePersonale() {
   };
 
   useEffect(() => {
+    if (isDev && !impersonatedEmail) {
+      setSegnalazioniDisponibilita([]);
+      return;
+    }
     fetchSegnalazioni();
-  }, []);
+  }, [isDev, impersonatedEmail]);
 
   // Carica lo storico delle segnalazioni degli ultimi 30 giorni on-demand (zero spreco letture)
   const fetchHistoryDisponibilita = async () => {
@@ -1129,9 +1151,11 @@ export default function PianificazionePersonale() {
       snap.forEach(docSnap => {
         const data = docSnap.data();
         const dateStr = data.timestamp || data.createdAt || '';
-        // Includi solo segnalazioni degli ultimi 30 giorni
+        // Includi solo segnalazioni degli ultimi 30 giorni relative alla macro-area coordinata
         if (!dateStr || dateStr >= thirtyDaysAgo) {
-          list.push({ id: docSnap.id, ...data });
+          if (myCoordinatedAreas.includes(data.macroArea)) {
+            list.push({ id: docSnap.id, ...data });
+          }
         }
       });
       list.sort((a, b) => (b.timestamp || b.createdAt || '').localeCompare(a.timestamp || a.createdAt || ''));
@@ -1267,85 +1291,6 @@ export default function PianificazionePersonale() {
         createdAt: new Date().toISOString()
       });
 
-      const richiedente = myAssociatedName || userEmail;
-
-      if (finalTipo === 'inserimento_commessa') {
-        // Invio E-mail al RESPONSABILE DI COMMESSA ed ai PM della commessa
-        const managerEmails: string[] = [];
-        if (commResp) {
-          const respDip = dipendenti.find(d => d.nome && areNamesEqual(d.nome, commResp));
-          if (respDip && respDip.email) managerEmails.push(respDip.email.toLowerCase().trim());
-        }
-
-        if (commObj?.pm) {
-          const pmList = Array.isArray(commObj.pm) ? commObj.pm : [commObj.pm];
-          pmList.forEach(pName => {
-            const pmDip = dipendenti.find(d => d.nome && areNamesEqual(d.nome, pName));
-            if (pmDip && pmDip.email) managerEmails.push(pmDip.email.toLowerCase().trim());
-          });
-        }
-
-        coordinatori.forEach(c => {
-          if (c.email) {
-            const coordDip = dipendenti.find(d => d.email && d.email.toLowerCase().trim() === c.email.toLowerCase().trim());
-            const cName = coordDip ? coordDip.nome : '';
-            if (cName && (areNamesEqual(cName, commResp) || (commObj?.pm && String(commObj.pm).includes(cName)))) {
-              managerEmails.push(c.email.toLowerCase().trim());
-            }
-          }
-        });
-
-        const uniqueManagerEmails = Array.from(new Set(managerEmails)).filter(e => e && e !== userEmail.toLowerCase().trim());
-
-        if (uniqueManagerEmails.length > 0) {
-          const targetRes = reqPreferredResource || richiedente;
-          const subject = `[Richiesta Inserimento Commessa] ${commName} (${targetRes})`;
-          const htmlBody = `
-            <p>Ciao <strong>${commResp || 'Responsabile Commessa'}</strong>,</p>
-            <p>È stata inviata una richiesta di inserimento in programmazione per la commessa <strong>${commName}</strong> di cui sei responsabile/PM.</p>
-            <table border="0" cellpadding="6" cellspacing="0" style="font-size:13px;color:#374151;width:100%">
-              <tr><td style="font-weight:bold;width:180px">Commessa:</td><td>${commName}</td></tr>
-              <tr><td style="font-weight:bold">Richiedente:</td><td>${richiedente} (${userEmail})</td></tr>
-              <tr><td style="font-weight:bold">Risorsa da Inserire:</td><td><strong style="color:#4f46e5">${targetRes}</strong></td></tr>
-              <tr><td style="font-weight:bold">Periodo:</td><td>${reqDataInizio} → ${reqDataFine}</td></tr>
-              <tr><td style="font-weight:bold">Carico Richiesto:</td><td>${reqPercentuale}%</td></tr>
-              ${reqNota ? `<tr><td style="font-weight:bold">Nota:</td><td><em>${reqNota}</em></td></tr>` : ''}
-            </table>
-            <p style="margin-top:16px">Accedi alla <strong>Pianificazione del Personale e Carichi</strong> per approvare o rifiutare la richiesta di inserimento.</p>
-          `;
-          for (const email of uniqueManagerEmails) {
-            await queueMail(email, subject, htmlBody);
-          }
-        }
-      } else {
-        // Invio E-mail ai Coordinatori dell'area richiesta
-        const coordAreaEmails = coordinatori
-          .filter(c => c.area === reqAreaTarget && c.email)
-          .map(c => c.email.toLowerCase());
-        
-        if (coordAreaEmails.length > 0) {
-          const subject = `[Richiesta Personale] Richiesta risorsa ${reqAreaTarget} per commessa ${commName}`;
-          const htmlBody = `
-            <p>Ciao Coordinatore,</p>
-            <p>È stata ricevuta una nuova richiesta di personale per l'area <strong>${reqAreaTarget}</strong>.</p>
-            <table border="0" cellpadding="6" cellspacing="0" style="font-size:13px;color:#374151;width:100%">
-              <tr><td style="font-weight:bold;width:180px">Commessa:</td><td>${commName}</td></tr>
-              <tr><td style="font-weight:bold">Richiedente:</td><td>${richiedente} (${userEmail})</td></tr>
-              <tr><td style="font-weight:bold">Periodo:</td><td>${reqDataInizio} → ${reqDataFine}</td></tr>
-              <tr><td style="font-weight:bold">Carico Richiesto:</td><td>${reqPercentuale}%</td></tr>
-              ${reqPreferredResource ? `<tr><td style="font-weight:bold">Risorsa Preferita:</td><td><strong style="color:#4f46e5">${reqPreferredResource}</strong></td></tr>` : ''}
-              ${reqNota ? `<tr><td style="font-weight:bold">Nota:</td><td><em>${reqNota}</em></td></tr>` : ''}
-            </table>
-            <p style="margin-top:16px">Accedi alla <strong>Pianificazione del Personale e Carichi</strong> per gestire questa richiesta.</p>
-          `;
-          for (const email of coordAreaEmails) {
-            if (email.toLowerCase() !== userEmail.toLowerCase()) {
-              await queueMail(email, subject, htmlBody);
-            }
-          }
-        }
-      }
-      
       showToast(`Richiesta inviata con successo!`, "success");
       setIsRequestModalOpen(false);
       setReqCommessaId('');
@@ -1435,26 +1380,6 @@ export default function PianificazionePersonale() {
       
       await batch.commit();
 
-      // Notifica al richiedente dell'approvazione (se non è se stesso)
-      const isSelfRequestor = (req.richiedenteEmail && req.richiedenteEmail.toLowerCase() === userEmail.toLowerCase()) || areNamesEqual(req.richiedenteNome, myAssociatedName);
-      if (req.richiedenteEmail && !isSelfRequestor) {
-        const areaLabel = req.area || 'Disegnatori';
-        const subject = isCancellation 
-          ? `[Approvato Annullamento] Rimosso ${risorsaNome} da ${req.commessaName}`
-          : `[Approvata] Richiesta ${areaLabel} per ${req.commessaName}`;
-        const htmlBody = isCancellation ? `
-          <p>Ciao <strong>${req.richiedenteNome || req.richiedenteEmail}</strong>,</p>
-          <p>La tua richiesta di <strong style="color:#e11d48">rimozione della risorsa ${risorsaNome}</strong> dalla commessa <strong>${req.commessaName}</strong> è stata <strong style="color:#059669">approvata</strong>.</p>
-          <p>La risorsa è stata rimossa dalla commessa per il periodo ${req.dataInizio} → ${req.dataFine}.</p>
-        ` : `
-          <p>Ciao <strong>${req.richiedenteNome || req.richiedenteEmail}</strong>,</p>
-          <p>La tua richiesta di personale dell'area <strong>${areaLabel}</strong> per la commessa <strong>${req.commessaName}</strong> è stata <strong style="color:#059669">approvata</strong>.</p>
-          <p>Risorsa assegnata: <strong>${risorsaNome}</strong></p>
-          <p>Periodo: ${req.dataInizio} → ${req.dataFine} | Carico: ${req.percentuale}%</p>
-        `;
-        await queueMail(req.richiedenteEmail, subject, htmlBody);
-      }
-
       showToast(isCancellation ? `Annullamento approvato: ${risorsaNome} rimosso dalla commessa!` : `Richiesta approvata per ${risorsaNome}!`, "success");
     } catch (err) {
       console.error("Errore approvazione richiesta:", err);
@@ -1540,26 +1465,6 @@ export default function PianificazionePersonale() {
         try {
           const reqRef = doc(db, 'richieste_disegnatori', reqId);
           await updateDoc(reqRef, { stato: 'rifiutata' });
-
-          // Invia email di notifica al richiedente dell'esito (rifiutata)
-          if (targetReq && targetReq.richiedenteEmail) {
-            const areaLabel = targetReq.area || 'Disegnatori';
-            const commName = targetReq.commessaName || 'Commessa';
-            const subject = `[Rifiutata] Richiesta ${areaLabel} per ${commName}`;
-            const htmlBody = `
-              <p>Ciao <strong>${targetReq.richiedenteNome || targetReq.richiedenteEmail}</strong>,</p>
-              <p>Ti informiamo che la tua richiesta di personale per l'area <strong>${areaLabel}</strong> relativa alla commessa <strong>${commName}</strong> è stata <strong style="color:#e11d48">RIFIUTATA</strong> dal coordinatore d'area.</p>
-              <table border="0" cellpadding="5" cellspacing="0" style="font-size: 13px; color: #374151; width: 100%;">
-                <tr><td style="font-weight: bold; width: 160px;">Commessa:</td><td>${commName}</td></tr>
-                <tr><td style="font-weight: bold;">Area Richiesta:</td><td>${areaLabel}</td></tr>
-                <tr><td style="font-weight: bold;">Periodo:</td><td>${targetReq.dataInizio} → ${targetReq.dataFine}</td></tr>
-                <tr><td style="font-weight: bold;">Carico Richiesto:</td><td>${targetReq.percentuale}%</td></tr>
-                ${targetReq.risorsaPreferita ? `<tr><td style="font-weight: bold;">Risorsa Preferita:</td><td>${targetReq.risorsaPreferita}</td></tr>` : ''}
-              </table>
-              <p style="margin-top: 15px; font-size: 12px; color: #6b7280;">Puoi consultare lo storico ed il dettaglio delle tue richieste inviate direttamente nella sezione Pianificazione Personale.</p>
-            `;
-            await queueMail(targetReq.richiedenteEmail, subject, htmlBody);
-          }
 
           showToast("Richiesta rifiutata con successo.");
           setConfirmConfig(prev => ({ ...prev, isOpen: false }));
@@ -2017,6 +1922,27 @@ export default function PianificazionePersonale() {
 
       if (writeCount > 0) {
         await batch.commit();
+
+        // Invia notifiche personali informative alle risorse coinvolte
+        const notifiedEmails = new Set<string>();
+        draftNotifications.forEach(n => {
+          const targetDip = dipendenti.find(d => areNamesEqual(d.nome, n.dipendenteNome));
+          if (targetDip?.email && targetDip.email.toLowerCase() !== userEmail.toLowerCase() && !notifiedEmails.has(targetDip.email.toLowerCase())) {
+            notifiedEmails.add(targetDip.email.toLowerCase());
+            const isRimosso = (n.description || '').toLowerCase().includes('rimoss');
+            const isAssegnato = (n.description || '').toLowerCase().includes('assegnat');
+            const notifTitle = isRimosso ? '🔴 Rimozione da Commessa' : isAssegnato ? '🟢 Nuova Assegnazione Commessa' : '📅 Pianificazione Aggiornata';
+            
+            createUserNotification({
+              destinatarioEmail: targetDip.email,
+              destinatarioNome: n.dipendenteNome,
+              titolo: notifTitle,
+              messaggio: `${n.description || 'Pianificazione aggiornata'} (${n.weekLabel}).`,
+              tipo: 'pianificazione_aggiornata',
+              link: '/commesse'
+            });
+          }
+        });
       }
 
       // Applica le notifiche accumulate in locale
@@ -2549,14 +2475,11 @@ export default function PianificazionePersonale() {
     });
   };
 
-  const renderEmployeeRow = (dip: Dipendente, parentAreaName: string, rowIndex: number = 0, totalRows: number = 1) => {
+  const renderEmployeeRow = (dip: Dipendente, parentAreaName: string, _rowIndex: number = 0, _totalRows: number = 1) => {
     const isCoordinatoreArea = coordinatori.some(c => c.email.toLowerCase() === userEmail && c.area === parentAreaName);
     // Può modificare la cella se è admin/socio, o coordinatore di quest'area
     const isEditable = isAdmin || isSoci(myAssociatedName) || isCoordinatoreArea;
     const isResponsabileDiQuestArea = coordinatori.some(c => c.email.toLowerCase() === dip.email?.toLowerCase() && c.area === parentAreaName);
-
-    const isNearBottom = parentAreaName === 'Non Assegnati' || parentAreaName === 'Consulenza Sicurezza' || parentAreaName === 'Amministrazione' || (totalRows > 1 && rowIndex >= Math.max(0, totalRows - 2));
-    const popoverPositionClass = isNearBottom ? "bottom-full mb-1" : "top-full mt-1";
 
     let areaColorClass = "border-l-4 border-slate-350 bg-slate-50/20 text-slate-900";
     if (parentAreaName === 'Disegnatori') {
@@ -2649,9 +2572,6 @@ export default function PianificazionePersonale() {
             backgroundImage: 'repeating-linear-gradient(45deg, #dbeafe 0px, #dbeafe 10px, #eff6ff 10px, #eff6ff 20px)'
           } : undefined;
 
-          const isNearRight = wIndex >= Math.floor(timelineWeeks.length / 2);
-          const popoverHorizontalClass = isNearRight ? "right-0 left-auto" : "left-0 right-auto";
-
           return (
             <td 
               key={wIndex} 
@@ -2683,7 +2603,24 @@ export default function PianificazionePersonale() {
               }}
             >
               <div 
-                className="flex flex-col items-center justify-center relative group/cell"
+                onMouseEnter={(e) => {
+                  const hasContent = (!isFullLeave && list.length > 0) || leaves.length > 0;
+                  if (hasContent) {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setHoveredCellTooltip({
+                      rect,
+                      dipNome: dip.nome,
+                      wkLabel: wk.label,
+                      list,
+                      leaves,
+                      isFullLeave
+                    });
+                  }
+                }}
+                onMouseLeave={() => {
+                  setHoveredCellTooltip(null);
+                }}
+                className="flex flex-col items-center justify-center relative"
                 style={{ 
                   minHeight: isNarrow ? '40px' : '56px',
                   gap: isUltraNarrow ? '1px' : '2px'
@@ -2735,32 +2672,6 @@ export default function PianificazionePersonale() {
                               </span>
                             )}
                           </>
-                        )}
-                      </div>
-                    )}
-                    
-                    {((!isFullWeekLeave(dip.nome, wk.id) && list.length > 0) || leaves.length > 0) && (
-                      <div className={`hidden group-hover/cell:flex absolute ${popoverPositionClass} ${popoverHorizontalClass} bg-slate-900 text-white text-[11px] rounded-xl p-3 flex-col gap-1 z-50 shadow-2xl min-w-[200px] max-w-[280px] sm:max-w-[320px] pointer-events-none text-left border border-slate-700/80`}>
-                        <div className="font-extrabold text-[10.5px] text-indigo-300 border-b border-slate-700/80 pb-1 mb-1 flex items-center justify-between gap-2">
-                          <span className="truncate">{dip.nome}</span>
-                          <span className="bg-indigo-900/80 text-indigo-200 px-1.5 py-0.5 rounded text-[9.5px] shrink-0">{wk.label}</span>
-                        </div>
-                        {!isFullWeekLeave(dip.nome, wk.id) && list.map((a, idx) => (
-                          <div key={idx} className="flex justify-between items-start gap-2.5 border-b border-slate-800/80 pb-1 last:border-none last:pb-0">
-                            <span className="font-semibold text-gray-200 leading-snug break-words flex-1">{a.commessaName}</span>
-                            <span className="font-black text-indigo-400 shrink-0">{a.percentuale}%</span>
-                          </div>
-                        ))}
-                        {leaves.length > 0 && (
-                          <div className="border-t border-slate-700/80 pt-1.5 mt-1 flex flex-col gap-1">
-                            <span className="text-[9.5px] font-black text-amber-400 uppercase tracking-wider">Assenze / Ferie:</span>
-                            {leaves.map((l, idx) => (
-                              <div key={idx} className="flex justify-between items-center text-[9.5px] gap-2">
-                                <span className="font-semibold text-gray-300">{l.giorno}</span>
-                                <span className="font-black text-amber-200">{l.dettagli}</span>
-                              </div>
-                            ))}
-                          </div>
                         )}
                       </div>
                     )}
@@ -2992,8 +2903,8 @@ export default function PianificazionePersonale() {
               </button>
             )}
 
-            {/* Pulsante Storico Disponibilità per Coordinatori e Admin */}
-            {(myCoordinatedAreas.length > 0 || isAdmin || isSoci(myAssociatedName)) && (
+            {/* Pulsante Storico Disponibilità per Coordinatori e Soci */}
+            {(myCoordinatedAreas.length > 0 || (isSoci(myAssociatedName) && !isDev)) && (
               <button
                 type="button"
                 onClick={handleOpenHistoryDisponibilita}
@@ -3032,11 +2943,11 @@ export default function PianificazionePersonale() {
         </h2>
       </div>
 
-      {/* SEZIONE NOTIFICA RISORSE SCARICHE CHE RICHIEDONO LAVORO (PER COORDINATORI E ADMIN) */}
+      {/* SEZIONE NOTIFICA RISORSE SCARICHE CHE RICHIEDONO LAVORO (PER COORDINATORI D'AREA) */}
       {(() => {
         const visibleSegnalazioni = segnalazioniDisponibilita.filter(s => {
           if (s.stato !== 'in_attesa') return false;
-          return isAdmin || isSoci(myAssociatedName) || myCoordinatedAreas.includes(s.macroArea);
+          return myCoordinatedAreas.includes(s.macroArea);
         });
 
         if (visibleSegnalazioni.length === 0) return null;
@@ -3726,7 +3637,6 @@ export default function PianificazionePersonale() {
 
               {/* Pulsanti Richiesta Personale – centrati sotto, visibili solo quando commessa + periodo selezionati */}
               {selectedCommessaId && allocDataInizio && allocDataFine && (() => {
-                if (isAdmin || isSoci(myAssociatedName) || isSoci(userEmail)) return null;
                 const areaButtonConfigs: Record<MacroArea, { color: string; label: string }> = {
                   'Disegnatori':          { color: 'bg-teal-600 hover:bg-teal-700',     label: '✉️ Richiedi Disegnatore' },
                   'Ingegneria':           { color: 'bg-indigo-600 hover:bg-indigo-700', label: '✉️ Richiedi Ingegnere' },
@@ -4205,14 +4115,16 @@ export default function PianificazionePersonale() {
 
           <div className="flex items-center gap-3 no-print">
             
-            {/* Grid Search Input */}
-            <input 
-              type="text" 
-              placeholder="Cerca dipendente..." 
-              value={gridSearchQuery}
-              onChange={e => setGridSearchQuery(e.target.value)}
-              className="p-2.5 border rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-400 font-semibold shadow-sm w-44"
-            />
+            {/* Grid Search Input (nascosto per dipendenti normali che visualizzano solo se stessi) */}
+            {!isDipendenteNormale && (
+              <input 
+                type="text" 
+                placeholder="Cerca dipendente..." 
+                value={gridSearchQuery}
+                onChange={e => setGridSearchQuery(e.target.value)}
+                className="p-2.5 border rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-400 font-semibold shadow-sm w-44"
+              />
+            )}
 
             {/* Zoom Temporale magnifier buttons */}
             <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-gray-200 shadow-sm h-[38px]">
@@ -4250,6 +4162,7 @@ export default function PianificazionePersonale() {
         {/* Load Grid Wrapper */}
         <div 
           ref={tableContainerRef}
+          onScroll={() => setHoveredCellTooltip(null)}
           className="w-full overflow-auto scrollbar-thin"
           style={{ maxHeight: `${tableHeight}px` }}
         >
@@ -5208,7 +5121,7 @@ export default function PianificazionePersonale() {
                 </div>
               ) : (() => {
                 const filteredHistory = historyDisponibilitaList.filter(s => 
-                  isAdmin || isSoci(myAssociatedName) || myCoordinatedAreas.includes(s.macroArea)
+                  myCoordinatedAreas.includes(s.macroArea) || (isSoci(myAssociatedName) && !isDev)
                 );
 
                 if (filteredHistory.length === 0) {
@@ -5325,6 +5238,58 @@ export default function PianificazionePersonale() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* TOOLTIP GALLEGGIANTE SMART (PORTAL) — Nessun taglio da overflow/bordi/header */}
+      {hoveredCellTooltip && createPortal(
+        (() => {
+          const { rect, dipNome, wkLabel, list, leaves, isFullLeave } = hoveredCellTooltip;
+          // Calcolo dinamico dello spazio disponibile sopra vs sotto
+          const spaceAbove = rect.top;
+          const spaceBelow = window.innerHeight - rect.bottom;
+          const showBelow = spaceAbove < 220 && spaceBelow >= 120;
+          
+          const topPos = showBelow ? rect.bottom + 8 : rect.top - 8;
+          const transformOrigin = showBelow ? 'translate(-50%, 0)' : 'translate(-50%, -100%)';
+          const leftPos = Math.max(160, Math.min(window.innerWidth - 160, rect.left + rect.width / 2));
+
+          return (
+            <div 
+              style={{
+                position: 'fixed',
+                top: `${topPos}px`,
+                left: `${leftPos}px`,
+                transform: transformOrigin,
+                zIndex: 999999,
+                pointerEvents: 'none'
+              }}
+              className="bg-slate-900 text-white text-[11px] rounded-xl p-3 flex flex-col gap-1 shadow-2xl min-w-[220px] max-w-[320px] border border-slate-700/80 animate-in fade-in zoom-in-95 duration-100 select-none pointer-events-none"
+            >
+              <div className="font-extrabold text-[10.5px] text-indigo-300 border-b border-slate-700/80 pb-1 mb-1 flex items-center justify-between gap-2">
+                <span className="truncate">{dipNome}</span>
+                <span className="bg-indigo-900/80 text-indigo-200 px-1.5 py-0.5 rounded text-[9.5px] shrink-0">{wkLabel}</span>
+              </div>
+              {!isFullLeave && list.map((a, idx) => (
+                <div key={idx} className="flex justify-between items-start gap-2.5 border-b border-slate-800/80 pb-1 last:border-none last:pb-0">
+                  <span className="font-semibold text-gray-200 leading-snug break-words flex-1">{a.commessaName}</span>
+                  <span className="font-black text-indigo-400 shrink-0">{a.percentuale}%</span>
+                </div>
+              ))}
+              {leaves.length > 0 && (
+                <div className="border-t border-slate-700/80 pt-1.5 mt-1 flex flex-col gap-1">
+                  <span className="text-[9.5px] font-black text-amber-400 uppercase tracking-wider">Assenze / Ferie:</span>
+                  {leaves.map((l, idx) => (
+                    <div key={idx} className="flex justify-between items-center text-[9.5px] gap-2">
+                      <span className="font-semibold text-gray-300">{l.giorno}</span>
+                      <span className="font-black text-amber-200">{l.dettagli}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })(),
+        document.body
       )}
     </div>
   );

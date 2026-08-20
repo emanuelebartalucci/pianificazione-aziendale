@@ -43,7 +43,7 @@ export default function Dashboard() {
     }
   };
 
-  const { isAdmin, isHR, isDev, myAssociatedName, user, dipendenti, userEmail, assegnazioni, commesse, prioritaCommesse, coordinatori = [] } = useAuth();
+  const { isAdmin, isHR, isDev, impersonatedEmail, myAssociatedName, user, dipendenti, userEmail, assegnazioni, commesse, prioritaCommesse, coordinatori = [] } = useAuth();
 
   // States per le comunicazioni
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
@@ -245,7 +245,7 @@ export default function Dashboard() {
       }
 
       // 5. Notifiche HR
-      if (isHR) {
+      if (isHR && !(isDev && !impersonatedEmail)) {
         const [ferieSnap, presenzeSnap, weekendSnap, sugSnap] = await Promise.all([
           getDocs(query(collection(db, 'richieste_ferie'), where('stato', 'in', ['In attesa', 'Richiesta Annullamento', 'Richiesta Modifica']))),
           getDocs(query(collection(db, 'presenze'), where('stato', '==', 'Inviato'))),
@@ -640,6 +640,7 @@ export default function Dashboard() {
   }, [myAssociatedName, assegnazioni, commesse, prioritaCommesse, currentWeekId]);
 
   const myCoordinatedAreas = useMemo(() => {
+    if (isDev && !impersonatedEmail) return [];
     const areas = new Set<string>();
     const uClean = (userEmail || '').toLowerCase().trim();
     const nClean = (myAssociatedName || '').toLowerCase().trim();
@@ -673,7 +674,7 @@ export default function Dashboard() {
     }
 
     return Array.from(areas);
-  }, [userEmail, myAssociatedName, coordinatori]);
+  }, [userEmail, myAssociatedName, coordinatori, isDev, impersonatedEmail]);
 
   const isSelfRequester = (r: any): boolean => {
     if (!r) return false;
@@ -690,6 +691,7 @@ export default function Dashboard() {
 
   const canUserManageRequest = (r: any): boolean => {
     if (!r || r.stato !== 'in_attesa') return false;
+    if (isDev && !impersonatedEmail) return false;
     if (isSelfRequester(r)) return false;
 
     // 1. Se l'utente è Coordinatore dell'area richiesta: la gestisce SEMPRE
@@ -721,7 +723,7 @@ export default function Dashboard() {
   const [pendingCoordinatorRequestsCount, setPendingCoordinatorRequestsCount] = useState(0);
 
   useEffect(() => {
-    if (!userEmail) {
+    if (!userEmail || (isDev && !impersonatedEmail)) {
       setPendingCoordinatorRequestsCount(0);
       return;
     }
@@ -738,12 +740,12 @@ export default function Dashboard() {
     }).catch(err => {
       console.error("Errore conteggio richieste disegnatori:", err);
     });
-  }, [userEmail, myCoordinatedAreas, myAssociatedName, isAdmin, commesse]);
+  }, [userEmail, myCoordinatedAreas, myAssociatedName, isAdmin, commesse, isDev, impersonatedEmail]);
 
   const [pendingAvailabilityCount, setPendingAvailabilityCount] = useState(0);
 
   useEffect(() => {
-    if (!userEmail || myCoordinatedAreas.length === 0) {
+    if (!userEmail || myCoordinatedAreas.length === 0 || (isDev && !impersonatedEmail)) {
       setPendingAvailabilityCount(0);
       return;
     }
@@ -760,7 +762,7 @@ export default function Dashboard() {
     }).catch(err => {
       console.error("Errore conteggio disponibilita:", err);
     });
-  }, [userEmail, myCoordinatedAreas]);
+  }, [userEmail, myCoordinatedAreas, isDev, impersonatedEmail]);
 
   const canPublish = isAdmin || isHR;
 
@@ -852,19 +854,11 @@ export default function Dashboard() {
             >
               <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-orange-100 text-orange-600 rounded-2xl flex items-center justify-center group-hover:bg-orange-600 group-hover:text-white transition-colors relative mb-3">
                 <Users className="w-6 h-6 sm:w-7 sm:h-7" />
-                {pendingCoordinatorRequestsCount > 0 && (
-                  <span className="absolute -top-1.5 -right-1.5 flex h-6 w-6" title={`${pendingCoordinatorRequestsCount} richieste in attesa`}>
+                {(pendingCoordinatorRequestsCount + pendingAvailabilityCount) > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 flex h-6 w-6" title={`${pendingCoordinatorRequestsCount + pendingAvailabilityCount} richieste da gestire`}>
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-6 w-6 bg-red-500 text-[11px] font-black text-white items-center justify-center border-2 border-white shadow-md">
-                      {pendingCoordinatorRequestsCount}
-                    </span>
-                  </span>
-                )}
-                {pendingAvailabilityCount > 0 && (
-                  <span className="absolute -top-1.5 -left-1.5 flex h-6 w-6" title={`${pendingAvailabilityCount} risorse scariche disponibili`}>
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-6 w-6 bg-emerald-600 text-[11px] font-black text-white items-center justify-center border-2 border-white shadow-md">
-                      {pendingAvailabilityCount}
+                      {pendingCoordinatorRequestsCount + pendingAvailabilityCount}
                     </span>
                   </span>
                 )}

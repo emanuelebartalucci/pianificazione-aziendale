@@ -9,6 +9,19 @@ async function generateGuidaDocx() {
   const lines = mdContent.split('\n');
   const children = [];
 
+  // Extract metadata from frontmatter if available
+  let docTitle = "Manuale Operativo della Web App";
+  let docSubtitle = "Pianificazione e Gestione Aziendale — Versione 1.0.11 (Agosto 2026)";
+
+  for (const l of lines) {
+    if (l.startsWith('title:')) {
+      docTitle = l.replace('title:', '').replace(/['"]/g, '').trim();
+    }
+    if (l.startsWith('subtitle:')) {
+      docSubtitle = l.replace('subtitle:', '').replace(/['"]/g, '').trim();
+    }
+  }
+
   // Title section
   children.push(
     new Paragraph({
@@ -16,7 +29,7 @@ async function generateGuidaDocx() {
       spacing: { after: 120 },
       children: [
         new TextRun({
-          text: "Manuale Operativo della Web App",
+          text: docTitle,
           bold: true,
           size: 36, // 18pt
           color: "1E1B4B",
@@ -28,7 +41,7 @@ async function generateGuidaDocx() {
       spacing: { after: 360 },
       children: [
         new TextRun({
-          text: "Pianificazione e Gestione Aziendale — Versione 1.0.6 (Agosto 2026)",
+          text: docSubtitle,
           italics: true,
           size: 22, // 11pt
           color: "4B5563",

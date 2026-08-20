@@ -6,6 +6,7 @@ import { FileText, Printer, Save, Send, CheckCircle, AlertCircle, Edit, Edit3, T
 import { queueMail } from '../utils/mailSender';
 import ConfirmModal from '../components/ConfirmModal';
 import { isItalianHoliday, isWeekend as isWeekendGlobal } from '../utils/date';
+import { createUserNotification } from '../utils/userNotificationService';
 
 export { isItalianHoliday };
 
@@ -1808,8 +1809,6 @@ export default function Presenze() {
     setHrUnlockSubmitting(true);
     try {
       const docRef = doc(db, 'presenze', reviewingRapportino.id);
-      const isCollab = isCollaboratore(reviewingRapportino.dipendenteNome, dipendenti);
-      const meseNome = MESI[reviewingRapportino.mese - 1];
 
       if (action === 'accept') {
         const updated: RapportinoPresenze = {
@@ -1828,24 +1827,6 @@ export default function Presenze() {
         setHrUnlockNote('');
         showToast("Richiesta di sblocco accettata. Il documento è stato sbloccato per il dipendente.");
         loadPresenzeData();
-
-        // Invia email al dipendente
-        const targetEmail = updated.dipendenteEmail;
-        const isSelfTarget = (targetEmail?.toLowerCase() === userEmail?.toLowerCase()) || (myAssociatedName && updated.dipendenteNome === myAssociatedName);
-        if (targetEmail && !isSelfTarget) {
-          const subject = `[Pianificazione] Richiesta di Sblocco Accettata - ${meseNome} ${updated.anno}`;
-          const noteStr = hrUnlockNote.trim() 
-            ? `<p><strong>Nota dell'HR:</strong></p><blockquote style="background-color: #f0fdf4; border-left: 4px solid #16a34a; padding: 10px 15px; margin: 10px 0; font-style: italic;">"${hrUnlockNote.trim()}"</blockquote>`
-            : '';
-          const htmlBody = `
-            <p>Ciao <strong>${updated.dipendenteNome}</strong>,</p>
-            <p>La tua richiesta di sblocco della ${isCollab ? 'bozza fattura' : 'bozza presenze'} per <strong>${meseNome} ${updated.anno}</strong> è stata <strong>accettata</strong> dall'amministrazione.</p>
-            ${noteStr}
-            <p>Ora puoi accedere all'applicazione per apportare le modifiche necessarie e reinviarla all'HR.</p>
-          `;
-          const plainText = `Ciao ${updated.dipendenteNome},\n\nLa tua richiesta di sblocco del foglio presenze per ${meseNome} ${updated.anno} è stata accettata.\nOra puoi accedere all'applicazione per apportare le modifiche e reinviarla.`;
-          await queueMail(targetEmail.toLowerCase(), subject, htmlBody, plainText);
-        }
       } else {
         // Reject / Resolved by HR
         const updated: RapportinoPresenze = {
@@ -1863,24 +1844,6 @@ export default function Presenze() {
         setHrUnlockNote('');
         showToast("Richiesta di sblocco gestita/rifiutata.");
         loadPresenzeData();
-
-        // Invia email al dipendente
-        const targetEmail = updated.dipendenteEmail;
-        const isSelfTarget = (targetEmail?.toLowerCase() === userEmail?.toLowerCase()) || (myAssociatedName && updated.dipendenteNome === myAssociatedName);
-        if (targetEmail && !isSelfTarget) {
-          const subject = `[Pianificazione] Aggiornamento Richiesta Sblocco - ${meseNome} ${updated.anno}`;
-          const noteStr = hrUnlockNote.trim()
-            ? `<p><strong>Nota dell'HR:</strong></p><blockquote style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 10px 15px; margin: 10px 0; font-style: italic;">"${hrUnlockNote.trim()}"</blockquote>`
-            : '<p>L\'HR ha preso in carico le eventuali correzioni direttamente o le ha ritenute non necessarie.</p>';
-          const htmlBody = `
-            <p>Ciao <strong>${updated.dipendenteNome}</strong>,</p>
-            <p>La tua richiesta di sblocco della ${isCollab ? 'bozza fattura' : 'bozza presenze'} per <strong>${meseNome} ${updated.anno}</strong> è stata processata dall'amministrazione.</p>
-            ${noteStr}
-            <p>Il documento rimane nello stato attuale (${updated.stato}).</p>
-          `;
-          const plainText = `Ciao ${updated.dipendenteNome},\n\nLa tua richiesta di sblocco per ${meseNome} ${updated.anno} è stata processata dall'amministrazione.`;
-          await queueMail(targetEmail.toLowerCase(), subject, htmlBody, plainText);
-        }
       }
     } catch (err) {
       console.error("Errore elaborazione richiesta sblocco:", err);
@@ -2092,26 +2055,22 @@ export default function Presenze() {
             await saveCollabProfileRates(reviewingRapportino.collaboratoreData, reviewingRapportino.dipendenteNome);
           }
 
+          // Invia notifica personale informativa al dipendente/collaboratore
+          if (reviewingRapportino.dipendenteEmail) {
+            const meseLabel = MESI[reviewingRapportino.mese - 1] || `Mese ${reviewingRapportino.mese}`;
+            await createUserNotification({
+              destinatarioEmail: reviewingRapportino.dipendenteEmail,
+              destinatarioNome: reviewingRapportino.dipendenteNome,
+              titolo: isCollab ? '✅ Bozza Fattura Approvata' : '✅ Foglio Presenze Approvato',
+              messaggio: `Il tuo ${isCollab ? 'prospetto bozza fattura' : 'foglio presenze'} di ${meseLabel} ${reviewingRapportino.anno} è stato approvato dall'HR.`,
+              tipo: 'presenze_approvate',
+              link: '/presenze'
+            });
+          }
+
           setReviewingRapportino(null);
           showToast(isCollab ? "Bozza fattura approvata!" : "Rapportino approvato!");
           loadPresenzeData();
-
-          // Invia notifica al dipendente (se non è se stesso)
-          const isSelfTarget = (updated.dipendenteEmail?.toLowerCase() === userEmail?.toLowerCase()) || (myAssociatedName && updated.dipendenteNome === myAssociatedName);
-          if (updated.dipendenteEmail && !isSelfTarget) {
-            const meseNome = MESI[selectedMonth - 1];
-            await queueMail(
-              updated.dipendenteEmail,
-              isCollab 
-                ? `[Pianificazione] Bozza Fattura Approvata - ${meseNome} ${selectedYear}`
-                : `[Pianificazione] Rapportino Presenze Approvato - ${meseNome} ${selectedYear}`,
-              `
-                <p>Ciao <strong>${updated.dipendenteNome}</strong>,</p>
-                <p>La tua ${isCollab ? 'bozza fattura' : 'bozza di rapportino presenze'} per il mese di <strong>${meseNome} ${selectedYear}</strong> è stata verificata ed <strong>approvata</strong> dall'amministrazione.</p>
-                <p>Grazie per la collaborazione.</p>
-              `
-            );
-          }
         } catch (err) {
           console.error("Errore approvazione:", err);
           showToast("Errore durante l'approvazione.", "error");
@@ -2187,6 +2146,15 @@ export default function Presenze() {
             <p>Accedi alla piattaforma per effettuare le modifiche richieste e inviarlo nuovamente.</p>
           `
         );
+
+        await createUserNotification({
+          destinatarioEmail: updated.dipendenteEmail,
+          destinatarioNome: updated.dipendenteNome,
+          titolo: '⚠️ Modifica Presenze Richiesta',
+          messaggio: `L'HR richiede verifiche o correzioni per il foglio presenze di ${meseNome} ${selectedYear}.`,
+          tipo: 'presenze_approvate',
+          link: '/presenze'
+        });
       }
     } catch (err) {
       console.error("Errore invio modifiche:", err);

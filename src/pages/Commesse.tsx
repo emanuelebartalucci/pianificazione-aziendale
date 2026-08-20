@@ -456,27 +456,6 @@ export default function Commesse() {
         setClientSearchText((createdDoc as any).nome);
         setIsClientDropdownOpen(false);
         showToast(`Cliente ${(createdDoc as any).codice} - ${(createdDoc as any).nome} aggiunto ed impostato!`, "success");
-
-        // Notifica E-mail al sistema per nuovo cliente inserito
-        try {
-          const clientSubject = `[Nuovo Cliente] Registrato cliente: ${(createdDoc as any).nome}`;
-          const clientHtmlBody = `
-            <p>Ciao,</p>
-            <p>Ti comunichiamo che è stato censito un nuovo cliente nell'anagrafica aziendale:</p>
-            <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 15px 0;" />
-            <table border="0" cellpadding="5" cellspacing="0" style="font-size: 14px; color: #374151; width: 100%;">
-              <tr><td style="font-weight: bold; width: 180px;">Codice Cliente:</td><td><strong>${(createdDoc as any).codice}</strong></td></tr>
-              <tr><td style="font-weight: bold;">Ragione Sociale:</td><td><strong>${(createdDoc as any).nome}</strong></td></tr>
-              <tr><td style="font-weight: bold;">Registrato da:</td><td>${myAssociatedName || userEmail}</td></tr>
-            </table>
-          `;
-          const recipients = await getCommesseNotificationEmails();
-          for (const rec of recipients) {
-            await queueMail(rec, clientSubject, clientHtmlBody, undefined, { isSystemNotification: true });
-          }
-        } catch (errClientMail) {
-          console.error("Errore invio mail nuovo cliente:", errClientMail);
-        }
       }
       setNewClientNome('');
       setIsNewClientModalOpen(false);
@@ -499,6 +478,21 @@ export default function Commesse() {
   const [catalogoSortBy, setCatalogoSortBy] = useState<'codice' | 'anno' | 'tipologia' | 'titolo' | 'cliente' | 'stato' | 'responsabile' | 'pm' | 'dataApertura'>('codice');
   const [catalogoSortDir, setCatalogoSortDir] = useState<'asc' | 'desc'>('asc');
   const [showNewCommessaForm, _setShowNewCommessaForm] = useState(true);
+
+  // Gestione parametri URL da notifiche (es. ?search=CO123 o ?commessaId=xyz)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const searchParam = params.get('search');
+    const commessaIdParam = params.get('commessaId');
+    if (searchParam) {
+      setCommessaTextQuery(decodeURIComponent(searchParam));
+    } else if (commessaIdParam) {
+      const matched = commesse.find(c => c.id === commessaIdParam);
+      if (matched) {
+        setCommessaTextQuery(matched.nome || matched.codiceCommessa || '');
+      }
+    }
+  }, [commesse]);
   
   const weekColumnMinWidth = useMemo(() => {
     if (zoomWeeks <= 6) return '100px';
@@ -873,37 +867,6 @@ export default function Commesse() {
         if (commObj.responsabile) {
           const respDip = dipendenti.find(d => areNamesEqual(d.nome, commObj.responsabile));
           if (respDip?.email) targetEmails.add(respDip.email.toLowerCase());
-        }
-        const pmArray = Array.isArray(commObj.pm) ? commObj.pm : (commObj.pm ? [commObj.pm] : []);
-        pmArray.forEach((pmName: string) => {
-          const pmDip = dipendenti.find(d => areNamesEqual(d.nome, pmName));
-          if (pmDip?.email) targetEmails.add(pmDip.email.toLowerCase());
-        });
-      }
-
-      if (targetEmails.size > 0) {
-        const richiedente = myAssociatedName || userEmail;
-        const subject = `[Richiesta Inserimento Commessa] Richiesta risorsa ${reqPreferredResource || reqAreaTarget} per commessa ${commName}`;
-        const htmlBody = `
-          <div style="font-family: Arial, sans-serif; color: #1e293b; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px;">
-            <h2 style="color: #d97706; margin-top: 0;">✉️ Nuova Richiesta Inserimento su Commessa</h2>
-            <p>Ciao,</p>
-            <p>È stata inviata una richiesta di inserimento personale per la commessa <strong>${commName}</strong>.</p>
-            <table border="0" cellpadding="6" cellspacing="0" style="font-size:13px;color:#374151;width:100%">
-              <tr><td style="font-weight:bold;width:180px">Commessa:</td><td>${commName}</td></tr>
-              <tr><td style="font-weight:bold">Richiedente:</td><td>${richiedente} (${userEmail})</td></tr>
-              <tr><td style="font-weight:bold">Risorsa da Inserire:</td><td><strong style="color:#d97706">${reqPreferredResource || 'Non specificata'}</strong></td></tr>
-              <tr><td style="font-weight:bold">Periodo:</td><td>dal ${reqDataInizio} al ${reqDataFine}</td></tr>
-              <tr><td style="font-weight:bold">Carico Richiesto:</td><td>${reqPercentuale}%</td></tr>
-              ${reqNota ? `<tr><td style="font-weight:bold">Nota:</td><td><em>${reqNota}</em></td></tr>` : ''}
-            </table>
-            <p style="margin-top:16px">Accedi alla <strong>Pianificazione Aziendale</strong> per verificare ed approvare la richiesta.</p>
-          </div>
-        `;
-        for (const email of Array.from(targetEmails)) {
-          if (email.toLowerCase() !== userEmail.toLowerCase()) {
-            await queueMail(email, subject, htmlBody);
-          }
         }
       }
 
@@ -1452,6 +1415,12 @@ export default function Commesse() {
     });
   }, [commesse, canAccessCatalogo, myAssociatedName]);
 
+  const selectableCommesseForRequest = useMemo(() => {
+    return (commesse || [])
+      .filter(c => (c.stato || 'Aperta') !== 'Chiusa')
+      .sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+  }, [commesse]);
+
   const selectableAnniCatalogo = useMemo(() => {
     const set = new Set<string>();
     commesseGestibili.forEach(c => {
@@ -1827,6 +1796,25 @@ export default function Commesse() {
     setCatalogoSortDir('asc');
   };
 
+  const getCommessaPmsAndRespEmails = (commData: any): string[] => {
+    const emails: string[] = [];
+    if (commData.responsabile) {
+      const respDip = dipendenti.find(d => areNamesEqual(d.nome, commData.responsabile));
+      if (respDip?.email) emails.push(respDip.email.toLowerCase().trim());
+    }
+    const pms: string[] = Array.isArray(commData.pm) ? [...commData.pm] : (commData.pm ? [commData.pm] : []);
+    if (Array.isArray(commData.progetti)) {
+      commData.progetti.forEach((p: any) => {
+        if (p.pm && !pms.includes(p.pm)) pms.push(p.pm);
+      });
+    }
+    pms.forEach((pmName: string) => {
+      const pmDip = dipendenti.find(d => areNamesEqual(d.nome, pmName));
+      if (pmDip?.email) emails.push(pmDip.email.toLowerCase().trim());
+    });
+    return Array.from(new Set(emails.filter(Boolean)));
+  };
+
   const generateCommessaAperturaEmailContent = (commData: any, openedByText?: string) => {
     const cod = commData.codiceCommessa || (commData.nome ? commData.nome.split(' - ')[0] : 'COMMESSA');
     const title = commData.titolo || (commData.nome && commData.nome.includes(' - ') ? commData.nome.split(' - ').slice(1).join(' - ') : commData.nome) || 'Commessa';
@@ -1982,8 +1970,10 @@ export default function Commesse() {
     if (!commToResend) return;
     try {
       const { subject, htmlBody } = generateCommessaAperturaEmailContent(commToResend);
-      const recipients = await getCommesseNotificationEmails();
-      for (const rec of recipients) {
+      const baseRecipients = await getCommesseNotificationEmails();
+      const roleRecipients = getCommessaPmsAndRespEmails(commToResend);
+      const allRecipients = Array.from(new Set([...baseRecipients, ...roleRecipients]));
+      for (const rec of allRecipients) {
         await queueMail(rec, subject, htmlBody, undefined, { isSystemNotification: true });
       }
       showToast("E-mail di apertura commessa re-inviata con successo!", "success");
@@ -2228,11 +2218,13 @@ export default function Commesse() {
       
       await addDoc(collection(db, 'catalogo_commesse'), payload);
       
-      // Invio notifica e-mail apertura commessa ad synergiesflow@ingegno06.it ed ai referenti
+      // Invio notifica e-mail apertura commessa ai destinatari di sistema + PM e Responsabili
       const { subject: mailSubject, htmlBody: finalMailBody } = generateCommessaAperturaEmailContent(payload);
 
-      const creationRecipients = await getCommesseNotificationEmails();
-      for (const rec of creationRecipients) {
+      const baseCreationRecipients = await getCommesseNotificationEmails();
+      const roleCreationRecipients = getCommessaPmsAndRespEmails(payload);
+      const allCreationRecipients = Array.from(new Set([...baseCreationRecipients, ...roleCreationRecipients]));
+      for (const rec of allCreationRecipients) {
         await queueMail(rec, mailSubject, finalMailBody, undefined, { isSystemNotification: true });
       }
       
@@ -5136,7 +5128,7 @@ export default function Commesse() {
                         className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
                       >
                         <option value="">-- Seleziona Commessa --</option>
-                        {commesseGestibili.map(c => (
+                        {selectableCommesseForRequest.map(c => (
                           <option key={c.id} value={c.id}>{c.nome} [{c.codiceCommessa || c.id}]</option>
                         ))}
                       </select>

@@ -1780,12 +1780,13 @@ export default function Impostazioni() {
               
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 items-stretch">
                 {(['Disegnatori', 'Ingegneria', 'Sicurezza Cantieri', 'Consulenza Sicurezza', 'Amministrazione'] as const).map(areaName => {
-                  const areaMembers = dipendenti
-                    .filter(d => d && d.macroArea === areaName && !isSoci(d.nome) && (d.email || '').toLowerCase().trim() !== 'synergieflow@ingegno06.it' && (d.email || '').toLowerCase().trim() !== 'synergiesflow@ingegno06.it' && !coordinatori.some(c => (c.email || '').toLowerCase() === (d.email || '').toLowerCase() && c.area === areaName))
-                    .sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'it'));
                   const areaCoordinators = coordinatori
-                    .filter(c => c && c.area === areaName)
+                    .filter(c => c && c.area === areaName && dipendenti.some(d => d.email?.toLowerCase().trim() === c.email?.toLowerCase().trim()))
                     .sort((a, b) => (getDipNomeFromEmail(a.email) || '').localeCompare(getDipNomeFromEmail(b.email) || '', 'it'));
+
+                  const areaMembers = dipendenti
+                    .filter(d => d && d.macroArea === areaName && !isSoci(d.nome) && !isTechnicalUser(d) && !areaCoordinators.some(c => (c.email || '').toLowerCase().trim() === (d.email || '').toLowerCase().trim()))
+                    .sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'it'));
                   
                   return (
                     <div key={areaName} className="bg-white p-4 rounded-2xl border border-indigo-100 shadow-sm flex flex-col h-full overflow-hidden">

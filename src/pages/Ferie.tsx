@@ -3,12 +3,12 @@ import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, addDoc, doc, updateDoc, deleteDoc, query, where, getDocs, getDoc } from 'firebase/firestore';
 import { Calendar, CheckCircle, XCircle, Clock, ChevronLeft, ChevronRight, RefreshCw, Pencil, Trash2, AlertTriangle, X, Search, BarChart2, Download, Users, Printer, ShieldAlert } from 'lucide-react';
-import { queueMail } from '../utils/mailSender';
 import { isItalianHoliday, isWeekend, getWeekNumber } from '../utils/date';
 import { getPrintFooterHtml, getPrintDateString, APP_VERSION } from '../config/version';
 import { isCollaboratore, isSoci } from './Impostazioni';
 import ResourceAnalyticsModal from '../components/ResourceAnalyticsModal';
 import { rebuildYearlySummary } from '../services/yearlySummaryService';
+import { createUserNotification } from '../utils/userNotificationService';
 
 const areNamesEqual = (n1?: string | null, n2?: string | null): boolean => {
   if (!n1 || !n2) return false;
@@ -113,7 +113,7 @@ interface FerieContentProps {
 }
 
 const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: FerieContentProps) => {
-  const { userEmail, coordinatori = [], commesse = [], isDev, hrEmails = [], refreshData } = useAuth();
+  const { userEmail, isDev, refreshData } = useAuth();
   const [viewMode, setViewMode] = useState<'calendario' | 'tabella'>('calendario');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' | 'info' } | null>(null);
   const [chiusureAziendali, setChiusureAziendali] = useState<Array<{ dataInizio: string; dataFine: string }>>([]);
@@ -653,26 +653,6 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       }
       loadWeekendData();
 
-      const targetDip = dipendenti.find(d => d.nome === req.dipendenteName);
-      if (targetDip && targetDip.email) {
-        const isSelfTarget = (targetDip.email.toLowerCase() === userEmail?.toLowerCase()) || (myAssociatedName && req.dipendenteName === myAssociatedName);
-        if (!isSelfTarget) {
-          let actionText = 'aggiornata';
-          if (action === 'Approvato') actionText = 'approvata';
-          else if (action === 'Rifiutato') actionText = 'rifiutata';
-          else if (action === 'Revocato') actionText = 'revocata dall\'HR';
-          else if (action === 'Annullato') actionText = 'annullata';
-
-          const subject = `[Notifica] Autorizzazione lavoro festivo ${actionText}`;
-          const htmlBody = `
-            <p>Ciao <strong>${req.dipendenteName}</strong>,</p>
-            <p>La tua richiesta di autorizzazione per il lavoro festivo del giorno <strong>${formatDate(req.data)}</strong> (${req.motivo}) è stata <strong>${actionText}</strong>.</p>
-            ${action === 'Approvato' ? '<p>Puoi procedere all\'inserimento delle ore sul tuo foglio presenze.</p>' : ''}
-          `;
-          const plainText = `Ciao ${req.dipendenteName},\n\nLa tua richiesta di autorizzazione per il lavoro festivo del giorno ${formatDate(req.data)} (${req.motivo}) è stata ${actionText}.\n\nQuesta è una notifica automatica.`;
-          await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
-        }
-      }
       showToast(`Richiesta ${action.toLowerCase()} con successo!`);
     } catch (e) {
       console.error("Errore decisione weekend:", e);
@@ -1503,44 +1483,6 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       }
       
       await addDoc(collection(db, 'richieste_ferie'), payload);
-
-      // Se l'inserimento è stato fatto direttamente dall'HR/Admin per conto di un dipendente, invia notifica email di conferma al dipendente
-      if (isPowerUser && targetDipName !== myAssociatedName) {
-        const targetDip = dipendenti.find(d => d.nome === targetDipName);
-        if (targetDip && targetDip.email) {
-          let dateDesc = requestMode === 'range' && dataInizio !== dataFine 
-            ? `dal ${formatDate(dataInizio)} al ${formatDate(dataFine)}` 
-            : `il ${formatDate(dataRichiesta || dataInizio)}`;
-          
-          if (tipoRichiesta === 'permesso' || tipoRichiesta === 'assenza') {
-            if (frazioneTipo === 'mattina') dateDesc += ' (mattina)';
-            else if (frazioneTipo === 'pomeriggio') dateDesc += ' (pomeriggio)';
-            else if (frazioneTipo === 'giornata') dateDesc += ' (giornata intera)';
-            else if (oraInizio && oraFine) dateDesc += ` dalle ${oraInizio} alle ${oraFine}`;
-          }
-
-          const typeLabels: Record<string, string> = {
-            ferie: 'Ferie',
-            malattia: 'Malattia',
-            maternita: 'Maternità',
-            permesso: 'Permesso',
-            assenza: 'Assenza',
-            smart: 'Lavoro da Casa',
-            mattina: 'Assenza Mattina',
-            pomeriggio: 'Assenza Pomeriggio'
-          };
-          const typeDesc = typeLabels[tipoRichiesta] || tipoRichiesta;
-
-          const subject = `[Notifica] Assegnazione ${typeDesc} da parte dell'HR`;
-          const htmlBody = `
-            <p>Ciao <strong>${targetDipName}</strong>,</p>
-            <p>Ti informiamo che l'amministrazione / HR ha inserito a tuo nome la seguente assenza: <strong>${typeDesc}</strong> prevista <strong>${dateDesc}</strong>.</p>
-            <p>Il tuo calendario e il registro presenze sono stati aggiornati di conseguenza.</p>
-          `;
-          const plainText = `Ciao ${targetDipName},\n\nTi informiamo che l'amministrazione / HR ha inserito a tuo nome: ${typeDesc} per il periodo ${dateDesc}.\n\nQuesta è una notifica automatica.`;
-          await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
-        }
-      }
       
       setDataRichiesta('');
       setDataInizio('');
@@ -1580,63 +1522,16 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         curr.setDate(curr.getDate() + 1);
       }
 
-      const dipObj = dipendenti.find(d => d.nome.trim().toLowerCase() === dipName.trim().toLowerCase());
-      const dipArea = dipObj?.macroArea || '';
-
-      const coordEmails = (coordinatori || [])
-        .filter(c => c.area && dipArea && c.area.trim().toLowerCase() === dipArea.trim().toLowerCase())
-        .map(c => c.email?.toLowerCase())
-        .filter(Boolean) as string[];
-
       for (const wkId of weekIds) {
         const docId = `${dipName}-${wkId}`;
         const docRef = doc(db, 'assegnazioni', docId);
         try {
           const docSnap = await getDoc(docRef);
           if (docSnap.exists()) {
-            const data = docSnap.data();
-            const list = data.assegnazioni || data.commesse || [];
-            const removedCommesse: { name: string; pct: number }[] = [];
-
-            if (Array.isArray(list)) {
-              list.forEach((item: any) => {
-                const commObj = commesse.find(c => c.id === item.commessaId);
-                const cName = commObj ? commObj.nome : (item.commessaName || item.commessaId || 'Commessa');
-                removedCommesse.push({ name: cName, pct: item.percentuale || 100 });
-              });
-            }
-
             await deleteDoc(docRef);
-
-            if (removedCommesse.length > 0 && coordEmails.length > 0) {
-              const subject = `[Pianificazione Aziendale] Ferie Approvate: ${dipName} - Settimana ${wkId}`;
-              const listHtml = removedCommesse.map(c => `<li><strong>${c.name}</strong> — Impegno preesistente: ${c.pct}%</li>`).join('');
-              const listText = removedCommesse.map(c => `- ${c.name}: ${c.pct}%`).join('\n');
-
-              const htmlBody = `
-                <div style="font-family: Arial, sans-serif; color: #1e293b; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px;">
-                  <h2 style="color: #059669; margin-top: 0;">🏖️ Ferie Approvate — Avviso Ridistribuzione Commesse</h2>
-                  <p>Ciao <strong>Coordinatore/i dell'Area ${dipArea || 'Competente'}</strong>,</p>
-                  <p>Si informa che la risorsa <strong>${dipName}</strong> ha ottenuto l'approvazione delle ferie per l'intera settimana <strong>${wkId}</strong> (dal ${formatDate(startDateStr)} al ${formatDate(endDateStr)}).</p>
-                  <p>Tutte le commesse precedentemente assegnate a questa risorsa per la settimana interessata sono state <strong>automaticamente rimosse</strong> dal calendario per evitare sovrapposizioni.</p>
-                  <div style="background-color: #f8fafc; padding: 15px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #059669;">
-                    <h4 style="margin: 0 0 10px 0; color: #0f172a;">📋 Commesse rimosse da ridistribuire sulle altre risorse dell'area:</h4>
-                    <ul style="margin: 0; padding-left: 20px; font-size: 13px;">
-                      ${listHtml}
-                    </ul>
-                  </div>
-                  <p style="font-size: 12px; color: #64748b;">Si invita ad accedere alla <strong>Pianificazione Personale</strong> per riassegnare i task sopra elencati alle altre risorse disponibili dell'area.</p>
-                </div>
-              `;
-              const plainText = `Ferie Approvate per ${dipName} (Settimana ${wkId}).\nCommesse rimosse da riassegnare:\n${listText}`;
-
-              for (const email of coordEmails) {
-                await queueMail(email, subject, htmlBody, plainText);
-              }
-            }
           }
         } catch (err) {
-          console.error("Errore pulizia e notifica per assegnazione ferie:", err);
+          console.error("Errore pulizia assegnazioni ferie:", err);
         }
       }
     } catch (e) {
@@ -1662,49 +1557,25 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         }
       }
 
-      // Invia notifica e-mail al dipendente
-      const targetDip = dipendenti.find(d => d.nome === req.dipendenteName);
-      if (targetDip && targetDip.email) {
-        let dateDesc = req.dataInizio && req.dataFine && req.dataInizio !== req.dataFine 
+      // Invia notifica personale informativa all'utente interessato
+      const targetDip = dipendenti.find(d => areNamesEqual(d.nome, req.dipendenteName));
+      if (targetDip?.email) {
+        const dateDesc = req.dataInizio && req.dataFine && req.dataInizio !== req.dataFine 
           ? `dal ${formatDate(req.dataInizio)} al ${formatDate(req.dataFine)}` 
-          : `il ${formatDate(req.dataInizio || req.data)}`;
+          : `per il ${formatDate(req.dataInizio || req.data)}`;
         
-        if (req.tipo === 'permesso' || req.tipo === 'assenza') {
-          if (req.frazioneTipo === 'mattina') dateDesc += ' (mattina)';
-          else if (req.frazioneTipo === 'pomeriggio') dateDesc += ' (pomeriggio)';
-          else if (req.frazioneTipo === 'giornata') dateDesc += ' (giornata intera)';
-          else if (req.oraInizio && req.oraFine) dateDesc += ` dalle ${req.oraInizio} alle ${req.oraFine}${req.pausaPranzo && req.pausaPranzoOre ? ` (esclusa pausa pranzo di ${req.pausaPranzoOre.toString().replace('.', ',')}h)` : ''}`;
-        } else if (req.tipo === 'mattina') {
-          dateDesc += ' (mattina)';
-        } else if (req.tipo === 'pomeriggio') {
-          dateDesc += ' (pomeriggio)';
-        }
-        
-        const typeLabels: Record<string, string> = {
-          ferie: 'Ferie',
-          malattia: 'Malattia',
-          maternita: 'Maternità',
-          permesso: 'Permesso',
-          assenza: 'Assenza',
-          smart: 'Lavoro da Casa',
-          mattina: 'Assenza Mattina',
-          pomeriggio: 'Assenza Pomeriggio'
-        };
-        const typeDesc = typeLabels[req.tipo] || req.tipo;
-
-        const subject = `[Notifica] Richiesta ${typeDesc} ${newStatus}`;
-        const htmlBody = `
-          <p>Ciao <strong>${req.dipendenteName}</strong>,</p>
-          <p>La tua richiesta di <strong>${typeDesc}</strong> prevista <strong>${dateDesc}</strong> è stata <strong>${newStatus.toLowerCase()}</strong>.</p>
-          <p>Puoi consultare lo stato delle tue richieste direttamente nella tua area personale della webapp.</p>
-        `;
-        const plainText = `Ciao ${req.dipendenteName},\n\nLa tua richiesta di ${typeDesc} prevista ${dateDesc} è stata ${newStatus.toLowerCase()}.\n\nPuoi consultare lo stato delle tue richieste direttamente nella tua area personale.\n\nQuesta è una notifica automatica.`;
-
-        const isSelfTarget = (targetDip.email.toLowerCase() === userEmail?.toLowerCase()) || (myAssociatedName && req.dipendenteName === myAssociatedName);
-        if (!isSelfTarget) {
-          await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
-        }
+        await createUserNotification({
+          destinatarioEmail: targetDip.email,
+          destinatarioNome: req.dipendenteName,
+          titolo: approva ? '✅ Ferie / Assenza Approvata' : '❌ Richiesta Assenza Non Approvata',
+          messaggio: approva 
+            ? `La tua richiesta di ${req.tipo || 'ferie'} ${dateDesc} è stata approvata dall'HR.`
+            : `La tua richiesta di ${req.tipo || 'ferie'} ${dateDesc} non è stata approvata dall'HR.`,
+          tipo: 'ferie_approvate',
+          link: '/ferie'
+        });
       }
+
       loadFerieData();
 
       // Rigenera la sintesi annuale in background (fire-and-forget)
@@ -1727,51 +1598,6 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       const req = cancellationRequest;
       // 1. Elimina il documento da Firestore
       await deleteDoc(doc(db, 'richieste_ferie', req.id));
-
-      // 2. Invia e-mail di notifica di annullamento al dipendente
-      const targetDip = dipendenti.find(d => d.nome === req.dipendenteName);
-      if (targetDip && targetDip.email) {
-        let dateDesc = req.dataInizio && req.dataFine && req.dataInizio !== req.dataFine 
-          ? `dal ${formatDate(req.dataInizio)} al ${formatDate(req.dataFine)}` 
-          : `il ${formatDate(req.dataInizio || req.data)}`;
-        
-        if (req.tipo === 'permesso' || req.tipo === 'assenza') {
-          if (req.frazioneTipo === 'mattina') dateDesc += ' (mattina)';
-          else if (req.frazioneTipo === 'pomeriggio') dateDesc += ' (pomeriggio)';
-          else if (req.frazioneTipo === 'giornata') dateDesc += ' (giornata intera)';
-          else if (req.oraInizio && req.oraFine) dateDesc += ` dalle ${req.oraInizio} alle ${req.oraFine}${req.pausaPranzo && req.pausaPranzoOre ? ` (esclusa pausa pranzo di ${req.pausaPranzoOre.toString().replace('.', ',')}h)` : ''}`;
-        } else if (req.tipo === 'mattina') {
-          dateDesc += ' (mattina)';
-        } else if (req.tipo === 'pomeriggio') {
-          dateDesc += ' (pomeriggio)';
-        }
-        
-        const typeLabels: Record<string, string> = {
-          ferie: 'Ferie',
-          malattia: 'Malattia',
-          maternita: 'Maternità',
-          permesso: 'Permesso',
-          assenza: 'Assenza',
-          smart: 'Lavoro da Casa',
-          mattina: 'Assenza Mattina',
-          pomeriggio: 'Assenza Pomeriggio'
-        };
-        const typeDesc = typeLabels[req.tipo] || req.tipo;
-
-        const subject = `[Notifica] Annullamento richiesta ${typeDesc}`;
-        const htmlBody = `
-          <p>Ciao <strong>${req.dipendenteName}</strong>,</p>
-          <p>Ti informiamo che la tua richiesta di <strong>${typeDesc}</strong> prevista <strong>${dateDesc}</strong> (in stato <em>${req.stato.toLowerCase()}</em>) è stata <strong>annullata dall'amministrazione / HR</strong>.</p>
-          ${cancellationReason.trim() ? `<p><strong>Motivazione dell'annullamento:</strong> ${cancellationReason.trim()}</p>` : ''}
-          <p>Il calendario e il registro presenze sono stati aggiornati di conseguenza.</p>
-        `;
-        const plainText = `Ciao ${req.dipendenteName},\n\nTi informiamo che la tua richiesta di ${typeDesc} prevista ${dateDesc} (in stato ${req.stato.toLowerCase()}) è stata annullata dall'amministrazione / HR.\n\n${cancellationReason.trim() ? `Motivazione dell'annullamento: ${cancellationReason.trim()}\n\n` : ''}Questa è una notifica automatica.`;
-
-        const isSelfTarget = (targetDip.email.toLowerCase() === userEmail?.toLowerCase()) || (myAssociatedName && req.dipendenteName === myAssociatedName);
-        if (!isSelfTarget) {
-          await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
-        }
-      }
 
       showToast("Ferie annullate con successo!");
       setCancellationRequest(null);
@@ -1817,25 +1643,6 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       if (isHROrAdminAction) {
         if (modTipoAzione === 'annullamento') {
           await deleteDoc(doc(db, 'richieste_ferie', modifyingRequest.id));
-
-          const targetDip = dipendenti.find(d => d.nome === modifyingRequest.dipendenteName);
-          if (targetDip && targetDip.email) {
-            const subject = `[Notifica HR] Annullamento Ferie/Permesso`;
-            const dateDesc = modifyingRequest.dataInizio && modifyingRequest.dataFine && modifyingRequest.dataInizio !== modifyingRequest.dataFine 
-              ? `dal ${formatDate(modifyingRequest.dataInizio)} al ${formatDate(modifyingRequest.dataFine)}` 
-              : `il ${formatDate(modifyingRequest.dataInizio || modifyingRequest.data)}`;
-            const htmlBody = `
-              <p>Ciao <strong>${modifyingRequest.dipendenteName}</strong>,</p>
-              <p>Ti informiamo che l'amministrazione/HR ha <strong>annullato</strong> la tua richiesta di ferie/permessi del <strong>${dateDesc}</strong>.</p>
-              ${modMotivazione.trim() ? `<p><strong>Note dell'HR:</strong> ${modMotivazione.trim()}</p>` : ''}
-              <p>Il registro presenze ed il calendario sono stati aggiornati.</p>
-            `;
-            const plainText = `Ciao ${modifyingRequest.dipendenteName},\n\nL'amministrazione/HR ha annullato la tua richiesta di ferie/permessi del ${dateDesc}.\n${modMotivazione.trim() ? `Note: ${modMotivazione.trim()}\n` : ''}`;
-            const isSelfTarget = (targetDip.email.toLowerCase() === userEmail?.toLowerCase()) || (myAssociatedName && modifyingRequest.dipendenteName === myAssociatedName);
-            if (!isSelfTarget) {
-              await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
-            }
-          }
           showToast("Ferie/Permesso annullato direttamente con successo!", "success");
         } else {
           const payloadUpdate: any = {
@@ -1858,21 +1665,6 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
             await cleanAssignmentsForApprovedFullWeekLeave(modifyingRequest.dipendenteName, modDataInizio, modDataFine);
           }
 
-          const targetDip = dipendenti.find(d => d.nome === modifyingRequest.dipendenteName);
-          if (targetDip && targetDip.email) {
-            const subject = `[Notifica HR] Modifica Ferie/Permessi Approvati`;
-            const htmlBody = `
-              <p>Ciao <strong>${modifyingRequest.dipendenteName}</strong>,</p>
-              <p>Ti informiamo che l'amministrazione/HR ha <strong>modificato</strong> le tue ferie/permessi già approvati.</p>
-              <p>Nuovo periodo/orario: <strong>dal ${formatDate(modDataInizio)} al ${formatDate(modDataFine)}</strong>.</p>
-              ${modMotivazione.trim() ? `<p><strong>Note dell'HR:</strong> ${modMotivazione.trim()}</p>` : ''}
-            `;
-            const plainText = `Ciao ${modifyingRequest.dipendenteName},\n\nL'amministrazione/HR ha modificato le tue ferie/permessi approvati.\nNuovo periodo: dal ${formatDate(modDataInizio)} al ${formatDate(modDataFine)}.\n${modMotivazione.trim() ? `Note: ${modMotivazione.trim()}\n` : ''}`;
-            const isSelfTarget = (targetDip.email.toLowerCase() === userEmail?.toLowerCase()) || (myAssociatedName && modifyingRequest.dipendenteName === myAssociatedName);
-            if (!isSelfTarget) {
-              await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
-            }
-          }
           showToast("Ferie/Permesso modificato direttamente con successo!", "success");
         }
       } else {
@@ -1897,34 +1689,6 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
           stato: newStato,
           richiestaModifica: payloadModifica
         });
-
-        // Invia notifica email all'HR
-        const targetHREmails = hrEmails && hrEmails.length > 0 ? hrEmails : ['cballerini@ingegno06.it'];
-        const subject = `[Notifica HR] ${newStato} da parte di ${modifyingRequest.dipendenteName}`;
-        const dateDesc = modifyingRequest.dataInizio && modifyingRequest.dataFine && modifyingRequest.dataInizio !== modifyingRequest.dataFine
-          ? `dal ${formatDate(modifyingRequest.dataInizio)} al ${formatDate(modifyingRequest.dataFine)}`
-          : `il ${formatDate(modifyingRequest.dataInizio || modifyingRequest.data)}`;
-
-        let modDetail = '';
-        if (modTipoAzione === 'annullamento') {
-          modDetail = `<p>Il dipendente richiede l'<strong>annullamento completo</strong> delle ferie/permessi approvati per il periodo <strong>${dateDesc}</strong>.</p>`;
-        } else {
-          const newDateDesc = modDataInizio === modDataFine ? `il ${formatDate(modDataInizio)}` : `dal ${formatDate(modDataInizio)} al ${formatDate(modDataFine)}`;
-          modDetail = `<p>Il dipendente richiede di <strong>modificare</strong> le ferie/permessi approvati dal periodo <strong>${dateDesc}</strong> al nuovo periodo <strong>${newDateDesc}</strong>.</p>`;
-        }
-
-        const htmlBody = `
-          <p>Ciao Chiara / HR Team,</p>
-          <p>È stata inviata una <strong>${newStato}</strong> per le ferie/permessi già approvati di <strong>${modifyingRequest.dipendenteName}</strong>.</p>
-          ${modDetail}
-          ${modMotivazione.trim() ? `<p><strong>Motivazione del dipendente:</strong> ${modMotivazione.trim()}</p>` : ''}
-          <p>Accedi all'area <em>Permessi e Ferie</em> per approvare o gestire la richiesta.</p>
-        `;
-        const plainText = `Ciao HR Team,\n\nRichiesta ${newStato} da parte di ${modifyingRequest.dipendenteName}.\nMotivazione: ${modMotivazione.trim()}\n\nAccedi alla piattaforma per gestire la richiesta.`;
-
-        for (const email of targetHREmails) {
-          await queueMail(email, subject, htmlBody, plainText);
-        }
 
         showToast("Richiesta di modifica/annullamento inviata all'HR con successo!", "success");
       }
@@ -1966,16 +1730,16 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         await cleanAssignmentsForApprovedFullWeekLeave(req.dipendenteName, newStart, newEnd);
       }
 
-      const targetDip = dipendenti.find(d => d.nome === req.dipendenteName);
-      if (targetDip && targetDip.email) {
-        const subject = `[Notifica] Modifica Ferie/Permesso Approvata`;
-        const htmlBody = `
-          <p>Ciao <strong>${req.dipendenteName}</strong>,</p>
-          <p>La tua richiesta di <strong>modifica</strong> delle ferie/permessi è stata <strong>approvata dall'HR</strong>.</p>
-          <p>Nuovo periodo approvato: dal <strong>${formatDate(newStart)}</strong> al <strong>${formatDate(newEnd)}</strong>.</p>
-        `;
-        const plainText = `Ciao ${req.dipendenteName},\n\nLa tua richiesta di modifica è stata approvata dall'HR.\nNuovo periodo: dal ${formatDate(newStart)} al ${formatDate(newEnd)}.`;
-        await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+      const targetDip = dipendenti.find(d => areNamesEqual(d.nome, req.dipendenteName));
+      if (targetDip?.email) {
+        await createUserNotification({
+          destinatarioEmail: targetDip.email,
+          destinatarioNome: req.dipendenteName,
+          titolo: '✅ Modifica Assenza Approvata',
+          messaggio: `La tua richiesta di modifica per ${req.tipo || 'ferie'} è stata approvata dall'HR.`,
+          tipo: 'ferie_approvate',
+          link: '/ferie'
+        });
       }
 
       showToast("Modifica approvata ed applicata con successo!", "success");
@@ -1990,16 +1754,16 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
     try {
       await deleteDoc(doc(db, 'richieste_ferie', req.id));
 
-      const targetDip = dipendenti.find(d => d.nome === req.dipendenteName);
-      if (targetDip && targetDip.email) {
-        const subject = `[Notifica] Annullamento Ferie/Permesso Confermato`;
-        const htmlBody = `
-          <p>Ciao <strong>${req.dipendenteName}</strong>,</p>
-          <p>La tua richiesta di <strong>annullamento</strong> per le ferie/permessi del <strong>${formatDate(req.dataInizio || req.data)}</strong> è stata <strong>confermata dall'HR</strong>.</p>
-          <p>Il giorno/periodo è stato ripristinato nel tuo calendario.</p>
-        `;
-        const plainText = `Ciao ${req.dipendenteName},\n\nLa tua richiesta di annullamento per il ${formatDate(req.dataInizio || req.data)} è stata confermata dall'HR.`;
-        await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
+      const targetDip = dipendenti.find(d => areNamesEqual(d.nome, req.dipendenteName));
+      if (targetDip?.email) {
+        await createUserNotification({
+          destinatarioEmail: targetDip.email,
+          destinatarioNome: req.dipendenteName,
+          titolo: '✅ Annullamento Assenza Confermato',
+          messaggio: `L'annullamento della tua richiesta di ${req.tipo || 'ferie'} è stato confermato dall'HR.`,
+          tipo: 'ferie_approvate',
+          link: '/ferie'
+        });
       }
 
       showToast("Annullamento approvato con successo!", "success");
@@ -2016,17 +1780,6 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         stato: 'Approvato',
         richiestaModifica: null
       });
-
-      const targetDip = dipendenti.find(d => d.nome === req.dipendenteName);
-      if (targetDip && targetDip.email) {
-        const subject = `[Notifica] Richiesta Modifica/Annullamento non accolta`;
-        const htmlBody = `
-          <p>Ciao <strong>${req.dipendenteName}</strong>,</p>
-          <p>La tua richiesta di modifica/annullamento per le ferie/permessi del <strong>${formatDate(req.dataInizio || req.data)}</strong> non è stata accolta. La richiesta originale rimane confermata ed approvata.</p>
-        `;
-        const plainText = `Ciao ${req.dipendenteName},\n\nLa tua richiesta di modifica/annullamento per il ${formatDate(req.dataInizio || req.data)} non è stata accolta.`;
-        await queueMail(targetDip.email.toLowerCase(), subject, htmlBody, plainText);
-      }
 
       showToast("Richiesta ripristinata allo stato approvato originale.", "info");
       loadFerieData();

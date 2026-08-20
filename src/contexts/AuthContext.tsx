@@ -201,37 +201,23 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         .filter(d => !isTechnicalUser(d));
       setDipendenti(dipList.sort((a, b) => a.nome.localeCompare(b.nome)));
 
-      // 6. Coordinatori
-      const coordList = coordinatoriSnap.docs.map(doc => ({
-        id: doc.id,
-        email: doc.data().email || '',
-        area: doc.data().area || ''
-      }));
+      // 6. Coordinatori (solo quelli effettivi salvati nel database)
+      const coordList = coordinatoriSnap.docs
+        .map(doc => ({
+          id: doc.id,
+          email: (doc.data().email || '').toLowerCase().trim(),
+          area: (doc.data().area || '').trim()
+        }))
+        .filter(c => c.email && c.area);
 
-      const defaultCoordinators = [
-        { email: 'mcorbellini@ingegno06.it', area: 'Amministrazione' },
-        { email: 'fbadalassi@ingegno06.it', area: 'Ingegneria' },
-        { email: 'badalassi@ingegno06.it', area: 'Ingegneria' },
-        { email: 'ptaddei@ingegno06.it', area: 'Ingegneria' },
-        { email: 'taddei@ingegno06.it', area: 'Ingegneria' },
-        { email: 'aromanello@ingegno06.it', area: 'Disegnatori' },
-        { email: 'romanello@ingegno06.it', area: 'Disegnatori' },
-        { email: 'abondi@ingegno06.it', area: 'Sicurezza Cantieri' },
-        { email: 'bondi@ingegno06.it', area: 'Sicurezza Cantieri' },
-        { email: 'fvotino@ingegno06.it', area: 'Consulenza Sicurezza' },
-        { email: 'votino@ingegno06.it', area: 'Consulenza Sicurezza' },
-      ];
-
-      defaultCoordinators.forEach((def, idx) => {
-        const cleanEmail = def.email.toLowerCase().trim();
-        if (!coordList.some(c => (c.email || '').toLowerCase().trim() === cleanEmail && c.area === def.area)) {
-          coordList.push({
-            id: `default-coord-${idx}-${cleanEmail.split('@')[0]}`,
-            email: def.email,
-            area: def.area
-          });
-        }
-      });
+      // Assicuriamo Corbellini Matteo su Amministrazione se non già presente nel DB
+      if (!coordList.some(c => c.email === 'mcorbellini@ingegno06.it' && c.area === 'Amministrazione')) {
+        coordList.push({
+          id: 'default-coord-admin-mcorbellini',
+          email: 'mcorbellini@ingegno06.it',
+          area: 'Amministrazione'
+        });
+      }
 
       setCoordinatori(coordList);
 
@@ -384,8 +370,21 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
       });
       setPrioritaCommesse(prioritaMap);
-    });
+    }, (err) => console.error("Errore listener priorità commesse:", err));
     return () => unsubPriority();
+  }, [user]);
+
+  // Listener real-time per assegnazioni commesse
+  useEffect(() => {
+    if (!user) return;
+    const unsubAssignments = onSnapshot(collection(db, 'assegnazioni'), (snap) => {
+      const ass: Record<string, any[]> = {};
+      snap.forEach(docSnap => {
+        ass[docSnap.id] = docSnap.data().lista || [];
+      });
+      setAssegnazioni(ass);
+    }, (err) => console.error("Errore listener real-time assegnazioni:", err));
+    return () => unsubAssignments();
   }, [user]);
 
 

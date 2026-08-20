@@ -62,25 +62,38 @@ export const OrganigrammaView: React.FC = () => {
     });
   }, [activeDipendenti]);
 
-  // Coordinatori mappati con nome ed email per ciascuna area
+  // Coordinatori mappati con nome ed email per ciascuna area (solo persone reali attive)
   const coordinatorsByArea = useMemo(() => {
-    const map: Record<string, { nome: string; email: string }[]> = {};
+    const map: Record<string, { nome: string; email: string }[]> = {
+      'Disegnatori': [],
+      'Ingegneria': [],
+      'Sicurezza Cantieri': [],
+      'Consulenza Sicurezza': [],
+      'Amministrazione': []
+    };
 
     coordinatori.forEach(coord => {
-      if (!coord.area) return;
+      if (!coord.area || !coord.email) return;
       const areaKey = coord.area.trim();
       if (!map[areaKey]) map[areaKey] = [];
 
-      const matchedDip = activeDipendenti.find(d => d.email?.toLowerCase().trim() === coord.email?.toLowerCase().trim());
-      const nome = matchedDip ? matchedDip.nome : (coord.email.toLowerCase().includes('mcorbellini') ? 'Corbellini Matteo' : coord.email);
+      const cleanEmail = coord.email.toLowerCase().trim();
+      const matchedDip = activeDipendenti.find(d => 
+        (d.email && d.email.toLowerCase().trim() === cleanEmail)
+      );
 
-      if (!map[areaKey].some(c => c.email.toLowerCase() === coord.email.toLowerCase())) {
+      // Se non corrisponde a nessun dipendente reale attivo, ignoriamo voci duplicate/fantasma
+      if (!matchedDip) return;
+
+      const nome = matchedDip.nome;
+
+      if (!map[areaKey].some(c => c.email.toLowerCase().trim() === cleanEmail || areNamesEqual(c.nome, nome))) {
         map[areaKey].push({ nome, email: coord.email });
       }
     });
 
-    if (!map['Amministrazione']) map['Amministrazione'] = [];
-    if (!map['Amministrazione'].some(c => c.email.toLowerCase().includes('mcorbellini'))) {
+    // Assicuriamo Corbellini Matteo su Amministrazione
+    if (!map['Amministrazione'].some(c => areNamesEqual(c.nome, 'Corbellini Matteo') || c.email.toLowerCase().includes('mcorbellini'))) {
       map['Amministrazione'].push({
         nome: 'Corbellini Matteo',
         email: 'mcorbellini@ingegno06.it'
@@ -470,8 +483,10 @@ export const OrganigrammaView: React.FC = () => {
             const icon = MACRO_AREA_ICONS[areaName] || <Building2 className="w-4 h-4 text-gray-600 shrink-0" />;
 
             const nonCoordMembers = members.filter(m => 
-              !areaCoords.some(c => c.email.toLowerCase().trim() === m.email?.toLowerCase().trim() || areNamesEqual(c.nome, m.nome))
+              !areaCoords.some(c => (c.email && m.email && c.email.toLowerCase().trim() === m.email.toLowerCase().trim()) || areNamesEqual(c.nome, m.nome))
             );
+
+            const totalAreaCount = areaCoords.length + nonCoordMembers.length;
 
             const isUserCategory = areaCoords.some(c => isCurrentUser(c.nome, c.email)) ||
                                    members.some(m => isCurrentUser(m.nome, m.email));
@@ -497,7 +512,7 @@ export const OrganigrammaView: React.FC = () => {
                     </div>
 
                     <span className="bg-slate-200 text-slate-800 text-[11px] font-black px-2 py-0.5 rounded-full shrink-0">
-                      {members.length}
+                      {totalAreaCount}
                     </span>
                   </div>
 

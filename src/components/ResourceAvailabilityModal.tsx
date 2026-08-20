@@ -3,7 +3,6 @@ import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, addDoc } from 'firebase/firestore';
 import { UserCheck, X, Send, AlertCircle } from 'lucide-react';
-import { queueMail } from '../utils/mailSender';
 import { getWeekNumber } from '../utils/date';
 
 interface ResourceAvailabilityModalProps {
@@ -17,7 +16,7 @@ export const ResourceAvailabilityModal: React.FC<ResourceAvailabilityModalProps>
   onClose,
   onSuccess
 }) => {
-  const { userEmail, dipendenti, coordinatori, myAssociatedName } = useAuth();
+  const { userEmail, dipendenti, myAssociatedName } = useAuth();
   const [nota, setNota] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -50,29 +49,6 @@ export const ResourceAvailabilityModal: React.FC<ResourceAvailabilityModalProps>
         timestamp: new Date().toISOString(),
         createdAt: new Date().toISOString()
       });
-
-      // 2. Recupera email coordinatori di macroArea + fallback admin
-      const adminEmails = ['aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it'];
-      const areaCoordEmails = (coordinatori || [])
-        .filter(c => c.area === macroArea && c.email)
-        .map(c => c.email.toLowerCase());
-
-      const recipients = Array.from(new Set([...areaCoordEmails, ...adminEmails]));
-
-      const subject = `[Disponibilità Risorsa] ${myAssociatedName} è scarico/a e richiede lavoro`;
-      const htmlBody = `
-        <p>Ciao Coordinatore / Admin,</p>
-        <p>Ti informiamo che la risorsa <strong>${myAssociatedName}</strong> dell'area <strong>${macroArea}</strong> ha inviato una segnalazione per comunicare che è <strong>scarica e disponibile per prendere in carico nuovi task / lavoro</strong> per la <strong>${weekLabel}</strong>.</p>
-        ${nota.trim() ? `<div style="margin-top:12px;padding:12px;background-color:#f8fafc;border-left:4px solid #059669;border-radius:6px;font-style:italic;color:#334155;">Note della risorsa: &ldquo;${nota.trim()}&rdquo;</div>` : ''}
-        <p style="margin-top:16px;">Accedi all'area <strong>Pianificazione del Personale e Carichi</strong> per assegnare nuove attività alla risorsa.</p>
-      `;
-      const plainText = `Ciao Coordinatore,\n\nLa risorsa ${myAssociatedName} (${macroArea}) segnala che è scarica e disponibile per prendere in carico nuovo lavoro per la ${weekLabel}.\n${nota.trim() ? `Note: "${nota.trim()}"\n` : ''}`;
-
-      for (const email of recipients) {
-        if (email.toLowerCase() !== (userEmail || '').toLowerCase()) {
-          await queueMail(email, subject, htmlBody, plainText);
-        }
-      }
 
       setNota('');
       if (onSuccess) onSuccess();
