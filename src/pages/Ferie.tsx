@@ -9,6 +9,8 @@ import { isCollaboratore, isSoci } from './Impostazioni';
 import ResourceAnalyticsModal from '../components/ResourceAnalyticsModal';
 import { rebuildYearlySummary } from '../services/yearlySummaryService';
 import { createUserNotification } from '../utils/userNotificationService';
+import { queueMail } from '../utils/mailSender';
+import { getSociNotificationEmails } from '../utils/emailTemplateManager';
 
 const areNamesEqual = (n1?: string | null, n2?: string | null): boolean => {
   if (!n1 || !n2) return false;
@@ -632,6 +634,103 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
     }
   };
 
+  const sendWeekendApprovalMailToSoci = async (
+    dipendenteNome: string,
+    dataFestivo: string,
+    motivo: string,
+    approvedByName: string
+  ) => {
+    try {
+      const formattedData = formatDate(dataFestivo) || dataFestivo;
+      const nowStr = new Date().toLocaleDateString('it-IT', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+
+      const subject = `[Lavoro Festivo Approvato] ${dipendenteNome} - ${formattedData}`;
+      const htmlBody = `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b; max-width: 680px; margin: 0 auto; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.06);">
+          
+          <!-- Header Dark Navy Email-Safe con Fallback Outlook -->
+          <table width="100%" border="0" cellpadding="0" cellspacing="0" bgcolor="#0f172a" style="width: 100%; background-color: #0f172a; background: linear-gradient(135deg, #0f172a 0%, #312e81 50%, #4338ca 100%);">
+            <tr>
+              <td bgcolor="#0f172a" style="background-color: #0f172a; padding: 26px; color: #ffffff;">
+                <table border="0" cellpadding="0" cellspacing="0" width="100%" style="width: 100%;">
+                  <tr>
+                    <td valign="top" style="vertical-align: top;">
+                      <div style="font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #a5b4fc; margin-bottom: 6px;">
+                        Autorizzazione Lavoro Straordinario / Festivo
+                      </div>
+                      <h1 style="margin: 0; font-size: 22px; font-weight: 900; color: #ffffff; line-height: 1.25;">
+                        ${dipendenteNome} — ${formattedData}
+                      </h1>
+                      <div style="margin-top: 10px; font-size: 13px; color: #e0e7ff; font-weight: 600;">
+                        🛡️ Approvato per lavoro nel weekend / festività
+                      </div>
+                    </td>
+                    <td align="right" valign="top" style="text-align: right; vertical-align: top; width: 130px;">
+                      <span style="background-color: #10b981; color: #ffffff; padding: 6px 14px; border-radius: 20px; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; display: inline-block;">
+                        🟢 AUTORIZZATO
+                      </span>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+
+          <div style="padding: 26px;">
+            <p style="font-size: 13px; color: #334155; margin-top: 0; margin-bottom: 20px; line-height: 1.5; font-weight: 600;">
+              Notifica automatica per i <strong>Soci</strong>: è stata approvata una richiesta di autorizzazione per lo svolgimento di attività lavorativa in giornata festiva o durante il fine settimana.
+            </p>
+
+            <h3 style="margin-top: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.8px; color: #1e1b4b; border-bottom: 2px solid #6366f1; padding-bottom: 8px; margin-bottom: 16px; font-weight: 900;">
+              📋 Dettaglio Autorizzazione Lavoro Festivo
+            </h3>
+
+            <table border="0" cellpadding="10" cellspacing="0" style="width: 100%; font-size: 13px; color: #334155; border-collapse: collapse; margin-bottom: 24px; background-color: #f8fafc; border-radius: 12px; overflow: hidden; border: 1px solid #e2e8f0;">
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="font-weight: bold; width: 220px; color: #475569; background-color: #f1f5f9;">Risorsa Autorizzata:</td>
+                <td style="font-weight: 900; color: #0f172a; font-size: 14px;">${dipendenteNome}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Data / Giorno Festivo:</td>
+                <td style="font-weight: 800; color: #4338ca; font-size: 14px;">${formattedData}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Motivazione / Attività:</td>
+                <td style="font-weight: 700; color: #0f172a;">${motivo || 'Autorizzazione lavoro festivo'}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Approvato Da:</td>
+                <td style="font-weight: 700; color: #047857;">${approvedByName}</td>
+              </tr>
+              <tr>
+                <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Data Registrazione:</td>
+                <td style="font-weight: 600; color: #64748b;">${nowStr}</td>
+              </tr>
+            </table>
+
+            <div style="padding: 14px 18px; background-color: #eef2ff; border: 1px solid #c7d2fe; border-radius: 12px; font-size: 12px; color: #3730a3; font-weight: 600;">
+              ℹ️ Questa comunicazione è trasmessa automaticamente a tutti i Soci in conformità alle direttive aziendali per il monitoraggio delle presenze nei giorni non lavorativi.
+            </div>
+          </div>
+
+        </div>
+      `;
+
+      const sociEmails = await getSociNotificationEmails(dipendenti);
+      for (const email of sociEmails) {
+        await queueMail(email, subject, htmlBody, undefined, { isSystemNotification: true });
+      }
+    } catch (err) {
+      console.error("Errore invio email approvazione festivi ai soci:", err);
+    }
+  };
+
   const handleWeekendDecision = async (id: string, action: 'Approvato' | 'Rifiutato' | 'Revocato' | 'Annullato') => {
     try {
       const req = allWeekendRequests.find(r => r.id === id);
@@ -652,6 +751,24 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         await updateDoc(doc(db, 'richieste_weekend', id), updates);
       }
       loadWeekendData();
+
+      if (action === 'Approvato') {
+        const targetData = req.nuovaData || req.data;
+        const targetMotivo = req.nuovoMotivo || req.motivo || 'Autorizzazione lavoro weekend/festivo';
+        const approver = myAssociatedName || userEmail || 'Ufficio HR';
+        await sendWeekendApprovalMailToSoci(req.dipendenteName, targetData, targetMotivo, approver);
+
+        if (req.dipendenteEmail) {
+          await createUserNotification({
+            destinatarioEmail: req.dipendenteEmail,
+            destinatarioNome: req.dipendenteName,
+            titolo: '✅ Lavoro Festivo Approvato',
+            messaggio: `La tua richiesta di lavoro per ${formatDate(targetData)} è stata approvata dall'HR.`,
+            tipo: 'ferie_approvate',
+            link: '/presenze'
+          });
+        }
+      }
 
       showToast(`Richiesta ${action.toLowerCase()} con successo!`);
     } catch (e) {
@@ -695,6 +812,21 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         stato: 'Approvato',
         timestamp: new Date().toISOString()
       });
+      
+      const approver = myAssociatedName || userEmail || 'Ufficio HR';
+      await sendWeekendApprovalMailToSoci(directAuthDipNome, directAuthData, directAuthMotivo || "Autorizzazione d'ufficio dall'HR", approver);
+
+      if (email) {
+        await createUserNotification({
+          destinatarioEmail: email,
+          destinatarioNome: directAuthDipNome,
+          titolo: '✅ Lavoro Festivo Autorizzato',
+          messaggio: `Sei stato autorizzato per lavoro nel giorno ${formatDate(directAuthData)} dall'HR.`,
+          tipo: 'ferie_approvate',
+          link: '/presenze'
+        });
+      }
+
       setDirectAuthDipNome('');
       setDirectAuthData('');
       setDirectAuthMotivo('');

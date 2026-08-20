@@ -1862,30 +1862,35 @@ export default function Commesse() {
 
     const mailSubject = `[Apertura Commessa] ${cod} - ${title}`;
     const mailHtmlBody = `
-      <div style="font-family: 'Segoe UI', Arial, sans-serif; color: #1e293b; max-width: 780px; margin: 0 auto; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.08);">
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b; max-width: 680px; margin: 0 auto; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.06);">
         
-        <div style="background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #1e3a8a 100%); padding: 26px; color: #ffffff;">
-          <table border="0" cellpadding="0" cellspacing="0" style="width: 100%;">
-            <tr>
-              <td>
-                <div style="font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #93c5fd; margin-bottom: 6px;">
-                  Scheda Apertura Nuova Commessa
-                </div>
-                <h1 style="margin: 0; font-size: 22px; font-weight: 900; color: #ffffff; line-height: 1.25;">
-                  ${cod} — ${title}
-                </h1>
-                <div style="margin-top: 10px; font-size: 13px; color: #e2e8f0; font-weight: 600;">
-                  💼 Cliente: <strong style="color: #ffffff;">${client}</strong>
-                </div>
-              </td>
-              <td style="text-align: right; vertical-align: top; width: 110px;">
-                <span style="background-color: #10b981; color: #ffffff; padding: 6px 14px; border-radius: 20px; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; display: inline-block;">
-                  🟢 APERTA
-                </span>
-              </td>
-            </tr>
-          </table>
-        </div>
+        <!-- Header Dark Navy Email-Safe con Fallback Outlook -->
+        <table width="100%" border="0" cellpadding="0" cellspacing="0" bgcolor="#0f172a" style="width: 100%; background-color: #0f172a; background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #1e3a8a 100%);">
+          <tr>
+            <td bgcolor="#0f172a" style="background-color: #0f172a; padding: 26px; color: #ffffff;">
+              <table border="0" cellpadding="0" cellspacing="0" width="100%" style="width: 100%;">
+                <tr>
+                  <td valign="top" style="vertical-align: top;">
+                    <div style="font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #93c5fd; margin-bottom: 6px;">
+                      Scheda Apertura Nuova Commessa
+                    </div>
+                    <h1 style="margin: 0; font-size: 22px; font-weight: 900; color: #ffffff; line-height: 1.25;">
+                      ${cod} — ${title}
+                    </h1>
+                    <div style="margin-top: 10px; font-size: 13px; color: #e2e8f0; font-weight: 600;">
+                      💼 Cliente: <strong style="color: #ffffff;">${client}</strong>
+                    </div>
+                  </td>
+                  <td align="right" valign="top" style="text-align: right; vertical-align: top; width: 110px;">
+                    <span style="background-color: #10b981; color: #ffffff; padding: 6px 14px; border-radius: 20px; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; display: inline-block;">
+                      🟢 APERTA
+                    </span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
 
         <div style="padding: 26px;">
           
@@ -2028,30 +2033,35 @@ export default function Commesse() {
 
     const mailSubject = `[Chiusura Commessa] ${cod} - ${title}`;
     const mailHtmlBody = `
-      <div style="font-family: 'Segoe UI', Arial, sans-serif; color: #1e293b; max-width: 780px; margin: 0 auto; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.08);">
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b; max-width: 680px; margin: 0 auto; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.06);">
         
-        <div style="background: linear-gradient(135deg, #0f172a 0%, #4c0519 50%, #881337 100%); padding: 26px; color: #ffffff;">
-          <table border="0" cellpadding="0" cellspacing="0" style="width: 100%;">
-            <tr>
-              <td>
-                <div style="font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #fecdd3; margin-bottom: 6px;">
-                  Scheda Chiusura Commessa
-                </div>
-                <h1 style="margin: 0; font-size: 22px; font-weight: 900; color: #ffffff; line-height: 1.25;">
-                  ${cod} — ${title}
-                </h1>
-                <div style="margin-top: 10px; font-size: 13px; color: #ffe4e6; font-weight: 600;">
-                  💼 Cliente: <strong style="color: #ffffff;">${client}</strong>
-                </div>
-              </td>
-              <td style="text-align: right; vertical-align: top; width: 110px;">
-                <span style="background-color: #e11d48; color: #ffffff; padding: 6px 14px; border-radius: 20px; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; display: inline-block;">
-                  🔴 CHIUSA
-                </span>
-              </td>
-            </tr>
-          </table>
-        </div>
+        <!-- Header Dark Red/Navy Email-Safe con Fallback Outlook -->
+        <table width="100%" border="0" cellpadding="0" cellspacing="0" bgcolor="#0f172a" style="width: 100%; background-color: #0f172a; background: linear-gradient(135deg, #0f172a 0%, #4c0519 50%, #881337 100%);">
+          <tr>
+            <td bgcolor="#0f172a" style="background-color: #0f172a; padding: 26px; color: #ffffff;">
+              <table border="0" cellpadding="0" cellspacing="0" width="100%" style="width: 100%;">
+                <tr>
+                  <td valign="top" style="vertical-align: top;">
+                    <div style="font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #fecdd3; margin-bottom: 6px;">
+                      Scheda Chiusura Commessa
+                    </div>
+                    <h1 style="margin: 0; font-size: 22px; font-weight: 900; color: #ffffff; line-height: 1.25;">
+                      ${cod} — ${title}
+                    </h1>
+                    <div style="margin-top: 10px; font-size: 13px; color: #ffe4e6; font-weight: 600;">
+                      💼 Cliente: <strong style="color: #ffffff;">${client}</strong>
+                    </div>
+                  </td>
+                  <td align="right" valign="top" style="text-align: right; vertical-align: top; width: 110px;">
+                    <span style="background-color: #e11d48; color: #ffffff; padding: 6px 14px; border-radius: 20px; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; display: inline-block;">
+                      🔴 CHIUSA
+                    </span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
 
         <div style="padding: 26px;">
           

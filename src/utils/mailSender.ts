@@ -11,7 +11,7 @@ export async function queueMail(
   subject: string, 
   htmlBody: string, 
   plainText?: string,
-  options?: { isSystemNotification?: boolean }
+  _options?: { isSystemNotification?: boolean }
 ) {
   try {
     // Verifica se l'email di destinazione è valida
@@ -22,30 +22,28 @@ export async function queueMail(
 
     const normalizedEmail = toEmail.toLowerCase().trim();
 
-    // L'email è considerata di sistema se inviata esplicitamente come notifica di sistema (es. commesse)
-    // o indirizzata a un indirizzo generico di sistema (synergieflow)
-    const isSystemEmail = 
-      options?.isSystemNotification === true || 
-      normalizedEmail === 'synergieflow@ingegno06.it' || 
-      normalizedEmail === 'synergiesflow@ingegno06.it';
+    // Controlla se l'indirizzo appartiene a una risorsa censita in anagrafica dipendenti
+    const dipendentiRef = collection(db, 'dipendenti');
+    const q = query(dipendentiRef, where('email', '==', normalizedEmail));
+    const querySnap = await getDocs(q);
 
-    if (!isSystemEmail) {
-      // Controlla se il destinatario ha le notifiche e-mail abilitate nel suo profilo dipendente
-      const dipendentiRef = collection(db, 'dipendenti');
-      const q = query(dipendentiRef, where('email', '==', normalizedEmail));
-      const querySnap = await getDocs(q);
-
-      if (querySnap.empty) {
-        console.log(`[PAUSA EMAIL PER RISORSA] Destinatario ${toEmail} non censito in anagrafica dipendenti. E-mail scartata.`);
+    if (!querySnap.empty) {
+      const dipData = querySnap.docs[0].data();
+      const todayStr = new Date().toISOString().split('T')[0];
+      
+      // Se il dipendente è cessato, blocca sempre le e-mail
+      if (dipData.dataCessazione && dipData.dataCessazione <= todayStr) {
+        console.log(`[DIPENDENTE CESSATO] Risorsa ${toEmail} cessata in data ${dipData.dataCessazione}. E-mail bloccata e scartata.`);
         return;
       }
 
-      const dipData = querySnap.docs[0].data();
+      // Se l'interruttore della risorsa è disabilitato (false o non impostato), la mail viene sempre bloccata
       if (dipData.notificheEmail !== true) {
-        console.log(`[PAUSA EMAIL PER RISORSA] Notifiche e-mail non abilitate per ${toEmail}. E-mail scartata.`);
+        console.log(`[NOTIFICHE EMAIL DISABILITATE] Interruttore disabilitato per la risorsa ${toEmail}. E-mail bloccata e scartata.`);
         return;
       }
     }
+    // Se l'indirizzo non appartiene a un dipendente censito (es. synergieflow o mail esterna), viene inviata regolarmente
 
     const payload: any = {
       to: toEmail.toLowerCase().trim(),

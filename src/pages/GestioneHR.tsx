@@ -2,9 +2,10 @@ import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, addDoc, doc, deleteDoc, query, orderBy, setDoc, getDocs, getDoc, limit } from 'firebase/firestore';
-import { MessageSquare, Plus, Trash2, Edit, HeartPulse, Lightbulb, FileText, RefreshCw, Archive, Download, Smile, Eye } from 'lucide-react';
+import { MessageSquare, Plus, Trash2, Edit, HeartPulse, Lightbulb, FileText, RefreshCw, Archive, Download, Smile, Eye, Users } from 'lucide-react';
 import ConfirmModal from '../components/ConfirmModal';
 import QuestionnaireModal from '../components/QuestionnaireModal';
+import AnagraficaRisorseSection from '../components/AnagraficaRisorseSection';
 import { DEFAULT_QUESTIONS } from '../utils/defaultQuestionnaire';
 
 interface Suggerimento {
@@ -142,7 +143,7 @@ const ClimaTrendChart = ({ responses, days, onDaysChange }: { responses: Rispost
 
 export default function GestioneHR() {
   const { isHR, isDev } = useAuth();
-  const [activeTab, setActiveTab] = useState<'greetings' | 'wellness' | 'surveys' | 'ideas'>('greetings');
+  const [activeTab, setActiveTab] = useState<'greetings' | 'wellness' | 'surveys' | 'ideas' | 'risorse'>('greetings');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
 
   // 1. Frasi Benvenuto
@@ -578,7 +579,7 @@ export default function GestioneHR() {
           onClick={() => setActiveTab('surveys')}
           className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm transition-all active:scale-95 cursor-pointer ${
             activeTab === 'surveys'
-              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+              ? 'bg-teal-600 text-white shadow-md shadow-teal-200'
               : 'bg-gray-50 text-gray-650 hover:bg-gray-100'
           }`}
         >
@@ -596,6 +597,18 @@ export default function GestioneHR() {
         >
           <Lightbulb className="w-4 h-4" />
           <span>Cassetta delle Idee ({suggerimenti.filter(s => s.stato !== 'Archiviato').length})</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('risorse')}
+          className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm transition-all active:scale-95 cursor-pointer ${
+            activeTab === 'risorse'
+              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+              : 'bg-gray-50 text-gray-650 hover:bg-gray-100'
+          }`}
+        >
+          <Users className="w-4 h-4" />
+          <span>Anagrafica Risorse</span>
         </button>
       </div>
 
@@ -919,6 +932,13 @@ export default function GestioneHR() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* TAB 5: ANAGRAFICA RISORSE */}
+      {activeTab === 'risorse' && (
+        <div className="animate-in fade-in duration-200">
+          <AnagraficaRisorseSection />
         </div>
       )}
 
