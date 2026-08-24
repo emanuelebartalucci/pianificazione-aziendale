@@ -30,6 +30,12 @@ export function isTechnicalUser(user?: { email?: string | null; nome?: string | 
   return email.includes('synergieflow') || email.includes('synergiesflow') || nome.includes('synergie flow') || nome.includes('synergies flow') || nome.includes('synergieflow') || nome.includes('synergiesflow');
 }
 
+export const isSoci = (nomeOrEmail?: string | null): boolean => {
+  if (!nomeOrEmail) return false;
+  const clean = nomeOrEmail.trim().toLowerCase();
+  return clean.includes('corbellini') || clean.includes('profeti') || clean.includes('aprofeti') || clean.includes('mcorbellini');
+};
+
 export interface Commessa {
   id: string;
   nome: string;
@@ -80,7 +86,11 @@ interface AuthContextType {
   isCommerciale: boolean;
   gestoriCommesseEmails: string[];
   isGestoreCommesse: boolean;
+  gestoriFornitureEmails: string[];
+  isGestoreForniture: boolean;
   prioritaCommesse: Record<string, 'Alta' | 'Standard' | 'Bassa'>;
+  isPlanningLoaded: boolean;
+  loadPlanningData: () => Promise<void>;
   refreshData: () => Promise<void>;
   refreshDataIfStale: () => Promise<void>;
   loadAllCommesse?: () => Promise<void>;
@@ -125,7 +135,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   // seniorsEmails: rimosso il fetch Firestore, ora sempre array vuoto per retrocompatibilità
   const [dynamicCommerciali, setDynamicCommerciali] = useState<string[]>([]);
   const [dynamicGestoriCommesse, setDynamicGestoriCommesse] = useState<string[]>([]);
+  const [dynamicGestoriForniture, setDynamicGestoriForniture] = useState<string[]>([]);
   const [prioritaCommesse, setPrioritaCommesse] = useState<Record<string, 'Alta' | 'Standard' | 'Bassa'>>({});
+  const [isPlanningLoaded, setIsPlanningLoaded] = useState(false);
+  const isPlanningLoadingRef = useRef(false);
 
   const fetchAuthData = async () => {
     try {
@@ -134,11 +147,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         hrsSnap,
         devsSnap,
         gestoriSnap,
+        gestoriFornitureSnap,
         dipendentiSnap,
         coordinatoriSnap,
-        commesseSnap,
-        clientiSnap,
-        assegnazioniSnap,
         chiusureSnap,
         richiesteDisegnatoriSnap,
         pmsSnap,
@@ -149,11 +160,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         getDocs(collection(db, 'hr')),
         getDocs(collection(db, 'sviluppatori')),
         getDocs(collection(db, 'gestori_commesse')),
+        getDocs(collection(db, 'gestori_forniture')),
         getDocs(collection(db, 'dipendenti')),
         getDocs(collection(db, 'coordinatori')),
-        getDocs(collection(db, 'catalogo_commesse')),
-        getDocs(collection(db, 'clienti')),
-        getDocs(collection(db, 'assegnazioni')),
         getDocs(collection(db, 'chiusure_aziendali')),
         getDocs(query(collection(db, 'richieste_disegnatori'), where('stato', '==', 'in_attesa'))),
         getDocs(collection(db, 'project_managers')),
@@ -179,6 +188,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       // 4. Gestori commesse
       const gestoriList = gestoriSnap.docs.map(doc => (doc.data().email || '').toLowerCase().trim()).filter(Boolean);
       setDynamicGestoriCommesse(gestoriList);
+
+      // 4b. Gestori forniture & materiali
+      const fornitureList = gestoriFornitureSnap.docs.map(doc => (doc.data().email || '').toLowerCase().trim()).filter(Boolean);
+      setDynamicGestoriForniture(fornitureList);
 
       // 5. Dipendenti
       const dipList = dipendentiSnap.docs
@@ -221,70 +234,251 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
       setCoordinatori(coordList);
 
-      // 7. Commesse
-      const commesseList = commesseSnap.docs.map(doc => ({
-        id: doc.id,
-        nome: doc.data().nome || '',
-        colore: doc.data().colore || '#3b82f6',
-        dataInizio: doc.data().dataInizio || '',
-        dataFine: doc.data().dataFine || '',
-        responsabile: doc.data().responsabile || '',
-        pm: doc.data().pm || '',
-        codiceCommessa: doc.data().codiceCommessa || '',
-        anno: doc.data().anno || '',
-        tipologia: doc.data().tipologia || '',
-        cliente: doc.data().cliente || '',
-        stato: doc.data().stato || 'Aperta',
-        giornateSeniorProject: doc.data().giornateSeniorProject,
-        giornateProject: doc.data().giornateProject,
-        giornateJuniorProject: doc.data().giornateJuniorProject,
-        apertaDa: doc.data().apertaDa || '',
-        progetti: doc.data().progetti || []
-      }));
-      setCommesse(commesseList.sort((a, b) => a.nome.localeCompare(b.nome)));
-
-      // 8. Clienti
-      const clientiList = clientiSnap.docs.map(doc => ({
-        id: doc.id,
-        codice: doc.data().codice || '',
-        nome: doc.data().nome || ''
-      })).sort((a, b) => Number(a.codice) - Number(b.codice));
-      setClienti(clientiList);
-
-      // 9. Assegnazioni
-      const ass: Record<string, any[]> = {};
-      assegnazioniSnap.forEach(docSnap => {
-        ass[docSnap.id] = docSnap.data().lista || [];
-      });
-      setAssegnazioni(ass);
-
-      // 10. Chiusure aziendali
+      // 7. Chiusure aziendali
       const chiusureList = chiusureSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setChiusureAziendali(chiusureList);
 
-      // 11. Richieste disegnatori
+      // 8. Richieste disegnatori
       const richiesteDisList = richiesteDisegnatoriSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setRichiesteDisegnatori(richiesteDisList);
 
-      // 12. PMs
+      // 9. PMs
       setPmsEmails(pmsSnap.docs.map(d => (d.data().email || '').toLowerCase()));
 
-      // 13. Commerciali
+      // 10. Commerciali
       setDynamicCommerciali(commercialiSnap.docs.map(d => (d.data().email || '').toLowerCase()).filter(Boolean));
 
-      // 14. Approved Leaves
+      // 11. Approved Leaves
       const leavesList: any[] = leavesSnap.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
       setApprovedLeaves(leavesList);
 
-      // 15. Priorita commesse — gestita dal listener real-time (vedi useEffect sotto)
     } catch (err) {
       console.error("Errore nel caricamento dei dati di AuthContext:", err);
     }
   };
 
+  // Caricamento On-Demand (Lazy Loading) e Mirato per la Pianificazione
+  const loadPlanningData = async () => {
+    if (isPlanningLoadingRef.current) return;
+    isPlanningLoadingRef.current = true;
+    try {
+      const uClean = (userEmail || '').toLowerCase().trim();
+      const nClean = (myAssociatedName || '').toLowerCase().trim();
+      const isCoord = coordinatori.some(c => c.email && c.email.toLowerCase().trim() === uClean);
+      const isSocioUser = isSocio || isSoci(myAssociatedName) || isSoci(userEmail);
+      const isDirezioneOrCoord = isAdmin || isSocioUser || isCoord;
+
+      const isPM = pmsEmails.some(e => e && e.toLowerCase().trim() === uClean);
+      const isGestore = dynamicGestoriCommesse.some(e => e && e.toLowerCase().trim() === uClean);
+      const isPMPuro = isPM || isGestore;
+
+      if (isDirezioneOrCoord) {
+        // Coordinatori, Soci, Admin, Dev: scaricano SOLO le commesse attualmente APERTE
+        const qCommOpen = query(collection(db, 'catalogo_commesse'), where('stato', '==', 'Aperta'));
+        const [commesseSnap, clientiSnap, prioritySnap, assSnap] = await Promise.all([
+          getDocs(qCommOpen),
+          getDocs(collection(db, 'clienti')),
+          getDocs(collection(db, 'priorita_commesse')),
+          getDocs(collection(db, 'assegnazioni'))
+        ]);
+
+        const commesseList = commesseSnap.docs.map(doc => ({
+          id: doc.id,
+          nome: doc.data().nome || '',
+          colore: doc.data().colore || '#3b82f6',
+          dataInizio: doc.data().dataInizio || '',
+          dataFine: doc.data().dataFine || '',
+          responsabile: doc.data().responsabile || '',
+          pm: doc.data().pm || '',
+          codiceCommessa: doc.data().codiceCommessa || '',
+          anno: doc.data().anno || '',
+          tipologia: doc.data().tipologia || '',
+          cliente: doc.data().cliente || '',
+          stato: doc.data().stato || 'Aperta',
+          giornateSeniorProject: doc.data().giornateSeniorProject,
+          giornateProject: doc.data().giornateProject,
+          giornateJuniorProject: doc.data().giornateJuniorProject,
+          apertaDa: doc.data().apertaDa || '',
+          progetti: doc.data().progetti || []
+        }));
+        setCommesse(commesseList.sort((a, b) => a.nome.localeCompare(b.nome)));
+
+        const clientiList = clientiSnap.docs.map(doc => ({
+          id: doc.id,
+          codice: doc.data().codice || '',
+          nome: doc.data().nome || ''
+        })).sort((a, b) => Number(a.codice) - Number(b.codice));
+        setClienti(clientiList);
+
+        const prioritaMap: Record<string, 'Alta' | 'Standard' | 'Bassa'> = {};
+        prioritySnap.forEach(docSnap => {
+          const data = docSnap.data();
+          if (data.priorita) prioritaMap[docSnap.id] = data.priorita;
+        });
+        setPrioritaCommesse(prioritaMap);
+
+        const ass: Record<string, any[]> = {};
+        assSnap.forEach(docSnap => {
+          ass[docSnap.id] = docSnap.data().lista || [];
+        });
+        setAssegnazioni(ass);
+
+      } else if (isPMPuro) {
+        // PM Puri e Responsabili: scaricano SOLO le commesse in cui sono PM o Responsabile, o assegnati come risorsa
+        const qCommOpen = query(collection(db, 'catalogo_commesse'), where('stato', '==', 'Aperta'));
+        const [commesseSnap, clientiSnap, prioritySnap, assSnap] = await Promise.all([
+          getDocs(qCommOpen),
+          getDocs(collection(db, 'clienti')),
+          getDocs(collection(db, 'priorita_commesse')),
+          getDocs(collection(db, 'assegnazioni'))
+        ]);
+
+        const ass: Record<string, any[]> = {};
+        const myAssignedCommessaIds = new Set<string>();
+        assSnap.forEach(docSnap => {
+          const lista = docSnap.data().lista || [];
+          ass[docSnap.id] = lista;
+          if (myAssociatedName && docSnap.id.startsWith(`${myAssociatedName}-`)) {
+            lista.forEach((item: any) => {
+              if (item.commessaId) myAssignedCommessaIds.add(item.commessaId);
+            });
+          }
+        });
+        setAssegnazioni(ass);
+
+        const prioritaMap: Record<string, 'Alta' | 'Standard' | 'Bassa'> = {};
+        prioritySnap.forEach(docSnap => {
+          const data = docSnap.data();
+          if (data.priorita) prioritaMap[docSnap.id] = data.priorita;
+        });
+        setPrioritaCommesse(prioritaMap);
+
+        const clientiList = clientiSnap.docs.map(doc => ({
+          id: doc.id,
+          codice: doc.data().codice || '',
+          nome: doc.data().nome || ''
+        })).sort((a, b) => Number(a.codice) - Number(b.codice));
+        setClienti(clientiList);
+
+        // Filtriamo le sole commesse di competenza (dove l'utente è PM/Responsabile o assegnato)
+        const myCommesseList = commesseSnap.docs
+          .map(doc => ({
+            id: doc.id,
+            nome: doc.data().nome || '',
+            colore: doc.data().colore || '#3b82f6',
+            dataInizio: doc.data().dataInizio || '',
+            dataFine: doc.data().dataFine || '',
+            responsabile: doc.data().responsabile || '',
+            pm: doc.data().pm || '',
+            codiceCommessa: doc.data().codiceCommessa || '',
+            anno: doc.data().anno || '',
+            tipologia: doc.data().tipologia || '',
+            cliente: doc.data().cliente || '',
+            stato: doc.data().stato || 'Aperta',
+            giornateSeniorProject: doc.data().giornateSeniorProject,
+            giornateProject: doc.data().giornateProject,
+            giornateJuniorProject: doc.data().giornateJuniorProject,
+            apertaDa: doc.data().apertaDa || '',
+            progetti: doc.data().progetti || []
+          }))
+          .filter(c => {
+            const resp = (c.responsabile || '').toLowerCase().trim();
+            const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
+            const isResp = Boolean(nClean && resp && (resp === nClean || resp.includes(nClean) || nClean.includes(resp)));
+            const isPm = pmArray.some(p => {
+              const pClean = String(p || '').toLowerCase().trim();
+              return pClean && ((nClean && (pClean === nClean || pClean.includes(nClean) || nClean.includes(pClean))) || (uClean && pClean === uClean));
+            });
+            const isAssigned = myAssignedCommessaIds.has(c.id);
+            return isResp || isPm || isAssigned;
+          });
+
+        setCommesse(myCommesseList.sort((a, b) => a.nome.localeCompare(b.nome)));
+
+      } else {
+        // Utente Standard (Dipendente / Disegnatore): scarica SOLO le proprie assegnazioni e SOLO le commesse assegnate
+        const ass: Record<string, any[]> = {};
+        const commesseIdsSet = new Set<string>();
+
+        if (myAssociatedName) {
+          const namesToQuery = new Set<string>();
+          namesToQuery.add(myAssociatedName);
+          const parts = myAssociatedName.trim().split(/\s+/);
+          if (parts.length === 2) {
+            namesToQuery.add(`${parts[1]} ${parts[0]}`);
+          }
+
+          for (const nameCandidate of namesToQuery) {
+            const qAss = query(
+              collection(db, 'assegnazioni'),
+              where(documentId(), '>=', `${nameCandidate}-`),
+              where(documentId(), '<=', `${nameCandidate}-\uf8ff`)
+            );
+            const assSnap = await getDocs(qAss);
+            assSnap.forEach(docSnap => {
+              const lista = docSnap.data().lista || [];
+              ass[docSnap.id] = lista;
+              lista.forEach((item: any) => {
+                if (item.commessaId) commesseIdsSet.add(item.commessaId);
+              });
+            });
+          }
+        }
+
+        setAssegnazioni(ass);
+
+        if (commesseIdsSet.size > 0) {
+          const commesseIds = Array.from(commesseIdsSet);
+          const BATCH_SIZE = 30;
+          const commList: Commessa[] = [];
+          for (let i = 0; i < commesseIds.length; i += BATCH_SIZE) {
+            const batch = commesseIds.slice(i, i + BATCH_SIZE);
+            const qComm = query(collection(db, 'catalogo_commesse'), where(documentId(), 'in', batch));
+            const commSnap = await getDocs(qComm);
+            commSnap.forEach(doc => {
+              commList.push({
+                id: doc.id,
+                nome: doc.data().nome || '',
+                colore: doc.data().colore || '#3b82f6',
+                dataInizio: doc.data().dataInizio || '',
+                dataFine: doc.data().dataFine || '',
+                responsabile: doc.data().responsabile || '',
+                pm: doc.data().pm || '',
+                codiceCommessa: doc.data().codiceCommessa || '',
+                anno: doc.data().anno || '',
+                tipologia: doc.data().tipologia || '',
+                cliente: doc.data().cliente || '',
+                stato: doc.data().stato || 'Aperta',
+                giornateSeniorProject: doc.data().giornateSeniorProject,
+                giornateProject: doc.data().giornateProject,
+                giornateJuniorProject: doc.data().giornateJuniorProject,
+                apertaDa: doc.data().apertaDa || '',
+                progetti: doc.data().progetti || []
+              });
+            });
+          }
+          setCommesse(commList.sort((a, b) => a.nome.localeCompare(b.nome)));
+        } else {
+          setCommesse([]);
+        }
+
+        setClienti([]);
+      }
+
+      setIsPlanningLoaded(true);
+    } catch (err) {
+      console.error("Errore caricamento dati pianificazione on-demand:", err);
+    } finally {
+      isPlanningLoadingRef.current = false;
+    }
+  };
+
   const loadAllCommesse = async () => {
     try {
-      const allSnap = await getDocs(collection(db, 'catalogo_commesse'));
+      const [allSnap, clientiSnap] = await Promise.all([
+        getDocs(collection(db, 'catalogo_commesse')),
+        getDocs(collection(db, 'clienti'))
+      ]);
       const commesseList = allSnap.docs.map(doc => ({
         id: doc.id,
         nome: doc.data().nome || '',
@@ -305,6 +499,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         progetti: doc.data().progetti || []
       }));
       setCommesse(commesseList.sort((a, b) => a.nome.localeCompare(b.nome)));
+
+      const clientiList = clientiSnap.docs.map(doc => ({
+        id: doc.id,
+        codice: doc.data().codice || '',
+        nome: doc.data().nome || ''
+      })).sort((a, b) => Number(a.codice) - Number(b.codice));
+      setClienti(clientiList);
     } catch (err) {
       console.error("Errore caricamento catalogo completo commesse:", err);
     }
@@ -345,6 +546,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setPmsEmails([]);
         setDynamicCommerciali([]);
         setDynamicGestoriCommesse([]);
+        setDynamicGestoriForniture([]);
         setPrioritaCommesse({});
         setLoading(false);
       } else {
@@ -357,37 +559,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       unsubscribeAuth();
     };
   }, []);
-
-  // Listener real-time per priorità commesse
-  useEffect(() => {
-    if (!user) return;
-    const unsubPriority = onSnapshot(collection(db, 'priorita_commesse'), (snap) => {
-      const prioritaMap: Record<string, 'Alta' | 'Standard' | 'Bassa'> = {};
-      snap.forEach(docSnap => {
-        const data = docSnap.data();
-        if (data.priorita) {
-          prioritaMap[docSnap.id] = data.priorita;
-        }
-      });
-      setPrioritaCommesse(prioritaMap);
-    }, (err) => console.error("Errore listener priorità commesse:", err));
-    return () => unsubPriority();
-  }, [user]);
-
-  // Listener real-time per assegnazioni commesse
-  useEffect(() => {
-    if (!user) return;
-    const unsubAssignments = onSnapshot(collection(db, 'assegnazioni'), (snap) => {
-      const ass: Record<string, any[]> = {};
-      snap.forEach(docSnap => {
-        ass[docSnap.id] = docSnap.data().lista || [];
-      });
-      setAssegnazioni(ass);
-    }, (err) => console.error("Errore listener real-time assegnazioni:", err));
-    return () => unsubAssignments();
-  }, [user]);
-
-
 
   // Calcolo ruoli derivati
   const realEmail = user?.email?.toLowerCase().trim() || '';
@@ -405,12 +576,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   // così che la simulazione mostri l'esatta esperienza e permessi dell'utente impersonificato.
   const isDev = isDevEmail(userEmail);
   const isSocio = userEmail.includes('aprofeti') || userEmail.includes('mcorbellini') || userEmail.includes('profeti') || userEmail.includes('corbellini');
-  const isAdmin = isDev || isSocio || DEFAULT_ADMINS.some(e => e.toLowerCase().trim() === userEmail) || dynamicAdmins.some(e => e.toLowerCase().trim() === userEmail);
-  const isHR = dynamicHrs.some(e => e.toLowerCase().trim() === userEmail);
+  // Se l'utente attivo è Sviluppatore (isDev = true), isAdmin e gli altri ruoli sono FALSE (per testarli usa "Simula Utente")
+  const isAdmin = !isDev && (isSocio || DEFAULT_ADMINS.some(e => e.toLowerCase().trim() === userEmail) || dynamicAdmins.some(e => e.toLowerCase().trim() === userEmail));
+  const isHR = !isDev && dynamicHrs.some(e => e.toLowerCase().trim() === userEmail);
   // isSenior è deprecato: sempre false. Usare myCoordinatedAreas (dalla collezione coordinatori) per i privilegi di area
   const isSenior = false;
-  const isCommerciale = dynamicCommerciali.some(e => e.toLowerCase().trim() === userEmail);
-  const isGestoreCommesse = isAdmin || isDev || dynamicGestoriCommesse.some(e => e.toLowerCase().trim() === userEmail);
+  const isCommerciale = !isDev && dynamicCommerciali.some(e => e.toLowerCase().trim() === userEmail);
+  const isGestoreCommesse = !isDev && (isAdmin || dynamicGestoriCommesse.some(e => e.toLowerCase().trim() === userEmail));
+  // Gestori Forniture & Acquisti: visibile SOLO a chi è esplicitamente nominato nel ruolo
+  const isGestoreForniture = !isDev && dynamicGestoriForniture.some(e => e.toLowerCase().trim() === userEmail);
 
   useEffect(() => {
     if (isRealDev) {
@@ -469,6 +643,61 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     userEmail.includes('badalassi') ? 'Badalassi Federico' : null
   ) : null);
 
+  // Listener real-time per priorità commesse (attivo solo quando la pianificazione è richiesta)
+  useEffect(() => {
+    if (!user || !isPlanningLoaded) return;
+    const unsubPriority = onSnapshot(collection(db, 'priorita_commesse'), (snap) => {
+      const prioritaMap: Record<string, 'Alta' | 'Standard' | 'Bassa'> = {};
+      snap.forEach(docSnap => {
+        const data = docSnap.data();
+        if (data.priorita) {
+          prioritaMap[docSnap.id] = data.priorita;
+        }
+      });
+      setPrioritaCommesse(prioritaMap);
+    }, (err) => console.error("Errore listener priorità commesse:", err));
+    return () => unsubPriority();
+  }, [user, isPlanningLoaded]);
+
+  // Listener real-time per assegnazioni commesse (attivo solo quando la pianificazione è richiesta)
+  useEffect(() => {
+    if (!user || !isPlanningLoaded) return;
+
+    const uClean = (userEmail || '').toLowerCase().trim();
+    const isCoord = coordinatori.some(c => c.email && c.email.toLowerCase().trim() === uClean);
+    const isPM = pmsEmails.some(e => e && e.toLowerCase().trim() === uClean);
+    const isGestore = dynamicGestoriCommesse.some(e => e && e.toLowerCase().trim() === uClean);
+    const isPrivileged = isAdmin || isSocio || isCoord || isPM || isGestore;
+
+    let unsubAssignments: () => void;
+    if (isPrivileged) {
+      unsubAssignments = onSnapshot(collection(db, 'assegnazioni'), (snap) => {
+        const ass: Record<string, any[]> = {};
+        snap.forEach(docSnap => {
+          ass[docSnap.id] = docSnap.data().lista || [];
+        });
+        setAssegnazioni(ass);
+      }, (err) => console.error("Errore listener real-time assegnazioni:", err));
+    } else if (myAssociatedName) {
+      const qAss = query(
+        collection(db, 'assegnazioni'),
+        where(documentId(), '>=', `${myAssociatedName}-`),
+        where(documentId(), '<=', `${myAssociatedName}-\uf8ff`)
+      );
+      unsubAssignments = onSnapshot(qAss, (snap) => {
+        const ass: Record<string, any[]> = {};
+        snap.forEach(docSnap => {
+          ass[docSnap.id] = docSnap.data().lista || [];
+        });
+        setAssegnazioni(ass);
+      }, (err) => console.error("Errore listener real-time assegnazioni utente:", err));
+    } else {
+      return;
+    }
+
+    return () => unsubAssignments();
+  }, [user, isPlanningLoaded, isAdmin, isDev, isSocio, myAssociatedName, userEmail, coordinatori, pmsEmails, dynamicGestoriCommesse]);
+
   const loadAssegnazioniForWeeks = async (requestedWeekIds: string[]) => {
     if (!requestedWeekIds || requestedWeekIds.length === 0) return;
     try {
@@ -512,7 +741,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       isCommerciale,
       gestoriCommesseEmails: dynamicGestoriCommesse,
       isGestoreCommesse,
+      gestoriFornitureEmails: dynamicGestoriForniture,
+      isGestoreForniture,
       prioritaCommesse,
+      isPlanningLoaded,
+      loadPlanningData,
       refreshData,
       refreshDataIfStale,
       loadAllCommesse,

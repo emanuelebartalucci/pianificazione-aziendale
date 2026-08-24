@@ -1,7 +1,7 @@
 {
   "name": "pianificazione-aziendale",
   "private": true,
-  "version": "1.0.7",
+  "version": "1.0.12",
   "type": "module",
   "scripts": {
     "dev": "vite",

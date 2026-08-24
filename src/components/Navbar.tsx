@@ -1,4 +1,4 @@
-import { LogOut, Home, KeyRound, X, Shield, RefreshCw, Network, Bell, CheckCircle2, FileText, Calendar, Check, Clock, ExternalLink } from 'lucide-react';
+import { LogOut, Home, KeyRound, X, Shield, RefreshCw, Network, Bell, CheckCircle2, FileText, Calendar, Check, Clock, ExternalLink, Phone } from 'lucide-react';
 import { signOut, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from 'firebase/auth';
 import { auth, db } from '../services/firebase';
 import { collection, query, where, getDocs } from 'firebase/firestore';
@@ -8,6 +8,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { isSoci } from '../pages/Impostazioni';
 import { useNotificationWatcher } from '../hooks/useNotificationWatcher';
 import type { UserNotification } from '../utils/userNotificationService';
+import NumeriInterniModal from './NumeriInterniModal';
 
 interface UpcomingHolidayWork {
   id: string;
@@ -73,7 +74,7 @@ export default function Navbar() {
     }
   };
 
-  const { user, isAdmin, isHR, isDev, impersonatedEmail, myAssociatedName, userEmail, coordinatori } = useAuth();
+  const { user, isAdmin, isHR, isDev, impersonatedEmail, myAssociatedName, userEmail, coordinatori, isGestoreForniture } = useAuth();
   const { 
     totalPendingCount, 
     operativePendingCount,
@@ -91,10 +92,12 @@ export default function Navbar() {
     isHR,
     isDev,
     impersonatedEmail,
-    coordinatori
+    coordinatori,
+    isGestoreForniture
   });
 
   const [isNotifOpen, setIsNotifOpen] = useState(false);
+  const [isNumeriInterniOpen, setIsNumeriInterniOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
 
   const [notifFilter, setNotifFilter] = useState<'all' | 'unread' | 'read'>('all');
@@ -416,11 +419,20 @@ export default function Navbar() {
             onClick={(e) => handleNav(e, '/organigramma')}
             onAuxClick={(e) => handleNav(e, '/organigramma')}
             onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
-            className={`text-sm font-medium flex items-center gap-1 transition-colors animate-in fade-in duration-300 ${
+            className={`text-sm font-medium flex items-center gap-1 transition-colors animate-in fade-in duration-300 cursor-pointer ${
               location.pathname === '/organigramma' ? 'text-blue-600 font-bold' : 'text-gray-600 hover:text-blue-600'
             }`}
           >
             <Network className="w-4 h-4" /> <span className="hidden sm:inline">Organigramma</span>
+          </button>
+
+          <button 
+            type="button"
+            onClick={() => setIsNumeriInterniOpen(true)}
+            className="text-sm font-medium flex items-center gap-1 transition-colors animate-in fade-in duration-300 text-gray-600 hover:text-blue-600 cursor-pointer"
+            title="Rubrica Numeri Telefonici Interni"
+          >
+            <Phone className="w-4 h-4" /> <span className="hidden sm:inline">Numeri Interni</span>
           </button>
 
           {/* CAMPANELLA UNIFICATA CENTRO NOTIFICHE (Richieste Operative & Notifiche Personali) */}
@@ -748,7 +760,7 @@ export default function Navbar() {
                     {myAssociatedName || user.email}
                   </span>
                   <span className="text-[11px] font-bold text-gray-400 leading-tight">
-                    {isAdmin ? 'Amministratore' : isHR ? 'Ufficio HR' : isDev ? 'Sviluppatore' : 'Dipendente'}
+                    {isDev ? 'Sviluppatore' : isAdmin ? 'Amministratore' : isHR ? 'Ufficio HR' : 'Dipendente'}
                   </span>
                 </>
               )}
@@ -890,6 +902,12 @@ export default function Navbar() {
           </div>
         </div>
       )}
+
+      {/* MODALE NUMERI TELEFONICI INTERNI */}
+      <NumeriInterniModal 
+        isOpen={isNumeriInterniOpen} 
+        onClose={() => setIsNumeriInterniOpen(false)} 
+      />
 
     </>
   );

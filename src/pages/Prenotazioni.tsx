@@ -105,8 +105,6 @@ export default function Prenotazioni() {
   const [selectedPC, setSelectedPC] = useState<Resource | null>(null);
   const [useRevit, setUseRevit] = useState(false);
   const [useAutoCAD, setUseAutoCAD] = useState(false);
-  const [selectedOtherSoftware, setSelectedOtherSoftware] = useState<string[]>([]);
-  const [customSoftwareInput, setCustomSoftwareInput] = useState('');
   const [isEditPCModalOpen, setIsEditPCModalOpen] = useState(false);
 
   // Admin Edit Resource state
@@ -401,6 +399,25 @@ export default function Prenotazioni() {
   // Filtered lists of resources
   const pcsList = useMemo(() => resources.filter(r => r.tipo === 'pc').sort((a, b) => a.id.localeCompare(b.id)), [resources]);
 
+  // Helper per verificare se su un PC sono installati programmi extra oltre a Revit/AutoCAD
+  const hasOtherProgramsInstalled = (pc: Resource): boolean => {
+    const progs = pc.dettagli?.programmiInstallati;
+    if (!progs || !progs.trim()) return false;
+    
+    // Divide per separatori comuni: virgola, punto e virgola, trattino con spazi, a capo, pipe, ecc.
+    const tokens = progs.split(/[,;\n•|]+|(?:\s+-\s+)/).map(t => t.trim().toLowerCase()).filter(Boolean);
+    if (tokens.length === 0) return false;
+
+    // Un token è considerato software aggiuntivo se non è riconducibile a Revit o AutoCAD o Autodesk/AEC
+    const hasExtra = tokens.some(token => {
+      const clean = token.replace(/[\d/.]+/g, '').trim();
+      const isAutodeskCore = clean === 'revit' || clean === 'autocad' || clean === 'autocad lt' || clean === 'aec' || clean === 'aec collection' || clean === 'autodesk';
+      return !isAutodeskCore;
+    });
+
+    return hasExtra;
+  };
+
   const getTwinStatus = (pc: Resource) => {
     const user = pc.dettagli.utenteIngegno?.trim().toLowerCase();
     if (!user || user === 'nessuna' || pc.dettagli.licenzaAutodesk === 'Autocad LT') {
@@ -409,7 +426,9 @@ export default function Prenotazioni() {
         twins: [],
         isTwinRevitInUse: false,
         isTwinAutocadInUse: false,
-        areAllTwinLicensesInUse: false
+        areAllTwinLicensesInUse: false,
+        hasOtherPrograms: false,
+        isDisabledDueToLicenses: false
       };
     }
 
@@ -420,13 +439,18 @@ export default function Prenotazioni() {
 
     const isTwinRevitInUse = twins.some(t => t.statoCorrente?.occupato && t.statoCorrente?.revitInUso);
     const isTwinAutocadInUse = twins.some(t => t.statoCorrente?.occupato && t.statoCorrente?.autocadInUso);
+    const areAllTwinLicensesInUse = isTwinRevitInUse && isTwinAutocadInUse;
+    const hasOtherPrograms = hasOtherProgramsInstalled(pc);
 
     return {
       hasTwins: twins.length > 0,
       twins,
       isTwinRevitInUse,
       isTwinAutocadInUse,
-      areAllTwinLicensesInUse: isTwinRevitInUse && isTwinAutocadInUse
+      areAllTwinLicensesInUse,
+      hasOtherPrograms,
+      // Il PC gemello è disattivato SOLO se entrambe le licenze sono esaurite sul gemello E questo PC non ha altri software installati
+      isDisabledDueToLicenses: twins.length > 0 && areAllTwinLicensesInUse && !hasOtherPrograms
     };
   };
 
@@ -436,7 +460,7 @@ export default function Prenotazioni() {
       const isOccupied = pc.statoCorrente?.occupato;
       if (isOccupied) return false;
       const twinStatus = getTwinStatus(pc);
-      const isDisabled = twinStatus.areAllTwinLicensesInUse;
+      const isDisabled = twinStatus.isDisabledDueToLicenses;
       return !isDisabled;
     });
   }, [pcsList, showOnlyFree]);
@@ -478,6 +502,8 @@ export default function Prenotazioni() {
   const pcStats = useMemo(() => {
     const total = pcsList.length;
     const occupied = pcsList.filter(pc => pc.statoCorrente?.occupato).length;
+    const disabledCount = pcsList.filter(pc => !pc.statoCorrente?.occupato && getTwinStatus(pc).isDisabledDueToLicenses).length;
+    const available = Math.max(0, total - occupied - disabledCount);
     const revitCount = pcsList.filter(pc => pc.statoCorrente?.occupato && pc.statoCorrente?.revitInUso).length;
     const autocadCompletoCount = pcsList.filter(pc => 
       pc.statoCorrente?.occupato && 
@@ -486,13 +512,13 @@ export default function Prenotazioni() {
     ).length;
     const autocadLtCount = pcsList.filter(pc => 
       pc.statoCorrente?.occupato && 
-      pc.statoCorrente?.autocadInUso && 
-      pc.dettagli.licenzaAutodesk === 'Autocad LT'
+      (pc.dettagli.licenzaAutodesk === 'Autocad LT' || pc.statoCorrente?.autocadInUso)
     ).length;
     return { 
       total, 
       occupied, 
-      available: total - occupied, 
+      disabledCount,
+      available, 
       revitCount, 
       autocadCompletoCount, 
       autocadLtCount 
@@ -521,13 +547,17 @@ export default function Prenotazioni() {
     if (!selectedPC) return;
 
     const twinStatus = getTwinStatus(selectedPC);
-    if (useRevit && twinStatus.isTwinRevitInUse) {
-      showToast("La licenza Revit è già in uso sul PC gemello!", "error");
-      return;
-    }
-    if (useAutoCAD && twinStatus.isTwinAutocadInUse) {
-      showToast("La licenza AutoCAD è già in uso sul PC gemello!", "error");
-      return;
+    const isSingle = selectedPC.dettagli.licenzaAutodesk === 'Autocad LT' || !twinStatus.hasTwins;
+
+    if (!isSingle) {
+      if (useRevit && twinStatus.isTwinRevitInUse) {
+        showToast("La licenza Revit è già in uso sul PC gemello!", "error");
+        return;
+      }
+      if (useAutoCAD && twinStatus.isTwinAutocadInUse) {
+        showToast("La licenza AutoCAD è già in uso sul PC gemello!", "error");
+        return;
+      }
     }
 
     const docId = `pc_${selectedPC.id.toLowerCase()}`;
@@ -537,15 +567,15 @@ export default function Prenotazioni() {
         'statoCorrente.utilizzatoreNome': currentUserName,
         'statoCorrente.utilizzatoreEmail': currentUserEmail,
         'statoCorrente.dataInizioUso': new Date().toISOString(),
-        'statoCorrente.revitInUso': useRevit,
-        'statoCorrente.autocadInUso': useAutoCAD,
-        'statoCorrente.altriSoftwareInUso': selectedOtherSoftware
+        'statoCorrente.revitInUso': isSingle ? false : useRevit,
+        'statoCorrente.autocadInUso': isSingle ? false : useAutoCAD,
+        'statoCorrente.altriSoftwareInUso': []
       });
       showToast(`PC ${selectedPC.id} preso in carico!`);
       setIsClaimPCModalOpen(false);
       setSelectedPC(null);
-      setSelectedOtherSoftware([]);
-      setCustomSoftwareInput('');
+      setUseRevit(false);
+      setUseAutoCAD(false);
     } catch (err: any) {
       console.error(err);
       showToast("Errore nella presa in carico: " + err.message, "error");
@@ -558,27 +588,31 @@ export default function Prenotazioni() {
     if (!selectedPC) return;
 
     const twinStatus = getTwinStatus(selectedPC);
-    if (useRevit && twinStatus.isTwinRevitInUse) {
-      showToast("La licenza Revit è già in uso sul PC gemello!", "error");
-      return;
-    }
-    if (useAutoCAD && twinStatus.isTwinAutocadInUse) {
-      showToast("La licenza AutoCAD è già in uso sul PC gemello!", "error");
-      return;
+    const isSingle = selectedPC.dettagli.licenzaAutodesk === 'Autocad LT' || !twinStatus.hasTwins;
+
+    if (!isSingle) {
+      if (useRevit && twinStatus.isTwinRevitInUse) {
+        showToast("La licenza Revit è già in uso sul PC gemello!", "error");
+        return;
+      }
+      if (useAutoCAD && twinStatus.isTwinAutocadInUse) {
+        showToast("La licenza AutoCAD è già in uso sul PC gemello!", "error");
+        return;
+      }
     }
 
     const docId = `pc_${selectedPC.id.toLowerCase()}`;
     try {
       await updateDoc(doc(db, 'risorse', docId), {
-        'statoCorrente.revitInUso': useRevit,
-        'statoCorrente.autocadInUso': useAutoCAD,
-        'statoCorrente.altriSoftwareInUso': selectedOtherSoftware
+        'statoCorrente.revitInUso': isSingle ? false : useRevit,
+        'statoCorrente.autocadInUso': isSingle ? false : useAutoCAD,
+        'statoCorrente.altriSoftwareInUso': []
       });
-      showToast(`Licenze e software per PC ${selectedPC.id} aggiornati!`);
+      showToast(`Licenze per PC ${selectedPC.id} aggiornate!`);
       setIsEditPCModalOpen(false);
       setSelectedPC(null);
-      setSelectedOtherSoftware([]);
-      setCustomSoftwareInput('');
+      setUseRevit(false);
+      setUseAutoCAD(false);
     } catch (err: any) {
       console.error(err);
       showToast("Errore nell'aggiornamento software: " + err.message, "error");
@@ -1009,12 +1043,13 @@ export default function Prenotazioni() {
     const isMe = pc.statoCorrente?.utilizzatoreEmail?.toLowerCase() === currentUserEmail?.toLowerCase();
     
     const twinStatus = getTwinStatus(pc);
+    const isSingle = pc.dettagli.licenzaAutodesk === 'Autocad LT' || !twinStatus.hasTwins;
     const isTwinRevitInUse = twinStatus.isTwinRevitInUse;
     const isTwinAutocadInUse = twinStatus.isTwinAutocadInUse;
     const areAllTwinLicensesInUse = twinStatus.areAllTwinLicensesInUse;
     
-    // A PC is disabled if it's NOT occupied AND its twin has consumed both licenses
-    const isDisabled = !isOccupied && areAllTwinLicensesInUse;
+    // Un PC è disattivato SOLO se non è occupato ed è disabilitato per esaurimento licenze senza altri software
+    const isDisabled = !isOccupied && twinStatus.isDisabledDueToLicenses;
 
     return (
       <div 
@@ -1096,27 +1131,26 @@ export default function Prenotazioni() {
                 </div>
               )}
               <div className="text-[10px] text-gray-450 font-semibold mt-0.5">Da: {formatDateTime(pc.statoCorrente?.dataInizioUso)}</div>
-              <div className="flex flex-col gap-1 mt-1">
-                {pc.statoCorrente?.revitInUso && (
-                  <span className="bg-indigo-600 text-white text-[10px] font-black px-2 py-0.5 rounded shadow-sm text-center block w-full max-w-[130px] border border-indigo-700">
-                    Licenza Revit
-                  </span>
-                )}
-                {pc.statoCorrente?.autocadInUso && (
-                  <span className="bg-blue-600 text-white text-[10px] font-black px-2 py-0.5 rounded shadow-sm text-center block w-full max-w-[130px] border border-blue-700">
-                    {pc.dettagli.licenzaAutodesk === 'Autocad LT' ? 'Licenza Autocad LT' : 'Licenza Autocad'}
-                  </span>
-                )}
-                {pc.statoCorrente?.altriSoftwareInUso && pc.statoCorrente.altriSoftwareInUso.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-0.5">
-                    {pc.statoCorrente.altriSoftwareInUso.map(s => (
-                      <span key={s} className="bg-purple-100 text-purple-900 text-[10px] font-black px-2 py-0.5 rounded shadow-2xs border border-purple-200">
-                        💻 {s}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
+              
+              {!isSingle && (
+                <div className="flex flex-col gap-1 mt-1">
+                  {pc.statoCorrente?.revitInUso && (
+                    <span className="bg-indigo-600 text-white text-[10px] font-black px-2 py-0.5 rounded shadow-sm text-center block w-full max-w-[130px] border border-indigo-700">
+                      Licenza Revit
+                    </span>
+                  )}
+                  {pc.statoCorrente?.autocadInUso && (
+                    <span className="bg-blue-600 text-white text-[10px] font-black px-2 py-0.5 rounded shadow-sm text-center block w-full max-w-[130px] border border-blue-700">
+                      Licenza Autocad
+                    </span>
+                  )}
+                  {!pc.statoCorrente?.revitInUso && !pc.statoCorrente?.autocadInUso && (
+                    <span className="bg-purple-100 text-purple-900 text-[10px] font-black px-2 py-0.5 rounded shadow-2xs border border-purple-200 text-center block w-full max-w-[130px]">
+                      Altri Software
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           ) : isDisabled ? (
             <div className="text-[10px] text-gray-500 font-bold bg-gray-100 p-1.5 rounded-lg border border-gray-200/50 inline-flex items-center gap-1">
@@ -1124,12 +1158,24 @@ export default function Prenotazioni() {
             </div>
           ) : (
             <div className="font-bold text-gray-550 flex flex-col gap-0.5">
-              <div>Licenza Base: <span className="text-gray-700 font-extrabold">{pc.dettagli.licenzaAutodesk === 'Autocad LT' ? 'Autocad LT' : 'AEC Collection'}</span></div>
-              {twinStatus.hasTwins && (isTwinRevitInUse || isTwinAutocadInUse) && (
-                <div className="text-amber-700 bg-amber-50/50 px-1.5 py-0.5 rounded border border-amber-100/50 leading-tight text-[9px] mt-0.5 font-bold">
-                  {isTwinRevitInUse && <div>• Revit su gemello</div>}
-                  {isTwinAutocadInUse && <div>• AutoCAD su gemello</div>}
-                </div>
+              <div>
+                Licenza Base: <span className="text-gray-700 font-extrabold">{isSingle ? 'Postazione Singola' : 'AEC Collection'}</span>
+              </div>
+              {!isSingle && twinStatus.hasTwins && (
+                <>
+                  {areAllTwinLicensesInUse ? (
+                    <div className="text-amber-700 bg-amber-50/80 p-1.5 rounded border border-amber-200 leading-tight text-[9px] mt-0.5 font-bold">
+                      ⚠️ Revit e AutoCAD su gemello (altri programmi disponibili)
+                    </div>
+                  ) : (
+                    (isTwinRevitInUse || isTwinAutocadInUse) && (
+                      <div className="text-amber-700 bg-amber-50/50 px-1.5 py-0.5 rounded border border-amber-100/50 leading-tight text-[9px] mt-0.5 font-bold">
+                        {isTwinRevitInUse && <div>• Revit su gemello</div>}
+                        {isTwinAutocadInUse && <div>• AutoCAD su gemello</div>}
+                      </div>
+                    )
+                  )}
+                </>
               )}
             </div>
           )}
@@ -1144,8 +1190,6 @@ export default function Prenotazioni() {
                 setSelectedPC(pc);
                 setUseRevit(false);
                 setUseAutoCAD(false);
-                setSelectedOtherSoftware([]);
-                setCustomSoftwareInput('');
                 setIsClaimPCModalOpen(true);
               }}
               disabled={isDisabled}
@@ -1159,14 +1203,12 @@ export default function Prenotazioni() {
             </button>
           ) : (
             <div className="flex flex-col sm:flex-row items-center gap-1.5 w-full justify-end">
-              {isMe && (
+              {isMe && !isSingle && (
                 <button
                   onClick={() => {
                     setSelectedPC(pc);
                     setUseRevit(pc.statoCorrente?.revitInUso || false);
                     setUseAutoCAD(pc.statoCorrente?.autocadInUso || false);
-                    setSelectedOtherSoftware(pc.statoCorrente?.altriSoftwareInUso || []);
-                    setCustomSoftwareInput('');
                     setIsEditPCModalOpen(true);
                   }}
                   className="w-full sm:w-auto px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg transition text-xs shadow flex items-center gap-1 shrink-0 justify-center"
@@ -1273,7 +1315,14 @@ export default function Prenotazioni() {
                   style={{ width: `${(pcStats.occupied / (pcStats.total || 1)) * 100}%` }}
                 />
               </div>
-              <span className="text-xs font-bold text-gray-500 mt-2">{pcStats.available} PC disponibili</span>
+              <div className="flex flex-col mt-2">
+                <span className="text-xs font-bold text-gray-700">{pcStats.available} PC disponibili</span>
+                {pcStats.disabledCount > 0 && (
+                  <span className="text-[10px] font-bold text-amber-600 leading-tight mt-0.5">
+                    ({pcStats.disabledCount} {pcStats.disabledCount === 1 ? 'disattivo' : 'disattivi'} per licenze gemello)
+                  </span>
+                )}
+              </div>
             </div>
 
             <div className="bg-white/80 backdrop-blur-xl p-6 rounded-[2rem] shadow-md border border-white/50 flex flex-col justify-between">
@@ -1447,13 +1496,13 @@ export default function Prenotazioni() {
                     </div>
                   )}
 
-                  {/* Sezione AutoCAD LT */}
+                  {/* Sezione Postazioni Singole */}
                   {aecGroups.ltPcs.length > 0 && (
                     <div className="space-y-6">
                       <div className="border-b border-gray-100 pb-2">
                         <h2 className="text-xl font-black text-gray-900 tracking-tight flex items-center gap-2">
                           <Laptop className="w-5 h-5 text-teal-600" />
-                          <span>Postazioni AutoCAD LT</span>
+                          <span>Postazioni singole</span>
                         </h2>
                       </div>
                       <div className="flex flex-col gap-2">
@@ -2093,249 +2142,181 @@ export default function Prenotazioni() {
       {/* --- MODALS SECTION --- */}
 
       {/* 1. Modal Claim PC */}
-      {isClaimPCModalOpen && selectedPC && (
-        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full border border-gray-100 p-6 flex flex-col gap-5 animate-in fade-in zoom-in-95 duration-200">
-            <div className="flex justify-between items-center">
-              <h3 className="text-xl font-black text-gray-900 flex items-center gap-2">
-                <Laptop className="w-5 h-5 text-teal-600" />
-                <span>Prendi in uso {selectedPC.id}</span>
-              </h3>
-              <button 
-                onClick={() => setIsClaimPCModalOpen(false)}
-                className="text-gray-400 hover:text-gray-600 p-1.5 rounded-xl hover:bg-gray-100 transition"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+      {isClaimPCModalOpen && selectedPC && (() => {
+        const twinStatus = getTwinStatus(selectedPC);
+        const isSingle = selectedPC.dettagli.licenzaAutodesk === 'Autocad LT' || !twinStatus.hasTwins;
+        const bothLicensesOnTwin = twinStatus.hasTwins && twinStatus.isTwinRevitInUse && twinStatus.isTwinAutocadInUse;
 
-            <form onSubmit={handleClaimPCSubmit} className="space-y-4">
-              <div className="bg-gray-50 p-4 rounded-2xl text-xs space-y-1 font-medium text-gray-600">
-                <div className="font-extrabold text-gray-800 text-sm mb-1">Dettagli Collegamento RDP:</div>
-                <div>IP: <span className="font-bold text-gray-900">{selectedPC.dettagli.ipAddress}</span></div>
-                <div>Credenziali: <span className="font-bold text-gray-900">{selectedPC.dettagli.utenteIngegno}</span> / <span className="font-bold text-gray-900 select-all">{selectedPC.dettagli.pswUtente}</span></div>
-                <div className="pt-2 text-[10px] text-gray-400">Assicurati di disconnetterti e rilasciare la postazione a fine lavoro!</div>
+        return (
+          <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+            <div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full border border-gray-100 p-6 flex flex-col gap-5 animate-in fade-in zoom-in-95 duration-200">
+              <div className="flex justify-between items-center">
+                <h3 className="text-xl font-black text-gray-900 flex items-center gap-2">
+                  <Laptop className="w-5 h-5 text-teal-600" />
+                  <span>Prendi in uso {selectedPC.id}</span>
+                </h3>
+                <button 
+                  onClick={() => setIsClaimPCModalOpen(false)}
+                  className="text-gray-400 hover:text-gray-600 p-1.5 rounded-xl hover:bg-gray-100 transition"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </div>
 
-              <div className="space-y-2 border-t border-gray-100 pt-3">
-                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Utilizzo Licenze Autodesk</label>
-                
-                {selectedPC.dettagli.licenzaAutodesk !== 'Autocad LT' && (
-                  <label className={`flex items-center gap-3 p-3 rounded-xl border transition cursor-pointer select-none ${
-                    getTwinStatus(selectedPC).isTwinRevitInUse 
-                      ? 'bg-gray-100 border-gray-200 text-gray-450 cursor-not-allowed opacity-60' 
-                      : 'bg-gray-50 hover:bg-gray-100/70 border-transparent text-gray-800'
-                  }`}>
-                    <input
-                      type="checkbox"
-                      checked={useRevit}
-                      disabled={getTwinStatus(selectedPC).isTwinRevitInUse}
-                      onChange={e => setUseRevit(e.target.checked)}
-                      className={`w-4.5 h-4.5 text-teal-600 rounded border-gray-300 focus:ring-teal-500 ${
-                        getTwinStatus(selectedPC).isTwinRevitInUse ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-                      }`}
-                    />
-                    <div>
-                      <div className="text-xs font-extrabold">
-                        <span>Licenza Revit</span>
-                        {getTwinStatus(selectedPC).isTwinRevitInUse && (
-                          <span className="text-rose-600 font-extrabold text-[9px] ml-2 uppercase bg-rose-50 px-1.5 py-0.5 rounded border border-rose-100">
-                            In uso sul gemello
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-[10px] text-gray-400">Occupa uno slot delle licenze Revit della ditta</div>
-                    </div>
-                  </label>
-                )}
-
-                <label className={`flex items-center gap-3 p-3 rounded-xl border transition cursor-pointer select-none ${
-                  getTwinStatus(selectedPC).isTwinAutocadInUse 
-                    ? 'bg-gray-100 border-gray-200 text-gray-450 cursor-not-allowed opacity-60' 
-                    : 'bg-gray-50 hover:bg-gray-100/70 border-transparent text-gray-800'
-                }`}>
-                  <input
-                    type="checkbox"
-                    checked={useAutoCAD}
-                    disabled={getTwinStatus(selectedPC).isTwinAutocadInUse}
-                    onChange={e => setUseAutoCAD(e.target.checked)}
-                    className={`w-4.5 h-4.5 text-teal-600 rounded border-gray-300 focus:ring-teal-500 ${
-                      getTwinStatus(selectedPC).isTwinAutocadInUse ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-                    }`}
-                  />
-                  <div>
-                    <div className="text-xs font-extrabold">
-                      <span>
-                        {selectedPC.dettagli.licenzaAutodesk === 'Autocad LT' 
-                          ? 'Licenza Autocad LT' 
-                          : 'Licenza Autocad'}
-                      </span>
-                      {getTwinStatus(selectedPC).isTwinAutocadInUse && (
-                        <span className="text-rose-600 font-extrabold text-[9px] ml-2 uppercase bg-rose-50 px-1.5 py-0.5 rounded border border-rose-100">
-                          In uso sul gemello
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[10px] text-gray-400">
-                      {selectedPC.dettagli.licenzaAutodesk === 'Autocad LT'
-                        ? 'Occupa uno slot delle licenze AutoCAD LT della ditta'
-                        : 'Occupa uno slot delle licenze AutoCAD Completo della ditta'}
-                    </div>
-                  </div>
-                </label>
-              </div>
-
-              {/* Altri Software Installati sul PC */}
-              <div className="space-y-2 border-t border-gray-100 pt-3">
-                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
-                  Altri Software in Uso (Senza Limiti Licenza)
-                </label>
-                <p className="text-[10px] text-gray-400 font-medium mb-2">
-                  Seleziona gli altri programmi installati su questa macchina che utilizzerai.
-                </p>
-
-                {/* Checkbox dai programmiInstallati del PC */}
-                {(() => {
-                  const installedList = selectedPC.dettagli.programmiInstallati
-                    ? selectedPC.dettagli.programmiInstallati.split(/[,;\n]+/).map(s => s.trim()).filter(s => s.length > 0)
-                    : [];
-                  if (installedList.length === 0) return null;
-                  return (
-                    <div className="space-y-1.5 mb-2 max-h-36 overflow-y-auto pr-1">
-                      <span className="text-[10px] font-bold text-gray-500 block mb-1">Programmi installati su {selectedPC.id}:</span>
-                      {installedList.map(prog => {
-                        const isChecked = selectedOtherSoftware.includes(prog);
-                        return (
-                          <label key={prog} className="flex items-center gap-2.5 p-2 rounded-lg bg-gray-50 hover:bg-gray-100 border border-gray-150 text-xs font-bold text-gray-800 cursor-pointer select-none">
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={e => {
-                                if (e.target.checked) {
-                                  setSelectedOtherSoftware(prev => [...prev, prog]);
-                                } else {
-                                  setSelectedOtherSoftware(prev => prev.filter(p => p !== prog));
-                                }
-                              }}
-                              className="w-4 h-4 text-teal-600 rounded border-gray-300 focus:ring-teal-500 cursor-pointer"
-                            />
-                            <span>{prog}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  );
-                })()}
-
-                {/* Input per aggiungere un software personalizzato non in elenco */}
-                <div className="flex gap-2 items-center">
-                  <input
-                    type="text"
-                    placeholder="Es. Edilclima, Photoshop, etc..."
-                    value={customSoftwareInput}
-                    onChange={e => setCustomSoftwareInput(e.target.value)}
-                    className="flex-1 p-2 text-xs border border-gray-200 rounded-xl bg-gray-50 font-bold text-gray-800 outline-none focus:ring-2 focus:ring-teal-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const trimmed = customSoftwareInput.trim();
-                      if (trimmed && !selectedOtherSoftware.includes(trimmed)) {
-                        setSelectedOtherSoftware(prev => [...prev, trimmed]);
-                        setCustomSoftwareInput('');
-                      }
-                    }}
-                    className="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold text-xs rounded-xl border border-indigo-200 transition cursor-pointer"
-                  >
-                    + Aggiungi
-                  </button>
+              <form onSubmit={handleClaimPCSubmit} className="space-y-4">
+                <div className="bg-gray-50 p-4 rounded-2xl text-xs space-y-1 font-medium text-gray-600">
+                  <div className="font-extrabold text-gray-800 text-sm mb-1">Dettagli Collegamento RDP:</div>
+                  <div>IP: <span className="font-bold text-gray-900">{selectedPC.dettagli.ipAddress || '-'}</span></div>
+                  <div>Credenziali: <span className="font-bold text-gray-900">{selectedPC.dettagli.utenteIngegno}</span> / <span className="font-bold text-gray-900 select-all">{selectedPC.dettagli.pswUtente}</span></div>
+                  <div className="pt-2 text-[10px] text-gray-400">Assicurati di disconnetterti e rilasciare la postazione a fine lavoro!</div>
                 </div>
 
-                {/* Badge software selezionati */}
-                {selectedOtherSoftware.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 pt-2">
-                    {selectedOtherSoftware.map(s => (
-                      <span key={s} className="bg-purple-100 text-purple-900 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 border border-purple-200">
-                        <span>{s}</span>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedOtherSoftware(prev => prev.filter(p => p !== s))}
-                          className="hover:text-red-600 font-black text-xs ml-0.5"
-                        >
-                          ×
-                        </button>
-                      </span>
-                    ))}
+                {isSingle ? (
+                  <div className="p-3.5 bg-teal-50/70 border border-teal-100 rounded-xl text-teal-950 text-xs font-semibold">
+                    <span>💡 Postazione singola con licenza dedicata locale. Nessuna condivisione con altre macchine.</span>
+                  </div>
+                ) : (
+                  <div className="space-y-2 border-t border-gray-100 pt-3">
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Utilizzo Licenze Autodesk</label>
+                    
+                    {bothLicensesOnTwin && (
+                      <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-xs font-bold mb-2">
+                        ⚠️ Le licenze Revit e AutoCAD sono attualmente in uso sul PC gemello. Puoi comunque confermare per utilizzare gli altri software installati sulla macchina.
+                      </div>
+                    )}
+
+                    <label className={`flex items-center gap-3 p-3 rounded-xl border transition cursor-pointer select-none ${
+                      twinStatus.isTwinRevitInUse 
+                        ? 'bg-gray-100 border-gray-200 text-gray-450 cursor-not-allowed opacity-60' 
+                        : 'bg-gray-50 hover:bg-gray-100/70 border-transparent text-gray-800'
+                    }`}>
+                      <input
+                        type="checkbox"
+                        checked={useRevit}
+                        disabled={twinStatus.isTwinRevitInUse}
+                        onChange={e => setUseRevit(e.target.checked)}
+                        className={`w-4.5 h-4.5 text-teal-600 rounded border-gray-300 focus:ring-teal-500 ${
+                          twinStatus.isTwinRevitInUse ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                        }`}
+                      />
+                      <div>
+                        <div className="text-xs font-extrabold flex items-center gap-2">
+                          <span>Licenza Revit</span>
+                          {twinStatus.isTwinRevitInUse && (
+                            <span className="text-rose-600 font-extrabold text-[9px] uppercase bg-rose-50 px-1.5 py-0.5 rounded border border-rose-100">
+                              In uso sul gemello
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-gray-400">Occupa uno slot delle licenze Revit della ditta</div>
+                      </div>
+                    </label>
+
+                    <label className={`flex items-center gap-3 p-3 rounded-xl border transition cursor-pointer select-none ${
+                      twinStatus.isTwinAutocadInUse 
+                        ? 'bg-gray-100 border-gray-200 text-gray-450 cursor-not-allowed opacity-60' 
+                        : 'bg-gray-50 hover:bg-gray-100/70 border-transparent text-gray-800'
+                    }`}>
+                      <input
+                        type="checkbox"
+                        checked={useAutoCAD}
+                        disabled={twinStatus.isTwinAutocadInUse}
+                        onChange={e => setUseAutoCAD(e.target.checked)}
+                        className={`w-4.5 h-4.5 text-teal-600 rounded border-gray-300 focus:ring-teal-500 ${
+                          twinStatus.isTwinAutocadInUse ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                        }`}
+                      />
+                      <div>
+                        <div className="text-xs font-extrabold flex items-center gap-2">
+                          <span>Licenza AutoCAD</span>
+                          {twinStatus.isTwinAutocadInUse && (
+                            <span className="text-rose-600 font-extrabold text-[9px] uppercase bg-rose-50 px-1.5 py-0.5 rounded border border-rose-100">
+                              In uso sul gemello
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-gray-400">Occupa uno slot delle licenze AutoCAD della ditta</div>
+                      </div>
+                    </label>
                   </div>
                 )}
-              </div>
 
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsClaimPCModalOpen(false)}
-                  className="flex-1 py-3 px-4 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 hover:bg-gray-50 transition"
-                >
-                  Annulla
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-3 px-4 rounded-xl bg-teal-600 text-white text-xs font-bold hover:bg-teal-700 transition active:scale-95 shadow"
-                >
-                  Conferma Collegamento
-                </button>
-              </div>
-            </form>
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsClaimPCModalOpen(false)}
+                    className="flex-1 py-3 px-4 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 hover:bg-gray-50 transition"
+                  >
+                    Annulla
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-3 px-4 rounded-xl bg-teal-600 text-white text-xs font-bold hover:bg-teal-700 transition active:scale-95 shadow"
+                  >
+                    Conferma Collegamento
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* 1b. Modal Edit PC Licenses */}
-      {isEditPCModalOpen && selectedPC && (
-        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full border border-gray-100 p-6 flex flex-col gap-5 animate-in fade-in zoom-in-95 duration-200">
-            <div className="flex justify-between items-center">
-              <h3 className="text-xl font-black text-gray-900 flex items-center gap-2">
-                <RefreshCw className="w-5 h-5 text-indigo-600" />
-                <span>Modifica Licenze {selectedPC.id}</span>
-              </h3>
-              <button 
-                onClick={() => setIsEditPCModalOpen(false)}
-                className="text-gray-400 hover:text-gray-600 p-1.5 rounded-xl hover:bg-gray-100 transition"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+      {isEditPCModalOpen && selectedPC && (() => {
+        const twinStatus = getTwinStatus(selectedPC);
+        const bothLicensesOnTwin = twinStatus.hasTwins && twinStatus.isTwinRevitInUse && twinStatus.isTwinAutocadInUse;
 
-            <form onSubmit={handleEditPCSubmit} className="space-y-4">
-              <div className="bg-gray-50 p-4 rounded-2xl text-xs space-y-1 font-medium text-gray-650">
-                <div className="font-extrabold text-gray-800 text-sm mb-1">Modifica delle licenze in uso:</div>
-                <div>Puoi selezionare o deselezionare Revit e AutoCAD a seconda della tua attività corrente. I limiti delle licenze dell'utenza e dei gemelli restano attivi.</div>
+        return (
+          <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+            <div className="bg-white rounded-[2rem] shadow-2xl max-w-sm w-full border border-gray-100 p-6 flex flex-col gap-5 animate-in fade-in zoom-in-95 duration-200">
+              <div className="flex justify-between items-center">
+                <h3 className="text-xl font-black text-gray-900 flex items-center gap-2">
+                  <RefreshCw className="w-5 h-5 text-indigo-600" />
+                  <span>Modifica Licenze {selectedPC.id}</span>
+                </h3>
+                <button 
+                  onClick={() => setIsEditPCModalOpen(false)}
+                  className="text-gray-400 hover:text-gray-600 p-1.5 rounded-xl hover:bg-gray-100 transition"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </div>
 
-              <div className="space-y-2 border-t border-gray-100 pt-3">
-                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Utilizzo Licenze Autodesk</label>
-                
-                {selectedPC.dettagli.licenzaAutodesk !== 'Autocad LT' && (
+              <form onSubmit={handleEditPCSubmit} className="space-y-4">
+                <div className="bg-gray-50 p-4 rounded-2xl text-xs space-y-1 font-medium text-gray-650">
+                  <div className="font-extrabold text-gray-800 text-sm mb-1">Modifica delle licenze in uso:</div>
+                  <div>Puoi selezionare o deselezionare Revit e AutoCAD a seconda della tua attività corrente. I limiti delle licenze dell'utenza e dei gemelli restano attivi.</div>
+                </div>
+
+                <div className="space-y-2 border-t border-gray-100 pt-3">
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Utilizzo Licenze Autodesk</label>
+                  
+                  {bothLicensesOnTwin && (
+                    <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-xs font-bold mb-2">
+                      ⚠️ Le licenze Revit e AutoCAD sono attualmente in uso sul PC gemello.
+                    </div>
+                  )}
+
                   <label className={`flex items-center gap-3 p-3 rounded-xl border transition cursor-pointer select-none ${
-                    getTwinStatus(selectedPC).isTwinRevitInUse 
+                    twinStatus.isTwinRevitInUse 
                       ? 'bg-gray-100 border-gray-200 text-gray-455 cursor-not-allowed opacity-60' 
                       : 'bg-gray-50 hover:bg-gray-100/70 border-transparent text-gray-800'
                   }`}>
                     <input
                       type="checkbox"
                       checked={useRevit}
-                      disabled={getTwinStatus(selectedPC).isTwinRevitInUse}
+                      disabled={twinStatus.isTwinRevitInUse}
                       onChange={e => setUseRevit(e.target.checked)}
                       className={`w-4.5 h-4.5 text-teal-600 rounded border-gray-300 focus:ring-teal-500 ${
-                        getTwinStatus(selectedPC).isTwinRevitInUse ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                        twinStatus.isTwinRevitInUse ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
                       }`}
                     />
                     <div>
-                      <div className="text-xs font-extrabold">
+                      <div className="text-xs font-extrabold flex items-center gap-2">
                         <span>Licenza Revit</span>
-                        {getTwinStatus(selectedPC).isTwinRevitInUse && (
-                          <span className="text-rose-600 font-extrabold text-[9px] ml-2 uppercase bg-rose-50 px-1.5 py-0.5 rounded border border-rose-100">
+                        {twinStatus.isTwinRevitInUse && (
+                          <span className="text-rose-600 font-extrabold text-[9px] uppercase bg-rose-50 px-1.5 py-0.5 rounded border border-rose-100">
                             In uso sul gemello
                           </span>
                         )}
@@ -2343,148 +2324,55 @@ export default function Prenotazioni() {
                       <div className="text-[10px] text-gray-400">Occupa uno slot delle licenze Revit della ditta</div>
                     </div>
                   </label>
-                )}
 
-                <label className={`flex items-center gap-3 p-3 rounded-xl border transition cursor-pointer select-none ${
-                  getTwinStatus(selectedPC).isTwinAutocadInUse 
-                    ? 'bg-gray-100 border-gray-200 text-gray-455 cursor-not-allowed opacity-60' 
-                    : 'bg-gray-50 hover:bg-gray-100/70 border-transparent text-gray-800'
-                }`}>
-                  <input
-                    type="checkbox"
-                    checked={useAutoCAD}
-                    disabled={getTwinStatus(selectedPC).isTwinAutocadInUse}
-                    onChange={e => setUseAutoCAD(e.target.checked)}
-                    className={`w-4.5 h-4.5 text-teal-600 rounded border-gray-300 focus:ring-teal-500 ${
-                      getTwinStatus(selectedPC).isTwinAutocadInUse ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-                    }`}
-                  />
-                  <div>
-                    <div className="text-xs font-extrabold">
-                      <span>
-                        {selectedPC.dettagli.licenzaAutodesk === 'Autocad LT' 
-                          ? 'Licenza Autocad LT' 
-                          : 'Licenza Autocad'}
-                      </span>
-                      {getTwinStatus(selectedPC).isTwinAutocadInUse && (
-                        <span className="text-rose-600 font-extrabold text-[9px] ml-2 uppercase bg-rose-50 px-1.5 py-0.5 rounded border border-rose-100">
-                          In uso sul gemello
-                        </span>
-                      )}
+                  <label className={`flex items-center gap-3 p-3 rounded-xl border transition cursor-pointer select-none ${
+                    twinStatus.isTwinAutocadInUse 
+                      ? 'bg-gray-100 border-gray-200 text-gray-455 cursor-not-allowed opacity-60' 
+                      : 'bg-gray-50 hover:bg-gray-100/70 border-transparent text-gray-800'
+                  }`}>
+                    <input
+                      type="checkbox"
+                      checked={useAutoCAD}
+                      disabled={twinStatus.isTwinAutocadInUse}
+                      onChange={e => setUseAutoCAD(e.target.checked)}
+                      className={`w-4.5 h-4.5 text-teal-600 rounded border-gray-300 focus:ring-teal-500 ${
+                        twinStatus.isTwinAutocadInUse ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                      }`}
+                    />
+                    <div>
+                      <div className="text-xs font-extrabold flex items-center gap-2">
+                        <span>Licenza AutoCAD</span>
+                        {twinStatus.isTwinAutocadInUse && (
+                          <span className="text-rose-600 font-extrabold text-[9px] uppercase bg-rose-50 px-1.5 py-0.5 rounded border border-rose-100">
+                            In uso sul gemello
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-gray-400">Occupa uno slot delle licenze AutoCAD della ditta</div>
                     </div>
-                    <div className="text-[10px] text-gray-400">
-                      {selectedPC.dettagli.licenzaAutodesk === 'Autocad LT'
-                        ? 'Occupa uno slot delle licenze AutoCAD LT della ditta'
-                        : 'Occupa uno slot delle licenze AutoCAD Completo della ditta'}
-                    </div>
-                  </div>
-                </label>
-              </div>
-
-              {/* Altri Software Installati sul PC */}
-              <div className="space-y-2 border-t border-gray-100 pt-3">
-                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
-                  Altri Software in Uso (Senza Limiti Licenza)
-                </label>
-                <p className="text-[10px] text-gray-400 font-medium mb-2">
-                  Seleziona gli altri programmi installati su questa macchina che utilizzerai.
-                </p>
-
-                {/* Checkbox dai programmiInstallati del PC */}
-                {(() => {
-                  const installedList = selectedPC.dettagli.programmiInstallati
-                    ? selectedPC.dettagli.programmiInstallati.split(/[,;\n]+/).map(s => s.trim()).filter(s => s.length > 0)
-                    : [];
-                  if (installedList.length === 0) return null;
-                  return (
-                    <div className="space-y-1.5 mb-2 max-h-36 overflow-y-auto pr-1">
-                      <span className="text-[10px] font-bold text-gray-500 block mb-1">Programmi installati su {selectedPC.id}:</span>
-                      {installedList.map(prog => {
-                        const isChecked = selectedOtherSoftware.includes(prog);
-                        return (
-                          <label key={prog} className="flex items-center gap-2.5 p-2 rounded-lg bg-gray-50 hover:bg-gray-100 border border-gray-150 text-xs font-bold text-gray-800 cursor-pointer select-none">
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={e => {
-                                if (e.target.checked) {
-                                  setSelectedOtherSoftware(prev => [...prev, prog]);
-                                } else {
-                                  setSelectedOtherSoftware(prev => prev.filter(p => p !== prog));
-                                }
-                              }}
-                              className="w-4 h-4 text-teal-600 rounded border-gray-300 focus:ring-teal-500 cursor-pointer"
-                            />
-                            <span>{prog}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  );
-                })()}
-
-                {/* Input per aggiungere un software personalizzato non in elenco */}
-                <div className="flex gap-2 items-center">
-                  <input
-                    type="text"
-                    placeholder="Es. Edilclima, Photoshop, etc..."
-                    value={customSoftwareInput}
-                    onChange={e => setCustomSoftwareInput(e.target.value)}
-                    className="flex-1 p-2 text-xs border border-gray-200 rounded-xl bg-gray-50 font-bold text-gray-800 outline-none focus:ring-2 focus:ring-teal-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const trimmed = customSoftwareInput.trim();
-                      if (trimmed && !selectedOtherSoftware.includes(trimmed)) {
-                        setSelectedOtherSoftware(prev => [...prev, trimmed]);
-                        setCustomSoftwareInput('');
-                      }
-                    }}
-                    className="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-extrabold text-xs rounded-xl border border-indigo-200 transition cursor-pointer"
-                  >
-                    + Aggiungi
-                  </button>
+                  </label>
                 </div>
 
-                {/* Badge software selezionati */}
-                {selectedOtherSoftware.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 pt-2">
-                    {selectedOtherSoftware.map(s => (
-                      <span key={s} className="bg-purple-100 text-purple-900 text-[10px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 border border-purple-200">
-                        <span>{s}</span>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedOtherSoftware(prev => prev.filter(p => p !== s))}
-                          className="hover:text-red-600 font-black text-xs ml-0.5"
-                        >
-                          ×
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsEditPCModalOpen(false)}
-                  className="flex-1 py-3 px-4 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 hover:bg-gray-50 transition"
-                >
-                  Annulla
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-3 px-4 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition active:scale-95 shadow"
-                >
-                  Salva Modifiche
-                </button>
-              </div>
-            </form>
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsEditPCModalOpen(false)}
+                    className="flex-1 py-3 px-4 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 hover:bg-gray-50 transition"
+                  >
+                    Annulla
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-3 px-4 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition active:scale-95 shadow"
+                  >
+                    Salva Modifiche
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* 2. Modal Car Check-In */}
       {isCarCheckInModalOpen && selectedCarBooking && (

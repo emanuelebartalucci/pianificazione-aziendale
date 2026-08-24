@@ -1,7 +1,7 @@
+import { useEffect, useState, lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
-import { useEffect, useState, lazy, Suspense } from 'react';
-import { APP_VERSION, APP_RELEASE_DATE, getPrintDateString } from './config/version';
+import { APP_VERSION, getPrintDateString } from './config/version';
 
 // Lazy-loaded Pages (Code-Splitting per caricamento iniziale ultra-veloce)
 const Login = lazy(() => import('./pages/Login'));
@@ -15,6 +15,7 @@ const PianificazionePersonale = lazy(() => import('./pages/PianificazionePersona
 const Prenotazioni = lazy(() => import('./pages/Prenotazioni'));
 const Organigramma = lazy(() => import('./pages/Organigramma'));
 const GestioneHR = lazy(() => import('./pages/GestioneHR'));
+const Forniture = lazy(() => import('./pages/Forniture'));
 
 import { auth } from './services/firebase';
 
@@ -180,6 +181,7 @@ function App() {
                     } />
                     <Route path="/presenze" element={<Presenze />} />
                     <Route path="/suggerimenti" element={<Suggerimenti />} />
+                    <Route path="/forniture" element={<Forniture />} />
                     <Route path="/pianificazione-personale" element={<PianificazionePersonale />} />
                     <Route path="/prenotazioni" element={<Prenotazioni />} />
                     <Route path="/organigramma" element={<Organigramma />} />
@@ -200,7 +202,7 @@ function App() {
               <span className="opacity-60 font-medium text-center">Sviluppato da Emanuele Bartalucci</span>
               <div className="sm:text-right">
                 <span className="inline-block font-bold bg-gray-200/70 px-3 py-1 rounded-full text-gray-600 border border-gray-300/50">
-                  {APP_VERSION} ({APP_RELEASE_DATE})
+                  {APP_VERSION}
                 </span>
               </div>
             </div>

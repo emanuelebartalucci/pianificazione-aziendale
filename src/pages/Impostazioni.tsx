@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, addDoc, doc, setDoc, deleteDoc, getDocs, updateDoc } from 'firebase/firestore';
-import { Shield, UserCheck, Star, Users, Plus, Trash2, Settings, Printer, Building2, Search, Pencil, X, Mail, Eye, Send, Code, Briefcase } from 'lucide-react';
+import { Shield, UserCheck, Star, Users, Plus, Trash2, Settings, Printer, Building2, Search, Pencil, X, Mail, Eye, Send, Code, Briefcase, Package } from 'lucide-react';
 import ConfirmModal from '../components/ConfirmModal';
 import AnagraficaRisorseSection from '../components/AnagraficaRisorseSection';
 import { wrapMailTemplate } from '../utils/mailTemplate';
@@ -207,6 +207,8 @@ export default function Impostazioni() {
   const [pmsList, setPmsList] = useState<{id: string, email: string}[]>([]);
   const [newGestoreCommessaEmail, setNewGestoreCommessaEmail] = useState('');
   const [gestoriCommesseList, setGestoriCommesseList] = useState<{id: string, email: string}[]>([]);
+  const [newGestoreFornitureEmail, setNewGestoreFornitureEmail] = useState('');
+  const [gestoriFornitureList, setGestoriFornitureList] = useState<{id: string, email: string}[]>([]);
 
   const [editingEmployeeAreaId, setEditingEmployeeAreaId] = useState<string | null>(null);
   
@@ -215,13 +217,14 @@ export default function Impostazioni() {
   const loadImpostazioniLists = async () => {
     if (!isDev) return;
     try {
-      const [snapA, snapH, snapD, snapC, snapPM, snapGC] = await Promise.all([
+      const [snapA, snapH, snapD, snapC, snapPM, snapGC, snapGF] = await Promise.all([
         getDocs(collection(db, 'admins')),
         getDocs(collection(db, 'hr')),
         getDocs(collection(db, 'sviluppatori')),
         getDocs(collection(db, 'clienti')),
         getDocs(collection(db, 'project_managers')),
-        getDocs(collection(db, 'gestori_commesse'))
+        getDocs(collection(db, 'gestori_commesse')),
+        getDocs(collection(db, 'gestori_forniture'))
       ]);
 
       setAdminsList(snapA.docs.map(d => ({ id: d.id, email: d.data().email })));
@@ -234,6 +237,7 @@ export default function Impostazioni() {
       })).sort((a, b) => Number(a.codice) - Number(b.codice)));
       setPmsList(snapPM.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
       setGestoriCommesseList(snapGC.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
+      setGestoriFornitureList(snapGF.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
     } catch (err) {
       console.error("Errore caricamento liste impostazioni:", err);
     }
@@ -333,6 +337,28 @@ export default function Impostazioni() {
     await refreshData();
     await loadImpostazioniLists();
     showToast("Gestore Commesse rimosso con successo!", "success");
+  };
+
+  const handleAddGestoreForniture = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newGestoreFornitureEmail) {
+      if (gestoriFornitureList.some(g => g.email.toLowerCase().trim() === newGestoreFornitureEmail.toLowerCase().trim())) {
+        showToast("Questo utente è già un Gestore Forniture & Acquisti.", "warning");
+        return;
+      }
+      await addDoc(collection(db, 'gestori_forniture'), { email: newGestoreFornitureEmail.toLowerCase().trim() });
+      await refreshData();
+      await loadImpostazioniLists();
+      setNewGestoreFornitureEmail('');
+      showToast("Gestore Forniture & Acquisti aggiunto con successo!", "success");
+    }
+  };
+
+  const handleRemoveGestoreForniture = async (id: string) => {
+    await deleteDoc(doc(db, 'gestori_forniture', id));
+    await refreshData();
+    await loadImpostazioniLists();
+    showToast("Gestore Forniture rimosso con successo!", "success");
   };
 
 
@@ -652,6 +678,16 @@ export default function Impostazioni() {
       }))
       .sort((a, b) => a.name.localeCompare(b.name, 'it'));
   }, [gestoriCommesseList, dipendenti]);
+
+  const sortedGestoriFornitureList = useMemo(() => {
+    return gestoriFornitureList
+      .map(g => ({
+        id: g.id,
+        email: g.email,
+        name: getDipNomeFromEmail(g.email)
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'it'));
+  }, [gestoriFornitureList, dipendenti]);
 
   const maxCoordinatorsCount = useMemo(() => {
     const counts = (['Disegnatori', 'Ingegneria', 'Sicurezza Cantieri', 'Consulenza Sicurezza', 'Amministrazione'] as const).map(
@@ -1036,6 +1072,40 @@ export default function Impostazioni() {
                           <div className="text-xs text-emerald-700/70">{g.email}</div>
                         </div>
                         <button onClick={() => handleRemoveGestoreCommessa(g.id)} className="text-emerald-500 hover:text-red-600 p-1 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </section>
+
+              {/* Gestori Forniture & Acquisti */}
+              <section className="bg-gradient-to-br from-amber-50 to-orange-50 p-6 rounded-3xl border border-amber-100 shadow-sm h-full flex flex-col justify-between">
+                <div>
+                  <h3 className="text-xl font-bold text-amber-950 mb-1 flex items-center gap-2">
+                    <Package className="w-6 h-6 text-amber-600" /> Gestori Forniture & Acquisti
+                  </h3>
+                  <p className="text-xs text-amber-800/80 mb-4">Abilitati alla gestione e presa in carico delle richieste forniture, materiali e distributori.</p>
+                  <form onSubmit={handleAddGestoreForniture} className="flex gap-2 mb-4">
+                    <select required value={newGestoreFornitureEmail} onChange={e => setNewGestoreFornitureEmail(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-amber-400 transition shadow-inner font-medium text-amber-950 text-xs">
+                      <option value="">Seleziona dipendente</option>
+                      {sortedDipendentiWithEmail
+                        .filter((d: any) => !gestoriFornitureList.some(g => (g.email || '').toLowerCase().trim() === (d.email || '').toLowerCase().trim()))
+                        .map((d: any) => <option key={d.id} value={d.email}>{d.nome}</option>)}
+                    </select>
+                    <button type="submit" className="bg-amber-600 text-white px-4 py-3 rounded-xl hover:bg-amber-700 transition font-bold shadow-md active:scale-95 text-xs cursor-pointer">Nomina</button>
+                  </form>
+                </div>
+                <div className="h-48 overflow-y-auto bg-white/50 rounded-xl divide-y border border-amber-100">
+                  {sortedGestoriFornitureList.length === 0 ? (
+                    <p className="p-4 text-xs text-gray-400 italic font-bold">Nessun Gestore Forniture nominato.</p>
+                  ) : (
+                    sortedGestoriFornitureList.map((g: any) => (
+                      <div key={g.id} className="p-3 flex justify-between items-center text-sm">
+                        <div>
+                          <div className="font-bold text-amber-950">{g.name}</div>
+                          <div className="text-xs text-amber-700/70">{g.email}</div>
+                        </div>
+                        <button onClick={() => handleRemoveGestoreForniture(g.id)} className="text-amber-500 hover:text-red-600 p-1 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
                       </div>
                     ))
                   )}

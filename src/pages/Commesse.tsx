@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, doc, setDoc, addDoc, deleteDoc, getDocs, runTransaction } from 'firebase/firestore';
-import { Briefcase, ChevronLeft, ChevronRight, ChevronDown, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw, Printer, Plus, UserCheck, MoveVertical, Building2, Send, Info, Mail } from 'lucide-react';
+import { Briefcase, ChevronLeft, ChevronRight, ChevronDown, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw, Printer, Plus, UserCheck, MoveVertical, Building2, Send, Info, Mail, User } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays } from '../utils/date';
 import { queueMail } from '../utils/mailSender';
 import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
@@ -225,7 +225,6 @@ const getWeeksSpannedByDates = (startDateStr: string, endDateStr: string): strin
 export default function Commesse() {
   const { 
     isAdmin = false, 
-    isDev = false,
     isGestoreCommesse = false,
     myAssociatedName = '', 
     userEmail = '',
@@ -237,6 +236,7 @@ export default function Commesse() {
     coordinatori = [], 
     pmsEmails = [],
     prioritaCommesse = {},
+    loadPlanningData,
     loadAllCommesse,
     refreshData,
     refreshDataIfStale
@@ -522,9 +522,9 @@ export default function Commesse() {
   const [isAvailabilityModalOpen, setIsAvailabilityModalOpen] = useState(false);
 
   useEffect(() => {
-    // Ricarica i dati solo se non freschi (throttle 2 min) per evitare 14 letture Firestore ad ogni navigazione
+    loadPlanningData?.();
     refreshDataIfStale();
-  }, []);
+  }, [loadPlanningData]);
 
 
 
@@ -613,6 +613,7 @@ export default function Commesse() {
 
   // Modale Richiedi Personale — [Area] (Sostituisce vecchia modale richiesta coordinatore)
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
+  const [isSelfChangeRequest, setIsSelfChangeRequest] = useState(false);
   const [reqAreaTarget, setReqAreaTarget] = useState('Disegnatori');
   const [reqCommessaId, setReqCommessaId] = useState('');
   const [reqDataInizio, setReqDataInizio] = useState('');
@@ -727,9 +728,8 @@ export default function Commesse() {
     };
 
     const isPMOrRespOfCommessa = checkIsUserPmOrResp(targetCommessa);
-    const isUserCoordinator = (coordinatori || []).some(c => c && c.email && userEmail && c.email.toLowerCase().trim() === userEmail.toLowerCase().trim());
     const isSelfPerson = areNamesEqual(personName, myAssociatedName);
-    const canDirectlyManage = isAdmin || isDev || isSoci(myAssociatedName) || isPMOrRespOfCommessa || (isUserCoordinator && isSelfPerson);
+    const canDirectlyManage = isAdmin || isSoci(myAssociatedName) || isPMOrRespOfCommessa;
 
     if (e.button === 1) {
       // Rotellina (Middle Click) -> Nuova Scheda
@@ -750,16 +750,18 @@ export default function Commesse() {
       });
     } else {
       const isAnyCoordinator = (coordinatori || []).some(c => c.email?.toLowerCase() === userEmail?.toLowerCase());
-      const canSendChangeRequest = isAnyCoordinator || isPMOrRespOfCommessa || areNamesEqual(personName, myAssociatedName);
+      const canSendChangeRequest = isAnyCoordinator || isSelfPerson;
 
       if (!canSendChangeRequest) {
         return;
       }
 
       const weekRange = getWeekDateRange(wkId);
+      const isSelf = isSelfPerson;
+      setIsSelfChangeRequest(isSelf);
       setReqAreaTarget(macroArea || 'Disegnatori');
       setReqCommessaId(commId);
-      setReqPreferredResource(personName && dipendenti.some(d => d.nome === personName) ? personName : '');
+      setReqPreferredResource(isSelf ? (myAssociatedName || personName) : (personName && dipendenti.some(d => d.nome === personName) ? personName : ''));
       setReqPercentuale(personPct || 100);
       setReqDataInizio(weekRange.startStr);
       setReqDataFine(weekRange.endStr);
@@ -804,7 +806,7 @@ export default function Commesse() {
       return false;
     };
 
-    const canDirectlyManageWeek = isAdmin || isDev || isSoci(myAssociatedName) || isPMOrRespOfCommessa(comm);
+    const canDirectlyManageWeek = isAdmin || isSoci(myAssociatedName) || isPMOrRespOfCommessa(comm);
 
     if (canDirectlyManageWeek) {
       setPlanningModal({
@@ -814,17 +816,21 @@ export default function Commesse() {
         weekId: wk.id
       });
     } else {
-      const myDip = dipendenti.find(d => areNamesEqual(d.nome, myAssociatedName));
-      const macroArea = myDip?.macroArea || 'Disegnatori';
-      const weekRange = getWeekDateRange(wk.id);
-      setReqAreaTarget(macroArea);
-      setReqCommessaId(comm.id);
-      setReqPreferredResource('');
-      setReqPercentuale(100);
-      setReqDataInizio(weekRange.startStr);
-      setReqDataFine(weekRange.endStr);
-      setReqNota('');
-      setIsRequestModalOpen(true);
+      const isAnyCoordinator = (coordinatori || []).some(c => c.email?.toLowerCase() === userEmail?.toLowerCase());
+      if (isAnyCoordinator) {
+        const myDip = dipendenti.find(d => areNamesEqual(d.nome, myAssociatedName));
+        const macroArea = myDip?.macroArea || 'Disegnatori';
+        const weekRange = getWeekDateRange(wk.id);
+        setIsSelfChangeRequest(false);
+        setReqAreaTarget(macroArea);
+        setReqCommessaId(comm.id);
+        setReqPreferredResource('');
+        setReqPercentuale(100);
+        setReqDataInizio(weekRange.startStr);
+        setReqDataFine(weekRange.endStr);
+        setReqNota('');
+        setIsRequestModalOpen(true);
+      }
     }
   };
 
@@ -839,6 +845,8 @@ export default function Commesse() {
       const commObj = commesse.find(c => c.id === reqCommessaId);
       const commName = commObj ? commObj.nome : '';
       
+      const finalTipoRichiesta = isSelfChangeRequest ? 'modifica_assegnazione' : 'richiesta_area';
+
       await addDoc(collection(db, 'richieste_disegnatori'), {
         commessaId: reqCommessaId,
         commessaName: commName,
@@ -846,12 +854,13 @@ export default function Commesse() {
         dataInizio: reqDataInizio,
         dataFine: reqDataFine,
         percentuale: Number(reqPercentuale),
-        risorsaPreferita: reqPreferredResource || '',
+        risorsaPreferita: reqPreferredResource || (isSelfChangeRequest ? myAssociatedName : ''),
         nota: reqNota,
         richiedenteNome: myAssociatedName || userEmail || '',
         richiedenteEmail: userEmail,
         stato: 'in_attesa',
         area: reqAreaTarget,
+        tipoRichiesta: finalTipoRichiesta,
         createdAt: new Date().toISOString()
       });
 
@@ -868,10 +877,16 @@ export default function Commesse() {
           const respDip = dipendenti.find(d => areNamesEqual(d.nome, commObj.responsabile));
           if (respDip?.email) targetEmails.add(respDip.email.toLowerCase());
         }
+        const pmArray = Array.isArray(commObj.pm) ? commObj.pm : (commObj.pm ? [commObj.pm] : []);
+        pmArray.forEach(p => {
+          const pmDip = dipendenti.find(d => areNamesEqual(d.nome, p));
+          if (pmDip?.email) targetEmails.add(pmDip.email.toLowerCase());
+        });
       }
 
-      showToast(`Richiesta ${reqAreaTarget} inviata con successo!`, "success");
+      showToast(isSelfChangeRequest ? "Richiesta di modifica inviata con successo!" : `Richiesta ${reqAreaTarget} inviata con successo!`, "success");
       setIsRequestModalOpen(false);
+      setIsSelfChangeRequest(false);
       setReqCommessaId('');
       setReqDataInizio('');
       setReqDataFine('');
@@ -1046,7 +1061,8 @@ export default function Commesse() {
     if (!isAdmin && myAssociatedName) {
       const assignedCommessaIds = new Set<string>();
       Object.entries(assignments).forEach(([key, listAss]) => {
-        if (key.startsWith(`${myAssociatedName}-`)) {
+        const keyName = key.split('-')[0];
+        if (areNamesEqual(keyName, myAssociatedName) || key.startsWith(`${myAssociatedName}-`)) {
           listAss.forEach(ass => {
             if (ass.percentuale > 0) {
               assignedCommessaIds.add(ass.commessaId);
@@ -1394,17 +1410,24 @@ export default function Commesse() {
   };
 
   const canAccessCatalogo = useMemo(() => {
-    return isAdmin || isDev || isGestoreCommesse || isSoci(myAssociatedName);
-  }, [isAdmin, isDev, isGestoreCommesse, myAssociatedName]);
+    return isAdmin || isGestoreCommesse || isSoci(myAssociatedName);
+  }, [isAdmin, isGestoreCommesse, myAssociatedName]);
+
+  // Scarica il catalogo completo storico (incluse commesse chiuse) SOLO quando si accede al tab Catalogo
+  useEffect(() => {
+    if (activeTab === 'gestione' && canAccessCatalogo && loadAllCommesse) {
+      loadAllCommesse();
+    }
+  }, [activeTab, canAccessCatalogo, loadAllCommesse]);
 
   const canAccessAltreCommesseTab = useMemo(() => {
     if (isSoci(myAssociatedName)) return false;
-    return isCoordinatoreQualsiasi || isAdmin || isDev;
-  }, [isCoordinatoreQualsiasi, isAdmin, isDev, myAssociatedName]);
+    return isCoordinatoreQualsiasi && myCoordinatedAreas.length > 0;
+  }, [isCoordinatoreQualsiasi, myCoordinatedAreas, myAssociatedName]);
 
   const canManageCatalogo = useMemo(() => {
-    return isAdmin || isDev || isGestoreCommesse || isSoci(myAssociatedName);
-  }, [isAdmin, isDev, isGestoreCommesse, myAssociatedName]);
+    return isAdmin || isGestoreCommesse || isSoci(myAssociatedName);
+  }, [isAdmin, isGestoreCommesse, myAssociatedName]);
 
   const commesseGestibili = useMemo(() => {
     if (canAccessCatalogo) return commesse;
@@ -1493,6 +1516,18 @@ export default function Commesse() {
       handleUnifyClientNames();
     }
   }, [canManageCatalogo, commesse, clientiList]);
+
+  useEffect(() => {
+    if (activeTab === 'altre-commesse' && !canAccessAltreCommesseTab) {
+      setActiveTab('consultazione');
+    }
+  }, [activeTab, canAccessAltreCommesseTab]);
+
+  useEffect(() => {
+    if (myCoordinatedAreas.length > 0 && !myCoordinatedAreas.includes(reqAreaTarget)) {
+      setReqAreaTarget(myCoordinatedAreas[0]);
+    }
+  }, [myCoordinatedAreas, reqAreaTarget]);
 
   const selectableResponsabiliCatalogo = useMemo(() => {
     const set = new Set<string>();
@@ -2745,7 +2780,8 @@ export default function Commesse() {
                               if (!isAdmin && myAssociatedName) {
                                 const assignedCommessaIds = new Set<string>();
                                 Object.entries(assignments).forEach(([key, listAss]) => {
-                                  if (key.startsWith(`${myAssociatedName}-`)) {
+                                  const keyName = key.split('-')[0];
+                                  if (areNamesEqual(keyName, myAssociatedName) || key.startsWith(`${myAssociatedName}-`)) {
                                     listAss.forEach(ass => {
                                       if (ass.percentuale > 0) {
                                         assignedCommessaIds.add(ass.commessaId);
@@ -4860,8 +4896,8 @@ export default function Commesse() {
                                     setAltreCommessaSearchText(c.nome);
                                     setReqCommessaId(c.id);
                                     const myDipObj = dipendenti.find(d => d.email && d.email.toLowerCase() === userEmail.toLowerCase()) || dipendenti.find(d => areNamesEqual(d.nome, myAssociatedName));
-                                    const myArea = myDipObj?.macroArea || 'Disegnatori';
-                                    setReqAreaTarget(myArea);
+                                    const targetDefaultArea = myCoordinatedAreas.length > 0 ? myCoordinatedAreas[0] : (myDipObj?.macroArea || 'Disegnatori');
+                                    setReqAreaTarget(targetDefaultArea);
                                     setReqPreferredResource(myAssociatedName || myDipObj?.nome || '');
                                     setIsAltreCommessaDropdownOpen(false);
                                   }}
@@ -4929,7 +4965,7 @@ export default function Commesse() {
                         <option value="">-- Seleziona Risorsa dell'Area --</option>
                         {myAssociatedName && <option value={myAssociatedName}>👤 Me stesso ({myAssociatedName})</option>}
                         {dipendenti
-                          .filter(d => !isSoci(d.nome) && (!reqAreaTarget || d.macroArea === reqAreaTarget) && d.nome !== myAssociatedName)
+                          .filter(d => !isSoci(d.nome) && d.macroArea === reqAreaTarget && d.nome !== myAssociatedName)
                           .map(d => (
                             <option key={d.id} value={d.nome}>{d.nome}</option>
                           ))
@@ -4942,17 +4978,20 @@ export default function Commesse() {
                       <select
                         required
                         value={reqAreaTarget}
+                        disabled={myCoordinatedAreas.length <= 1}
                         onChange={e => {
                           setReqAreaTarget(e.target.value);
                           setReqPreferredResource('');
                         }}
-                        className="w-full p-3 border border-gray-200 bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 shadow-xs cursor-pointer"
+                        className="w-full p-3 border border-gray-200 bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 shadow-xs cursor-pointer disabled:opacity-85 disabled:bg-gray-100"
                       >
-                        <option value="Disegnatori">Disegnatori</option>
-                        <option value="Ingegneria">Ingegneria</option>
-                        <option value="Sicurezza Cantieri">Sicurezza Cantieri</option>
-                        <option value="Consulenza Sicurezza">Consulenza Sicurezza</option>
-                        <option value="Amministrazione">Amministrazione</option>
+                        {myCoordinatedAreas.length > 0 ? (
+                          myCoordinatedAreas.map(area => (
+                            <option key={area} value={area}>{area}</option>
+                          ))
+                        ) : (
+                          <option value={reqAreaTarget}>{reqAreaTarget}</option>
+                        )}
                       </select>
                     </div>
 
@@ -5078,7 +5117,7 @@ export default function Commesse() {
         </div>
       )}
 
-      {/* MODALE RICHIESTA PERSONALE — [AREA] (SOSTITUISCE VECCHIA MODALE RICHIESTA COORDINATORE) */}
+      {/* MODALE RICHIESTA PERSONALE / MODIFICA ASSEGNAZIONE DIPENDENTE */}
       {isRequestModalOpen && (() => {
         const areaModalColors: Record<string, { gradient: string; titleColor: string; subtitleColor: string; ring: string }> = {
           'Disegnatori':          { gradient: 'from-teal-50/50 to-slate-50',   titleColor: 'text-teal-950',   subtitleColor: 'text-teal-700/80',   ring: 'focus:ring-teal-500' },
@@ -5088,18 +5127,28 @@ export default function Commesse() {
           'Amministrazione':      { gradient: 'from-blue-50/50 to-slate-50',   titleColor: 'text-blue-950',   subtitleColor: 'text-blue-700/80',   ring: 'focus:ring-blue-500' },
         };
         const mc = areaModalColors[reqAreaTarget] || areaModalColors['Disegnatori'];
+        const commObj = commesse.find(c => c.id === reqCommessaId);
 
         return (
           <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-md flex items-center justify-center z-[9999] p-4 sm:p-6 no-print animate-in fade-in duration-200">
             <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-3xl border border-gray-100 flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
               <div className={`p-6 sm:p-8 border-b flex justify-between items-center bg-gradient-to-br ${mc.gradient} rounded-t-[2rem]`}>
                 <div>
-                  <h3 className={`text-xl font-extrabold ${mc.titleColor}`}>Richiedi Personale — {reqAreaTarget}</h3>
-                  <p className={`text-xs ${mc.subtitleColor} mt-1`}>Invia una richiesta ai coordinatori dell'area <strong>{reqAreaTarget}</strong>.</p>
+                  <h3 className={`text-xl font-extrabold ${mc.titleColor}`}>
+                    {isSelfChangeRequest ? "Richiesta Modifica Assegnazione" : `Richiedi Personale — ${reqAreaTarget}`}
+                  </h3>
+                  <p className={`text-xs ${mc.subtitleColor} mt-1`}>
+                    {isSelfChangeRequest 
+                      ? "Invia una richiesta ai coordinatori e al responsabile per modificare la tua assegnazione su questa commessa." 
+                      : `Invia una richiesta ai coordinatori dell'area ${reqAreaTarget}.`}
+                  </p>
                 </div>
                 <button 
                   type="button"
-                  onClick={() => setIsRequestModalOpen(false)}
+                  onClick={() => {
+                    setIsRequestModalOpen(false);
+                    setIsSelfChangeRequest(false);
+                  }}
                   className="text-gray-400 hover:text-gray-650 text-lg font-bold p-2 hover:bg-gray-100 rounded-full transition cursor-pointer"
                 >
                   ✕
@@ -5110,59 +5159,91 @@ export default function Commesse() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                   {/* Colonna Sinistra */}
                   <div className="space-y-4">
-                    <div>
-                      <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Area Richiesta *</label>
-                      <select
-                        required
-                        value={reqAreaTarget}
-                        onChange={e => {
-                          setReqAreaTarget(e.target.value);
-                          setReqPreferredResource('');
-                        }}
-                        className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
-                      >
-                        <option value="Disegnatori">Disegnatori</option>
-                        <option value="Ingegneria">Ingegneria</option>
-                        <option value="Sicurezza Cantieri">Sicurezza Cantieri</option>
-                        <option value="Consulenza Sicurezza">Consulenza Sicurezza</option>
-                        <option value="Amministrazione">Amministrazione</option>
-                      </select>
-                    </div>
+                    {isSelfChangeRequest ? (
+                      <>
+                        {/* Sezione Sola Lettura per Dipendente Standard */}
+                        <div>
+                          <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Area di Riferimento</label>
+                          <div className="w-full p-2.5 bg-slate-100/90 rounded-xl text-xs font-bold text-gray-700 flex items-center gap-2 border border-slate-200/60 shadow-inner">
+                            <span className="w-2 h-2 rounded-full bg-teal-500"></span>
+                            <span>{reqAreaTarget}</span>
+                          </div>
+                        </div>
 
-                    <div>
-                      <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Seleziona Commessa *</label>
-                      <select
-                        required
-                        value={reqCommessaId}
-                        onChange={e => setReqCommessaId(e.target.value)}
-                        className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
-                      >
-                        <option value="">-- Seleziona Commessa --</option>
-                        {selectableCommesseForRequest.map(c => (
-                          <option key={c.id} value={c.id}>{c.nome} [{c.codiceCommessa || c.id}]</option>
-                        ))}
-                      </select>
-                    </div>
+                        <div>
+                          <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Commessa Assegnata</label>
+                          <div className="w-full p-2.5 bg-slate-100/90 rounded-xl text-xs font-bold text-gray-800 border border-slate-200/60 shadow-inner">
+                            {commObj ? `${commObj.nome} [${commObj.codiceCommessa || commObj.id}]` : reqCommessaId}
+                          </div>
+                        </div>
 
-                    <div>
-                      <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1 flex items-center justify-between">
-                        <span>Risorsa Preferita</span>
-                        <span className="text-[10px] text-indigo-600 font-bold italic">(Opzionale)</span>
-                      </label>
-                      <select
-                        value={reqPreferredResource}
-                        onChange={e => setReqPreferredResource(e.target.value)}
-                        className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
-                      >
-                        <option value="">-- Nessuna preferenza (Assegna Coordinatore) --</option>
-                        {dipendenti
-                          .filter(d => !isSoci(d.nome) && d.macroArea === reqAreaTarget)
-                          .map(d => (
-                            <option key={d.id} value={d.nome}>{d.nome}</option>
-                          ))
-                        }
-                      </select>
-                    </div>
+                        <div>
+                          <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Risorsa</label>
+                          <div className="w-full p-2.5 bg-slate-100/90 rounded-xl text-xs font-bold text-indigo-900 flex items-center gap-1.5 border border-slate-200/60 shadow-inner">
+                            <User className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                            <span className="truncate">{myAssociatedName || reqPreferredResource}</span>
+                            <span className="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-black uppercase ml-auto shrink-0">Tu</span>
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        {/* Sezione Modificabile per PM / Coordinatori */}
+                        <div>
+                          <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Area Richiesta *</label>
+                          <select
+                            required
+                            value={reqAreaTarget}
+                            onChange={e => {
+                              setReqAreaTarget(e.target.value);
+                              setReqPreferredResource('');
+                            }}
+                            className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
+                          >
+                            <option value="Disegnatori">Disegnatori</option>
+                            <option value="Ingegneria">Ingegneria</option>
+                            <option value="Sicurezza Cantieri">Sicurezza Cantieri</option>
+                            <option value="Consulenza Sicurezza">Consulenza Sicurezza</option>
+                            <option value="Amministrazione">Amministrazione</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Seleziona Commessa *</label>
+                          <select
+                            required
+                            value={reqCommessaId}
+                            onChange={e => setReqCommessaId(e.target.value)}
+                            className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
+                          >
+                            <option value="">-- Seleziona Commessa --</option>
+                            {selectableCommesseForRequest.map(c => (
+                              <option key={c.id} value={c.id}>{c.nome} [{c.codiceCommessa || c.id}]</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1 flex items-center justify-between">
+                            <span>Risorsa Preferita</span>
+                            <span className="text-[10px] text-indigo-600 font-bold italic">(Opzionale)</span>
+                          </label>
+                          <select
+                            value={reqPreferredResource}
+                            onChange={e => setReqPreferredResource(e.target.value)}
+                            className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
+                          >
+                            <option value="">-- Nessuna preferenza (Assegna Coordinatore) --</option>
+                            {dipendenti
+                              .filter(d => !isSoci(d.nome) && d.macroArea === reqAreaTarget)
+                              .map(d => (
+                                <option key={d.id} value={d.nome}>{d.nome}</option>
+                              ))
+                            }
+                          </select>
+                        </div>
+                      </>
+                    )}
 
                     <div>
                       <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Percentuale Carico Richiesta *</label>
@@ -5254,11 +5335,11 @@ export default function Commesse() {
 
                     <div>
                       <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1 flex items-center justify-between">
-                        <span>Nota per il Coordinatore</span>
+                        <span>{isSelfChangeRequest ? "Motivazione / Nota per Coordinatore e PM" : "Nota per il Coordinatore"}</span>
                         <span className="text-[10px] text-gray-400 font-semibold italic">(Facoltativa)</span>
                       </label>
                       <textarea
-                        placeholder={`Es. Ho bisogno di una risorsa dell'area ${reqAreaTarget} con esperienza in...`}
+                        placeholder={isSelfChangeRequest ? "Es. Richiedo variazione percentuale o spostamento per..." : `Es. Ho bisogno di una risorsa dell'area ${reqAreaTarget} con esperienza in...`}
                         value={reqNota}
                         onChange={e => setReqNota(e.target.value)}
                         rows={3}
@@ -5271,7 +5352,10 @@ export default function Commesse() {
                 <div className="flex gap-3 pt-4 border-t border-gray-100">
                   <button
                     type="button"
-                    onClick={() => setIsRequestModalOpen(false)}
+                    onClick={() => {
+                      setIsRequestModalOpen(false);
+                      setIsSelfChangeRequest(false);
+                    }}
                     className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-extrabold py-3 rounded-xl transition active:scale-95 text-xs text-center cursor-pointer"
                   >
                     Chiudi
@@ -5281,7 +5365,7 @@ export default function Commesse() {
                     disabled={isSubmittingRequest}
                     className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold py-3 rounded-xl shadow-md transition active:scale-95 text-xs text-center disabled:opacity-50 cursor-pointer"
                   >
-                    {isSubmittingRequest ? "Invio in corso..." : `Invia Richiesta ${reqAreaTarget}`}
+                    {isSubmittingRequest ? "Invio in corso..." : (isSelfChangeRequest ? "Invia Richiesta Modifica" : `Invia Richiesta ${reqAreaTarget}`)}
                   </button>
                 </div>
               </form>

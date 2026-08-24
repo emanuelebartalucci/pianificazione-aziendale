@@ -298,11 +298,11 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     return false;
   };
 
-  // Commesse selezionabili nei menu a tendina: Solo Admin, Dev e Soci vedono tutte le commesse aperte.
+  // Commesse selezionabili nei menu a tendina: Solo Admin e Soci vedono tutte le commesse aperte.
   // Tutti gli altri utenti (compresi Coordinatori d'area e PM) vedono SOLO ED ESCLUSIVAMENTE le commesse di cui sono nominati PM o Responsabile.
   const selectableCommesse = useMemo(() => {
     const openCommesse = commesse.filter(c => !c.stato || c.stato !== 'Chiusa');
-    if (isAdmin || isDev || isSoci(myAssociatedName)) {
+    if (isAdmin || isSoci(myAssociatedName)) {
       return openCommesse;
     }
     const filtered = openCommesse.filter(c => isUserPmOrResp(c));
@@ -313,7 +313,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
       }
     }
     return filtered;
-  }, [commesse, isAdmin, isDev, myAssociatedName, userEmail, myDip, initialCommessaId]);
+  }, [commesse, isAdmin, myAssociatedName, userEmail, myDip, initialCommessaId]);
 
   // Verifica se l'utente collegato è PM o Responsabile della commessa attualmente selezionata
   const isPmOfSelectedCommessa = useMemo(() => {
@@ -322,9 +322,9 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     return isUserPmOrResp(comm);
   }, [selectedCommessaId, commesse, userEmail, myAssociatedName, myDip]);
 
-  // Dipendenti direttamente assegnabili (Admin, Dev e Soci vedono tutti; Coordinatori/PM vedono solo la propria area di appartenenza)
+  // Dipendenti direttamente assegnabili (Admin e Soci vedono tutti; Coordinatori/PM vedono solo la propria area di appartenenza)
   const selectableDipendentiForUser = useMemo(() => {
-    if (isAdmin || isDev || isSoci(myAssociatedName)) return filteredDipendenti;
+    if (isAdmin || isSoci(myAssociatedName)) return filteredDipendenti;
     if (myCoordinatedAreas.length > 0) {
       return filteredDipendenti.filter(d => d.macroArea && myCoordinatedAreas.includes(d.macroArea));
     }
@@ -332,7 +332,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
       return filteredDipendenti.filter(d => d.macroArea === myDip.macroArea);
     }
     return filteredDipendenti;
-  }, [filteredDipendenti, isAdmin, isDev, myAssociatedName, myCoordinatedAreas, myDip]);
+  }, [filteredDipendenti, isAdmin, myAssociatedName, myCoordinatedAreas, myDip]);
 
   // Helper date e settimane
   const getWeeksSpannedByDates = (startStr: string, endStr: string): string[] => {
@@ -447,7 +447,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     const assignedNames = new Set(Object.keys(assignedMap));
     let assignedList = Object.values(assignedMap);
 
-    if (!isAdmin && !isDev && !isSoci(myAssociatedName) && isPM && myDip?.macroArea && myCoordinatedAreas.length === 0) {
+    if (!isAdmin && !isSoci(myAssociatedName) && isPM && myDip?.macroArea && myCoordinatedAreas.length === 0) {
       assignedList = assignedList.filter(r => {
         const dipObj = filteredDipendenti.find(d => d.nome === r.nome);
         return dipObj?.macroArea === myDip.macroArea;
@@ -460,7 +460,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
       risorseAssegnateAllaCommessa: assignedList,
       risorseNonAssegnateAllaCommessa: nonAssignedList
     };
-  }, [selectedCommessaId, allocDataInizio, allocDataFine, draftAssignments, filteredDipendenti, selectableDipendentiForUser, isAdmin, isDev, isSoci, myAssociatedName, isPM, myDip, myCoordinatedAreas]);
+  }, [selectedCommessaId, allocDataInizio, allocDataFine, draftAssignments, filteredDipendenti, selectableDipendentiForUser, isAdmin, isSoci, myAssociatedName, isPM, myDip, myCoordinatedAreas]);
 
   // Commesse Assegnate alla Risorsa nel periodo (usa la bozza locale draftAssignments)
   const commesseAssegnateAllaRisorsa = useMemo(() => {
@@ -1103,7 +1103,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                 <span>Sostituzione Risorsa</span>
               </button>
 
-              {(myCoordinatedAreas.length > 0 || (coordinatori || []).some(c => c.email?.toLowerCase() === userEmail?.toLowerCase()) || isAdmin || isDev || isSoci(myAssociatedName)) && (
+              {(myCoordinatedAreas.length > 0 && !isDev && !isSoci(myAssociatedName)) && (
                 <button
                   type="button"
                   onClick={() => setActiveTab('altre-commesse')}
@@ -1253,7 +1253,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                             const dipObj = filteredDipendenti.find(d => d.nome === r.nome);
                             const isCoordinatoreUser = (coordinatori || []).some(c => c.email?.toLowerCase() === userEmail?.toLowerCase()) || myCoordinatedAreas.length > 0;
                             const isSelfRes = (dipObj?.email?.toLowerCase() === (userEmail || '').toLowerCase()) || areNamesEqual(r.nome, myAssociatedName || undefined);
-                            const isOwnArea = isAdmin || isDev || isSoci(myAssociatedName) || isPmOfSelectedCommessa || (isCoordinatoreUser && isSelfRes);
+                            const isOwnArea = isAdmin || isSoci(myAssociatedName) || isPmOfSelectedCommessa || (isCoordinatoreUser && isSelfRes);
 
                             // Calcola i sotto-periodi per questa risorsa
                             const subperiods = computeSubperiods(r.percentuali, allWeekIds);
@@ -1891,7 +1891,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                           <option value={myAssociatedName}>Me stesso ({myAssociatedName})</option>
                         )}
                         {filteredDipendenti
-                          .filter(d => d.nome !== myAssociatedName && myCoordinatedAreas.includes(d.macroArea || ''))
+                          .filter(d => !isSoci(d.nome) && d.nome !== myAssociatedName && myCoordinatedAreas.includes(d.macroArea || ''))
                           .map(d => (
                             <option key={d.id} value={d.nome}>{d.nome} ({d.macroArea})</option>
                           ))}

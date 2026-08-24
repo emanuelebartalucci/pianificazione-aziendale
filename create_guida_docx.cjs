@@ -11,7 +11,7 @@ async function generateGuidaDocx() {
 
   // Extract metadata from frontmatter if available
   let docTitle = "Manuale Operativo della Web App";
-  let docSubtitle = "Pianificazione e Gestione Aziendale — Versione 1.0.11 (Agosto 2026)";
+  let docSubtitle = "Pianificazione e Gestione Aziendale — Versione 1.0.12 (Agosto 2026)";
 
   for (const l of lines) {
     if (l.startsWith('title:')) {

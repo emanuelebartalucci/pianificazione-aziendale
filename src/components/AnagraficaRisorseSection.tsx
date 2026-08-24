@@ -817,10 +817,10 @@ export default function AnagraficaRisorseSection() {
 
             {/* Modal Body / Form */}
             <form onSubmit={handleSaveEmployee} className="flex-1 overflow-y-auto p-6 space-y-5">
-              {/* Nome e Cognome */}
+              {/* Cognome e Nome */}
               <div>
                 <label className="block text-xs font-bold text-gray-500 mb-1 ml-1">
-                  Nome e Cognome {isSoci(editingDip.nome) && '(Socio Proprietario - Non Modificabile)'}
+                  Cognome e Nome {isSoci(editingDip.nome) && '(Socio Proprietario - Non Modificabile)'}
                 </label>
                 <input
                   required

@@ -22,11 +22,12 @@ interface UseNotificationWatcherParams {
   isDev: boolean;
   impersonatedEmail: string | null;
   coordinatori: Array<{ email: string; area: string }>;
+  isGestoreForniture?: boolean;
 }
 
 export interface OperativeNotificationItem {
   id: string;
-  category: 'ferie' | 'presenze' | 'weekend' | 'disponibilita' | 'richiesta_personale' | 'sollecito_presenze';
+  category: 'ferie' | 'presenze' | 'weekend' | 'disponibilita' | 'richiesta_personale' | 'sollecito_presenze' | 'forniture';
   titolo: string;
   messaggio: string;
   link: string;
@@ -58,7 +59,8 @@ export function useNotificationWatcher({
   isHR,
   isDev,
   impersonatedEmail,
-  coordinatori
+  coordinatori,
+  isGestoreForniture
 }: UseNotificationWatcherParams) {
   const [totalPendingCount, setTotalPendingCount] = useState<number>(0);
   const [operativePendingCount, setOperativePendingCount] = useState<number>(0);
@@ -107,7 +109,8 @@ export function useNotificationWatcher({
       weekend: [],
       disponibilita: [],
       richiestePersonale: [],
-      solleciti: []
+      solleciti: [],
+      forniture: []
     };
 
     const countsMap = {
@@ -117,11 +120,12 @@ export function useNotificationWatcher({
       disponibilitaCoord: 0,
       richiesteDisegnatoriCoord: 0,
       sollecitiPresenzeUser: 0,
+      fornitureGestore: 0,
       notifichePersonali: 0
     };
 
     const updateAndNotify = () => {
-      const operativeCount = (countsMap.ferieHR + countsMap.presenzeHR + countsMap.weekendHR + countsMap.disponibilitaCoord + countsMap.richiesteDisegnatoriCoord + countsMap.sollecitiPresenzeUser);
+      const operativeCount = (countsMap.ferieHR + countsMap.presenzeHR + countsMap.weekendHR + countsMap.disponibilitaCoord + countsMap.richiesteDisegnatoriCoord + countsMap.sollecitiPresenzeUser + countsMap.fornitureGestore);
       const personalCount = countsMap.notifichePersonali;
       const total = operativeCount + personalCount;
 
@@ -131,7 +135,8 @@ export function useNotificationWatcher({
         ...operativeItemsMap.weekend,
         ...operativeItemsMap.disponibilita,
         ...operativeItemsMap.richiestePersonale,
-        ...operativeItemsMap.solleciti
+        ...operativeItemsMap.solleciti,
+        ...operativeItemsMap.forniture
       ];
       combinedOperative.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
@@ -151,19 +156,20 @@ export function useNotificationWatcher({
       }
     };
 
-    const sixtyDaysAgo = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
-
     // 1. ASCOLTO ESCLUSIVO PER UFFICIO HR (Ferie, Presenze inviate, Weekend)
     if (isHR && !isPureDev) {
-      // Ferie in attesa o gestite negli ultimi 60 giorni
-      const unsubFerie = onSnapshot(collection(db, 'richieste_ferie'), (snap) => {
+      // Ferie in attesa di approvazione/gestione
+      const qFerieHR = query(
+        collection(db, 'richieste_ferie'),
+        where('stato', 'in', ['In attesa', 'Richiesta Annullamento', 'Richiesta Modifica'])
+      );
+      const unsubFerie = onSnapshot(qFerieHR, (snap) => {
         let matchingCount = 0;
         const items: OperativeNotificationItem[] = [];
         snap.forEach(docSnap => {
           const data = docSnap.data();
           const isPending = ['In attesa', 'Richiesta Annullamento', 'Richiesta Modifica'].includes(data.stato);
           const created = data.createdAt || data.dataInserimento || '';
-          if (!isPending && created && created < sixtyDaysAgo) return;
 
           if (isPending) matchingCount++;
           const dipName = data.dipendenteName || data.dipendenteNome || data.nome || 'Collaboratore';
@@ -204,29 +210,30 @@ export function useNotificationWatcher({
       }, (err) => console.error("Errore listener ferie HR:", err));
       unsubscribers.push(unsubFerie);
 
-      // Presenze / Bozza fattura inviate o approvate di recente
-      const unsubPresenze = onSnapshot(collection(db, 'presenze'), (snap) => {
+      // Presenze / Bozza fattura inviate in attesa di approvazione
+      const qPresenzeHR = query(
+        collection(db, 'presenze'),
+        where('stato', 'in', ['Inviato', 'Richiesta Sblocco'])
+      );
+      const unsubPresenze = onSnapshot(qPresenzeHR, (snap) => {
         let matchingCount = 0;
         const items: OperativeNotificationItem[] = [];
         snap.forEach(docSnap => {
           const data = docSnap.data();
-          const isPending = data.stato === 'Inviato';
-          const isManaged = ['Approvato', 'Richiede Modifica'].includes(data.stato);
-          if (!isPending && !isManaged) return;
+          const isPending = data.stato === 'Inviato' || data.stato === 'Richiesta Sblocco';
 
           const created = data.dataInvio || data.updatedAt || '';
-          if (!isPending && created && created < sixtyDaysAgo) return;
 
           if (isPending) matchingCount++;
           const dipName = data.dipendenteNome || data.dipendenteName || data.nome || 'Collaboratore';
           const statoLabel = isPending
-            ? 'Inviato'
+            ? (data.stato === 'Richiesta Sblocco' ? 'Richiesta Sblocco' : 'Inviato')
             : (data.stato === 'Approvato' ? '✓ Approvato' : data.stato);
           items.push({
             id: `presenze-${docSnap.id}`,
             category: 'presenze',
             titolo: `⏱️ Foglio Presenze: ${dipName}`,
-            messaggio: `Presenze mese ${data.mese}/${data.anno} di ${dipName}`,
+            messaggio: `${data.stato === 'Richiesta Sblocco' ? 'Richiesta sblocco' : 'Presenze'} mese ${data.mese}/${data.anno} di ${dipName}`,
             link: '/presenze',
             createdAt: created || new Date().toISOString(),
             badgeLabel: statoLabel,
@@ -241,7 +248,7 @@ export function useNotificationWatcher({
           if (change.type === 'added') {
             const docId = change.doc.id;
             const data = change.doc.data();
-            if (data.stato === 'Inviato' && !isInitialLoadRef.current && !knownIdsRef.current.has(docId)) {
+            if ((data.stato === 'Inviato' || data.stato === 'Richiesta Sblocco') && !isInitialLoadRef.current && !knownIdsRef.current.has(docId)) {
               const dipName = data.dipendenteNome || data.dipendenteName || data.nome || 'Una risorsa';
               sendDesktopNotification("Pianificazione Aziendale: Foglio Ore Inviato", {
                 body: `${dipName} ha inviato il foglio presenze del mese per approvazione.`,
@@ -255,15 +262,18 @@ export function useNotificationWatcher({
       }, (err) => console.error("Errore listener presenze HR:", err));
       unsubscribers.push(unsubPresenze);
 
-      // Richieste lavoro festivo/weekend
-      const unsubWeekend = onSnapshot(collection(db, 'richieste_weekend'), (snap) => {
+      // Richieste lavoro festivo/weekend in attesa
+      const qWeekendHR = query(
+        collection(db, 'richieste_weekend'),
+        where('stato', 'in', ['In attesa', 'Richiesta Annullamento', 'Richiesta Modifica'])
+      );
+      const unsubWeekend = onSnapshot(qWeekendHR, (snap) => {
         let matchingCount = 0;
         const items: OperativeNotificationItem[] = [];
         snap.forEach(docSnap => {
           const data = docSnap.data();
           const isPending = ['In attesa', 'Richiesta Annullamento', 'Richiesta Modifica'].includes(data.stato);
           const created = data.createdAt || '';
-          if (!isPending && created && created < sixtyDaysAgo) return;
 
           if (isPending) matchingCount++;
           const dipName = data.dipendenteName || data.dipendenteNome || data.nome || 'Collaboratore';
@@ -305,7 +315,7 @@ export function useNotificationWatcher({
       unsubscribers.push(unsubWeekend);
     }
 
-    // 2. ASCOLTO ESCLUSIVO PER COORDINATORI (Segnalazioni disponibilità e richieste personale della PROPRIA AREA)
+    // 2. ASCOLTO ESCLUSIVO PER COORDINATORI (Segnalazioni disponibilità e richieste personale della PROPRIA AREA in attesa)
     const myCoordinatedAreas = isPureDev ? [] : coordinatori
       .filter(c => c.email && c.email.toLowerCase().trim() === normalizedEmail)
       .map(c => c.area);
@@ -313,8 +323,12 @@ export function useNotificationWatcher({
     const isCoordinator = myCoordinatedAreas.length > 0;
 
     if (isCoordinator) {
-      // Segnalazioni disponibilità (in attesa e gestite negli ultimi 60gg)
-      const unsubDisp = onSnapshot(collection(db, 'segnalazioni_disponibilita'), (snap) => {
+      // Segnalazioni disponibilità (solo in_attesa)
+      const qDispCoord = query(
+        collection(db, 'segnalazioni_disponibilita'),
+        where('stato', '==', 'in_attesa')
+      );
+      const unsubDisp = onSnapshot(qDispCoord, (snap) => {
         let matchingCount = 0;
         const items: OperativeNotificationItem[] = [];
         snap.forEach(docSnap => {
@@ -322,7 +336,6 @@ export function useNotificationWatcher({
           if (myCoordinatedAreas.includes(data.macroArea)) {
             const isPending = data.stato === 'in_attesa';
             const created = data.createdAt || data.timestamp || '';
-            if (!isPending && created && created < sixtyDaysAgo) return;
 
             if (isPending) matchingCount++;
             const resName = data.risorsaNome || data.dipendenteNome || data.nome || 'Collaboratore';
@@ -369,8 +382,12 @@ export function useNotificationWatcher({
       }, (err) => console.error("Errore listener disponibilità coordinatore:", err));
       unsubscribers.push(unsubDisp);
 
-      // Richieste disegnatori / personale d'area (in attesa e gestite negli ultimi 60gg)
-      const unsubReqDis = onSnapshot(collection(db, 'richieste_disegnatori'), (snap) => {
+      // Richieste disegnatori / personale d'area (solo in_attesa)
+      const qReqDisCoord = query(
+        collection(db, 'richieste_disegnatori'),
+        where('stato', '==', 'in_attesa')
+      );
+      const unsubReqDis = onSnapshot(qReqDisCoord, (snap) => {
         let matchingCount = 0;
         const items: OperativeNotificationItem[] = [];
         snap.forEach(docSnap => {
@@ -378,7 +395,6 @@ export function useNotificationWatcher({
           if (myCoordinatedAreas.includes(data.area)) {
             const isPending = data.stato === 'in_attesa';
             const created = data.createdAt || data.dataApprovazione || '';
-            if (!isPending && created && created < sixtyDaysAgo) return;
 
             if (isPending) matchingCount++;
             const reqPerson = data.richiedenteNome || data.richiedente || '';
@@ -472,7 +488,62 @@ export function useNotificationWatcher({
       unsubscribers.push(unsubMyPresenze);
     }
 
-    // 4. ASCOLTO NOTIFICHE INFORMATIVE PERSONALI (Ferie Approvate, Presenze Approvate, Pianificazione Aggiornata)
+    // 4. ASCOLTO PER GESTORI FORNITURE & ACQUISTI
+    if (isGestoreForniture) {
+      const qForniture = query(
+        collection(db, 'richieste_forniture'),
+        where('stato', '==', 'In attesa')
+      );
+      const unsubForniture = onSnapshot(qForniture, (snap) => {
+        let matchingCount = 0;
+        const items: OperativeNotificationItem[] = [];
+        snap.forEach(docSnap => {
+          const data = docSnap.data();
+          const isPending = data.stato === 'In attesa';
+          if (isPending) matchingCount++;
+          const reqPerson = data.richiedenteNome || data.richiedenteEmail || 'Collaboratore';
+          const artStr = data.cosaManca || (data.articoliSelezionati || []).join(', ') || data.altroDettaglio || '';
+          const detailStr = artStr ? `: ${artStr}` : '';
+
+          items.push({
+            id: `forniture-${docSnap.id}`,
+            category: 'forniture',
+            titolo: `📦 Richiesta Forniture: ${data.categoria || 'Materiali'}`,
+            messaggio: `${reqPerson} (${data.sede || 'Sede'})${detailStr}`,
+            link: '/forniture?tab=gestione',
+            createdAt: data.createdAt || new Date().toISOString(),
+            badgeLabel: 'Da Rifornire',
+            isPending,
+            stato: data.stato
+          });
+        });
+
+        operativeItemsMap.forniture = items;
+        countsMap.fornitureGestore = matchingCount;
+
+        snap.docChanges().forEach((change) => {
+          if (change.type === 'added') {
+            const docId = change.doc.id;
+            const data = change.doc.data();
+            if (data.stato === 'In attesa' && !isInitialLoadRef.current && !knownIdsRef.current.has(docId)) {
+              const reqPerson = data.richiedenteNome || 'Un collaboratore';
+              sendDesktopNotification("Forniture: Nuova Richiesta Materiali", {
+                body: `${reqPerson} ha inviato una richiesta di materiali per "${data.categoria || 'Forniture'}" (${data.sede || 'Sede'}).`,
+                tag: `forniture-${docId}`,
+                onClick: () => {
+                  window.location.href = '/forniture?tab=gestione';
+                }
+              });
+            }
+            knownIdsRef.current.add(docId);
+          }
+        });
+        updateAndNotify();
+      }, (err) => console.error("Errore listener richieste forniture gestore:", err));
+      unsubscribers.push(unsubForniture);
+    }
+
+    // 5. ASCOLTO NOTIFICHE INFORMATIVE PERSONALI (Ferie Approvate, Presenze Approvate, Pianificazione Aggiornata)
     if (normalizedEmail) {
       // Esegui la pulizia in background delle sole notifiche lette più vecchie di 60 giorni
       cleanupExpiredReadNotifications(normalizedEmail);
@@ -522,7 +593,7 @@ export function useNotificationWatcher({
       unsubscribers.forEach(unsub => unsub());
       setGlobalBadgeNotification(0);
     };
-  }, [userEmail, myAssociatedName, isHR, isDev, impersonatedEmail, coordinatori]);
+  }, [userEmail, myAssociatedName, isHR, isDev, impersonatedEmail, coordinatori, isGestoreForniture]);
 
   return {
     totalPendingCount,

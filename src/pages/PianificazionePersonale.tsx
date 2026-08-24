@@ -163,6 +163,7 @@ export default function PianificazionePersonale() {
     assegnazioni: globalAssignments = {},
     approvedLeaves = [],
     richiesteDisegnatori: globalRichiesteDisegnatori = [],
+    loadPlanningData,
     refreshDataIfStale
   } = useAuth();
 
@@ -204,12 +205,13 @@ export default function PianificazionePersonale() {
     return Array.from(areas);
   }, [userEmail, myAssociatedName, coordinatori]);
 
-  // Sincronizzazione in tempo reale delle richieste di personale per prevenire latenze o disallineamenti
+  // Sincronizzazione in tempo reale delle sole richieste di personale in attesa (filtro mirato alla fonte)
   const [localRichiesteDisegnatori, setLocalRichiesteDisegnatori] = useState<any[]>([]);
 
   useEffect(() => {
     if (!user) return;
-    const unsub = onSnapshot(collection(db, 'richieste_disegnatori'), (snap) => {
+    const qReq = query(collection(db, 'richieste_disegnatori'), where('stato', '==', 'in_attesa'));
+    const unsub = onSnapshot(qReq, (snap) => {
       const list: any[] = [];
       snap.forEach(docSnap => {
         list.push({ id: docSnap.id, ...docSnap.data() });
@@ -268,9 +270,9 @@ export default function PianificazionePersonale() {
   };
 
   useEffect(() => {
-    // Ricarica i dati solo se non freschi (throttle 2 min) per evitare 14 letture Firestore ad ogni navigazione
+    loadPlanningData?.();
     refreshDataIfStale();
-  }, []);
+  }, [loadPlanningData]);
   const [commessaSearchText, setCommessaSearchText] = useState('');
   const [isCommessaDropdownOpen, setIsCommessaDropdownOpen] = useState(false);
   const [timelineWeeks, setTimelineWeeks] = useState<WeekInfo[]>([]); // weeks for the load grid
@@ -893,7 +895,7 @@ export default function PianificazionePersonale() {
     return (myDip?.macroArea as MacroArea) || null;
   }, [isAdmin, myAssociatedName, dipendenti, userEmail]);
 
-  const isSocioUser = isAdmin || isDev || isSoci(myAssociatedName) || isSoci(userEmail);
+  const isSocioUser = isAdmin || isSoci(myAssociatedName) || isSoci(userEmail);
 
   const filteredDipendenti = useMemo(() => {
     let list = dipendenti.filter(d => {
