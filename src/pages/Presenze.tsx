@@ -6351,21 +6351,35 @@ export default function Presenze() {
 
       </div> {/* fine no-print wrapper */}
 
-      <div className="hidden print:block print-container w-full h-full text-[8px] font-sans p-2">
+      <div className="hidden print:block print-container w-full h-full text-[8px] font-sans p-0">
         {(() => {
           const sheets = getSheetsToPrint();
           if (sheets.length === 0) {
             return <div className="text-center p-8 text-gray-400">Nessun documento da stampare per questo mese.</div>;
           }
 
-          return sheets.map((sheetToPrint) => {
-            const totals = calculateTotals(sheetToPrint.giorni, daysInMonth);
-            const trasferte = getTrasferteList(sheetToPrint.giorni, daysInMonth);
-            const isCollab = isCollaboratore(sheetToPrint.dipendenteNome, dipendenti);
-            const dailyNotes = getDailyNotes(sheetToPrint.giorni, daysInMonth);
+          const hasCollab = sheets.some(s => isCollaboratore(s.dipendenteNome, dipendenti));
 
-            return (
-              <div key={sheetToPrint.id} className={`sheet-break ${isCollab ? 'print-portrait-page max-w-[21cm] mx-auto p-4' : 'space-y-3'}`}>
+          return (
+            <>
+              {hasCollab && (
+                <style>{`
+                  @media print {
+                    @page {
+                      size: portrait !important;
+                      margin: 0.8cm 0.8cm 1.5cm 0.8cm !important;
+                    }
+                  }
+                `}</style>
+              )}
+              {sheets.map((sheetToPrint) => {
+                const totals = calculateTotals(sheetToPrint.giorni, daysInMonth);
+                const trasferte = getTrasferteList(sheetToPrint.giorni, daysInMonth);
+                const isCollab = isCollaboratore(sheetToPrint.dipendenteNome, dipendenti);
+                const dailyNotes = getDailyNotes(sheetToPrint.giorni, daysInMonth);
+
+                return (
+                  <div key={sheetToPrint.id} className={`sheet-break ${isCollab ? 'print-portrait-page w-full max-w-[21cm] mx-auto p-4' : 'space-y-3 p-2'}`}>
                 {!isCollab ? (
                   <>
                     {/* Intestazione Documento */}
@@ -6961,12 +6975,14 @@ export default function Presenze() {
                 )}
               </div>
             );
-          });
+          })}
+        </>
+      );
         })()}
       </div>
       {/* MODALE RICHIESTA MODIFICA / ANNULLAMENTO FESTIVO APPROVATO PER DIPENDENTE */}
       {modifyingWeekendReq && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 no-print print:hidden">
           <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full border border-gray-150 p-6 flex flex-col gap-5 animate-in fade-in zoom-in-95 duration-200">
             <div className="flex justify-between items-center">
               <h3 className="text-lg font-black text-gray-900 flex items-center gap-2">

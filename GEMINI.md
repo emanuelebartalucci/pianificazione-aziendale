@@ -36,3 +36,9 @@ Dopo ogni modifica di codice o rilascio di funzionalità, **DEVI SEMPRE AGGIORNA
 - **Gestione Errori e Feedback Utente**: Ogni operazione verso il backend deve includere un blocco `try/catch` con feedback notificato all'utente via Toast/Alert.
 - **Retrocompatibilità Schema DB**: Non rimuovere o rinominare mai campi esistenti nel database Firestore senza previa conferma e piano di migrazione.
 - **Build Verification**: Esegui sempre `npm run build` al termine delle modifiche per garantire 0 errori di compilazione TypeScript prima di informare l'utente.
+
+---
+
+## 🚀 6. Gestione Deploy su Cloudflare Pages
+- **Nessun Deploy Automatico**: NON eseguire MAI il deploy automatico su Cloudflare Pages (`wrangler deploy` o comandi analoghi). Il deploy in produzione deve essere effettuato **SOLO ED ESCLUSIVAMENTE quando l'utente ne fa esplicita richiesta**.
+

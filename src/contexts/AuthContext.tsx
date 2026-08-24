@@ -264,7 +264,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     try {
       const uClean = (userEmail || '').toLowerCase().trim();
       const nClean = (myAssociatedName || '').toLowerCase().trim();
-      const isCoord = coordinatori.some(c => c.email && c.email.toLowerCase().trim() === uClean);
+      const isCoord = coordinatori.some(c => 
+        (c.email && c.email.toLowerCase().trim() === uClean) || 
+        (c.email && nClean && c.email.toLowerCase().trim() === nClean) ||
+        (c.id && c.id.toLowerCase().includes(uClean))
+      );
       const isSocioUser = isSocio || isSoci(myAssociatedName) || isSoci(userEmail);
       const isDirezioneOrCoord = isAdmin || isSocioUser || isCoord;
 

@@ -299,7 +299,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
   };
 
   // Commesse selezionabili nei menu a tendina: Solo Admin e Soci vedono tutte le commesse aperte.
-  // Tutti gli altri utenti (compresi Coordinatori d'area e PM) vedono SOLO ED ESCLUSIVAMENTE le commesse di cui sono nominati PM o Responsabile.
+  // Tutti gli altri utenti (compresi Coordinatori d'area e PM) possono gestire solo le proprie commesse (di cui sono nominati PM o Responsabile).
   const selectableCommesse = useMemo(() => {
     const openCommesse = commesse.filter(c => !c.stato || c.stato !== 'Chiusa');
     if (isAdmin || isSoci(myAssociatedName)) {

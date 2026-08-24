@@ -163,11 +163,13 @@ function App() {
       <ScrollToTop />
       <PrintVersionFooter />
       {user ? (
-        <div className="bg-gray-100 text-gray-900 font-sans min-h-screen flex flex-col justify-between">
-          <div className="flex-1">
-            <Navbar />
+        <div className="bg-gray-100 text-gray-900 font-sans min-h-screen flex flex-col justify-between print:min-h-0 print:bg-white print:block">
+          <div className="flex-1 print:block">
+            <div className="no-print print:hidden">
+              <Navbar />
+            </div>
             <DevImpersonator />
-            <main className="max-w-[1400px] mx-auto px-4 py-8">
+            <main className="max-w-[1400px] mx-auto px-4 py-8 print:p-0 print:m-0 print:max-w-none print:w-full print:block">
               <ErrorBoundary>
                 <Suspense fallback={<PageLoader />}>
                   <Routes>

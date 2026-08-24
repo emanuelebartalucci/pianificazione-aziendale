@@ -1057,8 +1057,8 @@ export default function Commesse() {
       });
     }
 
-    // Filtro per standard employees e coordinatori (che vedono solo quelle a cui sono assegnati)
-    if (!isAdmin && myAssociatedName) {
+    // Filtro per standard employees (che vedono solo quelle a cui sono assegnati o dove sono PM/Resp)
+    if (!isAdmin && !isSoci(myAssociatedName) && myCoordinatedAreas.length === 0 && myAssociatedName) {
       const assignedCommessaIds = new Set<string>();
       Object.entries(assignments).forEach(([key, listAss]) => {
         const keyName = key.split('-')[0];
@@ -2777,7 +2777,7 @@ export default function Commesse() {
                               const search = commessaTextQuery.toLowerCase().trim();
                               
                               let listToDisplay = commesse.filter(c => (c.stato || 'Aperta') !== 'Chiusa');
-                              if (!isAdmin && myAssociatedName) {
+                              if (!isAdmin && !isSoci(myAssociatedName) && myCoordinatedAreas.length === 0 && myAssociatedName) {
                                 const assignedCommessaIds = new Set<string>();
                                 Object.entries(assignments).forEach(([key, listAss]) => {
                                   const keyName = key.split('-')[0];

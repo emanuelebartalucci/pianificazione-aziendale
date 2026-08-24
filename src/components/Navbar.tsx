@@ -377,7 +377,7 @@ export default function Navbar() {
 
   return (
     <>
-      <nav className="bg-white/80 backdrop-blur-md border-b border-gray-100 px-4 sm:px-6 py-2.5 flex justify-between items-center shadow-sm relative z-40 transition-all">
+      <nav className="bg-white/80 backdrop-blur-md border-b border-gray-100 px-4 sm:px-6 py-2.5 flex justify-between items-center shadow-sm relative z-40 transition-all no-print print:hidden">
         <div className="flex items-center gap-3">
           <div 
             onClick={(e) => handleNav(e, '/')}
