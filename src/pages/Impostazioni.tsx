@@ -63,18 +63,31 @@ export const TIPOLOGIE_COMMESSE: Record<string, string> = {
   'V': 'Valutazione ambientale, integrata'
 };
 
-export function isCollaboratore(nome?: string | null, tipoOrList?: string | any[]): boolean {
-  if (!nome) return false;
-  const clean = nome.trim().toLowerCase();
+const areNamesEqual = (name1?: string | null, name2?: string | null): boolean => {
+  if (!name1 || !name2) return false;
+  const n1 = name1.toLowerCase().trim();
+  const n2 = name2.toLowerCase().trim();
+  if (n1 === n2) return true;
+  const parts1 = n1.split(/\s+/).sort().join(' ');
+  const parts2 = n2.split(/\s+/).sort().join(' ');
+  return parts1 === parts2;
+};
+
+export function isCollaboratore(nomeOrEmail?: string | null, tipoOrList?: string | any[]): boolean {
+  if (!nomeOrEmail) return false;
+  const clean = nomeOrEmail.trim().toLowerCase();
   if (typeof tipoOrList === 'string') {
     if (tipoOrList === 'collaboratore') return true;
     if (tipoOrList === 'dipendente') return false;
   } else if (Array.isArray(tipoOrList)) {
-    const found = tipoOrList.find(d => d.nome.trim().toLowerCase() === clean);
+    const found = tipoOrList.find(d => 
+      (d.nome && (d.nome.trim().toLowerCase() === clean || areNamesEqual(d.nome, nomeOrEmail))) ||
+      (d.email && d.email.trim().toLowerCase() === clean)
+    );
     if (found?.tipo === 'collaboratore') return true;
     if (found?.tipo === 'dipendente') return false;
   }
-  return COLLABORATORI.some(c => c.toLowerCase() === clean);
+  return COLLABORATORI.some(c => c.toLowerCase() === clean || areNamesEqual(c, nomeOrEmail));
 }
 
 export const isSoci = (nomeOrEmail?: string | null): boolean => {

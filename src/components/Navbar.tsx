@@ -5,7 +5,7 @@ import { collection, query, where, getDocs } from 'firebase/firestore';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { isSoci } from '../pages/Impostazioni';
+import { isSoci, isCollaboratore } from '../pages/Impostazioni';
 import { useNotificationWatcher } from '../hooks/useNotificationWatcher';
 import type { UserNotification } from '../utils/userNotificationService';
 import NumeriInterniModal from './NumeriInterniModal';
@@ -74,7 +74,7 @@ export default function Navbar() {
     }
   };
 
-  const { user, isAdmin, isHR, isDev, impersonatedEmail, myAssociatedName, userEmail, coordinatori, isGestoreForniture } = useAuth();
+  const { user, isAdmin, isHR, isDev, impersonatedEmail, myAssociatedName, userEmail, coordinatori, isGestoreForniture, dipendenti } = useAuth();
   const { 
     totalPendingCount, 
     operativePendingCount,
@@ -760,7 +760,7 @@ export default function Navbar() {
                     {myAssociatedName || user.email}
                   </span>
                   <span className="text-[11px] font-bold text-gray-400 leading-tight">
-                    {isDev ? 'Sviluppatore' : isAdmin ? 'Amministratore' : isHR ? 'Ufficio HR' : 'Dipendente'}
+                    {isDev ? 'Sviluppatore' : isAdmin ? 'Amministratore' : isHR ? 'Ufficio HR' : isCollaboratore(myAssociatedName || userEmail, dipendenti) ? 'Collaboratore' : 'Dipendente'}
                   </span>
                 </>
               )}

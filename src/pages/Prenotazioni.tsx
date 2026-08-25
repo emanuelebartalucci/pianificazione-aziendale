@@ -508,11 +508,11 @@ export default function Prenotazioni() {
     const autocadCompletoCount = pcsList.filter(pc => 
       pc.statoCorrente?.occupato && 
       pc.statoCorrente?.autocadInUso && 
-      pc.dettagli.licenzaAutodesk === 'AEC Collection'
+      !((pc.dettagli.licenzaAutodesk || '').toLowerCase().includes('lt'))
     ).length;
     const autocadLtCount = pcsList.filter(pc => 
       pc.statoCorrente?.occupato && 
-      (pc.dettagli.licenzaAutodesk === 'Autocad LT' || pc.statoCorrente?.autocadInUso)
+      ((pc.dettagli.licenzaAutodesk || '').toLowerCase().includes('lt'))
     ).length;
     return { 
       total, 

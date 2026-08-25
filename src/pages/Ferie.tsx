@@ -555,7 +555,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         setMyWeekendRequests(listMy);
       }
 
-      if (isHR || isAdmin || isDev) {
+      if (isHR || isAdmin || isSoci(myAssociatedName)) {
         const snapAll = await getDocs(collection(db, 'richieste_weekend'));
         const listAll: any[] = [];
         snapAll.forEach(d => listAll.push({ id: d.id, ...d.data() }));
@@ -966,6 +966,12 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
   // States per la scheda Riepilogo Contatori Risorse (Soci & HR)
   const [mainTab, setMainTab] = useState<'piano' | 'weekend' | 'contatori_risorse'>('piano');
   
+  useEffect(() => {
+    if (isDev && mainTab === 'contatori_risorse') {
+      setMainTab('piano');
+    }
+  }, [isDev, mainTab]);
+  
   // States per autorizzazione weekend/chiusure
   const [reqWeekendData, setReqWeekendData] = useState('');
   const [reqWeekendMotivo, setReqWeekendMotivo] = useState('');
@@ -1039,7 +1045,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
 
   // Aggregazione contatori per tutte le risorse dipendenti per l'anno selezionato (1 sola lettura da sintesi!)
   const allResourcesStats = useMemo(() => {
-    if (!isHR && !isAdmin) return [];
+    if (isDev || (!isHR && !isAdmin && !isSoci(myAssociatedName))) return [];
 
     // Filtra ALL'ORIGINE solo i dipendenti veri e propri (i collaboratori P.IVA e i soci non hanno contatori ferie)
     const onlyDipendenti = dipendenti.filter(dip => {
@@ -2650,7 +2656,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
             <span>Lavoro nei Weekend & Festivi</span>
           </button>
 
-          {(isHR || isAdmin || isDev) && (
+          {!isDev && (isHR || isAdmin || isSoci(myAssociatedName)) && (
             <>
               <button
                 type="button"
@@ -2764,7 +2770,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
               </div>
 
               {/* PANNELLO APPROVAZIONE HR / ADMIN */}
-              {(isHR || isAdmin || isDev) && (
+              {(isHR || isAdmin || isSoci(myAssociatedName)) && (
                 <div className="mt-8 pt-8 border-t border-indigo-100 space-y-6">
                   <div className="bg-indigo-950 text-white p-6 rounded-2xl shadow-md">
                     <h4 className="font-black text-base flex items-center gap-2 mb-1">
@@ -2887,7 +2893,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
           </div>
         )}
 
-        {mainTab === 'contatori_risorse' && (isHR || isAdmin || isDev) && (
+        {mainTab === 'contatori_risorse' && !isDev && (isHR || isAdmin || isSoci(myAssociatedName)) && (
           /* VISTA CONTATORI RISORSE (SOCI & HR) */
           <div className="space-y-6 animate-in fade-in duration-200">
             {/* Header KPI Cards */}
@@ -3091,7 +3097,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                   <span>Stampa / PDF</span>
                 </button>
 
-                {isDev && (
+                {(isHR || isAdmin || isSoci(myAssociatedName)) && (
                   <button
                     type="button"
                     onClick={handleRegenerateSummary}

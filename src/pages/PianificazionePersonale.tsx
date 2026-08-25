@@ -2005,9 +2005,17 @@ export default function PianificazionePersonale() {
 
     // Permissions check
     if (commObj) {
+      const respStr = String(commObj.responsabile || '').trim();
       const pmArray = Array.isArray(commObj.pm) ? commObj.pm : (commObj.pm ? [commObj.pm] : []);
-      const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
-      const isUserAllowed = isAdmin || isSoci(myAssociatedName) || areNamesEqual(commObj.responsabile, myAssociatedName) || isPM;
+      const targets = [respStr, ...pmArray.map(p => String(p || '').trim())].filter(Boolean);
+      
+      const myDip = dipendenti.find(d => areNamesEqual(d.nome, myAssociatedName) || (d.email && userEmail && d.email.toLowerCase() === userEmail.toLowerCase()));
+      const isPMOrResp = targets.some(t => 
+        areNamesEqual(t, myAssociatedName) || 
+        (myDip?.nome && areNamesEqual(t, myDip.nome)) ||
+        (userEmail && (t.toLowerCase().includes(userEmail.toLowerCase()) || (userEmail.split('@')[0].length >= 4 && t.toLowerCase().includes(userEmail.split('@')[0]))))
+      );
+      const isUserAllowed = isAdmin || isSoci(myAssociatedName) || isPMOrResp;
       if (!isUserAllowed) {
         showToast("Non hai i permessi per pianificare risorse su questa commessa (solo Amministratori, Soci o il PM/Responsabile specifico della commessa sono autorizzati).", "error");
         return;
@@ -2478,10 +2486,13 @@ export default function PianificazionePersonale() {
   };
 
   const renderEmployeeRow = (dip: Dipendente, parentAreaName: string, _rowIndex: number = 0, _totalRows: number = 1) => {
-    const isCoordinatoreArea = coordinatori.some(c => c.email.toLowerCase() === userEmail && c.area === parentAreaName);
+    const isCoordinatoreArea = myCoordinatedAreas.includes(parentAreaName);
     // Può modificare la cella se è admin/socio, o coordinatore di quest'area
     const isEditable = isAdmin || isSoci(myAssociatedName) || isCoordinatoreArea;
-    const isResponsabileDiQuestArea = coordinatori.some(c => c.email.toLowerCase() === dip.email?.toLowerCase() && c.area === parentAreaName);
+    const isResponsabileDiQuestArea = coordinatori.some(c => 
+      ((c.email && dip.email && c.email.toLowerCase().trim() === dip.email.toLowerCase().trim()) || areNamesEqual(c.email, dip.nome)) && 
+      c.area === parentAreaName
+    );
 
     let areaColorClass = "border-l-4 border-slate-350 bg-slate-50/20 text-slate-900";
     if (parentAreaName === 'Disegnatori') {
@@ -2808,8 +2819,8 @@ export default function PianificazionePersonale() {
           ) : (
             (() => {
               const sortedMembers = [...members].sort((a, b) => {
-                const isACoord = coordinatori.some(c => c.email.toLowerCase() === a.email?.toLowerCase() && c.area === areaName);
-                const isBCoord = coordinatori.some(c => c.email.toLowerCase() === b.email?.toLowerCase() && c.area === areaName);
+                const isACoord = coordinatori.some(c => ((c.email && a.email && c.email.toLowerCase().trim() === a.email.toLowerCase().trim()) || areNamesEqual(c.email, a.nome)) && c.area === areaName);
+                const isBCoord = coordinatori.some(c => ((c.email && b.email && c.email.toLowerCase().trim() === b.email.toLowerCase().trim()) || areNamesEqual(c.email, b.nome)) && c.area === areaName);
                 if (isACoord && !isBCoord) return -1;
                 if (!isACoord && isBCoord) return 1;
                 return a.nome.localeCompare(b.nome);
