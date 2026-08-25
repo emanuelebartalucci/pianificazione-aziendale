@@ -332,12 +332,6 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     return filtered;
   }, [commesse, isAdmin, myAssociatedName, userEmail, myDip, initialCommessaId]);
 
-  // Verifica se l'utente collegato è PM o Responsabile della commessa attualmente selezionata
-  const isPmOfSelectedCommessa = useMemo(() => {
-    if (!selectedCommessaId) return false;
-    const comm = commesse.find(c => c.id === selectedCommessaId);
-    return isUserPmOrResp(comm);
-  }, [selectedCommessaId, commesse, userEmail, myAssociatedName, myDip]);
 
   // Dipendenti direttamente assegnabili (Admin e Soci vedono tutti; Coordinatori/PM vedono solo la propria area di appartenenza)
   const selectableDipendentiForUser = useMemo(() => {
@@ -1270,7 +1264,8 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                             const dipObj = filteredDipendenti.find(d => d.nome === r.nome);
                             const isCoordinatoreUser = (coordinatori || []).some(c => c.email?.toLowerCase() === userEmail?.toLowerCase()) || myCoordinatedAreas.length > 0;
                             const isSelfRes = (dipObj?.email?.toLowerCase() === (userEmail || '').toLowerCase()) || areNamesEqual(r.nome, myAssociatedName || undefined);
-                            const isOwnArea = isAdmin || isSoci(myAssociatedName) || isPmOfSelectedCommessa || (dipObj?.macroArea && myCoordinatedAreas.includes(dipObj.macroArea)) || (isCoordinatoreUser && isSelfRes);
+                            const isResourceInMyCoordinatedArea = Boolean(dipObj?.macroArea && myCoordinatedAreas.includes(dipObj.macroArea));
+                            const isOwnArea = isAdmin || isSoci(myAssociatedName) || isResourceInMyCoordinatedArea || (isCoordinatoreUser && isSelfRes);
 
                             // Calcola i sotto-periodi per questa risorsa
                             const subperiods = computeSubperiods(r.percentuali, allWeekIds);
