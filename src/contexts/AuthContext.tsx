@@ -270,14 +270,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         (c.id && c.id.toLowerCase().includes(uClean))
       );
       const isSocioUser = isSocio || isSoci(myAssociatedName) || isSoci(userEmail);
-      const isDirezioneOrCoord = isAdmin || isSocioUser || isCoord;
+      const isDirezione = isAdmin || isSocioUser;
 
       const isPM = pmsEmails.some(e => e && e.toLowerCase().trim() === uClean);
       const isGestore = dynamicGestoriCommesse.some(e => e && e.toLowerCase().trim() === uClean);
-      const isPMPuro = isPM || isGestore;
+      const isCoordOrPM = isCoord || isPM || isGestore;
 
-      if (isDirezioneOrCoord) {
-        // Coordinatori, Soci, Admin, Dev: scaricano SOLO le commesse attualmente APERTE
+      if (isDirezione) {
+        // Solo Soci e Amministratori: scaricano TUTTE le commesse attualmente APERTE
         const qCommOpen = query(collection(db, 'catalogo_commesse'), where('stato', '==', 'Aperta'));
         const [commesseSnap, clientiSnap, prioritySnap, assSnap] = await Promise.all([
           getDocs(qCommOpen),
@@ -327,8 +327,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         });
         setAssegnazioni(ass);
 
-      } else if (isPMPuro) {
-        // PM Puri e Responsabili: scaricano SOLO le commesse in cui sono PM o Responsabile, o assegnati come risorsa
+      } else if (isCoordOrPM) {
+        // Coordinatori d'Area, PM Puri e Responsabili: scaricano SOLO le commesse in cui sono PM o Responsabile, o assegnati come risorsa
         const qCommOpen = query(collection(db, 'catalogo_commesse'), where('stato', '==', 'Aperta'));
         const [commesseSnap, clientiSnap, prioritySnap, assSnap] = await Promise.all([
           getDocs(qCommOpen),
