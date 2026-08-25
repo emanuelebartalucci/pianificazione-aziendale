@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { doc, writeBatch, collection, addDoc } from 'firebase/firestore';
@@ -199,9 +199,21 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
   const [allocDataInizio, setAllocDataInizio] = useState('');
   const [allocDataFine, setAllocDataFine] = useState('');
 
-  // Reset/Inizializzazione all'apertura
+  const wasOpenRef = useRef(false);
+  const prevInitialCommessaIdRef = useRef(initialCommessaId);
+  const prevInitialResourceNameRef = useRef(initialResourceName);
+  const prevInitialWeekIdRef = useRef(initialWeekId);
+
+  // Reset/Inizializzazione SOLO all'apertura effettiva della modale
   useEffect(() => {
-    if (isOpen) {
+    const justOpened = isOpen && !wasOpenRef.current;
+    const targetChangedWhileOpen = isOpen && (
+      initialCommessaId !== prevInitialCommessaIdRef.current ||
+      initialResourceName !== prevInitialResourceNameRef.current ||
+      initialWeekId !== prevInitialWeekIdRef.current
+    );
+
+    if (justOpened || targetChangedWhileOpen) {
       setActiveTab(initialTab);
       setSelectedCommessaId(initialCommessaId);
       setSelectedResourceForTab(initialResourceName);
@@ -232,7 +244,12 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
         setInitialPriority('Standard');
       }
     }
-  }, [isOpen, initialTab, initialCommessaId, initialResourceName, initialWeekId, selectableWeekOptions, currentWeekOpt, assegnazioni, prioritaCommesse]);
+
+    wasOpenRef.current = isOpen;
+    prevInitialCommessaIdRef.current = initialCommessaId;
+    prevInitialResourceNameRef.current = initialResourceName;
+    prevInitialWeekIdRef.current = initialWeekId;
+  }, [isOpen, initialTab, initialCommessaId, initialResourceName, initialWeekId, selectableWeekOptions, currentWeekOpt]);
 
   // Sincronizza allocDataInizio e allocDataFine con le settimane selezionate
   useEffect(() => {
@@ -1253,7 +1270,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                             const dipObj = filteredDipendenti.find(d => d.nome === r.nome);
                             const isCoordinatoreUser = (coordinatori || []).some(c => c.email?.toLowerCase() === userEmail?.toLowerCase()) || myCoordinatedAreas.length > 0;
                             const isSelfRes = (dipObj?.email?.toLowerCase() === (userEmail || '').toLowerCase()) || areNamesEqual(r.nome, myAssociatedName || undefined);
-                            const isOwnArea = isAdmin || isSoci(myAssociatedName) || isPmOfSelectedCommessa || (isCoordinatoreUser && isSelfRes);
+                            const isOwnArea = isAdmin || isSoci(myAssociatedName) || isPmOfSelectedCommessa || (dipObj?.macroArea && myCoordinatedAreas.includes(dipObj.macroArea)) || (isCoordinatoreUser && isSelfRes);
 
                             // Calcola i sotto-periodi per questa risorsa
                             const subperiods = computeSubperiods(r.percentuali, allWeekIds);
