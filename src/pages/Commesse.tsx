@@ -242,6 +242,8 @@ export default function Commesse() {
     refreshDataIfStale
   } = useAuth();
 
+  const myDip = useMemo(() => dipendenti.find(d => areNamesEqual(d.nome, myAssociatedName) || (d.email && userEmail && d.email.toLowerCase() === userEmail.toLowerCase())), [dipendenti, myAssociatedName, userEmail]);
+
   const [tableHeight, setTableHeight] = useState<number>(650);
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const heightTextRef = useRef<HTMLSpanElement>(null);
@@ -1014,6 +1016,26 @@ export default function Commesse() {
     document.body.removeChild(link);
   };
 
+  const isUserPmOrRespOfCommessa = (cObj: any): boolean => {
+    if (!cObj) return false;
+    const respStr = String(cObj.responsabile || '').toLowerCase().trim();
+    const pmList: any[] = Array.isArray(cObj.pm) ? cObj.pm : (cObj.pm ? [cObj.pm] : []);
+    const targets = [respStr, ...pmList.map(p => String(p || '').toLowerCase().trim())].filter(Boolean);
+
+    if (targets.length === 0) return false;
+
+    if (myAssociatedName && targets.some(t => areNamesEqual(t, myAssociatedName))) return true;
+    if (myDip?.nome && targets.some(t => areNamesEqual(t, myDip.nome))) return true;
+
+    if (userEmail) {
+      const emailClean = userEmail.toLowerCase().trim();
+      const username = emailClean.split('@')[0];
+      if (targets.some(t => t.includes(emailClean) || (username.length >= 4 && t.includes(username)))) return true;
+    }
+
+    return false;
+  };
+
   // Filtra commesse con filtri avanzati ed in ordine alfabetico (solo commesse Aperte nella timeline/pianificazione)
   const filteredCommesse = useMemo(() => {
     let list = commesse.filter(c => (c.stato || 'Aperta') !== 'Chiusa');
@@ -1071,18 +1093,12 @@ export default function Commesse() {
         }
       });
 
-      list = list.filter(c => {
-        const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
-        const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
-        return assignedCommessaIds.has(c.id) ||
-               areNamesEqual(c.responsabile, myAssociatedName) ||
-               isPM;
-      });
+      list = list.filter(c => assignedCommessaIds.has(c.id) || isUserPmOrRespOfCommessa(c));
     }
 
     // Ordine alfabetico
     return [...list].sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
-  }, [commesse, selectedCommessaIdsFilter, selectedClientFilter, selectedPMFilter, selectedTipologiaFilter, commessaTextQuery, isAdmin, myAssociatedName, assignments]);
+  }, [commesse, selectedCommessaIdsFilter, selectedClientFilter, selectedPMFilter, selectedTipologiaFilter, commessaTextQuery, isAdmin, myAssociatedName, assignments, userEmail, myDip]);
 
   // Pre-calcolo delle ferie settimanali full-week in O(L)
   const fullWeekLeavesSet = useMemo(() => {
@@ -1390,24 +1406,6 @@ export default function Commesse() {
     return (coordinatori || []).some(c => c && c.email && typeof c.email === 'string' && c.email.toLowerCase().trim() === clean);
   }, [userEmail, coordinatori]);
 
-  const isUserPmOrRespOfCommessa = (cObj: any): boolean => {
-    if (!cObj) return false;
-    const respStr = String(cObj.responsabile || '').toLowerCase().trim();
-    const pmList: any[] = Array.isArray(cObj.pm) ? cObj.pm : (cObj.pm ? [cObj.pm] : []);
-    const targets = [respStr, ...pmList.map(p => String(p || '').toLowerCase().trim())].filter(Boolean);
-
-    if (targets.length === 0) return false;
-
-    if (myAssociatedName && targets.some(t => areNamesEqual(t, myAssociatedName))) return true;
-
-    if (userEmail) {
-      const emailClean = userEmail.toLowerCase().trim();
-      const username = emailClean.split('@')[0];
-      if (targets.some(t => t.includes(emailClean) || (username.length >= 4 && t.includes(username)))) return true;
-    }
-
-    return false;
-  };
 
   const canAccessCatalogo = useMemo(() => {
     return isAdmin || isGestoreCommesse || isSoci(myAssociatedName);
@@ -2789,13 +2787,7 @@ export default function Commesse() {
                                     });
                                   }
                                 });
-                                listToDisplay = commesse.filter(c => {
-                                  const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
-                                  const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
-                                  return assignedCommessaIds.has(c.id) ||
-                                         areNamesEqual(c.responsabile, myAssociatedName) ||
-                                         isPM;
-                                });
+                                listToDisplay = commesse.filter(c => assignedCommessaIds.has(c.id) || isUserPmOrRespOfCommessa(c));
                               }
 
                               const filtered = listToDisplay.filter(c => {

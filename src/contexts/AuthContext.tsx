@@ -36,6 +36,16 @@ export const isSoci = (nomeOrEmail?: string | null): boolean => {
   return clean.includes('corbellini') || clean.includes('profeti') || clean.includes('aprofeti') || clean.includes('mcorbellini');
 };
 
+export const areNamesEqual = (n1?: string | null, n2?: string | null): boolean => {
+  if (!n1 || !n2) return false;
+  const clean1 = n1.toLowerCase().trim().replace(/\s+/g, ' ');
+  const clean2 = n2.toLowerCase().trim().replace(/\s+/g, ' ');
+  if (clean1 === clean2) return true;
+  const parts1 = clean1.split(' ').sort().join(' ');
+  const parts2 = clean2.split(' ').sort().join(' ');
+  return parts1 === parts2;
+};
+
 export interface Commessa {
   id: string;
   nome: string;
@@ -276,11 +286,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const isGestore = dynamicGestoriCommesse.some(e => e && e.toLowerCase().trim() === uClean);
       const isCoordOrPM = isCoord || isPM || isGestore;
 
-      if (isDirezione) {
-        // Solo Soci e Amministratori: scaricano TUTTE le commesse attualmente APERTE
-        const qCommOpen = query(collection(db, 'catalogo_commesse'), where('stato', '==', 'Aperta'));
+      if (isDirezione || isCoordOrPM) {
+        // Scarica TUTTE le commesse dal catalogo (inclusi record storici senza campo stato esplicito e commesse chiuse)
         const [commesseSnap, clientiSnap, prioritySnap, assSnap] = await Promise.all([
-          getDocs(qCommOpen),
+          getDocs(collection(db, 'catalogo_commesse')),
           getDocs(collection(db, 'clienti')),
           getDocs(collection(db, 'priorita_commesse')),
           getDocs(collection(db, 'assegnazioni'))
@@ -326,78 +335,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           ass[docSnap.id] = docSnap.data().lista || [];
         });
         setAssegnazioni(ass);
-
-      } else if (isCoordOrPM) {
-        // Coordinatori d'Area, PM Puri e Responsabili: scaricano SOLO le commesse in cui sono PM o Responsabile, o assegnati come risorsa
-        const qCommOpen = query(collection(db, 'catalogo_commesse'), where('stato', '==', 'Aperta'));
-        const [commesseSnap, clientiSnap, prioritySnap, assSnap] = await Promise.all([
-          getDocs(qCommOpen),
-          getDocs(collection(db, 'clienti')),
-          getDocs(collection(db, 'priorita_commesse')),
-          getDocs(collection(db, 'assegnazioni'))
-        ]);
-
-        const ass: Record<string, any[]> = {};
-        const myAssignedCommessaIds = new Set<string>();
-        assSnap.forEach(docSnap => {
-          const lista = docSnap.data().lista || [];
-          ass[docSnap.id] = lista;
-          if (myAssociatedName && docSnap.id.startsWith(`${myAssociatedName}-`)) {
-            lista.forEach((item: any) => {
-              if (item.commessaId) myAssignedCommessaIds.add(item.commessaId);
-            });
-          }
-        });
-        setAssegnazioni(ass);
-
-        const prioritaMap: Record<string, 'Alta' | 'Standard' | 'Bassa'> = {};
-        prioritySnap.forEach(docSnap => {
-          const data = docSnap.data();
-          if (data.priorita) prioritaMap[docSnap.id] = data.priorita;
-        });
-        setPrioritaCommesse(prioritaMap);
-
-        const clientiList = clientiSnap.docs.map(doc => ({
-          id: doc.id,
-          codice: doc.data().codice || '',
-          nome: doc.data().nome || ''
-        })).sort((a, b) => Number(a.codice) - Number(b.codice));
-        setClienti(clientiList);
-
-        // Filtriamo le sole commesse di competenza (dove l'utente è PM/Responsabile o assegnato)
-        const myCommesseList = commesseSnap.docs
-          .map(doc => ({
-            id: doc.id,
-            nome: doc.data().nome || '',
-            colore: doc.data().colore || '#3b82f6',
-            dataInizio: doc.data().dataInizio || '',
-            dataFine: doc.data().dataFine || '',
-            responsabile: doc.data().responsabile || '',
-            pm: doc.data().pm || '',
-            codiceCommessa: doc.data().codiceCommessa || '',
-            anno: doc.data().anno || '',
-            tipologia: doc.data().tipologia || '',
-            cliente: doc.data().cliente || '',
-            stato: doc.data().stato || 'Aperta',
-            giornateSeniorProject: doc.data().giornateSeniorProject,
-            giornateProject: doc.data().giornateProject,
-            giornateJuniorProject: doc.data().giornateJuniorProject,
-            apertaDa: doc.data().apertaDa || '',
-            progetti: doc.data().progetti || []
-          }))
-          .filter(c => {
-            const resp = (c.responsabile || '').toLowerCase().trim();
-            const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
-            const isResp = Boolean(nClean && resp && (resp === nClean || resp.includes(nClean) || nClean.includes(resp)));
-            const isPm = pmArray.some(p => {
-              const pClean = String(p || '').toLowerCase().trim();
-              return pClean && ((nClean && (pClean === nClean || pClean.includes(nClean) || nClean.includes(pClean))) || (uClean && pClean === uClean));
-            });
-            const isAssigned = myAssignedCommessaIds.has(c.id);
-            return isResp || isPm || isAssigned;
-          });
-
-        setCommesse(myCommesseList.sort((a, b) => a.nome.localeCompare(b.nome)));
 
       } else {
         // Utente Standard (Dipendente / Disegnatore): scarica SOLO le proprie assegnazioni e SOLO le commesse assegnate
