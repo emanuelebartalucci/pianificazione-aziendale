@@ -1,8 +1,8 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
+import { useAuth, isTechnicalUser, type PunchListItem, TODO_CATEGORIE } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, doc, setDoc, addDoc, deleteDoc, getDocs, runTransaction } from 'firebase/firestore';
-import { Briefcase, ChevronLeft, ChevronRight, ChevronDown, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw, Printer, Plus, UserCheck, MoveVertical, Building2, Send, Info, Mail, User } from 'lucide-react';
+import { collection, doc, setDoc, updateDoc, addDoc, deleteDoc, getDocs, runTransaction } from 'firebase/firestore';
+import { Briefcase, ChevronLeft, ChevronRight, ChevronDown, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw, Printer, Plus, UserCheck, MoveVertical, Building2, Send, Info, Mail, User, Folder, FolderPlus, FolderOpen, ListTodo, Check } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays } from '../utils/date';
 import { queueMail } from '../utils/mailSender';
 import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
@@ -590,6 +590,338 @@ export default function Commesse() {
     setTimeout(() => {
       setToast(null);
     }, 4500);
+  };
+
+  // Gestione Percorso Cartella di Rete Commessa
+  const [isNetworkPathModalOpen, setIsNetworkPathModalOpen] = useState(false);
+  const [selectedCommessaForNetworkPath, setSelectedCommessaForNetworkPath] = useState<any | null>(null);
+  const [networkPathInput, setNetworkPathInput] = useState('');
+  const [isSavingNetworkPath, setIsSavingNetworkPath] = useState(false);
+
+  const handleOpenNetworkPath = (comm: any, e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+    }
+    const rawPath = comm.percorsoRete?.trim();
+    if (!rawPath) {
+      setSelectedCommessaForNetworkPath(comm);
+      setNetworkPathInput('');
+      setIsNetworkPathModalOpen(true);
+      return;
+    }
+
+    // 1. Copia negli appunti (sempre garantito)
+    try {
+      navigator.clipboard.writeText(rawPath);
+      showToast("📁 Percorso copiato negli appunti! Premi Win + R o incollalo nella barra di Esplora Risorse.", "success");
+    } catch (err) {
+      console.error("Errore copia appunti:", err);
+      showToast(`📁 Percorso: ${rawPath}`, "warning");
+    }
+
+    // 2. Tenta l'apertura tramite il protocollo Windows registrato
+    try {
+      const protocolUri = `ingegno-path:${encodeURIComponent(rawPath)}`;
+      const tempLink = document.createElement('a');
+      tempLink.href = protocolUri;
+      tempLink.style.display = 'none';
+      document.body.appendChild(tempLink);
+      tempLink.click();
+      setTimeout(() => {
+        if (document.body.contains(tempLink)) {
+          document.body.removeChild(tempLink);
+        }
+      }, 1500);
+    } catch (err) {
+      console.error("Errore protocollo ingegno-path:", err);
+    }
+  };
+
+  const handleSaveNetworkPath = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedCommessaForNetworkPath) return;
+    setIsSavingNetworkPath(true);
+    let cleanPath = networkPathInput.trim();
+    // Rimuove eventuali virgolette esterne incollate per errore
+    if ((cleanPath.startsWith('"') && cleanPath.endsWith('"')) || (cleanPath.startsWith("'") && cleanPath.endsWith("'"))) {
+      cleanPath = cleanPath.slice(1, -1).trim();
+    }
+    const commId = selectedCommessaForNetworkPath.id;
+    try {
+      await updateDoc(doc(db, 'catalogo_commesse', commId), {
+        percorsoRete: cleanPath
+      });
+      // Aggiornamento immediato in memoria per feedback istantaneo
+      selectedCommessaForNetworkPath.percorsoRete = cleanPath;
+      const targetInList = commesse.find(c => c.id === commId);
+      if (targetInList) {
+        targetInList.percorsoRete = cleanPath;
+      }
+      if (infoModalCommessa && infoModalCommessa.id === commId) {
+        setInfoModalCommessa({ ...infoModalCommessa, percorsoRete: cleanPath });
+      }
+
+      showToast(cleanPath ? "📁 Percorso di rete salvato con successo!" : "Percorso di rete rimosso.", "success");
+      setIsNetworkPathModalOpen(false);
+      setSelectedCommessaForNetworkPath(null);
+      setNetworkPathInput('');
+      if (loadPlanningData) {
+        await loadPlanningData();
+      }
+      if (refreshData) {
+        await refreshData();
+      }
+    } catch (err: any) {
+      console.error("Errore salvataggio percorso rete:", err);
+      showToast("Errore nel salvataggio del percorso: " + err.message, "error");
+    } finally {
+      setIsSavingNetworkPath(false);
+    }
+  };
+
+  // Configurazione Categorie ToDo List (18 categorie con icone e stili dedicati)
+  const CATEGORIA_CONFIG: Record<string, { label: string; icon: string; bg: string; text: string; border: string }> = {
+    'chiamare': { label: 'Chiamare', icon: '📞', bg: 'bg-emerald-50', text: 'text-emerald-800', border: 'border-emerald-200' },
+    'inviare mail': { label: 'Inviare mail', icon: '✉️', bg: 'bg-blue-50', text: 'text-blue-800', border: 'border-blue-200' },
+    'rispondere': { label: 'Rispondere', icon: '💬', bg: 'bg-indigo-50', text: 'text-indigo-800', border: 'border-indigo-200' },
+    'stampare': { label: 'Stampare', icon: '🖨️', bg: 'bg-slate-100', text: 'text-slate-800', border: 'border-slate-300' },
+    'archiviare': { label: 'Archiviare', icon: '🗄️', bg: 'bg-gray-100', text: 'text-gray-800', border: 'border-gray-300' },
+    'da fare': { label: 'Da fare', icon: '📋', bg: 'bg-purple-50', text: 'text-purple-800', border: 'border-purple-200' },
+    'fissare appuntamento': { label: 'Fissare appuntamento', icon: '📅', bg: 'bg-amber-50', text: 'text-amber-800', border: 'border-amber-200' },
+    'fatturare': { label: 'Fatturare', icon: '💶', bg: 'bg-teal-50', text: 'text-teal-800', border: 'border-teal-200' },
+    'attesa feedback': { label: 'Attesa feedback', icon: '⏳', bg: 'bg-yellow-50', text: 'text-yellow-800', border: 'border-yellow-300' },
+    'scansionare': { label: 'Scansionare', icon: '📄', bg: 'bg-cyan-50', text: 'text-cyan-800', border: 'border-cyan-200' },
+    'registrare': { label: 'Registrare', icon: '📝', bg: 'bg-sky-50', text: 'text-sky-800', border: 'border-sky-200' },
+    'firmare': { label: 'Firmare', icon: '✍️', bg: 'bg-rose-50', text: 'text-rose-800', border: 'border-rose-200' },
+    'ordinare': { label: 'Ordinare', icon: '🛒', bg: 'bg-pink-50', text: 'text-pink-800', border: 'border-pink-200' },
+    'consegnare': { label: 'Consegnare', icon: '🚚', bg: 'bg-lime-50', text: 'text-lime-800', border: 'border-lime-300' },
+    'prenotare': { label: 'Prenotare', icon: '🎟️', bg: 'bg-orange-50', text: 'text-orange-800', border: 'border-orange-200' },
+    'aggiornare': { label: 'Aggiornare', icon: '🔄', bg: 'bg-blue-50', text: 'text-blue-800', border: 'border-blue-300' },
+    'effettuare revisione': { label: 'Effettuare revisione', icon: '🔍', bg: 'bg-violet-50', text: 'text-violet-800', border: 'border-violet-200' },
+    'pagare': { label: 'Pagare', icon: '💳', bg: 'bg-red-50', text: 'text-red-800', border: 'border-red-200' },
+  };
+
+  // Gestione ToDo List Commessa
+  const [isPunchListModalOpen, setIsPunchListModalOpen] = useState(false);
+  const [selectedCommessaForPunchList, setSelectedCommessaForPunchList] = useState<any | null>(null);
+  const [punchListFilter, setPunchListFilter] = useState<'all' | 'da_fare' | 'da_rivedere' | 'eseguito'>('all');
+  const [newTaskCategoria, setNewTaskCategoria] = useState<string>('da fare');
+  const [newTaskTitolo, setNewTaskTitolo] = useState('');
+  const [newTaskDescrizione, setNewTaskDescrizione] = useState('');
+  const [newTaskScadenza, setNewTaskScadenza] = useState('');
+  const [newTaskAssegnatoA, setNewTaskAssegnatoA] = useState('');
+  const [isSavingTask, setIsSavingTask] = useState(false);
+  const [editingTask, setEditingTask] = useState<PunchListItem | null>(null);
+
+  // Chiunque lavori alla commessa può inserire punti
+  const canUserAddToPunchList = (comm?: any) => {
+    if (!comm) return false;
+    if (isAdmin || isSoci(myAssociatedName) || isGestoreCommesse) return true;
+    if (comm.responsabile && areNamesEqual(comm.responsabile, myAssociatedName)) return true;
+    const pms = Array.isArray(comm.pm) ? comm.pm : (comm.pm ? [comm.pm] : []);
+    if (pms.some((p: string) => areNamesEqual(p, myAssociatedName))) return true;
+    return true; // Tutti gli utenti della ditta possono inserire punti ToDo nelle commesse attive
+  };
+
+  // Solo chi ha aperto quel punto specifico lo può modificare o eliminare (con fallback admin)
+  const canUserEditOrDeleteTask = (task: PunchListItem) => {
+    if (isAdmin || isSoci(myAssociatedName)) return true;
+    if (task.creatoDa && (areNamesEqual(task.creatoDa, myAssociatedName) || task.creatoDa.toLowerCase() === (userEmail || '').toLowerCase())) return true;
+    return false;
+  };
+
+  const sanitizePunchListForFirestore = (list: PunchListItem[]): any[] => {
+    return list.map(item => {
+      const cleanItem: Record<string, any> = {
+        id: item.id || `task_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+        categoria: item.categoria || 'da fare',
+        titolo: item.titolo ? item.titolo.trim() : '',
+        stato: item.stato || 'da_fare',
+        assegnatoA: item.assegnatoA ? item.assegnatoA.trim() : '',
+        creatoDa: item.creatoDa || 'Utente',
+        creatoIl: item.creatoIl || new Date().toISOString()
+      };
+      if (item.descrizione && item.descrizione.trim()) cleanItem.descrizione = item.descrizione.trim();
+      if (item.scadenza) cleanItem.scadenza = item.scadenza;
+      if (item.completatoDa) cleanItem.completatoDa = item.completatoDa;
+      if (item.completatoIl) cleanItem.completatoIl = item.completatoIl;
+      if (item.approvatoDa) cleanItem.approvatoDa = item.approvatoDa;
+      if (item.approvatoIl) cleanItem.approvatoIl = item.approvatoIl;
+      if (item.noteRevisione && item.noteRevisione.trim()) cleanItem.noteRevisione = item.noteRevisione.trim();
+      return cleanItem;
+    });
+  };
+
+  const handleSavePunchListToFirestore = async (commId: string, updatedList: PunchListItem[]) => {
+    const cleanList = sanitizePunchListForFirestore(updatedList);
+    await updateDoc(doc(db, 'catalogo_commesse', commId), {
+      punchList: cleanList
+    });
+    // Aggiornamento immediato stato locale
+    if (selectedCommessaForPunchList && selectedCommessaForPunchList.id === commId) {
+      setSelectedCommessaForPunchList({ ...selectedCommessaForPunchList, punchList: cleanList });
+    }
+    const target = commesse.find(c => c.id === commId);
+    if (target) {
+      target.punchList = cleanList;
+    }
+    if (infoModalCommessa && infoModalCommessa.id === commId) {
+      setInfoModalCommessa({ ...infoModalCommessa, punchList: cleanList });
+    }
+    if (loadPlanningData) loadPlanningData();
+  };
+
+  const handleAddOrEditPunchTask = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedCommessaForPunchList) return;
+    if (!newTaskTitolo.trim()) {
+      showToast("Inserisci la descrizione dell'attività.", "warning");
+      return;
+    }
+    if (!newTaskAssegnatoA.trim()) {
+      showToast("Seleziona obbligatoriamente la risorsa assegnata.", "warning");
+      return;
+    }
+
+    setIsSavingTask(true);
+    try {
+      const commId = selectedCommessaForPunchList.id;
+      const currentList: PunchListItem[] = selectedCommessaForPunchList.punchList || [];
+      let updatedList: PunchListItem[] = [];
+
+      if (editingTask) {
+        // Controllo che solo l'autore possa modificare
+        if (!canUserEditOrDeleteTask(editingTask)) {
+          showToast("Puoi modificare solo i punti che hai creato tu.", "error");
+          setIsSavingTask(false);
+          return;
+        }
+
+        updatedList = currentList.map(t => {
+          if (t.id === editingTask.id) {
+            const updated: PunchListItem = {
+              ...t,
+              categoria: newTaskCategoria || 'da fare',
+              titolo: newTaskTitolo.trim(),
+              assegnatoA: newTaskAssegnatoA.trim()
+            };
+            if (newTaskDescrizione.trim()) updated.descrizione = newTaskDescrizione.trim();
+            else delete updated.descrizione;
+
+            if (newTaskScadenza) updated.scadenza = newTaskScadenza;
+            else delete updated.scadenza;
+
+            return updated;
+          }
+          return t;
+        });
+        showToast("Punto ToDo aggiornato con successo!", "success");
+      } else {
+        // Nuovo task creato
+        const newTask: PunchListItem = {
+          id: `task_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+          categoria: newTaskCategoria || 'da fare',
+          titolo: newTaskTitolo.trim(),
+          assegnatoA: newTaskAssegnatoA.trim(),
+          stato: 'da_fare',
+          creatoDa: myAssociatedName || userEmail || 'Utente',
+          creatoIl: new Date().toISOString()
+        };
+        if (newTaskDescrizione.trim()) newTask.descrizione = newTaskDescrizione.trim();
+        if (newTaskScadenza) newTask.scadenza = newTaskScadenza;
+
+        updatedList = [newTask, ...currentList];
+        showToast(`Nuova voce [${newTask.categoria}] aggiunta alla ToDo List!`, "success");
+      }
+
+      await handleSavePunchListToFirestore(commId, updatedList);
+      setNewTaskTitolo('');
+      setNewTaskDescrizione('');
+      setNewTaskScadenza('');
+      setNewTaskAssegnatoA('');
+      setNewTaskCategoria('da fare');
+      setEditingTask(null);
+    } catch (err: any) {
+      console.error("Errore salvataggio task:", err);
+      showToast("Errore durante il salvataggio della voce ToDo: " + err.message, "error");
+    } finally {
+      setIsSavingTask(false);
+    }
+  };
+
+  const handleChangeTaskStatus = async (task: PunchListItem, nextStatus: 'da_fare' | 'da_rivedere' | 'eseguito') => {
+    if (!selectedCommessaForPunchList) return;
+    const commId = selectedCommessaForPunchList.id;
+    const currentList: PunchListItem[] = selectedCommessaForPunchList.punchList || [];
+
+    const nowIso = new Date().toISOString();
+    const updaterName = myAssociatedName || userEmail || 'Utente';
+
+    const updatedList = currentList.map(t => {
+      if (t.id === task.id) {
+        const updated: PunchListItem = { ...t, stato: nextStatus };
+        if (nextStatus === 'da_rivedere' || nextStatus === 'eseguito') {
+          updated.completatoDa = updaterName;
+          updated.completatoIl = nowIso;
+          if (nextStatus === 'eseguito') {
+            updated.approvatoDa = updaterName;
+            updated.approvatoIl = nowIso;
+          }
+        } else if (nextStatus === 'da_fare') {
+          delete updated.completatoDa;
+          delete updated.completatoIl;
+          delete updated.approvatoDa;
+          delete updated.approvatoIl;
+        }
+        return updated;
+      }
+      return t;
+    });
+
+    try {
+      await handleSavePunchListToFirestore(commId, updatedList);
+
+      if (nextStatus === 'da_rivedere' || nextStatus === 'eseguito') {
+        const creator = task.creatoDa || 'il creatore';
+        if (!areNamesEqual(task.creatoDa, updaterName)) {
+          showToast(`✓ Voce completata da ${updaterName}! (Notifica registrata per ${creator})`, "success");
+        } else {
+          showToast("✓ Voce ToDo completata!", "success");
+        }
+      } else {
+        showToast("Spunta rimossa: voce ToDo riportata a 'Da Fare'.", "info" as any);
+      }
+    } catch (err: any) {
+      console.error("Errore cambio stato task:", err);
+      showToast("Errore durante l'aggiornamento dello stato: " + err.message, "error");
+    }
+  };
+
+  const handleDeletePunchTask = async (task: PunchListItem) => {
+    if (!selectedCommessaForPunchList) return;
+    if (!canUserEditOrDeleteTask(task)) {
+      showToast("Puoi eliminare solo i punti che hai creato tu.", "error");
+      return;
+    }
+    setConfirmConfig({
+      isOpen: true,
+      title: "Elimina Voce ToDo",
+      message: `Sei sicuro di voler eliminare la voce "${task.titolo}" dalla ToDo List?`,
+      type: "danger",
+      onConfirm: async () => {
+        const commId = selectedCommessaForPunchList.id;
+        const currentList: PunchListItem[] = selectedCommessaForPunchList.punchList || [];
+        const updatedList = currentList.filter(t => t.id !== task.id);
+        try {
+          await handleSavePunchListToFirestore(commId, updatedList);
+          showToast("Voce ToDo eliminata.", "success");
+        } catch (err: any) {
+          showToast("Errore: " + err.message, "error");
+        } finally {
+          setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+        }
+      }
+    });
   };
 
   // Helper per calcolare le date di inizio e fine lunedì/domenica di una settimana ID
@@ -1879,126 +2211,140 @@ export default function Commesse() {
     let sgqDetailsStr = '';
     if (p0.sgq === 'SI') {
       const vList = Array.isArray(p0.verificatori) ? p0.verificatori.map((v: string) => getOfficialName(v)).join(', ') : (p0.verificatori || '-');
-      sgqDetailsStr = `<strong style="color: #15803d;">✓ SGQ ABILITATO</strong> (Validatori: ${vList || '-'} | Compilatore: ${p0.compilatore ? getOfficialName(p0.compilatore) : '-'})`;
+      sgqDetailsStr = `✓ SGQ ABILITATO (Validatori: ${vList || '-'} | Compilatore: ${p0.compilatore ? getOfficialName(p0.compilatore) : '-'})`;
     } else {
       const sDays = p0.giornateSenior ?? commData.giornateSeniorProject ?? 0;
       const pDays = p0.giornateProject ?? commData.giornateProject ?? 0;
       const jDays = p0.giornateJunior ?? commData.giornateJuniorProject ?? 0;
-      sgqDetailsStr = `SGQ non abilitato (Giornate Stimate: Senior: <strong>${sDays}</strong> gg | Project: <strong>${pDays}</strong> gg | Junior: <strong>${jDays}</strong> gg)`;
+      sgqDetailsStr = `SGQ non abilitato (Giornate Stimate: Senior: ${sDays} gg | Project: ${pDays} gg | Junior: ${jDays} gg)`;
     }
 
-    // Lista dei progetti (elenco pulito di sole descrizioni)
     let progettiListHtml = '';
     progettiList.forEach((p, idx) => {
-      progettiListHtml += `<li style="margin-bottom: 6px;">${p.descrizione || `Progetto #${idx + 1}`}</li>`;
+      progettiListHtml += `<li style="margin-bottom: 6px; font-family: Arial, Helvetica, sans-serif;">${p.descrizione || `Progetto #${idx + 1}`}</li>`;
     });
 
     const mailSubject = `[Apertura Commessa] ${cod} - ${title}`;
     const mailHtmlBody = `
-      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b; max-width: 680px; margin: 0 auto; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.06);">
-        
-        <!-- Header Dark Navy Email-Safe con Fallback Outlook -->
-        <table width="100%" border="0" cellpadding="0" cellspacing="0" bgcolor="#0f172a" style="width: 100%; background-color: #0f172a; background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #1e3a8a 100%);">
-          <tr>
-            <td bgcolor="#0f172a" style="background-color: #0f172a; padding: 26px; color: #ffffff;">
-              <table border="0" cellpadding="0" cellspacing="0" width="100%" style="width: 100%;">
-                <tr>
-                  <td valign="top" style="vertical-align: top;">
-                    <div style="font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #93c5fd; margin-bottom: 6px;">
-                      Scheda Apertura Nuova Commessa
-                    </div>
-                    <h1 style="margin: 0; font-size: 22px; font-weight: 900; color: #ffffff; line-height: 1.25;">
-                      ${cod} — ${title}
-                    </h1>
-                    <div style="margin-top: 10px; font-size: 13px; color: #e2e8f0; font-weight: 600;">
-                      💼 Cliente: <strong style="color: #ffffff;">${client}</strong>
-                    </div>
-                  </td>
-                  <td align="right" valign="top" style="text-align: right; vertical-align: top; width: 110px;">
-                    <span style="background-color: #10b981; color: #ffffff; padding: 6px 14px; border-radius: 20px; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; display: inline-block;">
-                      🟢 APERTA
-                    </span>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-        </table>
+      <table width="100%" border="0" cellpadding="0" cellspacing="0" bgcolor="#0f172a" style="width: 100%; background-color: #0f172a; border-collapse: collapse;">
+        <tr>
+          <td bgcolor="#0f172a" style="background-color: #0f172a; padding: 22px 24px; color: #ffffff; font-family: Arial, Helvetica, sans-serif;">
+            <table border="0" cellpadding="0" cellspacing="0" width="100%" style="width: 100%; border-collapse: collapse;">
+              <tr>
+                <td valign="top" align="left" style="font-family: Arial, Helvetica, sans-serif;">
+                  <p style="margin: 0 0 6px 0; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 1.5px; color: #93c5fd; font-family: Arial, Helvetica, sans-serif;">
+                    Scheda Apertura Nuova Commessa
+                  </p>
+                  <h1 style="margin: 0; font-size: 20px; font-weight: bold; color: #ffffff; line-height: 1.3; font-family: Arial, Helvetica, sans-serif;">
+                    ${cod} — ${title}
+                  </h1>
+                  <p style="margin: 8px 0 0 0; font-size: 13px; color: #e2e8f0; font-weight: normal; font-family: Arial, Helvetica, sans-serif;">
+                    Cliente: <strong style="color: #ffffff;">${client}</strong>
+                  </p>
+                </td>
+                <td align="right" valign="top" width="100" style="text-align: right; vertical-align: top; width: 100px;">
+                  <table border="0" cellspacing="0" cellpadding="0" align="right" style="border-collapse: collapse;">
+                    <tr>
+                      <td bgcolor="#10b981" align="center" style="background-color: #10b981; color: #ffffff; padding: 6px 14px; border-radius: 14px; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; font-family: Arial, Helvetica, sans-serif;">
+                        APERTA
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
 
-        <div style="padding: 26px;">
-          
-          <p style="font-size: 13px; color: #334155; margin-top: 0; margin-bottom: 20px; line-height: 1.5; font-weight: 600;">
-            Notifica di apertura nuova commessa sulla piattaforma di pianificazione aziendale con i seguenti dettagli:
-          </p>
+      <table width="100%" border="0" cellpadding="0" cellspacing="0" style="width: 100%; border-collapse: collapse; background-color: #ffffff;">
+        <tr>
+          <td style="padding: 22px 24px; font-family: Arial, Helvetica, sans-serif; color: #1e293b;">
+            
+            <p style="font-size: 13px; color: #334155; margin-top: 0; margin-bottom: 18px; line-height: 1.5; font-family: Arial, Helvetica, sans-serif;">
+              Notifica di apertura nuova commessa sulla piattaforma di pianificazione aziendale con i seguenti dettagli:
+            </p>
 
-          <h3 style="margin-top: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.8px; color: #1e1b4b; border-bottom: 2px solid #6366f1; padding-bottom: 8px; margin-bottom: 16px; font-weight: 900;">
-            📋 Anagrafica Generale & Impostazioni Commessa
-          </h3>
+            <table width="100%" border="0" cellpadding="0" cellspacing="0" style="margin-bottom: 12px; border-collapse: collapse;">
+              <tr>
+                <td style="font-family: Arial, Helvetica, sans-serif; font-size: 13px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.8px; color: #1e1b4b; border-bottom: 2px solid #6366f1; padding-bottom: 6px;">
+                  Anagrafica Generale & Impostazioni Commessa
+                </td>
+              </tr>
+            </table>
 
-          <table border="0" cellpadding="10" cellspacing="0" style="width: 100%; font-size: 13px; color: #334155; border-collapse: collapse; margin-bottom: 26px; background-color: #f8fafc; border-radius: 12px; overflow: hidden; border: 1px solid #e2e8f0;">
-            <tr style="border-bottom: 1px solid #e2e8f0;">
-              <td style="font-weight: bold; width: 220px; color: #475569; background-color: #f1f5f9;">Codice Commessa:</td>
-              <td style="font-weight: 900; color: #0f172a; font-size: 14px;">${cod}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #e2e8f0;">
-              <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Titolo Commessa:</td>
-              <td style="font-weight: 800; color: #0f172a;">${title}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #e2e8f0;">
-              <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Cliente:</td>
-              <td style="font-weight: 800; color: #1d4ed8;">${client}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #e2e8f0;">
-              <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Data Apertura Registrata:</td>
-              <td style="font-weight: 800; color: #047857;">${dataAperturaStr}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #e2e8f0;">
-              <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Anno di Riferimento:</td>
-              <td style="font-weight: 700; color: #0f172a;">${commData.anno || 'N/D'}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #e2e8f0;">
-              <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Tipologia Commessa:</td>
-              <td style="font-weight: 700; color: #0f172a;">${tipologiaStr}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #e2e8f0;">
-              <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Periodo di Esecuzione:</td>
-              <td style="font-weight: 700; color: #334155;">Da: <strong>${dataInizioStr}</strong> a: <strong>${dataFineStr}</strong></td>
-            </tr>
-            <tr style="border-bottom: 1px solid #e2e8f0;">
-              <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Responsabile Commessa:</td>
-              <td style="font-weight: 800; color: #0f172a;">${respStr}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #e2e8f0;">
-              <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Project Manager (PM):</td>
-              <td style="font-weight: 800; color: #312e81;">${pmStr}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #e2e8f0;">
-              <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Utenti Abilitati sulla Commessa:</td>
-              <td style="font-weight: 700; color: #047857;">${utentiStr}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #e2e8f0;">
-              <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Gestione SGQ / Giornate Stimate:</td>
-              <td style="font-weight: 700; color: #334155;">${sgqDetailsStr}</td>
-            </tr>
-            <tr>
-              <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Registrata / Aperta Da:</td>
-              <td style="font-weight: 600; color: #64748b;">${userOpened}</td>
-            </tr>
-          </table>
+            <table width="100%" border="0" cellpadding="8" cellspacing="0" style="width: 100%; font-size: 13px; color: #334155; border-collapse: collapse; margin-bottom: 22px; background-color: #ffffff; border: 1px solid #e2e8f0; font-family: Arial, Helvetica, sans-serif;">
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td width="200" bgcolor="#f8fafc" style="font-weight: bold; width: 200px; color: #475569; background-color: #f8fafc; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #e2e8f0;">Codice Commessa:</td>
+                <td style="font-weight: bold; color: #0f172a; font-size: 13px; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #e2e8f0;">${cod}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td width="200" bgcolor="#f8fafc" style="font-weight: bold; color: #475569; background-color: #f8fafc; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #e2e8f0;">Titolo Commessa:</td>
+                <td style="font-weight: bold; color: #0f172a; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #e2e8f0;">${title}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td width="200" bgcolor="#f8fafc" style="font-weight: bold; color: #475569; background-color: #f8fafc; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #e2e8f0;">Cliente:</td>
+                <td style="font-weight: bold; color: #1d4ed8; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #e2e8f0;">${client}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td width="200" bgcolor="#f8fafc" style="font-weight: bold; color: #475569; background-color: #f8fafc; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #e2e8f0;">Data Apertura Registrata:</td>
+                <td style="font-weight: bold; color: #047857; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #e2e8f0;">${dataAperturaStr}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td width="200" bgcolor="#f8fafc" style="font-weight: bold; color: #475569; background-color: #f8fafc; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #e2e8f0;">Anno di Riferimento:</td>
+                <td style="color: #0f172a; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #e2e8f0;">${commData.anno || 'N/D'}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td width="200" bgcolor="#f8fafc" style="font-weight: bold; color: #475569; background-color: #f8fafc; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #e2e8f0;">Tipologia Commessa:</td>
+                <td style="color: #0f172a; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #e2e8f0;">${tipologiaStr}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td width="200" bgcolor="#f8fafc" style="font-weight: bold; color: #475569; background-color: #f8fafc; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #e2e8f0;">Periodo di Esecuzione:</td>
+                <td style="color: #334155; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #e2e8f0;">Da: <strong>${dataInizioStr}</strong> a: <strong>${dataFineStr}</strong></td>
+              </tr>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td width="200" bgcolor="#f8fafc" style="font-weight: bold; color: #475569; background-color: #f8fafc; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #e2e8f0;">Responsabile Commessa:</td>
+                <td style="font-weight: bold; color: #0f172a; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #e2e8f0;">${respStr}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td width="200" bgcolor="#f8fafc" style="font-weight: bold; color: #475569; background-color: #f8fafc; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #e2e8f0;">Project Manager (PM):</td>
+                <td style="font-weight: bold; color: #312e81; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #e2e8f0;">${pmStr}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td width="200" bgcolor="#f8fafc" style="font-weight: bold; color: #475569; background-color: #f8fafc; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #e2e8f0;">Utenti Abilitati sulla Commessa:</td>
+                <td style="font-weight: bold; color: #047857; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #e2e8f0;">${utentiStr}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td width="200" bgcolor="#f8fafc" style="font-weight: bold; color: #475569; background-color: #f8fafc; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #e2e8f0;">Gestione SGQ / Giornate Stimate:</td>
+                <td style="color: #334155; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #e2e8f0;">${sgqDetailsStr}</td>
+              </tr>
+              <tr>
+                <td width="200" bgcolor="#f8fafc" style="font-weight: bold; color: #475569; background-color: #f8fafc; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px;">Registrata / Aperta Da:</td>
+                <td style="color: #475569; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif;">${userOpened}</td>
+              </tr>
+            </table>
 
-          <h3 style="margin-top: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.8px; color: #1e1b4b; border-bottom: 2px solid #6366f1; padding-bottom: 8px; margin-bottom: 16px; font-weight: 900;">
-            🔀 Elenco Progetti della Commessa (${progettiList.length})
-          </h3>
+            <table width="100%" border="0" cellpadding="0" cellspacing="0" style="margin-bottom: 12px; border-collapse: collapse;">
+              <tr>
+                <td style="font-family: Arial, Helvetica, sans-serif; font-size: 13px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.8px; color: #1e1b4b; border-bottom: 2px solid #6366f1; padding-bottom: 6px;">
+                  Elenco Progetti della Commessa (${progettiList.length})
+                </td>
+              </tr>
+            </table>
 
-          <div style="background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; padding: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
-            <ul style="margin: 0; padding-left: 20px; font-size: 13px; color: #0f172a; line-height: 1.8; font-weight: 700;">
-              ${progettiListHtml}
-            </ul>
-          </div>
+            <table width="100%" border="0" cellpadding="14" cellspacing="0" style="width: 100%; border-collapse: collapse; background-color: #ffffff; border: 1px solid #cbd5e1; font-family: Arial, Helvetica, sans-serif; margin-bottom: 8px;">
+              <tr>
+                <td style="font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #0f172a; line-height: 1.6; padding: 14px;">
+                  <ul style="margin: 0; padding-left: 18px; font-size: 13px; color: #0f172a; line-height: 1.7; font-family: Arial, Helvetica, sans-serif;">
+                    ${progettiListHtml}
+                  </ul>
+                </td>
+              </tr>
+            </table>
 
-        </div>
-
-      </div>
+          </td>
+        </tr>
+      </table>
     `;
 
     return { subject: mailSubject, htmlBody: mailHtmlBody };
@@ -2051,129 +2397,147 @@ export default function Commesse() {
     let sgqDetailsStr = '';
     if (p0.sgq === 'SI') {
       const vList = Array.isArray(p0.verificatori) ? p0.verificatori.map((v: string) => getOfficialName(v)).join(', ') : (p0.verificatori || '-');
-      sgqDetailsStr = `<strong style="color: #15803d;">✓ SGQ ABILITATO</strong> (Validatori: ${vList || '-'} | Compilatore: ${p0.compilatore ? getOfficialName(p0.compilatore) : '-'})`;
+      sgqDetailsStr = `✓ SGQ ABILITATO (Validatori: ${vList || '-'} | Compilatore: ${p0.compilatore ? getOfficialName(p0.compilatore) : '-'})`;
     } else {
       const sDays = p0.giornateSenior ?? commData.giornateSeniorProject ?? 0;
       const pDays = p0.giornateProject ?? commData.giornateProject ?? 0;
       const jDays = p0.giornateJunior ?? commData.giornateJuniorProject ?? 0;
-      sgqDetailsStr = `SGQ non abilitato (Giornate Stimate: Senior: <strong>${sDays}</strong> gg | Project: <strong>${pDays}</strong> gg | Junior: <strong>${jDays}</strong> gg)`;
+      sgqDetailsStr = `SGQ non abilitato (Giornate Stimate: Senior: ${sDays} gg | Project: ${pDays} gg | Junior: ${jDays} gg)`;
     }
 
     let progettiListHtml = '';
     progettiList.forEach((p, idx) => {
-      progettiListHtml += `<li style="margin-bottom: 6px;">${p.descrizione || `Progetto #${idx + 1}`}</li>`;
+      progettiListHtml += `<li style="margin-bottom: 6px; font-family: Arial, Helvetica, sans-serif;">${p.descrizione || `Progetto #${idx + 1}`}</li>`;
     });
 
     const mailSubject = `[Chiusura Commessa] ${cod} - ${title}`;
     const mailHtmlBody = `
-      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b; max-width: 680px; margin: 0 auto; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.06);">
-        
-        <!-- Header Dark Red/Navy Email-Safe con Fallback Outlook -->
-        <table width="100%" border="0" cellpadding="0" cellspacing="0" bgcolor="#0f172a" style="width: 100%; background-color: #0f172a; background: linear-gradient(135deg, #0f172a 0%, #4c0519 50%, #881337 100%);">
-          <tr>
-            <td bgcolor="#0f172a" style="background-color: #0f172a; padding: 26px; color: #ffffff;">
-              <table border="0" cellpadding="0" cellspacing="0" width="100%" style="width: 100%;">
-                <tr>
-                  <td valign="top" style="vertical-align: top;">
-                    <div style="font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #fecdd3; margin-bottom: 6px;">
-                      Scheda Chiusura Commessa
-                    </div>
-                    <h1 style="margin: 0; font-size: 22px; font-weight: 900; color: #ffffff; line-height: 1.25;">
-                      ${cod} — ${title}
-                    </h1>
-                    <div style="margin-top: 10px; font-size: 13px; color: #ffe4e6; font-weight: 600;">
-                      💼 Cliente: <strong style="color: #ffffff;">${client}</strong>
-                    </div>
-                  </td>
-                  <td align="right" valign="top" style="text-align: right; vertical-align: top; width: 110px;">
-                    <span style="background-color: #e11d48; color: #ffffff; padding: 6px 14px; border-radius: 20px; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; display: inline-block;">
-                      🔴 CHIUSA
-                    </span>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-        </table>
+      <table width="100%" border="0" cellpadding="0" cellspacing="0" bgcolor="#0f172a" style="width: 100%; background-color: #0f172a; border-collapse: collapse;">
+        <tr>
+          <td bgcolor="#0f172a" style="background-color: #0f172a; padding: 22px 24px; color: #ffffff; font-family: Arial, Helvetica, sans-serif;">
+            <table border="0" cellpadding="0" cellspacing="0" width="100%" style="width: 100%; border-collapse: collapse;">
+              <tr>
+                <td valign="top" align="left" style="font-family: Arial, Helvetica, sans-serif;">
+                  <p style="margin: 0 0 6px 0; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 1.5px; color: #fecdd3; font-family: Arial, Helvetica, sans-serif;">
+                    Scheda Chiusura Commessa
+                  </p>
+                  <h1 style="margin: 0; font-size: 20px; font-weight: bold; color: #ffffff; line-height: 1.3; font-family: Arial, Helvetica, sans-serif;">
+                    ${cod} — ${title}
+                  </h1>
+                  <p style="margin: 8px 0 0 0; font-size: 13px; color: #ffe4e6; font-weight: normal; font-family: Arial, Helvetica, sans-serif;">
+                    Cliente: <strong style="color: #ffffff;">${client}</strong>
+                  </p>
+                </td>
+                <td align="right" valign="top" width="100" style="text-align: right; vertical-align: top; width: 100px;">
+                  <table border="0" cellspacing="0" cellpadding="0" align="right" style="border-collapse: collapse;">
+                    <tr>
+                      <td bgcolor="#e11d48" align="center" style="background-color: #e11d48; color: #ffffff; padding: 6px 14px; border-radius: 14px; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; font-family: Arial, Helvetica, sans-serif;">
+                        CHIUSA
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
 
-        <div style="padding: 26px;">
-          
-          <p style="font-size: 13px; color: #334155; margin-top: 0; margin-bottom: 20px; line-height: 1.5; font-weight: 600;">
-            Notifica di avvenuta chiusura della commessa sulla piattaforma di pianificazione aziendale con i seguenti dettagli:
-          </p>
+      <table width="100%" border="0" cellpadding="0" cellspacing="0" style="width: 100%; border-collapse: collapse; background-color: #ffffff;">
+        <tr>
+          <td style="padding: 22px 24px; font-family: Arial, Helvetica, sans-serif; color: #1e293b;">
+            
+            <p style="font-size: 13px; color: #334155; margin-top: 0; margin-bottom: 18px; line-height: 1.5; font-family: Arial, Helvetica, sans-serif;">
+              Notifica di avvenuta chiusura della commessa sulla piattaforma di pianificazione aziendale con i seguenti dettagli:
+            </p>
 
-          <h3 style="margin-top: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.8px; color: #881337; border-bottom: 2px solid #f43f5e; padding-bottom: 8px; margin-bottom: 16px; font-weight: 900;">
-            📋 Anagrafica Generale & Impostazioni Commessa
-          </h3>
+            <table width="100%" border="0" cellpadding="0" cellspacing="0" style="margin-bottom: 12px; border-collapse: collapse;">
+              <tr>
+                <td style="font-family: Arial, Helvetica, sans-serif; font-size: 13px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.8px; color: #881337; border-bottom: 2px solid #f43f5e; padding-bottom: 6px;">
+                  Anagrafica Generale & Impostazioni Commessa
+                </td>
+              </tr>
+            </table>
 
-          <table border="0" cellpadding="10" cellspacing="0" style="width: 100%; font-size: 13px; color: #334155; border-collapse: collapse; margin-bottom: 26px; background-color: #fff1f2; border-radius: 12px; overflow: hidden; border: 1px solid #fecdd3;">
-            <tr style="border-bottom: 1px solid #fecdd3;">
-              <td style="font-weight: bold; width: 220px; color: #881337; background-color: #ffe4e6;">Codice Commessa:</td>
-              <td style="font-weight: 900; color: #0f172a; font-size: 14px;">${cod}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #fecdd3;">
-              <td style="font-weight: bold; color: #881337; background-color: #ffe4e6;">Titolo Commessa:</td>
-              <td style="font-weight: 800; color: #0f172a;">${title}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #fecdd3;">
-              <td style="font-weight: bold; color: #881337; background-color: #ffe4e6;">Cliente:</td>
-              <td style="font-weight: 800; color: #1d4ed8;">${client}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #fecdd3;">
-              <td style="font-weight: bold; color: #881337; background-color: #ffe4e6;">Data Chiusura Registrata:</td>
-              <td style="font-weight: 800; color: #be123c;">${dataChiusuraStr}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #fecdd3;">
-              <td style="font-weight: bold; color: #881337; background-color: #ffe4e6;">Anno di Riferimento:</td>
-              <td style="font-weight: 700; color: #0f172a;">${commData.anno || 'N/D'}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #fecdd3;">
-              <td style="font-weight: bold; color: #881337; background-color: #ffe4e6;">Tipologia Commessa:</td>
-              <td style="font-weight: 700; color: #0f172a;">${tipologiaStr}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #fecdd3;">
-              <td style="font-weight: bold; color: #881337; background-color: #ffe4e6;">Periodo di Esecuzione:</td>
-              <td style="font-weight: 700; color: #334155;">Da: <strong>${dataInizioStr}</strong> a: <strong>${dataFineStr}</strong></td>
-            </tr>
-            <tr style="border-bottom: 1px solid #fecdd3;">
-              <td style="font-weight: bold; color: #881337; background-color: #ffe4e6;">Responsabile Commessa:</td>
-              <td style="font-weight: 800; color: #0f172a;">${respStr}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #fecdd3;">
-              <td style="font-weight: bold; color: #881337; background-color: #ffe4e6;">Project Manager (PM):</td>
-              <td style="font-weight: 800; color: #312e81;">${pmStr}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #fecdd3;">
-              <td style="font-weight: bold; color: #881337; background-color: #ffe4e6;">Utenti Abilitati sulla Commessa:</td>
-              <td style="font-weight: 700; color: #047857;">${utentiStr}</td>
-            </tr>
-            <tr style="border-bottom: 1px solid #fecdd3;">
-              <td style="font-weight: bold; color: #881337; background-color: #ffe4e6;">Gestione SGQ / Giornate Stimate:</td>
-              <td style="font-weight: 700; color: #334155;">${sgqDetailsStr}</td>
-            </tr>
-            <tr>
-              <td style="font-weight: bold; color: #881337; background-color: #ffe4e6;">Registrata / Chiusa Da:</td>
-              <td style="font-weight: 700; color: #be123c;">${userClosed}</td>
-            </tr>
-          </table>
+            <table width="100%" border="0" cellpadding="8" cellspacing="0" style="width: 100%; font-size: 13px; color: #334155; border-collapse: collapse; margin-bottom: 22px; background-color: #ffffff; border: 1px solid #fecdd3; font-family: Arial, Helvetica, sans-serif;">
+              <tr style="border-bottom: 1px solid #fecdd3;">
+                <td width="200" bgcolor="#fff1f2" style="font-weight: bold; width: 200px; color: #881337; background-color: #fff1f2; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #fecdd3;">Codice Commessa:</td>
+                <td style="font-weight: bold; color: #0f172a; font-size: 13px; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #fecdd3;">${cod}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #fecdd3;">
+                <td width="200" bgcolor="#fff1f2" style="font-weight: bold; color: #881337; background-color: #fff1f2; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #fecdd3;">Titolo Commessa:</td>
+                <td style="font-weight: bold; color: #0f172a; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #fecdd3;">${title}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #fecdd3;">
+                <td width="200" bgcolor="#fff1f2" style="font-weight: bold; color: #881337; background-color: #fff1f2; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #fecdd3;">Cliente:</td>
+                <td style="font-weight: bold; color: #1d4ed8; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #fecdd3;">${client}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #fecdd3;">
+                <td width="200" bgcolor="#fff1f2" style="font-weight: bold; color: #881337; background-color: #fff1f2; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #fecdd3;">Data Chiusura Registrata:</td>
+                <td style="font-weight: bold; color: #be123c; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #fecdd3;">${dataChiusuraStr}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #fecdd3;">
+                <td width="200" bgcolor="#fff1f2" style="font-weight: bold; color: #881337; background-color: #fff1f2; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #fecdd3;">Anno di Riferimento:</td>
+                <td style="color: #0f172a; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #fecdd3;">${commData.anno || 'N/D'}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #fecdd3;">
+                <td width="200" bgcolor="#fff1f2" style="font-weight: bold; color: #881337; background-color: #fff1f2; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #fecdd3;">Tipologia Commessa:</td>
+                <td style="color: #0f172a; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #fecdd3;">${tipologiaStr}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #fecdd3;">
+                <td width="200" bgcolor="#fff1f2" style="font-weight: bold; color: #881337; background-color: #fff1f2; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #e2e8f0;">Da: <strong>${dataInizioStr}</strong> a: <strong>${dataFineStr}</strong></td>
+              </tr>
+              <tr style="border-bottom: 1px solid #fecdd3;">
+                <td width="200" bgcolor="#fff1f2" style="font-weight: bold; color: #881337; background-color: #fff1f2; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #fecdd3;">Responsabile Commessa:</td>
+                <td style="font-weight: bold; color: #0f172a; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #fecdd3;">${respStr}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #fecdd3;">
+                <td width="200" bgcolor="#fff1f2" style="font-weight: bold; color: #881337; background-color: #fff1f2; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #fecdd3;">Project Manager (PM):</td>
+                <td style="font-weight: bold; color: #312e81; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #fecdd3;">${pmStr}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #fecdd3;">
+                <td width="200" bgcolor="#fff1f2" style="font-weight: bold; color: #881337; background-color: #fff1f2; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #fecdd3;">Utenti Abilitati sulla Commessa:</td>
+                <td style="font-weight: bold; color: #047857; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #fecdd3;">${utentiStr}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #fecdd3;">
+                <td width="200" bgcolor="#fff1f2" style="font-weight: bold; color: #881337; background-color: #fff1f2; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #fecdd3;">Gestione SGQ / Giornate Stimate:</td>
+                <td style="color: #334155; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #fecdd3;">${sgqDetailsStr}</td>
+              </tr>
+              <tr>
+                <td width="200" bgcolor="#fff1f2" style="font-weight: bold; color: #881337; background-color: #fff1f2; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px;">Registrata / Chiusa Da:</td>
+                <td style="color: #be123c; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif;">${userClosed}</td>
+              </tr>
+            </table>
 
-          <h3 style="margin-top: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.8px; color: #881337; border-bottom: 2px solid #f43f5e; padding-bottom: 8px; margin-bottom: 16px; font-weight: 900;">
-            🔀 Elenco Progetti della Commessa (${progettiList.length})
-          </h3>
+            <table width="100%" border="0" cellpadding="0" cellspacing="0" style="margin-bottom: 12px; border-collapse: collapse;">
+              <tr>
+                <td style="font-family: Arial, Helvetica, sans-serif; font-size: 13px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.8px; color: #881337; border-bottom: 2px solid #f43f5e; padding-bottom: 6px;">
+                  Elenco Progetti della Commessa
+                </td>
+              </tr>
+            </table>
 
-          <div style="background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; padding: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
-            <ul style="margin: 0; padding-left: 20px; font-size: 13px; color: #0f172a; line-height: 1.8; font-weight: 700;">
-              ${progettiListHtml}
-            </ul>
-          </div>
+            <table width="100%" border="0" cellpadding="14" cellspacing="0" style="width: 100%; border-collapse: collapse; background-color: #ffffff; border: 1px solid #fecdd3; font-family: Arial, Helvetica, sans-serif; margin-bottom: 16px;">
+              <tr>
+                <td style="font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #0f172a; line-height: 1.6; padding: 14px;">
+                  <ul style="margin: 0; padding-left: 18px; font-size: 13px; color: #0f172a; line-height: 1.7; font-family: Arial, Helvetica, sans-serif;">
+                    ${progettiListHtml}
+                  </ul>
+                </td>
+              </tr>
+            </table>
 
-          <div style="margin-top: 20px; padding: 12px 16px; background-color: #fef2f2; border: 1px solid #fecdd3; border-radius: 12px; font-size: 12px; color: #9f1239; font-weight: 600;">
-            ℹ️ Nota: Le eventuali assegnazioni di ore pianificate per questa commessa nelle settimane successive alla chiusura sono state automaticamente rimosse.
-          </div>
+            <table width="100%" border="0" cellpadding="0" cellspacing="0" style="border-collapse: collapse;">
+              <tr>
+                <td style="padding: 12px 14px; background-color: #fef2f2; border: 1px solid #fecdd3; font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #9f1239;">
+                  Nota: Le eventuali assegnazioni di ore pianificate per questa commessa nelle settimane successive alla chiusura sono state automaticamente rimosse.
+                </td>
+              </tr>
+            </table>
 
-        </div>
-
-      </div>
+          </td>
+        </tr>
+      </table>
     `;
 
     return { subject: mailSubject, htmlBody: mailHtmlBody };
@@ -2953,22 +3317,15 @@ export default function Commesse() {
                         <tr key={comm.id} className="hover:bg-blue-50/20 transition-colors bg-white">
                           <td 
                             className="p-3 font-bold text-gray-800 bg-white sticky left-0 z-10 shadow-[1px_0_0_0_#f3f4f6] border-b align-middle text-left"
-                            style={{ width: '240px', minWidth: '240px', maxWidth: '240px' }}
+                            style={{ width: '252px', minWidth: '252px', maxWidth: '252px' }}
                           >
-                            <div className="flex items-center gap-2">
-                              <span className="w-3 h-3 rounded-full shadow-inner shrink-0" style={{backgroundColor: (comm.tipologia && TIPOLOGIA_COLORS[comm.tipologia]) || comm.colore || '#64748b'}}></span>
-                              <div className="min-w-0 flex-1 text-left">
-                                <div className="flex items-center gap-1.5 justify-between">
-                                  <div className="whitespace-normal break-words font-extrabold text-xs text-gray-800" title={comm.nome}>{comm.nome}</div>
-                                  <button 
-                                    onClick={() => handleOpenInfoModal(comm)}
-                                    className="text-gray-400 hover:text-blue-600 p-1 rounded transition-colors shrink-0 cursor-pointer"
-                                    title="Visualizza dettagli e specifiche commessa"
-                                  >
-                                    <Info className="w-3.5 h-3.5 text-slate-400 hover:text-blue-600" />
-                                  </button>
-                                </div>
-                                <div className="text-[9.5px] text-indigo-655 font-bold italic mt-0.5">
+                            <div className="flex items-stretch gap-2">
+                              <span className="w-3 h-3 rounded-full shadow-inner shrink-0 mt-1" style={{backgroundColor: (comm.tipologia && TIPOLOGIA_COLORS[comm.tipologia]) || comm.colore || '#64748b'}}></span>
+                              
+                              <div className="min-w-0 flex-1 text-left flex flex-col justify-between">
+                                <div className="whitespace-normal break-words font-extrabold text-xs text-gray-800 leading-tight" title={comm.nome}>{comm.nome}</div>
+                                
+                                <div className="text-[10px] text-indigo-655 font-bold italic mt-1 truncate">
                                   💼 Cliente: {comm.cliente || 'Nessun cliente'}
                                 </div>
                                 {comm.dataInizio && comm.dataFine ? (
@@ -2981,15 +3338,110 @@ export default function Commesse() {
                                   </div>
                                 )}
                                 {(comm.responsabile || comm.pm) ? (
-                                  <div className="text-[9px] text-gray-500 font-semibold mt-1 truncate" title={`${comm.responsabile ? `Resp: ${getOfficialName(comm.responsabile)}` : ''}${comm.pm ? ` | PM: ${formatPMField(comm.pm)}` : ''}`}>
+                                  <div className="text-[9px] text-gray-500 font-semibold mt-0.5 truncate" title={`${comm.responsabile ? `Resp: ${getOfficialName(comm.responsabile)}` : ''}${comm.pm ? ` | PM: ${formatPMField(comm.pm)}` : ''}`}>
                                     {comm.responsabile && `Resp: ${getOfficialName(comm.responsabile)}`} {comm.pm && ` | PM: ${formatPMField(comm.pm)}`}
                                   </div>
                                 ) : (
-                                  <div className="text-[9px] text-gray-455 font-medium mt-1 italic truncate">
+                                  <div className="text-[9px] text-gray-455 font-medium mt-0.5 italic truncate">
                                     Resp/PM non assegnati
                                   </div>
                                 )}
                               </div>
+
+                              {(() => {
+                                const pList: PunchListItem[] = comm.punchList || [];
+                                const totalTasks = pList.length;
+                                const completedTasks = pList.filter(t => t.stato === 'eseguito').length;
+                                const reviewTasks = pList.filter(t => t.stato === 'da_rivedere').length;
+                                const openTasks = pList.filter(t => t.stato === 'da_fare').length;
+                                const hasPendingReview = reviewTasks > 0;
+                                const totalUncompleted = openTasks + reviewTasks;
+
+                                return (
+                                  <div className="flex flex-col items-center justify-between shrink-0 bg-slate-50/90 p-1 rounded-xl border border-slate-200/80 shadow-2xs self-stretch min-h-[84px]">
+                                    {/* 1. In alto: Info */}
+                                    <button 
+                                      type="button"
+                                      onClick={() => handleOpenInfoModal(comm)}
+                                      className="text-gray-400 hover:text-blue-600 p-1 rounded-lg hover:bg-blue-50 transition-colors shrink-0 cursor-pointer"
+                                      title="Visualizza dettagli e specifiche commessa"
+                                    >
+                                      <Info className="w-4 h-4" />
+                                    </button>
+
+                                    {/* 2. Al centro: Cartella di Rete */}
+                                    {comm.percorsoRete ? (
+                                      <div className="flex items-center gap-0.5">
+                                        <button
+                                          type="button"
+                                          onClick={(e) => handleOpenNetworkPath(comm, e)}
+                                          className="text-indigo-600 hover:text-indigo-800 p-1 rounded-lg hover:bg-indigo-50 transition-colors cursor-pointer"
+                                          title={`📁 Apri / Copia percorso di rete:\n${comm.percorsoRete}`}
+                                        >
+                                          <Folder className="w-4 h-4" />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setSelectedCommessaForNetworkPath(comm);
+                                            setNetworkPathInput(comm.percorsoRete || '');
+                                            setIsNetworkPathModalOpen(true);
+                                          }}
+                                          className="text-gray-400 hover:text-indigo-600 p-0.5 rounded hover:bg-indigo-50 transition-colors cursor-pointer"
+                                          title="Modifica percorso di rete"
+                                        >
+                                          <Pencil className="w-2.5 h-2.5" />
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setSelectedCommessaForNetworkPath(comm);
+                                          setNetworkPathInput('');
+                                          setIsNetworkPathModalOpen(true);
+                                        }}
+                                        className="text-gray-400 hover:text-indigo-600 p-1 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
+                                        title="Collega cartella di rete (UNC)"
+                                      >
+                                        <FolderPlus className="w-4 h-4" />
+                                      </button>
+                                    )}
+
+                                    {/* 3. In basso: Lista ToDo */}
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setSelectedCommessaForPunchList(comm);
+                                        setEditingTask(null);
+                                        setNewTaskTitolo('');
+                                        setNewTaskDescrizione('');
+                                        setNewTaskScadenza('');
+                                        setNewTaskAssegnatoA('');
+                                        setIsPunchListModalOpen(true);
+                                      }}
+                                      className={`relative p-1 rounded-lg transition-all cursor-pointer ${
+                                        hasPendingReview
+                                          ? 'bg-amber-100 text-amber-900 border border-amber-300 ring-2 ring-amber-400 animate-pulse'
+                                          : totalUncompleted > 0
+                                            ? 'text-indigo-600 hover:bg-indigo-100/70 font-black'
+                                            : 'text-gray-400 hover:text-indigo-600 hover:bg-gray-100'
+                                      }`}
+                                      title={`📋 ToDo List (${completedTasks}/${totalTasks} completati)${hasPendingReview ? ` - ${reviewTasks} da revisionare!` : ''}`}
+                                    >
+                                      <ListTodo className="w-4 h-4" />
+                                      {totalUncompleted > 0 && (
+                                        <span className={`absolute -top-1 -right-1 text-[8px] font-black min-w-[14px] h-3.5 px-0.5 rounded-full flex items-center justify-center text-white ${hasPendingReview ? 'bg-amber-600' : 'bg-indigo-600'}`}>
+                                          {totalUncompleted}
+                                        </span>
+                                      )}
+                                    </button>
+                                  </div>
+                                );
+                              })()}
                             </div>
                           </td>
                           {activeWeeks.map((wk, wIndex) => {
@@ -4710,6 +5162,47 @@ export default function Commesse() {
 
               </div>
 
+              {/* Card Percorso Cartella di Rete Commessa */}
+              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200/70 space-y-2">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                  <div className="text-xs font-black text-slate-800 uppercase tracking-wide flex items-center gap-1.5">
+                    <Folder className="w-4 h-4 text-indigo-600" />
+                    <span>Cartella di Rete (File System)</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedCommessaForNetworkPath(infoModalCommessa);
+                      setNetworkPathInput(infoModalCommessa.percorsoRete || '');
+                      setIsNetworkPathModalOpen(true);
+                    }}
+                    className="text-xs font-bold text-indigo-600 hover:text-indigo-800 hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <Pencil className="w-3 h-3" />
+                    <span>{infoModalCommessa.percorsoRete ? 'Modifica' : 'Imposta percorso'}</span>
+                  </button>
+                </div>
+                {infoModalCommessa.percorsoRete ? (
+                  <div className="flex items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-200">
+                    <span className="font-mono text-xs text-slate-800 break-all select-all font-semibold">
+                      {infoModalCommessa.percorsoRete}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenNetworkPath(infoModalCommessa)}
+                      className="shrink-0 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-lg shadow-xs transition flex items-center gap-1.5 cursor-pointer active:scale-95"
+                    >
+                      <FolderOpen className="w-3.5 h-3.5" />
+                      <span>Apri / Copia</span>
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-400 italic">
+                    Nessun percorso di rete collegato a questa commessa.
+                  </p>
+                )}
+              </div>
+
               {/* Sezione Dettaglio Progetti & SGQ (Sola Lettura) */}
               <div className="bg-gradient-to-br from-indigo-50/40 to-slate-50 p-5 rounded-2xl border border-indigo-100/70 space-y-3">
                 <h4 className="text-xs font-black text-indigo-950 uppercase tracking-wide flex items-center gap-1.5 border-b border-indigo-100 pb-2">
@@ -5461,6 +5954,575 @@ export default function Commesse() {
           </div>
         </div>
       )}
+
+      {/* MODALE DI GESTIONE PERCORSO CARTELLA DI RETE */}
+      {isNetworkPathModalOpen && selectedCommessaForNetworkPath && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 sm:p-7 shadow-2xl max-w-lg w-full border border-gray-150 animate-in zoom-in-95 duration-200">
+            
+            {/* Header Modale */}
+            <div className="flex justify-between items-start mb-5">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-indigo-100 text-indigo-700 rounded-2xl shadow-xs">
+                  <Folder className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-gray-900">Cartella di Rete Commessa</h3>
+                  <p className="text-xs text-gray-500 font-medium truncate max-w-xs sm:max-w-sm">
+                    {selectedCommessaForNetworkPath.nome}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsNetworkPathModalOpen(false);
+                  setSelectedCommessaForNetworkPath(null);
+                }}
+                className="text-gray-400 hover:text-gray-600 p-1.5 hover:bg-gray-100 rounded-xl transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveNetworkPath} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-800 mb-1 ml-0.5">
+                  Percorso di rete (Cartella UNC o locale)
+                </label>
+                <div className="relative">
+                  <input
+                    autoFocus
+                    type="text"
+                    placeholder="Es. \\srvapp\home\dati\01_Archivio\185_Takeda\..."
+                    value={networkPathInput}
+                    onChange={e => setNetworkPathInput(e.target.value)}
+                    className="w-full p-3 pr-24 border border-gray-200 rounded-xl text-xs font-mono text-gray-800 outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner bg-slate-50 focus:bg-white"
+                  />
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const text = await navigator.clipboard.readText();
+                        if (text) setNetworkPathInput(text.trim());
+                      } catch {
+                        showToast("Incolla manualmente il percorso con Ctrl+V.", "warning");
+                      }
+                    }}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 px-2.5 py-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg border border-indigo-200 transition cursor-pointer"
+                    title="Incolla dagli appunti"
+                  >
+                    Incolla
+                  </button>
+                </div>
+                <p className="text-[11px] text-gray-500 mt-1.5 leading-relaxed font-medium">
+                  Inserisci il percorso della cartella su disco di rete (es. <code className="text-[10px] bg-gray-100 px-1 py-0.5 rounded text-gray-700">\\srvapp\home\dati\...</code>). Cliccando sul pulsante nella tabella, il percorso verrà aperto in Esplora Risorse e copiato negli appunti.
+                </p>
+              </div>
+
+              {/* Bottoni di azione */}
+              <div className="flex gap-2.5 pt-2">
+                {selectedCommessaForNetworkPath.percorsoRete && (
+                  <button
+                    type="button"
+                    disabled={isSavingNetworkPath}
+                    onClick={() => {
+                      setConfirmConfig({
+                        isOpen: true,
+                        title: "Rimuovi Percorso di Rete",
+                        message: `Vuoi rimuovere il collegamento alla cartella di rete per la commessa "${selectedCommessaForNetworkPath.nome}"?`,
+                        type: "warning",
+                        onConfirm: async () => {
+                          setIsSavingNetworkPath(true);
+                          const commId = selectedCommessaForNetworkPath.id;
+                          try {
+                            await updateDoc(doc(db, 'catalogo_commesse', commId), {
+                              percorsoRete: ''
+                            });
+                            selectedCommessaForNetworkPath.percorsoRete = '';
+                            const targetInList = commesse.find(c => c.id === commId);
+                            if (targetInList) {
+                              targetInList.percorsoRete = '';
+                            }
+                            if (infoModalCommessa && infoModalCommessa.id === commId) {
+                              setInfoModalCommessa({ ...infoModalCommessa, percorsoRete: '' });
+                            }
+                            showToast("Percorso di rete rimosso.", "success");
+                            setIsNetworkPathModalOpen(false);
+                            setSelectedCommessaForNetworkPath(null);
+                            if (loadPlanningData) await loadPlanningData();
+                            if (refreshData) await refreshData();
+                          } catch (err: any) {
+                            showToast("Errore: " + err.message, "error");
+                          } finally {
+                            setIsSavingNetworkPath(false);
+                            setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+                          }
+                        }
+                      });
+                    }}
+                    className="px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs rounded-xl border border-rose-200 transition cursor-pointer"
+                  >
+                    Rimuovi
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsNetworkPathModalOpen(false);
+                    setSelectedCommessaForNetworkPath(null);
+                  }}
+                  className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2.5 rounded-xl transition text-xs cursor-pointer text-center"
+                >
+                  Annulla
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={isSavingNetworkPath}
+                  className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold py-2.5 rounded-xl shadow-md transition active:scale-95 text-xs cursor-pointer text-center disabled:opacity-50 flex items-center justify-center gap-1.5"
+                >
+                  {isSavingNetworkPath ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <span>Salva Percorso</span>
+                  )}
+                </button>
+              </div>
+            </form>
+
+          </div>
+        </div>
+      )}
+
+      {/* MODALE TO-DO LIST COMMESSA */}
+      {isPunchListModalOpen && selectedCommessaForPunchList && (() => {
+        const canAdd = canUserAddToPunchList(selectedCommessaForPunchList);
+        const allTasks: PunchListItem[] = selectedCommessaForPunchList.punchList || [];
+        
+        const countTotal = allTasks.length;
+        const countDone = allTasks.filter(t => t.stato === 'eseguito').length;
+        const countReview = allTasks.filter(t => t.stato === 'da_rivedere').length;
+        const countTodo = allTasks.filter(t => t.stato === 'da_fare').length;
+
+        const filteredTasks = allTasks.filter(t => {
+          if (punchListFilter === 'da_fare') return t.stato === 'da_fare';
+          if (punchListFilter === 'da_rivedere') return t.stato === 'da_rivedere';
+          if (punchListFilter === 'eseguito') return t.stato === 'eseguito';
+          return true;
+        }).sort((a, b) => {
+          // Ordinamento prioritario: prima 'da_rivedere', poi 'da_fare', poi 'eseguito'
+          const stateScore = (s: string) => s === 'da_rivedere' ? 1 : (s === 'da_fare' ? 2 : 3);
+          if (stateScore(a.stato) !== stateScore(b.stato)) {
+            return stateScore(a.stato) - stateScore(b.stato);
+          }
+          // Per 'da_fare', ordina per data di scadenza (le più vicine per prime)
+          if (a.scadenza && b.scadenza) return a.scadenza.localeCompare(b.scadenza);
+          if (a.scadenza) return -1;
+          if (b.scadenza) return 1;
+          return (b.creatoIl || '').localeCompare(a.creatoIl || '');
+        });
+
+        const isTodayOrPast = (dStr?: string) => {
+          if (!dStr) return false;
+          const today = new Date().toLocaleDateString('sv-SE');
+          return dStr < today;
+        };
+
+        return (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full border border-gray-150 flex flex-col max-h-[90vh] overflow-hidden animate-in zoom-in-95 duration-200">
+              
+              {/* Header Modale ToDo List */}
+              <div className="p-6 pb-4 border-b border-gray-150 bg-gradient-to-r from-slate-900 via-indigo-950 to-blue-900 text-white rounded-t-3xl flex justify-between items-start shrink-0">
+                <div className="space-y-1 min-w-0 flex-1 pr-3">
+                  <div className="flex items-center gap-2">
+                    <span className="p-1.5 bg-white/10 rounded-xl">
+                      <ListTodo className="w-5 h-5 text-indigo-300" />
+                    </span>
+                    <h3 className="text-lg font-black text-white tracking-tight truncate">
+                      ToDo List
+                    </h3>
+                  </div>
+                  <div className="text-xs text-indigo-200 font-bold truncate">
+                    {selectedCommessaForPunchList.nome}
+                  </div>
+                  <div className="text-[11px] text-indigo-300/80 flex flex-wrap gap-x-3 gap-y-0.5 pt-1">
+                    {selectedCommessaForPunchList.cliente && <span>💼 Cliente: <strong>{selectedCommessaForPunchList.cliente}</strong></span>}
+                    {selectedCommessaForPunchList.responsabile && <span>👤 Resp: <strong>{getOfficialName(selectedCommessaForPunchList.responsabile)}</strong></span>}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsPunchListModalOpen(false);
+                    setSelectedCommessaForPunchList(null);
+                    setEditingTask(null);
+                  }}
+                  className="text-white/70 hover:text-white p-2 hover:bg-white/10 rounded-xl transition cursor-pointer shrink-0"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Barra Filtri & Conteggi Voci */}
+              <div className="bg-slate-50 px-6 py-3 border-b border-slate-200/80 flex flex-wrap items-center justify-between gap-3 shrink-0">
+                <div className="text-xs font-bold text-gray-500 flex items-center gap-1.5">
+                  <span>Totale Punti:</span>
+                  <span className="px-2.5 py-0.5 rounded-lg bg-gray-200/80 font-black text-gray-800 text-xs">
+                    {countTotal}
+                  </span>
+                  <span className="text-[11px] text-emerald-700 font-bold">
+                    ({countDone} completati)
+                  </span>
+                </div>
+
+                {/* Filtri Stato */}
+                <div className="flex items-center gap-1.5 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setPunchListFilter('all')}
+                    className={`px-3 py-1.5 rounded-xl font-bold transition cursor-pointer ${punchListFilter === 'all' ? 'bg-indigo-600 text-white shadow-xs' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-100'}`}
+                  >
+                    Tutte ({countTotal})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPunchListFilter('da_fare')}
+                    className={`px-3 py-1.5 rounded-xl font-bold transition cursor-pointer ${punchListFilter === 'da_fare' ? 'bg-indigo-600 text-white shadow-xs' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-100'}`}
+                  >
+                    Da Fare ({countTodo})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPunchListFilter('da_rivedere')}
+                    className={`px-3 py-1.5 rounded-xl font-bold transition cursor-pointer flex items-center gap-1.5 ${punchListFilter === 'da_rivedere' ? 'bg-amber-600 text-white shadow-xs' : countReview > 0 ? 'bg-amber-50 text-amber-900 border border-amber-300 font-extrabold' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-100'}`}
+                  >
+                    <span>Da Rivedere</span>
+                    {countReview > 0 && <span className="px-1.5 py-0.2 bg-amber-500 text-white rounded-full text-[10px] font-black">{countReview}</span>}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPunchListFilter('eseguito')}
+                    className={`px-3 py-1.5 rounded-xl font-bold transition cursor-pointer ${punchListFilter === 'eseguito' ? 'bg-emerald-600 text-white shadow-xs' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-100'}`}
+                  >
+                    Eseguite ({countDone})
+                  </button>
+                </div>
+              </div>
+
+              {/* Corpo Scrollabile */}
+              <div className="p-6 overflow-y-auto flex-1 space-y-4">
+
+                {/* Form Inserimento / Modifica Voce ToDo (Aperto a tutti coloro che lavorano sulla commessa) */}
+                {canAdd && (
+                  <form onSubmit={handleAddOrEditPunchTask} className="bg-slate-50/90 p-4 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
+                        <span>{editingTask ? '✏️ Modifica Voce ToDo List' : '➕ Nuovo Punto ToDo List'}</span>
+                      </span>
+                      {editingTask && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingTask(null);
+                            setNewTaskTitolo('');
+                            setNewTaskDescrizione('');
+                            setNewTaskScadenza('');
+                            setNewTaskAssegnatoA('');
+                            setNewTaskCategoria('da fare');
+                          }}
+                          className="text-[11px] font-bold text-gray-500 hover:text-gray-800 underline cursor-pointer"
+                        >
+                          Annulla Modifica
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Riga 1: Categoria (Menù a tendina 18 opzioni) + Descrizione/Titolo */}
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5">
+                      <div className="md:col-span-4">
+                        <label className="text-[10px] font-extrabold text-gray-500 uppercase tracking-wider block mb-1">
+                          Categoria Attività *
+                        </label>
+                        <select
+                          required
+                          value={newTaskCategoria}
+                          onChange={e => setNewTaskCategoria(e.target.value)}
+                          className="w-full p-2.5 border border-slate-200 bg-white rounded-xl text-xs font-black text-gray-800 outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs cursor-pointer"
+                        >
+                          {TODO_CATEGORIE.map(cat => {
+                            const cfg = CATEGORIA_CONFIG[cat];
+                            return (
+                              <option key={cat} value={cat}>
+                                {cfg?.icon || '📌'} {cfg?.label || cat}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </div>
+
+                      <div className="md:col-span-8">
+                        <label className="text-[10px] font-extrabold text-gray-500 uppercase tracking-wider block mb-1">
+                          Descrizione del punto ToDo *
+                        </label>
+                        <input
+                          required
+                          type="text"
+                          placeholder="es. Telefonare a Studio Tecnico per conferma misure, Inviare computo via mail..."
+                          value={newTaskTitolo}
+                          onChange={e => setNewTaskTitolo(e.target.value)}
+                          className="w-full p-2.5 border border-slate-200 bg-white rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Riga 2: Risorsa Assegnata (OBBLIGATORIA) + Scadenza + Pulsante Salva */}
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 items-end">
+                      <div className="md:col-span-6">
+                        <label className="text-[10px] font-extrabold text-indigo-700 uppercase tracking-wider block mb-1">
+                          👤 Assegna a (Obbligatorio) *
+                        </label>
+                        <select
+                          required
+                          value={newTaskAssegnatoA}
+                          onChange={e => setNewTaskAssegnatoA(e.target.value)}
+                          className="w-full p-2.5 border border-indigo-200 bg-white rounded-xl text-xs font-black text-gray-800 outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs cursor-pointer"
+                        >
+                          <option value="">-- Seleziona Risorsa Incaricata * --</option>
+                          {dipendenti.map(d => (
+                            <option key={d.id} value={d.nome}>{d.nome}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="md:col-span-4">
+                        <label className="text-[10px] font-extrabold text-gray-500 uppercase tracking-wider block mb-1">
+                          📅 Scadenza (Opzionale)
+                        </label>
+                        <input
+                          type="date"
+                          value={newTaskScadenza}
+                          onChange={e => setNewTaskScadenza(e.target.value)}
+                          className="w-full p-2.5 border border-slate-200 bg-white rounded-xl text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs cursor-pointer"
+                          title="Data di scadenza (opzionale)"
+                        />
+                      </div>
+
+                      <div className="md:col-span-2 flex justify-end">
+                        <button
+                          type="submit"
+                          disabled={isSavingTask || !newTaskTitolo.trim() || !newTaskAssegnatoA.trim()}
+                          className="w-full py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-xs transition active:scale-95 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1.5"
+                        >
+                          {isSavingTask ? (
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <>
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>{editingTask ? 'Salva' : 'Aggiungi'}</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </form>
+                )}
+
+                {/* Lista Voci ToDo Compatta da Spuntare */}
+                {filteredTasks.length === 0 ? (
+                  <div className="p-8 text-center bg-gray-50 rounded-2xl border border-dashed border-gray-200 text-gray-400 text-xs">
+                    Nessuna voce presente con i filtri selezionati.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-gray-150 border border-gray-200 rounded-2xl overflow-hidden bg-white shadow-2xs">
+                    {filteredTasks.map(task => {
+                      const isDone = task.stato === 'eseguito';
+                      const isReview = task.stato === 'da_rivedere';
+                      const isExpired = !isDone && isTodayOrPast(task.scadenza);
+                      const catConfig = CATEGORIA_CONFIG[task.categoria || 'da fare'] || CATEGORIA_CONFIG['da fare'];
+                      const canEditOrDelete = canUserEditOrDeleteTask(task);
+
+                      let rowBg = "hover:bg-slate-50/80";
+                      if (isReview) rowBg = "bg-amber-50/30 hover:bg-amber-50/60";
+                      if (isDone) rowBg = "bg-slate-50/40 hover:bg-slate-50/60";
+
+                      return (
+                        <div key={task.id} className={`p-3 px-3.5 flex items-center justify-between gap-3 transition-colors ${rowBg}`}>
+                          
+                          {/* A Sinistra: Checkbox Interattivo, Categoria e Titolo */}
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            
+                            {/* 1. Casella non spuntata (Da Fare) -> Cliccando si spunta (Da Rivedere) */}
+                            {task.stato === 'da_fare' && (
+                              <button
+                                type="button"
+                                onClick={() => handleChangeTaskStatus(task, 'da_rivedere')}
+                                className="w-5 h-5 rounded-full border-2 border-slate-300 hover:border-amber-500 hover:bg-amber-50 flex items-center justify-center cursor-pointer transition shrink-0 group"
+                                title="Clicca per spuntare l'attività (invia a verifica)"
+                              >
+                                <Check className="w-3 h-3 text-transparent group-hover:text-amber-600 transition" />
+                              </button>
+                            )}
+
+                            {/* 2. Casella spuntata in attesa di verifica (Da Rivedere) -> Cliccando si toglie la spunta (torna a Da Fare) */}
+                            {task.stato === 'da_rivedere' && (
+                              <button
+                                type="button"
+                                onClick={() => handleChangeTaskStatus(task, 'da_fare')}
+                                className="w-5 h-5 rounded-full border-2 border-amber-500 bg-amber-500 text-white hover:bg-rose-500 hover:border-rose-600 flex items-center justify-center cursor-pointer transition shrink-0 group"
+                                title="Spuntata (in attesa di verifica) - Clicca per togliere la spunta"
+                              >
+                                <Check className="w-3.5 h-3.5 group-hover:hidden" />
+                                <X className="w-3 h-3 hidden group-hover:block" />
+                              </button>
+                            )}
+
+                            {/* 3. Casella approvata definitivamente (Eseguito) -> Cliccando (se autore/PM) si toglie la spunta */}
+                            {task.stato === 'eseguito' && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (canEditOrDelete) {
+                                    handleChangeTaskStatus(task, 'da_fare');
+                                  }
+                                }}
+                                className={`w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center shrink-0 ${canEditOrDelete ? 'cursor-pointer hover:bg-rose-500 transition group' : 'cursor-default'}`}
+                                title={canEditOrDelete ? "Approvato - Clicca per togliere la spunta e riaprire" : "Approvato ed Eseguito"}
+                              >
+                                <Check className={`w-3.5 h-3.5 ${canEditOrDelete ? 'group-hover:hidden' : ''}`} />
+                                {canEditOrDelete && <X className="w-3 h-3 hidden group-hover:block" />}
+                              </button>
+                            )}
+
+                            {/* Dettagli Voce ToDo */}
+                            <div className="min-w-0 flex-1 flex flex-col justify-center">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                
+                                {/* Badge Categoria */}
+                                <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black border flex items-center gap-1 shrink-0 ${catConfig.bg} ${catConfig.text} ${catConfig.border}`}>
+                                  <span>{catConfig.icon}</span>
+                                  <span>{catConfig.label}</span>
+                                </span>
+
+                                {/* Titolo / Descrizione */}
+                                <span className={`text-xs ${isDone ? 'line-through text-gray-400 font-medium' : 'font-extrabold text-gray-900'}`}>
+                                  {task.titolo}
+                                </span>
+
+                                {/* Badge Stato compatti */}
+                                {isReview && (
+                                  <span className="px-1.5 py-0.2 rounded-md text-[9.5px] font-black bg-amber-100 text-amber-900 border border-amber-300">
+                                    DA RIVEDERE
+                                  </span>
+                                )}
+                                {isDone && (
+                                  <span className="px-1.5 py-0.2 rounded-md text-[9.5px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                    ✓ ESEGUITO
+                                  </span>
+                                )}
+
+                                {/* Scadenza in Linea */}
+                                {task.scadenza && (
+                                  <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded-md ${isExpired ? 'bg-rose-100 text-rose-800 border border-rose-200' : 'bg-gray-100 text-gray-600'}`}>
+                                    📅 {formatDate(task.scadenza)} {isExpired && '⚠️'}
+                                  </span>
+                                )}
+
+                                {/* Assegnatario in Linea (Obbligatorio) */}
+                                {task.assegnatoA && (
+                                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-100">
+                                    👤 {task.assegnatoA}
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Dettagli Autore / Completamento */}
+                              <div className="text-[10px] text-gray-400 flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5">
+                                <span>✍️ Creato da: <strong>{task.creatoDa}</strong></span>
+                                {task.completatoDa && <span className="text-amber-800 font-bold">✓ Spuntato da: {task.completatoDa}</span>}
+                                {task.approvatoDa && <span className="text-emerald-800 font-bold">Approvato da: {task.approvatoDa}</span>}
+                              </div>
+                            </div>
+
+                          </div>
+
+                          {/* A Destra: Pulsanti di Azione per PM e Modifica/Elimina SOLO per l'autore */}
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            
+                            {/* Azione Rapida Approva per PM in stato Da Rivedere */}
+                            {isReview && (
+                              <button
+                                type="button"
+                                onClick={() => handleChangeTaskStatus(task, 'eseguito')}
+                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10.5px] rounded-lg shadow-2xs transition active:scale-95 cursor-pointer flex items-center gap-1"
+                                title="Approva definitivamente come Eseguito"
+                              >
+                                <Check className="w-3 h-3" />
+                                <span>Approva</span>
+                              </button>
+                            )}
+
+                            {/* Modifica ed Elimina: riservati ESCLUSIVAMENTE all'autore del punto (o Admin) */}
+                            {canEditOrDelete && (
+                              <div className="flex items-center gap-0.5 ml-1 border-l border-gray-200 pl-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingTask(task);
+                                    setNewTaskTitolo(task.titolo);
+                                    setNewTaskCategoria(task.categoria || 'da fare');
+                                    setNewTaskDescrizione(task.descrizione || '');
+                                    setNewTaskScadenza(task.scadenza || '');
+                                    setNewTaskAssegnatoA(task.assegnatoA || '');
+                                  }}
+                                  className="text-gray-400 hover:text-indigo-600 p-1 rounded-md hover:bg-gray-100 transition cursor-pointer"
+                                  title="Modifica punto (creato da te)"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeletePunchTask(task)}
+                                  className="text-gray-400 hover:text-rose-600 p-1 rounded-md hover:bg-rose-50 transition cursor-pointer"
+                                  title="Elimina punto (creato da te)"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            )}
+
+                          </div>
+
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+              </div>
+
+              {/* Footer */}
+              <div className="flex justify-end items-center p-4 border-t border-gray-150 bg-slate-50 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsPunchListModalOpen(false);
+                    setSelectedCommessaForPunchList(null);
+                    setEditingTask(null);
+                  }}
+                  className="px-5 py-2.5 bg-gray-800 hover:bg-gray-900 text-white font-extrabold text-xs rounded-xl transition cursor-pointer"
+                >
+                  Chiudi
+                </button>
+              </div>
+
+            </div>
+          </div>
+        );
+      })()}
 
       <ConfirmModal
         isOpen={confirmConfig.isOpen}

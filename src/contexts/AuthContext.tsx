@@ -46,6 +46,46 @@ export const areNamesEqual = (n1?: string | null, n2?: string | null): boolean =
   return parts1 === parts2;
 };
 
+export const TODO_CATEGORIE = [
+  'chiamare',
+  'inviare mail',
+  'rispondere',
+  'stampare',
+  'archiviare',
+  'da fare',
+  'fissare appuntamento',
+  'fatturare',
+  'attesa feedback',
+  'scansionare',
+  'registrare',
+  'firmare',
+  'ordinare',
+  'consegnare',
+  'prenotare',
+  'aggiornare',
+  'effettuare revisione',
+  'pagare'
+] as const;
+
+export type ToDoCategoria = typeof TODO_CATEGORIE[number];
+
+export interface PunchListItem {
+  id: string;
+  categoria?: string; // una delle 18 categorie TODO_CATEGORIE
+  titolo: string;
+  descrizione?: string;
+  scadenza?: string; // YYYY-MM-DD
+  assegnatoA: string; // Nome dipendente incaricato (obbligatorio)
+  stato: 'da_fare' | 'da_rivedere' | 'eseguito';
+  creatoDa: string;
+  creatoIl: string; // ISO date
+  completatoDa?: string;
+  completatoIl?: string;
+  approvatoDa?: string;
+  approvatoIl?: string;
+  noteRevisione?: string;
+}
+
 export interface Commessa {
   id: string;
   nome: string;
@@ -59,6 +99,8 @@ export interface Commessa {
   tipologia?: string;
   cliente?: string;
   stato?: string;
+  percorsoRete?: string;
+  punchList?: PunchListItem[];
   giornateSeniorProject?: number;
   giornateProject?: number;
   giornateJuniorProject?: number;
@@ -308,6 +350,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           tipologia: doc.data().tipologia || '',
           cliente: doc.data().cliente || '',
           stato: doc.data().stato || 'Aperta',
+          percorsoRete: doc.data().percorsoRete || '',
+          punchList: doc.data().punchList || [],
           giornateSeniorProject: doc.data().giornateSeniorProject,
           giornateProject: doc.data().giornateProject,
           giornateJuniorProject: doc.data().giornateJuniorProject,
@@ -390,6 +434,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                 tipologia: doc.data().tipologia || '',
                 cliente: doc.data().cliente || '',
                 stato: doc.data().stato || 'Aperta',
+                percorsoRete: doc.data().percorsoRete || '',
+                punchList: doc.data().punchList || [],
                 giornateSeniorProject: doc.data().giornateSeniorProject,
                 giornateProject: doc.data().giornateProject,
                 giornateJuniorProject: doc.data().giornateJuniorProject,
@@ -433,6 +479,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         tipologia: doc.data().tipologia || '',
         cliente: doc.data().cliente || '',
         stato: doc.data().stato || 'Aperta',
+        percorsoRete: doc.data().percorsoRete || '',
+        punchList: doc.data().punchList || [],
         giornateSeniorProject: doc.data().giornateSeniorProject,
         giornateProject: doc.data().giornateProject,
         giornateJuniorProject: doc.data().giornateJuniorProject,
@@ -458,6 +506,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const refreshData = async () => {
     lastFetchTimestampRef.current = Date.now();
     await fetchAuthData();
+    isPlanningLoadingRef.current = false;
+    await loadPlanningData();
   };
 
   // Versione throttled: non rilancia il fetch se i dati sono stati caricati negli ultimi 2 minuti.

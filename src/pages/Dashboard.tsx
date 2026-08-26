@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Briefcase, Calendar, Settings, FileText, MessageSquare, Plus, Trash2, Megaphone, X, Users, CalendarDays, Edit, Network, AlertCircle, ChevronRight, HeartPulse, Package } from 'lucide-react';
+import { Briefcase, Calendar, Settings, FileText, MessageSquare, Plus, Trash2, Megaphone, X, Users, CalendarDays, Edit, AlertCircle, ChevronRight, HeartPulse, Package } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
@@ -975,23 +975,6 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Organigramma Aziendale */}
-            <div 
-              onClick={(e) => handleNav(e, '/organigramma')} 
-              onAuxClick={(e) => handleNav(e, '/organigramma')} 
-              onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
-              className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col min-h-[200px] xl:min-h-[220px] h-auto w-full"
-            >
-              <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center group-hover:bg-amber-600 group-hover:text-white transition-colors mb-3">
-                <Network className="w-6 h-6 sm:w-7 sm:h-7" />
-              </div>
-              <div className="h-11 xl:h-12 shrink-0 flex items-start overflow-hidden">
-                <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-900 leading-snug">Organigramma</h2>
-              </div>
-              <div className="hidden xl:block min-h-[48px] shrink-0 mt-1 pb-1">
-                <p className="text-xs font-semibold text-gray-500 leading-snug">Consulta la suddivisione delle macroaree ed i coordinatori di riferimento.</p>
-              </div>
-            </div>
 
             {/* Cassetta delle Idee */}
             <div 

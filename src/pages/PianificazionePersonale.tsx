@@ -275,6 +275,10 @@ export default function PianificazionePersonale() {
   }, [loadPlanningData]);
   const [commessaSearchText, setCommessaSearchText] = useState('');
   const [isCommessaDropdownOpen, setIsCommessaDropdownOpen] = useState(false);
+  const [addCommessaSearchText, setAddCommessaSearchText] = useState('');
+  const [isAddCommessaDropdownOpen, setIsAddCommessaDropdownOpen] = useState(false);
+  const [resourceSearchText, setResourceSearchText] = useState('');
+  const [isResourceDropdownOpen, setIsResourceDropdownOpen] = useState(false);
   const [timelineWeeks, setTimelineWeeks] = useState<WeekInfo[]>([]); // weeks for the load grid
   const [gridBaseDate, setGridBaseDate] = useState<Date>(new Date());
   const [zoomWeeks, setZoomWeeks] = useState<number>(8);
@@ -412,11 +416,18 @@ export default function PianificazionePersonale() {
     }
   }, [selectedStartWeekId, selectedEndWeekId, selectableWeekOptions]);
 
-  // Pre-selezione automatica dell'intervallo settimane quando viene selezionata una commessa
+  const lastSyncedCommessaIdRef = useRef<string | null>(null);
+
+  // Pre-selezione automatica dell'intervallo settimane SOLO al primo cambio/selezione della commessa
   useEffect(() => {
     if (selectedCommessaId) {
+      if (selectedCommessaId === lastSyncedCommessaIdRef.current) return;
       const comm = commesse.find(c => c.id === selectedCommessaId);
-      if (comm && (comm.dataInizio || comm.dataFine)) {
+      if (!comm) return; // Se commesse non è ancora caricato, attende
+
+      lastSyncedCommessaIdRef.current = selectedCommessaId;
+
+      if (comm.dataInizio || comm.dataFine) {
         if (comm.dataInizio) {
           const commStartMon = getStartOfWeek(new Date(comm.dataInizio));
           const startMonStr = `${commStartMon.getFullYear()}-${String(commStartMon.getMonth()+1).padStart(2,'0')}-${String(commStartMon.getDate()).padStart(2,'0')}`;
@@ -431,6 +442,8 @@ export default function PianificazionePersonale() {
           if (endMatch) setSelectedEndWeekId(endMatch.id);
         }
       }
+    } else {
+      lastSyncedCommessaIdRef.current = null;
     }
   }, [selectedCommessaId, commesse, selectableWeekOptions]);
 
@@ -596,10 +609,13 @@ export default function PianificazionePersonale() {
 
   const [commesseToRemove, setCommesseToRemove] = useState<string[]>([]);
 
+  const urlParamsHandledRef = useRef(false);
+
   // Gestione parametri URL per il collegamento da altre pagine (es. Commesse.tsx)
   // Supporta: ?tab=commessa&commessaId=X&startWeek=2026-W32&endWeek=2026-W45
   //           ?tab=risorsa&risorsa=Nome+Cognome&startWeek=2026-W32&endWeek=2026-W45
   useEffect(() => {
+    if (urlParamsHandledRef.current) return;
     if (!commesse.length || !selectableWeekOptions.length) return;
     const params = new URLSearchParams(window.location.search);
     const tabParam = params.get('tab');
@@ -609,6 +625,13 @@ export default function PianificazionePersonale() {
     const endWeekParam = params.get('endWeek');
     // legacy: weekId singolo
     const weekIdParam = params.get('weekId');
+
+    if (!tabParam && !commessaIdParam && !risorsaParam && !startWeekParam && !endWeekParam && !weekIdParam) {
+      urlParamsHandledRef.current = true;
+      return;
+    }
+
+    urlParamsHandledRef.current = true;
 
     const applyWeeks = () => {
       const startId = startWeekParam || weekIdParam || null;
@@ -626,6 +649,7 @@ export default function PianificazionePersonale() {
     if (tabParam === 'commessa' && commessaIdParam) {
       setActiveTab('commessa');
       setSelectedCommessaId(commessaIdParam);
+      lastSyncedCommessaIdRef.current = commessaIdParam; // Segna come già sincronizzata per evitare sovrascritture successive
       const commObj = commesse.find(c => c.id === commessaIdParam);
       if (commObj) setCommessaSearchText(commObj.nome);
       applyWeeks();
@@ -634,7 +658,9 @@ export default function PianificazionePersonale() {
       }, 100);
     } else if (tabParam === 'risorsa' && risorsaParam) {
       setActiveTab('risorsa');
-      setSelectedResourceForTab(decodeURIComponent(risorsaParam));
+      const decodedRes = decodeURIComponent(risorsaParam);
+      setSelectedResourceForTab(decodedRes);
+      setResourceSearchText(decodedRes);
       applyWeeks();
       setTimeout(() => {
         plannerContainerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1178,6 +1204,7 @@ export default function PianificazionePersonale() {
     if (!nomeRisorsa) return;
     setActiveTab('risorsa');
     setSelectedResourceForTab(nomeRisorsa);
+    setResourceSearchText(nomeRisorsa);
     showToast(`Visualizzazione impostata sulla risorsa ${nomeRisorsa}.`);
     // Scroll morbido verso la griglia di pianificazione
     setTimeout(() => {
@@ -3695,16 +3722,78 @@ export default function PianificazionePersonale() {
                 <div className="flex flex-wrap gap-4 items-end">
                   <div className="relative flex-1 min-w-[260px]">
                     <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Risorsa da Modificare *</label>
-                    <select
-                      value={selectedResourceForTab}
-                      onChange={e => setSelectedResourceForTab(e.target.value)}
-                      className="w-full p-2.5 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-800 cursor-pointer"
-                    >
-                      <option value="">-- Seleziona Risorsa --</option>
-                      {filteredDipendenti.map(d => (
-                        <option key={d.id} value={d.nome}>{d.nome} {d.macroArea ? `(${d.macroArea})` : ''}</option>
-                      ))}
-                    </select>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="Cerca o seleziona risorsa..."
+                        value={isResourceDropdownOpen ? resourceSearchText : (selectedResourceForTab || resourceSearchText)}
+                        onChange={e => {
+                          setResourceSearchText(e.target.value);
+                          setIsResourceDropdownOpen(true);
+                        }}
+                        onFocus={() => {
+                          setResourceSearchText('');
+                          setIsResourceDropdownOpen(true);
+                        }}
+                        className="w-full p-2.5 pr-8 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-750 cursor-pointer"
+                      />
+                      <div className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+                        <ChevronDown className="w-4 h-4" />
+                      </div>
+                    </div>
+                    {isResourceDropdownOpen && (
+                      <>
+                        <div className="fixed inset-0 z-10" onClick={() => setIsResourceDropdownOpen(false)}></div>
+                        <div className="absolute left-0 right-0 z-20 mt-1 bg-white border border-indigo-200 rounded-xl shadow-2xl overflow-hidden">
+                          <div className="max-h-56 overflow-y-auto divide-y divide-gray-50 p-1">
+                            {(() => {
+                              const search = resourceSearchText.toLowerCase();
+                              const filtered = filteredDipendenti.filter(d =>
+                                d.nome.toLowerCase().includes(search) ||
+                                (d.macroArea && d.macroArea.toLowerCase().includes(search)) ||
+                                (d.tipo && d.tipo.toLowerCase().includes(search)) ||
+                                (d.email && d.email.toLowerCase().includes(search))
+                              );
+                              if (filtered.length === 0) {
+                                return <div className="p-3 text-xs text-gray-450 italic font-bold">Nessuna risorsa trovata</div>;
+                              }
+                              return filtered.map(d => {
+                                const isSelected = selectedResourceForTab === d.nome;
+                                return (
+                                  <button
+                                    key={d.id}
+                                    ref={el => {
+                                      if (el && isSelected && el.parentElement) {
+                                        el.parentElement.scrollTop = el.offsetTop;
+                                      }
+                                    }}
+                                    type="button"
+                                    title={d.nome}
+                                    onClick={() => {
+                                      setSelectedResourceForTab(d.nome);
+                                      setResourceSearchText(d.nome);
+                                      setIsResourceDropdownOpen(false);
+                                      setAddCommessaId('');
+                                      setAddCommessaSearchText('');
+                                    }}
+                                    className={`w-full text-left px-3 py-2 text-xs font-semibold transition-colors flex flex-col gap-0.5 cursor-pointer rounded-lg ${
+                                      isSelected ? 'bg-indigo-100/90 font-black text-indigo-950' : 'hover:bg-indigo-50 text-gray-700'
+                                    }`}
+                                  >
+                                    <span className="truncate w-full font-bold text-gray-800">
+                                      {isSelected ? '✓ ' : ''}{d.nome}
+                                    </span>
+                                    <span className="text-[9.5px] text-indigo-650 font-semibold italic">
+                                      👤 Macroarea: {d.macroArea || 'Non Assegnata'}{d.tipo ? ` • ${d.tipo === 'collaboratore' ? 'Collaboratore' : 'Dipendente'}` : ''}
+                                    </span>
+                                  </button>
+                                );
+                              });
+                            })()}
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </div>
 
                   {selectedResourceForTab && (() => {
@@ -3739,18 +3828,77 @@ export default function PianificazionePersonale() {
                         ➕ Assegna Commessa a <strong className="text-indigo-950">{selectedResourceForTab}</strong>
                       </h4>
                       <div className="space-y-4">
-                        <div>
+                        <div className="relative">
                           <label className="block text-xs font-bold text-indigo-950 mb-1 ml-1">Seleziona Commessa *</label>
-                          <select
-                            value={addCommessaId}
-                            onChange={e => setAddCommessaId(e.target.value)}
-                            className="w-full p-3 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-800 cursor-pointer"
-                          >
-                            <option value="">-- Seleziona Commessa --</option>
-                            {selectableCommesse.map(c => (
-                              <option key={c.id} value={c.id}>{c.nome} [{c.codiceCommessa}]</option>
-                            ))}
-                          </select>
+                          <div className="relative">
+                            <input
+                              type="text"
+                              placeholder="Cerca o seleziona commessa..."
+                              value={isAddCommessaDropdownOpen ? addCommessaSearchText : (addCommessaId ? (commesse.find(c => c.id === addCommessaId)?.nome || '') : addCommessaSearchText)}
+                              onChange={e => {
+                                setAddCommessaSearchText(e.target.value);
+                                setIsAddCommessaDropdownOpen(true);
+                              }}
+                              onFocus={() => {
+                                setAddCommessaSearchText('');
+                                setIsAddCommessaDropdownOpen(true);
+                              }}
+                              className="w-full p-2.5 pr-8 border-none bg-white rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-bold text-gray-750 cursor-pointer"
+                            />
+                            <div className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+                              <ChevronDown className="w-4 h-4" />
+                            </div>
+                          </div>
+                          {isAddCommessaDropdownOpen && (
+                            <>
+                              <div className="fixed inset-0 z-10" onClick={() => setIsAddCommessaDropdownOpen(false)}></div>
+                              <div className="absolute left-0 right-0 z-20 mt-1 bg-white border border-indigo-200 rounded-xl shadow-2xl overflow-hidden">
+                                <div className="max-h-56 overflow-y-auto divide-y divide-gray-50 p-1">
+                                  {(() => {
+                                    const search = addCommessaSearchText.toLowerCase();
+                                    const filtered = selectableCommesse.filter(c =>
+                                      c.nome.toLowerCase().includes(search) ||
+                                      (c.cliente && c.cliente.toLowerCase().includes(search)) ||
+                                      (c.codiceCommessa && c.codiceCommessa.toLowerCase().includes(search))
+                                    );
+                                    if (filtered.length === 0) {
+                                      return <div className="p-3 text-xs text-gray-450 italic font-bold">Nessuna commessa abilitata trovata</div>;
+                                    }
+                                    return filtered.map(c => {
+                                      const isSelected = addCommessaId === c.id;
+                                      return (
+                                        <button
+                                          key={c.id}
+                                          ref={el => {
+                                            if (el && isSelected && el.parentElement) {
+                                              el.parentElement.scrollTop = el.offsetTop;
+                                            }
+                                          }}
+                                          type="button"
+                                          title={c.nome}
+                                          onClick={() => {
+                                            setAddCommessaId(c.id);
+                                            setAddCommessaSearchText(c.nome);
+                                            setIsAddCommessaDropdownOpen(false);
+                                          }}
+                                          className={`w-full text-left px-3 py-2 text-xs font-semibold transition-colors flex flex-col gap-0.5 cursor-pointer rounded-lg ${
+                                            isSelected ? 'bg-indigo-100/90 font-black text-indigo-950' : 'hover:bg-indigo-50 text-gray-700'
+                                          }`}
+                                        >
+                                          <span className="truncate w-full font-bold text-gray-800">
+                                            {isSelected ? '✓ ' : ''}{c.nome}
+                                          </span>
+                                          <span className="text-[9.5px] text-indigo-650 font-semibold italic">
+                                            💼 Cliente: {c.cliente || 'Nessun cliente'}
+                                          </span>
+                                        </button>
+                                      );
+                                    });
+                                  })()}
+                                </div>
+                              </div>
+                            </>
+                          )}
                         </div>
 
                         <div>
@@ -3774,6 +3922,7 @@ export default function PianificazionePersonale() {
                       onClick={async () => {
                         await executeAssignResourceToCommessa(selectedResourceForTab, addCommessaId, parseInt(addPercentage));
                         setAddCommessaId('');
+                        setAddCommessaSearchText('');
                       }}
                       className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black py-3 rounded-xl transition shadow-md active:scale-95 disabled:opacity-50 cursor-pointer mt-6"
                     >

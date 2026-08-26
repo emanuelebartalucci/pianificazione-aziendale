@@ -649,32 +649,33 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         hour: '2-digit',
         minute: '2-digit'
       });
-
-      const subject = `[Lavoro Festivo Approvato] ${dipendenteNome} - ${formattedData}`;
+      const subject = `[Lavoro Festivo Approvato] ${dipendenteNome} - ${formattedData}`;
       const htmlBody = `
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b; max-width: 680px; margin: 0 auto; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.06);">
-          
           <!-- Header Dark Navy Email-Safe con Fallback Outlook -->
-          <table width="100%" border="0" cellpadding="0" cellspacing="0" bgcolor="#0f172a" style="width: 100%; background-color: #0f172a; background: linear-gradient(135deg, #0f172a 0%, #312e81 50%, #4338ca 100%);">
+          <table width="100%" border="0" cellpadding="0" cellspacing="0" bgcolor="#0f172a" style="width: 100%; background-color: #0f172a; border-collapse: collapse;">
             <tr>
-              <td bgcolor="#0f172a" style="background-color: #0f172a; padding: 26px; color: #ffffff;">
-                <table border="0" cellpadding="0" cellspacing="0" width="100%" style="width: 100%;">
+              <td bgcolor="#0f172a" style="background-color: #0f172a; padding: 22px 24px; color: #ffffff; font-family: Arial, Helvetica, sans-serif;">
+                <table border="0" cellpadding="0" cellspacing="0" width="100%" style="width: 100%; border-collapse: collapse;">
                   <tr>
-                    <td valign="top" style="vertical-align: top;">
-                      <div style="font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 1.5px; color: #a5b4fc; margin-bottom: 6px;">
+                    <td valign="top" align="left" style="font-family: Arial, Helvetica, sans-serif;">
+                      <p style="margin: 0 0 6px 0; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 1.5px; color: #a5b4fc; font-family: Arial, Helvetica, sans-serif;">
                         Autorizzazione Lavoro Straordinario / Festivo
-                      </div>
-                      <h1 style="margin: 0; font-size: 22px; font-weight: 900; color: #ffffff; line-height: 1.25;">
+                      </p>
+                      <h1 style="margin: 0; font-size: 20px; font-weight: bold; color: #ffffff; line-height: 1.3; font-family: Arial, Helvetica, sans-serif;">
                         ${dipendenteNome} — ${formattedData}
                       </h1>
-                      <div style="margin-top: 10px; font-size: 13px; color: #e0e7ff; font-weight: 600;">
-                        🛡️ Approvato per lavoro nel weekend / festività
-                      </div>
+                      <p style="margin: 8px 0 0 0; font-size: 13px; color: #e0e7ff; font-family: Arial, Helvetica, sans-serif;">
+                        Approvato per lavoro nel weekend / festività
+                      </p>
                     </td>
-                    <td align="right" valign="top" style="text-align: right; vertical-align: top; width: 130px;">
-                      <span style="background-color: #10b981; color: #ffffff; padding: 6px 14px; border-radius: 20px; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; display: inline-block;">
-                        🟢 AUTORIZZATO
-                      </span>
+                    <td align="right" valign="top" width="120" style="text-align: right; vertical-align: top; width: 120px;">
+                      <table border="0" cellspacing="0" cellpadding="0" align="right" style="border-collapse: collapse;">
+                        <tr>
+                          <td bgcolor="#10b981" align="center" style="background-color: #10b981; color: #ffffff; padding: 6px 14px; border-radius: 14px; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; font-family: Arial, Helvetica, sans-serif;">
+                            AUTORIZZATO
+                          </td>
+                        </tr>
+                      </table>
                     </td>
                   </tr>
                 </table>
@@ -682,45 +683,56 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
             </tr>
           </table>
 
-          <div style="padding: 26px;">
-            <p style="font-size: 13px; color: #334155; margin-top: 0; margin-bottom: 20px; line-height: 1.5; font-weight: 600;">
-              Notifica automatica per i <strong>Soci</strong>: è stata approvata una richiesta di autorizzazione per lo svolgimento di attività lavorativa in giornata festiva o durante il fine settimana.
-            </p>
+          <!-- Corpo Contenuto 100% Table Based -->
+          <table width="100%" border="0" cellpadding="0" cellspacing="0" style="width: 100%; border-collapse: collapse; background-color: #ffffff;">
+            <tr>
+              <td style="padding: 22px 24px; font-family: Arial, Helvetica, sans-serif; color: #1e293b;">
+                <p style="font-size: 13px; color: #334155; margin-top: 0; margin-bottom: 18px; line-height: 1.5; font-family: Arial, Helvetica, sans-serif;">
+                  Notifica automatica per i <strong>Soci</strong>: è stata approvata una richiesta di autorizzazione per lo svolgimento di attività lavorativa in giornata festiva o durante il fine settimana.
+                </p>
 
-            <h3 style="margin-top: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.8px; color: #1e1b4b; border-bottom: 2px solid #6366f1; padding-bottom: 8px; margin-bottom: 16px; font-weight: 900;">
-              📋 Dettaglio Autorizzazione Lavoro Festivo
-            </h3>
+                <table width="100%" border="0" cellpadding="0" cellspacing="0" style="margin-bottom: 12px; border-collapse: collapse;">
+                  <tr>
+                    <td style="font-family: Arial, Helvetica, sans-serif; font-size: 13px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.8px; color: #1e1b4b; border-bottom: 2px solid #6366f1; padding-bottom: 6px;">
+                      Dettaglio Autorizzazione Lavoro Festivo
+                    </td>
+                  </tr>
+                </table>
 
-            <table border="0" cellpadding="10" cellspacing="0" style="width: 100%; font-size: 13px; color: #334155; border-collapse: collapse; margin-bottom: 24px; background-color: #f8fafc; border-radius: 12px; overflow: hidden; border: 1px solid #e2e8f0;">
-              <tr style="border-bottom: 1px solid #e2e8f0;">
-                <td style="font-weight: bold; width: 220px; color: #475569; background-color: #f1f5f9;">Risorsa Autorizzata:</td>
-                <td style="font-weight: 900; color: #0f172a; font-size: 14px;">${dipendenteNome}</td>
-              </tr>
-              <tr style="border-bottom: 1px solid #e2e8f0;">
-                <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Data / Giorno Festivo:</td>
-                <td style="font-weight: 800; color: #4338ca; font-size: 14px;">${formattedData}</td>
-              </tr>
-              <tr style="border-bottom: 1px solid #e2e8f0;">
-                <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Motivazione / Attività:</td>
-                <td style="font-weight: 700; color: #0f172a;">${motivo || 'Autorizzazione lavoro festivo'}</td>
-              </tr>
-              <tr style="border-bottom: 1px solid #e2e8f0;">
-                <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Approvato Da:</td>
-                <td style="font-weight: 700; color: #047857;">${approvedByName}</td>
-              </tr>
-              <tr>
-                <td style="font-weight: bold; color: #475569; background-color: #f1f5f9;">Data Registrazione:</td>
-                <td style="font-weight: 600; color: #64748b;">${nowStr}</td>
-              </tr>
-            </table>
+                <table width="100%" border="0" cellpadding="8" cellspacing="0" style="width: 100%; font-size: 13px; color: #334155; border-collapse: collapse; margin-bottom: 22px; background-color: #ffffff; border: 1px solid #e2e8f0; font-family: Arial, Helvetica, sans-serif;">
+                  <tr style="border-bottom: 1px solid #e2e8f0;">
+                    <td width="200" bgcolor="#f8fafc" style="font-weight: bold; width: 200px; color: #475569; background-color: #f8fafc; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #e2e8f0;">Risorsa Autorizzata:</td>
+                    <td style="font-weight: bold; color: #0f172a; font-size: 13px; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #e2e8f0;">${dipendenteNome}</td>
+                  </tr>
+                  <tr style="border-bottom: 1px solid #e2e8f0;">
+                    <td width="200" bgcolor="#f8fafc" style="font-weight: bold; color: #475569; background-color: #f8fafc; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #e2e8f0;">Data / Giorno Festivo:</td>
+                    <td style="font-weight: bold; color: #4338ca; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #e2e8f0;">${formattedData}</td>
+                  </tr>
+                  <tr style="border-bottom: 1px solid #e2e8f0;">
+                    <td width="200" bgcolor="#f8fafc" style="font-weight: bold; color: #475569; background-color: #f8fafc; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #e2e8f0;">Motivazione / Attività:</td>
+                    <td style="color: #0f172a; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #e2e8f0;">${motivo || 'Autorizzazione lavoro festivo'}</td>
+                  </tr>
+                  <tr style="border-bottom: 1px solid #e2e8f0;">
+                    <td width="200" bgcolor="#f8fafc" style="font-weight: bold; color: #475569; background-color: #f8fafc; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #e2e8f0;">Approvato Da:</td>
+                    <td style="font-weight: bold; color: #047857; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #e2e8f0;">${approvedByName}</td>
+                  </tr>
+                  <tr>
+                    <td width="200" bgcolor="#f8fafc" style="font-weight: bold; color: #475569; background-color: #f8fafc; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px;">Data Registrazione:</td>
+                    <td style="color: #475569; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif;">${nowStr}</td>
+                  </tr>
+                </table>
 
-            <div style="padding: 14px 18px; background-color: #eef2ff; border: 1px solid #c7d2fe; border-radius: 12px; font-size: 12px; color: #3730a3; font-weight: 600;">
-              ℹ️ Questa comunicazione è trasmessa automaticamente a tutti i Soci in conformità alle direttive aziendali per il monitoraggio delle presenze nei giorni non lavorativi.
-            </div>
-          </div>
-
-        </div>
-      `;
+                <table width="100%" border="0" cellpadding="0" cellspacing="0" style="border-collapse: collapse;">
+                  <tr>
+                    <td style="padding: 12px 14px; background-color: #eef2ff; border: 1px solid #c7d2fe; font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #3730a3;">
+                      Questa comunicazione è trasmessa automaticamente a tutti i Soci in conformità alle direttive aziendali per il monitoraggio delle presenze nei giorni non lavorativi.
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        `;
 
       const sociEmails = await getSociNotificationEmails(dipendenti);
       for (const email of sociEmails) {
@@ -758,7 +770,8 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         const approver = myAssociatedName || userEmail || 'Ufficio HR';
         await sendWeekendApprovalMailToSoci(req.dipendenteName, targetData, targetMotivo, approver);
 
-        if (req.dipendenteEmail) {
+        const isSelfTarget = (req.dipendenteEmail?.toLowerCase() === (userEmail || '').toLowerCase()) || (myAssociatedName && areNamesEqual(req.dipendenteName, myAssociatedName));
+        if (req.dipendenteEmail && !isSelfTarget) {
           await createUserNotification({
             destinatarioEmail: req.dipendenteEmail,
             destinatarioNome: req.dipendenteName,
@@ -816,7 +829,8 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       const approver = myAssociatedName || userEmail || 'Ufficio HR';
       await sendWeekendApprovalMailToSoci(directAuthDipNome, directAuthData, directAuthMotivo || "Autorizzazione d'ufficio dall'HR", approver);
 
-      if (email) {
+      const isSelfTarget = (email?.toLowerCase() === (userEmail || '').toLowerCase()) || (myAssociatedName && areNamesEqual(directAuthDipNome, myAssociatedName));
+      if (email && !isSelfTarget) {
         await createUserNotification({
           destinatarioEmail: email,
           destinatarioNome: directAuthDipNome,
@@ -1695,9 +1709,10 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         }
       }
 
-      // Invia notifica personale informativa all'utente interessato
+      // Invia notifica personale informativa all'utente interessato (solo se non è l'utente operante)
       const targetDip = dipendenti.find(d => areNamesEqual(d.nome, req.dipendenteName));
-      if (targetDip?.email) {
+      const isSelfTarget = (targetDip?.email?.toLowerCase() === (userEmail || '').toLowerCase()) || (myAssociatedName && areNamesEqual(req.dipendenteName, myAssociatedName));
+      if (targetDip?.email && !isSelfTarget) {
         const dateDesc = req.dataInizio && req.dataFine && req.dataInizio !== req.dataFine 
           ? `dal ${formatDate(req.dataInizio)} al ${formatDate(req.dataFine)}` 
           : `per il ${formatDate(req.dataInizio || req.data)}`;
@@ -1869,7 +1884,8 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       }
 
       const targetDip = dipendenti.find(d => areNamesEqual(d.nome, req.dipendenteName));
-      if (targetDip?.email) {
+      const isSelfTarget = (targetDip?.email?.toLowerCase() === (userEmail || '').toLowerCase()) || (myAssociatedName && areNamesEqual(req.dipendenteName, myAssociatedName));
+      if (targetDip?.email && !isSelfTarget) {
         await createUserNotification({
           destinatarioEmail: targetDip.email,
           destinatarioNome: req.dipendenteName,
@@ -1893,7 +1909,8 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       await deleteDoc(doc(db, 'richieste_ferie', req.id));
 
       const targetDip = dipendenti.find(d => areNamesEqual(d.nome, req.dipendenteName));
-      if (targetDip?.email) {
+      const isSelfTarget = (targetDip?.email?.toLowerCase() === (userEmail || '').toLowerCase()) || (myAssociatedName && areNamesEqual(req.dipendenteName, myAssociatedName));
+      if (targetDip?.email && !isSelfTarget) {
         await createUserNotification({
           destinatarioEmail: targetDip.email,
           destinatarioNome: req.dipendenteName,

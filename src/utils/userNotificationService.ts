@@ -34,9 +34,27 @@ export async function createUserNotification(data: {
   link?: string;
 }) {
   if (!data.destinatarioEmail || !data.destinatarioEmail.trim()) return;
+  const targetEmail = data.destinatarioEmail.toLowerCase().trim();
   try {
+    // Controllo anti-duplicazione: evita di creare notifiche identiche non lette per lo stesso utente
+    const qDuplicate = query(
+      collection(db, 'notifiche_utenti'),
+      where('destinatarioEmail', '==', targetEmail),
+      where('letta', '==', false)
+    );
+    const existingSnap = await getDocs(qDuplicate);
+    const isDuplicate = existingSnap.docs.some(docSnap => {
+      const d = docSnap.data();
+      return d.titolo === data.titolo && (d.messaggio || '').trim() === (data.messaggio || '').trim();
+    });
+
+    if (isDuplicate) {
+      // Notifica identica già presente e non letta, non duplicare
+      return;
+    }
+
     await addDoc(collection(db, 'notifiche_utenti'), {
-      destinatarioEmail: data.destinatarioEmail.toLowerCase().trim(),
+      destinatarioEmail: targetEmail,
       destinatarioNome: data.destinatarioNome || '',
       titolo: data.titolo,
       messaggio: data.messaggio,

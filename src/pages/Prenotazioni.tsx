@@ -25,18 +25,20 @@ import {
   Info, 
   Clock, 
   History, 
-  ShieldAlert,
-  ChevronLeft,
-  ChevronRight,
-  Filter,
-  Pencil
+  ShieldAlert, 
+  ChevronLeft, 
+  ChevronRight, 
+  Filter, 
+  Pencil,
+  KeyRound,
+  Usb
 } from 'lucide-react';
 import ConfirmModal from '../components/ConfirmModal';
 
 export interface Resource {
   id: string;
   nome: string;
-  tipo: 'pc' | 'room' | 'car';
+  tipo: 'pc' | 'room' | 'car' | 'software_key';
   docId?: string;
   dettagli: {
     utenteIngegno?: string;
@@ -47,17 +49,154 @@ export interface Resource {
     sede?: string;
     modello?: string;
     targa?: string;
+    // Specifici per software_key
+    programma?: string;
+    tipoLicenza?: string;
+    versioneSoftware?: string;
+    serviziAttivi?: string;
+    numeroSerie?: string;
+    noteSoftware?: string;
   };
   statoCorrente?: {
     occupato: boolean;
     utilizzatoreNome: string | null;
     utilizzatoreEmail: string | null;
     dataInizioUso: string | null;
-    revitInUso: boolean;
-    autocadInUso: boolean;
+    revitInUso?: boolean;
+    autocadInUso?: boolean;
     altriSoftwareInUso?: string[];
+    notaUso?: string;
   };
 }
+
+export const DEFAULT_SOFTWARE_KEYS: Omit<Resource, 'docId'>[] = [
+  {
+    id: 'KEY_EDILUS_USB',
+    nome: 'EdiLus (Chiavetta USB)',
+    tipo: 'software_key',
+    dettagli: {
+      programma: 'EDILUS',
+      tipoLicenza: 'chiavetta USB',
+      versioneSoftware: 'EdiLus-CA +MU +AC +LG +EE usBIM',
+      serviziAttivi: 'AmicUS',
+      numeroSerie: '13041419'
+    },
+    statoCorrente: {
+      occupato: false,
+      utilizzatoreNome: null,
+      utilizzatoreEmail: null,
+      dataInizioUso: null
+    }
+  },
+  {
+    id: 'KEY_EDILUS_2',
+    nome: 'EdiLus (2° Licenza senza USB)',
+    tipo: 'software_key',
+    dettagli: {
+      programma: 'EDILUS',
+      tipoLicenza: '2° licenza senza USB',
+      versioneSoftware: 'EdiLus-CA +MU +AC +LG +EE usBIM',
+      serviziAttivi: 'Temporary Soft 1 mese',
+      numeroSerie: 'ING_PC_13'
+    },
+    statoCorrente: {
+      occupato: false,
+      utilizzatoreNome: null,
+      utilizzatoreEmail: null,
+      dataInizioUso: null
+    }
+  },
+  {
+    id: 'KEY_PRIMUS_USB',
+    nome: 'PriMus (Chiavetta USB)',
+    tipo: 'software_key',
+    dettagli: {
+      programma: 'PRIMUS',
+      tipoLicenza: 'chiavetta USB',
+      versioneSoftware: 'PriMus usBIM',
+      serviziAttivi: 'POWER PACK',
+      numeroSerie: '20020677'
+    },
+    statoCorrente: {
+      occupato: false,
+      utilizzatoreNome: null,
+      utilizzatoreEmail: null,
+      dataInizioUso: null
+    }
+  },
+  {
+    id: 'KEY_PRIMUS_2',
+    nome: 'PriMus (2° Licenza senza USB)',
+    tipo: 'software_key',
+    dettagli: {
+      programma: 'PRIMUS',
+      tipoLicenza: '2° licenza senza USB',
+      versioneSoftware: 'PriMus usBIM (PowerPack)',
+      serviziAttivi: 'POWER PACK',
+      numeroSerie: '20020677'
+    },
+    statoCorrente: {
+      occupato: false,
+      utilizzatoreNome: null,
+      utilizzatoreEmail: null,
+      dataInizioUso: null
+    }
+  },
+  {
+    id: 'KEY_SOLARIUS_USB',
+    nome: 'Solarius (Chiavetta USB)',
+    tipo: 'software_key',
+    dettagli: {
+      programma: 'SOLARIUS',
+      tipoLicenza: 'chiavetta USB',
+      versioneSoftware: 'Solarius-PV 17.00',
+      serviziAttivi: '-',
+      numeroSerie: '88031886'
+    },
+    statoCorrente: {
+      occupato: false,
+      utilizzatoreNome: null,
+      utilizzatoreEmail: null,
+      dataInizioUso: null
+    }
+  },
+  {
+    id: 'KEY_TERMUS_USB_1',
+    nome: 'TerMus (Chiavetta USB - S/N 87090262)',
+    tipo: 'software_key',
+    dettagli: {
+      programma: 'TERMUS',
+      tipoLicenza: 'chiavetta USB',
+      versioneSoftware: 'TerMus +E + TerMus-i 42.00 | Termus BIM + E 52.00',
+      serviziAttivi: 'AmicUS',
+      numeroSerie: '87090262'
+    },
+    statoCorrente: {
+      occupato: false,
+      utilizzatoreNome: null,
+      utilizzatoreEmail: null,
+      dataInizioUso: null
+    }
+  },
+  {
+    id: 'KEY_TERMUS_USB_2',
+    nome: 'TerMus (Chiavetta USB - S/N 21123154)',
+    tipo: 'software_key',
+    dettagli: {
+      programma: 'TERMUS',
+      tipoLicenza: 'chiavetta USB',
+      versioneSoftware: 'TerMus +E 42.00 | Termus BIM + E 52.00',
+      serviziAttivi: 'AmicUS',
+      numeroSerie: '21123154'
+    },
+    statoCorrente: {
+      occupato: false,
+      utilizzatoreNome: null,
+      utilizzatoreEmail: null,
+      dataInizioUso: null
+    }
+  }
+];
 
 interface Booking {
   id: string;
@@ -77,15 +216,15 @@ interface Booking {
 }
 
 export default function Prenotazioni() {
-  const { isAdmin, myAssociatedName, userEmail } = useAuth();
+  const { isAdmin, isDev, myAssociatedName, userEmail } = useAuth();
   const currentUserName = myAssociatedName || userEmail || 'Dipendente';
   const currentUserEmail = userEmail || '';
 
-  // Tabs: 'pc' | 'room' | 'car' | 'admin'
-  const [activeTab, setActiveTab] = useState<'pc' | 'room' | 'car' | 'admin'>('pc');
+  // Tabs: 'pc' | 'software_keys' | 'room' | 'car' | 'admin'
+  const [activeTab, setActiveTab] = useState<'pc' | 'software_keys' | 'room' | 'car' | 'admin'>('pc');
 
-  // Filtro postazioni libere
-  const [showOnlyFree, setShowOnlyFree] = useState(false);
+  // Filtro postazioni PC: 'all' | 'free' | 'mine'
+  const [pcFilter, setPcFilter] = useState<'all' | 'free' | 'mine'>('all');
 
   // Firestore lists
   const [resources, setResources] = useState<Resource[]>([]);
@@ -107,13 +246,15 @@ export default function Prenotazioni() {
   const [useAutoCAD, setUseAutoCAD] = useState(false);
   const [isEditPCModalOpen, setIsEditPCModalOpen] = useState(false);
 
-  // Admin Edit Resource state
+  // Sviluppatore / Admin Edit Resource state
   const [isAdminEditResourceOpen, setIsAdminEditResourceOpen] = useState(false);
   const [editingResourceDocId, setEditingResourceDocId] = useState<string>('');
+  const [adminActiveSubSection, setAdminActiveSubSection] = useState<'pc' | 'software_key' | 'room' | 'car' | 'licenses'>('pc');
+  
   const [editResourceData, setEditResourceData] = useState({
     id: '',
     nome: '',
-    tipo: 'pc' as 'pc' | 'room' | 'car',
+    tipo: 'pc' as 'pc' | 'room' | 'car' | 'software_key',
     utenteIngegno: '',
     pswUtente: '',
     licenzaAutodesk: 'AEC Collection',
@@ -121,7 +262,12 @@ export default function Prenotazioni() {
     ipAddress: '',
     sede: 'Via Diaz',
     modello: '',
-    targa: ''
+    targa: '',
+    programma: 'EDILUS',
+    tipoLicenza: 'chiavetta USB',
+    versioneSoftware: '',
+    serviziAttivi: '',
+    numeroSerie: ''
   });
 
   const [roomBookingData, setRoomBookingData] = useState({
@@ -295,7 +441,7 @@ export default function Prenotazioni() {
   const [newResourceData, setNewResourceData] = useState({
     id: '',
     nome: '',
-    tipo: 'pc' as 'pc' | 'room' | 'car',
+    tipo: 'pc' as 'pc' | 'room' | 'car' | 'software_key',
     utenteIngegno: '',
     pswUtente: '',
     licenzaAutodesk: 'AEC Collection',
@@ -303,7 +449,12 @@ export default function Prenotazioni() {
     ipAddress: '',
     sede: 'Via Diaz',
     modello: '',
-    targa: ''
+    targa: '',
+    programma: 'EDILUS',
+    tipoLicenza: 'chiavetta USB',
+    versioneSoftware: '',
+    serviziAttivi: '',
+    numeroSerie: ''
   });
 
   // Confirmation modal config
@@ -454,8 +605,24 @@ export default function Prenotazioni() {
     };
   };
 
+  const myPcsCount = useMemo(() => {
+    if (!currentUserEmail) return 0;
+    return pcsList.filter(pc => 
+      pc.statoCorrente?.occupato && 
+      pc.statoCorrente?.utilizzatoreEmail?.toLowerCase() === currentUserEmail.toLowerCase()
+    ).length;
+  }, [pcsList, currentUserEmail]);
+
   const filteredPcsList = useMemo(() => {
-    if (!showOnlyFree) return pcsList;
+    if (pcFilter === 'all') return pcsList;
+    if (pcFilter === 'mine') {
+      if (!currentUserEmail) return [];
+      return pcsList.filter(pc => 
+        pc.statoCorrente?.occupato && 
+        pc.statoCorrente?.utilizzatoreEmail?.toLowerCase() === currentUserEmail.toLowerCase()
+      );
+    }
+    // pcFilter === 'free'
     return pcsList.filter(pc => {
       const isOccupied = pc.statoCorrente?.occupato;
       if (isOccupied) return false;
@@ -463,7 +630,7 @@ export default function Prenotazioni() {
       const isDisabled = twinStatus.isDisabledDueToLicenses;
       return !isDisabled;
     });
-  }, [pcsList, showOnlyFree]);
+  }, [pcsList, pcFilter, currentUserEmail]);
 
   const aecGroups = useMemo(() => {
     const groups: Record<string, Resource[]> = {};
@@ -495,8 +662,92 @@ export default function Prenotazioni() {
 
     return { groups, ltPcs, otherPcs };
   }, [filteredPcsList]);
+
+  const softwareKeysList = useMemo(() => {
+    const defaultOrderMap = new Map(DEFAULT_SOFTWARE_KEYS.map((k, idx) => [k.id, idx]));
+    return resources
+      .filter(r => r.tipo === 'software_key')
+      .sort((a, b) => {
+        const orderA = defaultOrderMap.has(a.id) ? defaultOrderMap.get(a.id)! : 999;
+        const orderB = defaultOrderMap.has(b.id) ? defaultOrderMap.get(b.id)! : 999;
+        if (orderA !== orderB) return orderA - orderB;
+        return (a.dettagli.programma || '').localeCompare(b.dettagli.programma || '') || 
+               (a.dettagli.tipoLicenza || '').localeCompare(b.dettagli.tipoLicenza || '') ||
+               a.id.localeCompare(b.id);
+      });
+  }, [resources]);
+
   const roomsList = useMemo(() => resources.filter(r => r.tipo === 'room').sort((a, b) => a.nome.localeCompare(b.nome)), [resources]);
   const carsList = useMemo(() => resources.filter(r => r.tipo === 'car').sort((a, b) => a.nome.localeCompare(b.nome)), [resources]);
+
+  // Seeding iniziale automatico chiavette se non presenti
+  useEffect(() => {
+    if (!loading && resources.length > 0) {
+      const hasSoftwareKeys = resources.some(r => r.tipo === 'software_key');
+      if (!hasSoftwareKeys) {
+        handleSeedDefaultSoftwareKeys();
+      }
+    }
+  }, [loading, resources]);
+
+  // Chiavette Software: Seed/Ripristino
+  const handleSeedDefaultSoftwareKeys = async () => {
+    try {
+      for (const key of DEFAULT_SOFTWARE_KEYS) {
+        const docId = `software_key_${key.id.toLowerCase()}`;
+        await setDoc(doc(db, 'risorse', docId), key, { merge: true });
+      }
+      showToast("7 Licenze/Chiavette ACCA caricate con successo!");
+    } catch (err: any) {
+      console.error("Errore nel caricamento licenze default:", err);
+      showToast("Errore nel caricamento licenze ACCA: " + err.message, "error");
+    }
+  };
+
+  // Chiavette Software: Prendi in uso
+  const handleClaimSoftwareKey = async (keyRes: Resource) => {
+    const docId = keyRes.docId || `software_key_${keyRes.id.toLowerCase()}`;
+    try {
+      await updateDoc(doc(db, 'risorse', docId), {
+        'statoCorrente.occupato': true,
+        'statoCorrente.utilizzatoreNome': currentUserName,
+        'statoCorrente.utilizzatoreEmail': currentUserEmail,
+        'statoCorrente.dataInizioUso': new Date().toISOString()
+      });
+      showToast(`Licenza ${keyRes.dettagli.programma || keyRes.nome} presa in uso!`);
+    } catch (err: any) {
+      console.error(err);
+      showToast("Errore nella presa in carico: " + err.message, "error");
+    }
+  };
+
+  // Chiavette Software: Rilascia / Forza rilascio
+  const handleReleaseSoftwareKey = (keyRes: Resource, force: boolean = false) => {
+    const docId = keyRes.docId || `software_key_${keyRes.id.toLowerCase()}`;
+    const actionTitle = force ? "Forza Rilascio Licenza" : "Rilascia Licenza";
+    const actionMsg = force 
+      ? `Sei sicuro di voler forzare il rilascio di "${keyRes.nome}" attualmente in uso da ${keyRes.statoCorrente?.utilizzatoreNome}?`
+      : `Sei sicuro di voler rilasciare la licenza "${keyRes.nome}"?`;
+
+    triggerConfirm(
+      actionTitle,
+      actionMsg,
+      async () => {
+        try {
+          await updateDoc(doc(db, 'risorse', docId), {
+            'statoCorrente.occupato': false,
+            'statoCorrente.utilizzatoreNome': null,
+            'statoCorrente.utilizzatoreEmail': null,
+            'statoCorrente.dataInizioUso': null
+          });
+          showToast(`Licenza "${keyRes.nome}" rilasciata.`);
+        } catch (err: any) {
+          console.error(err);
+          showToast("Errore nel rilascio: " + err.message, "error");
+        }
+      }
+    );
+  };
 
   // Compute CAD PCs stats
   const pcStats = useMemo(() => {
@@ -836,7 +1087,7 @@ export default function Prenotazioni() {
   // Admin: Add new Resource
   const handleAddResourceSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const { id, nome, tipo, utenteIngegno, pswUtente, licenzaAutodesk, programmiInstallati, ipAddress, sede, modello, targa } = newResourceData;
+    const { id, nome, tipo, utenteIngegno, pswUtente, licenzaAutodesk, programmiInstallati, ipAddress, sede, modello, targa, programma, tipoLicenza, versioneSoftware, serviziAttivi, numeroSerie } = newResourceData;
     if (!id.trim() || !nome.trim()) {
       showToast("Identificativo e Nome sono richiesti.", "warning");
       return;
@@ -864,6 +1115,20 @@ export default function Prenotazioni() {
         dataInizioUso: null,
         revitInUso: false,
         autocadInUso: false
+      };
+    } else if (tipo === 'software_key') {
+      details = {
+        programma: (programma || 'EDILUS').trim().toUpperCase(),
+        tipoLicenza: (tipoLicenza || 'chiavetta USB').trim(),
+        versioneSoftware: versioneSoftware.trim(),
+        serviziAttivi: serviziAttivi.trim() || '-',
+        numeroSerie: numeroSerie.trim()
+      };
+      statoCorrente = {
+        occupato: false,
+        utilizzatoreNome: null,
+        utilizzatoreEmail: null,
+        dataInizioUso: null
       };
     } else if (tipo === 'room') {
       details = {
@@ -902,7 +1167,12 @@ export default function Prenotazioni() {
         ipAddress: '',
         sede: 'Via Diaz',
         modello: '',
-        targa: ''
+        targa: '',
+        programma: 'EDILUS',
+        tipoLicenza: 'chiavetta USB',
+        versioneSoftware: '',
+        serviziAttivi: '',
+        numeroSerie: ''
       });
     } catch (err: any) {
       console.error(err);
@@ -925,7 +1195,12 @@ export default function Prenotazioni() {
       ipAddress: res.dettagli.ipAddress || '',
       sede: res.dettagli.sede || 'Via Diaz',
       modello: res.dettagli.modello || '',
-      targa: res.dettagli.targa || ''
+      targa: res.dettagli.targa || '',
+      programma: res.dettagli.programma || 'EDILUS',
+      tipoLicenza: res.dettagli.tipoLicenza || 'chiavetta USB',
+      versioneSoftware: res.dettagli.versioneSoftware || '',
+      serviziAttivi: res.dettagli.serviziAttivi || '',
+      numeroSerie: res.dettagli.numeroSerie || ''
     });
     setIsAdminEditResourceOpen(true);
   };
@@ -934,7 +1209,7 @@ export default function Prenotazioni() {
   const handleEditResourceSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingResourceDocId) return;
-    const { id, nome, tipo, utenteIngegno, pswUtente, licenzaAutodesk, programmiInstallati, ipAddress, sede, modello, targa } = editResourceData;
+    const { id, nome, tipo, utenteIngegno, pswUtente, licenzaAutodesk, programmiInstallati, ipAddress, sede, modello, targa, programma, tipoLicenza, versioneSoftware, serviziAttivi, numeroSerie } = editResourceData;
     if (!id.trim() || !nome.trim()) {
       showToast("Identificativo e Nome sono richiesti.", "warning");
       return;
@@ -948,6 +1223,14 @@ export default function Prenotazioni() {
         licenzaAutodesk: licenzaAutodesk.trim(),
         programmiInstallati: programmiInstallati.trim(),
         ipAddress: ipAddress.trim()
+      };
+    } else if (tipo === 'software_key') {
+      details = {
+        programma: (programma || 'EDILUS').trim().toUpperCase(),
+        tipoLicenza: (tipoLicenza || 'chiavetta USB').trim(),
+        versioneSoftware: versioneSoftware.trim(),
+        serviziAttivi: serviziAttivi.trim() || '-',
+        numeroSerie: numeroSerie.trim()
       };
     } else if (tipo === 'room') {
       details = {
@@ -1270,6 +1553,14 @@ export default function Prenotazioni() {
             <Laptop className="w-4 h-4" /> PC CAD Remoti
           </button>
           <button 
+            onClick={() => setActiveTab('software_keys')}
+            className={`flex items-center justify-center gap-2 px-4 py-2 text-xs font-bold rounded-xl whitespace-nowrap transition-all ${
+              activeTab === 'software_keys' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <KeyRound className="w-4 h-4" /> Chiavette & Licenze Software
+          </button>
+          <button 
             onClick={() => setActiveTab('room')}
             className={`flex items-center justify-center gap-2 px-4 py-2 text-xs font-bold rounded-xl whitespace-nowrap transition-all ${
               activeTab === 'room' ? 'bg-white text-teal-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'
@@ -1285,7 +1576,7 @@ export default function Prenotazioni() {
           >
             <Car className="w-4 h-4" /> Auto Aziendali
           </button>
-          {isAdmin && (
+          {isDev && (
             <button 
               onClick={() => setActiveTab('admin')}
               className={`flex items-center justify-center gap-2 px-4 py-2 text-xs font-bold rounded-xl whitespace-nowrap transition-all ${
@@ -1316,10 +1607,12 @@ export default function Prenotazioni() {
                 />
               </div>
               <div className="flex flex-col mt-2">
-                <span className="text-xs font-bold text-gray-700">{pcStats.available} PC disponibili</span>
+                <span className="text-xs font-bold text-gray-700">
+                  {pcStats.total - pcStats.occupied} liberi ({pcStats.available} disponibili{pcStats.disabledCount > 0 ? `, ${pcStats.disabledCount} ${pcStats.disabledCount === 1 ? 'disattivo' : 'disattivi'}` : ''})
+                </span>
                 {pcStats.disabledCount > 0 && (
                   <span className="text-[10px] font-bold text-amber-600 leading-tight mt-0.5">
-                    ({pcStats.disabledCount} {pcStats.disabledCount === 1 ? 'disattivo' : 'disattivi'} per licenze gemello)
+                    ({pcStats.disabledCount} con licenze Revit/AutoCAD occupate sul gemello)
                   </span>
                 )}
               </div>
@@ -1408,24 +1701,33 @@ export default function Prenotazioni() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="flex bg-gray-100 p-1 rounded-2xl gap-1">
+                  <div className="flex bg-gray-100 p-1 rounded-2xl gap-1 flex-wrap">
                     <button
                       type="button"
-                      onClick={() => setShowOnlyFree(false)}
+                      onClick={() => setPcFilter('all')}
                       className={`px-4 py-2 text-xs font-bold rounded-xl transition-all ${
-                        !showOnlyFree ? 'bg-white text-teal-650 shadow-sm' : 'text-gray-500 hover:text-gray-800'
+                        pcFilter === 'all' ? 'bg-white text-teal-650 shadow-sm' : 'text-gray-500 hover:text-gray-800'
                       }`}
                     >
                       Tutte ({pcsList.length})
                     </button>
                     <button
                       type="button"
-                      onClick={() => setShowOnlyFree(true)}
+                      onClick={() => setPcFilter('free')}
                       className={`px-4 py-2 text-xs font-bold rounded-xl transition-all ${
-                        showOnlyFree ? 'bg-white text-teal-650 shadow-sm' : 'text-gray-500 hover:text-gray-800'
+                        pcFilter === 'free' ? 'bg-white text-teal-650 shadow-sm' : 'text-gray-500 hover:text-gray-800'
                       }`}
                     >
-                      Solo Libere ({pcsList.filter(pc => !pc.statoCorrente?.occupato && !(!pc.statoCorrente?.occupato && getTwinStatus(pc).areAllTwinLicensesInUse)).length})
+                      Solo Disponibili ({pcStats.available})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPcFilter('mine')}
+                      className={`px-4 py-2 text-xs font-bold rounded-xl transition-all ${
+                        pcFilter === 'mine' ? 'bg-white text-indigo-650 shadow-sm' : 'text-gray-500 hover:text-gray-800'
+                      }`}
+                    >
+                      Le mie Postazioni ({myPcsCount})
                     </button>
                   </div>
                 </div>
@@ -1433,11 +1735,23 @@ export default function Prenotazioni() {
 
               {filteredPcsList.length === 0 ? (
                 <div className="bg-white/80 rounded-[2rem] p-12 text-center text-gray-500 border border-white/50 w-full flex flex-col items-center justify-center gap-3">
-                  <Info className="w-8 h-8 text-amber-500" />
-                  <span className="font-extrabold text-gray-800">Nessuna postazione libera</span>
-                  <p className="text-xs text-gray-400 max-w-sm leading-relaxed">
-                    Tutte le macchine virtuali o le licenze sono attualmente occupate. Disattiva il filtro "Solo Libere" per visualizzare tutte le postazioni.
-                  </p>
+                  {pcFilter === 'mine' ? (
+                    <>
+                      <Laptop className="w-8 h-8 text-indigo-500" />
+                      <span className="font-extrabold text-gray-800">Nessuna postazione in uso</span>
+                      <p className="text-xs text-gray-400 max-w-sm leading-relaxed">
+                        Al momento non hai preso in carico nessuna postazione PC CAD. Clicca su "Tutte" o "Solo Disponibili" per visualizzare i PC da prenotare.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <Info className="w-8 h-8 text-amber-500" />
+                      <span className="font-extrabold text-gray-800">Nessuna postazione disponibile</span>
+                      <p className="text-xs text-gray-400 max-w-sm leading-relaxed">
+                        Tutte le macchine virtuali o le licenze sono attualmente occupate. Disattiva il filtro per visualizzare tutte le postazioni.
+                      </p>
+                    </>
+                  )}
                 </div>
               ) : (
                 <>
@@ -1517,7 +1831,182 @@ export default function Prenotazioni() {
         </div>
       )}
 
-      {/* --- TAB 2: SALE RIUNIONI --- */}
+      {/* --- TAB 2: CHIAVETTE & LICENZE SOFTWARE --- */}
+      {activeTab === 'software_keys' && (
+        <div className="space-y-6 animate-in fade-in">
+          {/* Note informative / Istruzioni compatte */}
+          <div className="bg-indigo-50/70 border border-indigo-100 rounded-3xl p-5 text-indigo-900 text-xs flex items-start gap-3 shadow-sm">
+            <Info className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-extrabold text-sm text-indigo-950 mb-0.5">Gestione e Prenotazione Chiavette & Licenze Software</div>
+              <p className="leading-relaxed font-medium">
+                La tabella sottostante indica la disponibilità in tempo reale delle licenze e chiavette USB (EdiLus, PriMus, TerMus, Solarius). Clicca su <strong>"Prendi in uso"</strong> prima di utilizzare il programma sul tuo computer e ricordati di cliccare <strong>"Rilascia"</strong> non appena hai completato il lavoro per consentire l'utilizzo ai tuoi colleghi.
+              </p>
+            </div>
+          </div>
+
+          {/* Tabella Chiavette e Licenze ACCA */}
+          <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-md border border-white/50 p-6 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs font-medium text-gray-600">
+                <thead>
+                  <tr className="border-b border-gray-150 text-gray-400 font-extrabold uppercase tracking-wider text-[10px]">
+                    <th className="py-3 px-4 text-center">Stato</th>
+                    <th className="py-3 px-4">Programma</th>
+                    <th className="py-3 px-4">Tipo Licenza</th>
+                    <th className="py-3 px-4">Utilizzatore</th>
+                    <th className="py-3 px-4">Versione Software</th>
+                    <th className="py-3 px-4">Servizi Attivi</th>
+                    <th className="py-3 px-4">Numero di Serie</th>
+                    <th className="py-3 px-4 text-center">Azione</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {softwareKeysList.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-8 text-center text-gray-400 font-bold italic">
+                        Nessuna licenza software censita.
+                      </td>
+                    </tr>
+                  ) : (
+                    softwareKeysList.map(keyRes => {
+                      const isOccupied = keyRes.statoCorrente?.occupato;
+                      const isMe = keyRes.statoCorrente?.utilizzatoreEmail?.toLowerCase() === currentUserEmail?.toLowerCase();
+                      const canForce = (isDev || isAdmin) && isOccupied && !isMe;
+
+                      return (
+                        <tr 
+                          key={keyRes.docId || keyRes.id} 
+                          className={`transition ${
+                            isOccupied
+                              ? isMe
+                                ? 'bg-indigo-50/60 hover:bg-indigo-50/80 font-semibold'
+                                : 'bg-rose-50/50 hover:bg-rose-50/70'
+                              : 'hover:bg-gray-50/70'
+                          }`}
+                        >
+                          {/* 1. STATO */}
+                          <td className="py-4 px-4 text-center whitespace-nowrap">
+                            <span className={`text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider inline-block ${
+                              isOccupied
+                                ? isMe
+                                  ? 'bg-indigo-600 text-white shadow-sm'
+                                  : 'bg-rose-600 text-white shadow-sm'
+                                : 'bg-emerald-600 text-white shadow-sm'
+                            }`}>
+                              {isOccupied ? (isMe ? 'IN USO (TU)' : 'IN USO') : 'DISPONIBILE'}
+                            </span>
+                          </td>
+
+                          {/* 2. PROGRAMMA */}
+                          <td className="py-4 px-4 font-black text-gray-900 whitespace-nowrap">
+                            <div className="flex items-center gap-2">
+                              <div className={`p-1.5 rounded-lg ${
+                                keyRes.dettagli.programma?.toUpperCase().includes('PRIMUS') ? 'bg-amber-100 text-amber-800' :
+                                keyRes.dettagli.programma?.toUpperCase().includes('TERMUS') ? 'bg-orange-100 text-orange-800' :
+                                keyRes.dettagli.programma?.toUpperCase().includes('EDILUS') ? 'bg-blue-100 text-blue-800' :
+                                'bg-emerald-100 text-emerald-800'
+                              }`}>
+                                <KeyRound className="w-4 h-4" />
+                              </div>
+                              <span className="text-sm font-extrabold">{keyRes.dettagli.programma || keyRes.nome}</span>
+                            </div>
+                          </td>
+
+                          {/* 3. TIPO LICENZA */}
+                          <td className="py-4 px-4 whitespace-nowrap">
+                            <span className="inline-flex items-center gap-1.5 bg-gray-100 text-gray-700 font-bold px-2.5 py-1 rounded-lg text-xs">
+                              {keyRes.dettagli.tipoLicenza?.toLowerCase().includes('usb') && <Usb className="w-3.5 h-3.5 text-indigo-600 shrink-0" />}
+                              {keyRes.dettagli.tipoLicenza || 'Standard'}
+                            </span>
+                          </td>
+
+                          {/* 4. UTILIZZATORE */}
+                          <td className="py-4 px-4">
+                            {isOccupied ? (
+                              <div className="flex flex-col gap-0.5">
+                                <div className="font-extrabold text-gray-900 flex items-center gap-1.5">
+                                  <span>{keyRes.statoCorrente?.utilizzatoreNome || 'Utente'}</span>
+                                  {isMe && (
+                                    <span className="bg-indigo-600 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full uppercase">Tu</span>
+                                  )}
+                                </div>
+                                {keyRes.statoCorrente?.dataInizioUso && (
+                                  <span className="text-[10px] text-gray-400 font-medium">
+                                    Da: {formatDateTime(keyRes.statoCorrente?.dataInizioUso)}
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-gray-400 italic text-xs">Libera</span>
+                            )}
+                          </td>
+
+                          {/* 5. VERSIONE SOFTWARE */}
+                          <td className="py-4 px-4 font-semibold text-gray-750">
+                            <span className="block max-w-[260px] truncate" title={keyRes.dettagli.versioneSoftware}>
+                              {keyRes.dettagli.versioneSoftware || '-'}
+                            </span>
+                          </td>
+
+                          {/* 6. SERVIZI ATTIVI */}
+                          <td className="py-4 px-4 font-bold text-gray-700 whitespace-nowrap">
+                            {keyRes.dettagli.serviziAttivi && keyRes.dettagli.serviziAttivi !== '-' ? (
+                              <span className="bg-indigo-50 text-indigo-700 border border-indigo-100 px-2 py-0.5 rounded text-[10px] font-bold">
+                                {keyRes.dettagli.serviziAttivi}
+                              </span>
+                            ) : (
+                              <span className="text-gray-400">-</span>
+                            )}
+                          </td>
+
+                          {/* 7. NUMERO DI SERIE */}
+                          <td className="py-4 px-4 font-mono font-bold text-gray-800 whitespace-nowrap">
+                            <span className="bg-gray-100 px-2.5 py-1 rounded-lg select-all text-xs border border-gray-200">
+                              {keyRes.dettagli.numeroSerie || '-'}
+                            </span>
+                          </td>
+
+                          {/* 8. AZIONI */}
+                          <td className="py-4 px-4 text-center whitespace-nowrap">
+                            {!isOccupied ? (
+                              <button
+                                onClick={() => handleClaimSoftwareKey(keyRes)}
+                                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition text-xs shadow-sm flex items-center gap-1.5 mx-auto cursor-pointer active:scale-95"
+                              >
+                                <Check className="w-3.5 h-3.5" /> Prendi in uso
+                              </button>
+                            ) : isMe ? (
+                              <button
+                                onClick={() => handleReleaseSoftwareKey(keyRes, false)}
+                                className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl transition text-xs shadow-sm flex items-center gap-1.5 mx-auto cursor-pointer active:scale-95"
+                              >
+                                <X className="w-3.5 h-3.5" /> Rilascia
+                              </button>
+                            ) : canForce ? (
+                              <button
+                                onClick={() => handleReleaseSoftwareKey(keyRes, true)}
+                                className="px-2.5 py-1 border border-rose-200 text-rose-600 hover:bg-rose-50 font-bold rounded-lg transition text-[11px] mx-auto cursor-pointer"
+                                title="Forza il rilascio della licenza"
+                              >
+                                Forza Rilascio
+                              </button>
+                            ) : (
+                              <span className="text-xs text-gray-400 font-semibold italic">In uso</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- TAB 3: SALE RIUNIONI --- */}
       {activeTab === 'room' && (
         <div className="space-y-8 animate-in fade-in">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
@@ -1975,45 +2464,475 @@ export default function Prenotazioni() {
         </div>
       )}
 
-      {/* --- TAB 4: AMMINISTRAZIONE / GESTIONE RISORSE --- */}
-      {activeTab === 'admin' && isAdmin && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Pannello Risorse */}
-            <div className="bg-white/80 backdrop-blur-xl p-6 rounded-[2rem] shadow-md border border-white/50 flex flex-col justify-between">
-              <div>
-                <h3 className="text-lg font-black text-gray-900 mb-2 flex items-center gap-2">
-                  <ShieldAlert className="w-5 h-5 text-red-600" />
-                  <span>Pannello di Amministrazione Risorse</span>
-                </h3>
-                <p className="text-xs font-bold text-gray-500 mb-4 leading-normal">
-                  Questo pannello consente di inserire o rimuovere le risorse prenotabili (PC, Sale, Auto) nel database.
-                </p>
-              </div>
-
-              <div className="flex gap-4">
-                <button
-                  onClick={() => setIsAdminAddResourceOpen(true)}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs shadow flex items-center gap-1.5 transition active:scale-95 w-full md:w-auto"
-                >
-                  <Plus className="w-4 h-4" /> Aggiungi Nuova Risorsa
-                </button>
-              </div>
+      {/* --- TAB 4: AMMINISTRAZIONE / GESTIONE RISORSE (SOLO SVILUPPATORE) --- */}
+      {activeTab === 'admin' && isDev && (
+        <div className="space-y-6 animate-in fade-in">
+          {/* Header Gestione Sviluppatore */}
+          <div className="bg-white/80 backdrop-blur-xl p-6 rounded-[2rem] shadow-md border border-white/50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+              <h3 className="text-xl font-black text-gray-900 flex items-center gap-2">
+                <ShieldAlert className="w-5 h-5 text-red-600" />
+                <span>Pannello Risorse & Configurazione (Sviluppatore)</span>
+              </h3>
+              <p className="text-xs font-bold text-gray-500 mt-1">
+                Gestione separata delle anagrafiche hardware/software e dei limiti licenze per l'intero ambiente aziendale.
+              </p>
             </div>
 
-            {/* Configurazione Limiti Licenze */}
-            <div className="bg-white/80 backdrop-blur-xl p-6 rounded-[2rem] shadow-md border border-white/50 flex flex-col justify-between">
+            {/* Sottosezioni / Switcher */}
+            <div className="flex bg-gray-100 p-1 rounded-xl gap-1 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setAdminActiveSubSection('pc')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                  adminActiveSubSection === 'pc' ? 'bg-white text-teal-700 shadow-xs' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <Laptop className="w-3.5 h-3.5" /> Postazioni PC
+              </button>
+              <button
+                type="button"
+                onClick={() => setAdminActiveSubSection('software_key')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                  adminActiveSubSection === 'software_key' ? 'bg-white text-indigo-700 shadow-xs' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <KeyRound className="w-3.5 h-3.5" /> Licenze Software
+              </button>
+              <button
+                type="button"
+                onClick={() => setAdminActiveSubSection('room')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                  adminActiveSubSection === 'room' ? 'bg-white text-indigo-700 shadow-xs' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <CalendarDays className="w-3.5 h-3.5" /> Sale
+              </button>
+              <button
+                type="button"
+                onClick={() => setAdminActiveSubSection('car')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                  adminActiveSubSection === 'car' ? 'bg-white text-teal-700 shadow-xs' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <Car className="w-3.5 h-3.5" /> Auto
+              </button>
+              <button
+                type="button"
+                onClick={() => setAdminActiveSubSection('licenses')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                  adminActiveSubSection === 'licenses' ? 'bg-white text-indigo-700 shadow-xs' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <RefreshCw className="w-3.5 h-3.5" /> Limiti Autodesk
+              </button>
+            </div>
+          </div>
+
+          {/* SOTTOSEZIONE 1: POSTAZIONI PC CAD */}
+          {adminActiveSubSection === 'pc' && (
+            <div className="bg-white/80 backdrop-blur-xl p-6 rounded-[2rem] shadow-md border border-white/50 space-y-4">
+              <div className="flex justify-between items-center flex-wrap gap-3 border-b border-gray-100 pb-3">
+                <div>
+                  <h4 className="text-base font-extrabold text-gray-900 flex items-center gap-2">
+                    <Laptop className="w-4 h-4 text-teal-600" />
+                    <span>Postazioni CAD Remoti ({pcsList.length})</span>
+                  </h4>
+                  <p className="text-xs text-gray-500 font-medium mt-0.5">Gestione delle postazioni RDP e delle licenze Autodesk associate.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewResourceData({
+                      id: '',
+                      nome: '',
+                      tipo: 'pc',
+                      utenteIngegno: '',
+                      pswUtente: '',
+                      licenzaAutodesk: 'AEC Collection',
+                      programmiInstallati: '',
+                      ipAddress: '',
+                      sede: 'Via Diaz',
+                      modello: '',
+                      targa: '',
+                      programma: 'EDILUS',
+                      tipoLicenza: 'chiavetta USB',
+                      versioneSoftware: '',
+                      serviziAttivi: '',
+                      numeroSerie: ''
+                    });
+                    setIsAdminAddResourceOpen(true);
+                  }}
+                  className="bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-3.5 rounded-xl text-xs shadow flex items-center gap-1.5 transition active:scale-95 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" /> Aggiungi Postazione PC
+                </button>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs font-medium text-gray-600">
+                  <thead>
+                    <tr className="border-b border-gray-100 text-gray-400 font-extrabold uppercase tracking-wider text-[10px]">
+                      <th className="py-3 px-3">Identificativo</th>
+                      <th className="py-3 px-3">IP</th>
+                      <th className="py-3 px-3">Utente RDP</th>
+                      <th className="py-3 px-3">Licenza Autodesk</th>
+                      <th className="py-3 px-3">Sede</th>
+                      <th className="py-3 px-3">Programmi Extra</th>
+                      <th className="py-3 px-3 text-center">Azioni</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {pcsList.length === 0 ? (
+                      <tr><td colSpan={7} className="py-6 text-center text-gray-400 font-bold italic">Nessun PC registrato.</td></tr>
+                    ) : (
+                      pcsList.map(res => (
+                        <tr key={res.docId || res.id} className="hover:bg-gray-50/50 transition">
+                          <td className="py-3 px-3 font-black text-gray-900">{res.id}</td>
+                          <td className="py-3 px-3 font-mono font-bold text-gray-700">{res.dettagli.ipAddress || '-'}</td>
+                          <td className="py-3 px-3 font-bold text-gray-800">{res.dettagli.utenteIngegno || '-'}</td>
+                          <td className="py-3 px-3">
+                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-md uppercase ${
+                              res.dettagli.licenzaAutodesk === 'Autocad LT' ? 'bg-cyan-100 text-cyan-800' : 'bg-indigo-100 text-indigo-800'
+                            }`}>
+                              {res.dettagli.licenzaAutodesk || 'Nessuna'}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 font-medium text-gray-600">{res.dettagli.sede || '-'}</td>
+                          <td className="py-3 px-3 font-medium text-gray-500 max-w-[200px] truncate">{res.dettagli.programmiInstallati || '-'}</td>
+                          <td className="py-3 px-3 text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                onClick={() => handleOpenEditResource(res)}
+                                className="text-gray-400 hover:text-indigo-600 p-1.5 rounded-xl hover:bg-indigo-50 transition cursor-pointer"
+                                title="Modifica"
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteResource(res)}
+                                className="text-gray-400 hover:text-red-600 p-1.5 rounded-xl hover:bg-red-50 transition cursor-pointer"
+                                title="Elimina"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* SOTTOSEZIONE 2: CHIAVETTE & LICENZE SOFTWARE */}
+          {adminActiveSubSection === 'software_key' && (
+            <div className="bg-white/80 backdrop-blur-xl p-6 rounded-[2rem] shadow-md border border-white/50 space-y-4">
+              <div className="flex justify-between items-center flex-wrap gap-3 border-b border-gray-100 pb-3">
+                <div>
+                  <h4 className="text-base font-extrabold text-gray-900 flex items-center gap-2">
+                    <KeyRound className="w-4 h-4 text-indigo-600" />
+                    <span>Chiavette & Licenze Software ({softwareKeysList.length})</span>
+                  </h4>
+                  <p className="text-xs text-gray-500 font-medium mt-0.5">Gestione delle chiavette USB fisiche e delle licenze software addizionali (EdiLus, PriMus, TerMus, Solarius).</p>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      triggerConfirm(
+                        "Ripristina Licenze ACCA da Excel",
+                        "Vuoi ripristinare / caricare le 7 licenze ACCA standard configurate nel file Excel?",
+                        handleSeedDefaultSoftwareKeys
+                      );
+                    }}
+                    className="bg-gray-100 hover:bg-gray-200 text-gray-750 font-bold py-2 px-3.5 rounded-xl text-xs transition cursor-pointer"
+                  >
+                    ↺ Reinizializza 7 Licenze ACCA
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewResourceData({
+                        id: '',
+                        nome: '',
+                        tipo: 'software_key',
+                        utenteIngegno: '',
+                        pswUtente: '',
+                        licenzaAutodesk: 'AEC Collection',
+                        programmiInstallati: '',
+                        ipAddress: '',
+                        sede: 'Via Diaz',
+                        modello: '',
+                        targa: '',
+                        programma: 'EDILUS',
+                        tipoLicenza: 'chiavetta USB',
+                        versioneSoftware: '',
+                        serviziAttivi: '',
+                        numeroSerie: ''
+                      });
+                      setIsAdminAddResourceOpen(true);
+                    }}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-3.5 rounded-xl text-xs shadow flex items-center gap-1.5 transition active:scale-95 cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" /> Aggiungi Chiavetta / Licenza
+                  </button>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs font-medium text-gray-600">
+                  <thead>
+                    <tr className="border-b border-gray-100 text-gray-400 font-extrabold uppercase tracking-wider text-[10px]">
+                      <th className="py-3 px-3">Programma</th>
+                      <th className="py-3 px-3">Tipo Licenza</th>
+                      <th className="py-3 px-3">Versione Software</th>
+                      <th className="py-3 px-3">Servizi Attivi</th>
+                      <th className="py-3 px-3">Numero di Serie</th>
+                      <th className="py-3 px-3 text-center">Azioni</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {softwareKeysList.length === 0 ? (
+                      <tr><td colSpan={6} className="py-6 text-center text-gray-400 font-bold italic">Nessuna licenza software registrata. Premi "Reinizializza 7 Licenze ACCA" in alto.</td></tr>
+                    ) : (
+                      softwareKeysList.map(res => (
+                        <tr key={res.docId || res.id} className="hover:bg-gray-50/50 transition">
+                          <td className="py-3 px-3 font-black text-gray-900">
+                            <div className="flex items-center gap-1.5">
+                              <KeyRound className="w-3.5 h-3.5 text-indigo-600" />
+                              <span>{res.dettagli.programma || res.nome}</span>
+                            </div>
+                          </td>
+                          <td className="py-3 px-3 font-bold text-gray-700">
+                            <span className="bg-gray-100 px-2 py-0.5 rounded text-[11px] font-bold">
+                              {res.dettagli.tipoLicenza || '-'}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 font-medium text-gray-700 max-w-[220px] truncate" title={res.dettagli.versioneSoftware}>
+                            {res.dettagli.versioneSoftware || '-'}
+                          </td>
+                          <td className="py-3 px-3 font-bold text-gray-700">{res.dettagli.serviziAttivi || '-'}</td>
+                          <td className="py-3 px-3 font-mono font-bold text-gray-800">{res.dettagli.numeroSerie || '-'}</td>
+                          <td className="py-3 px-3 text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                onClick={() => handleOpenEditResource(res)}
+                                className="text-gray-400 hover:text-indigo-600 p-1.5 rounded-xl hover:bg-indigo-50 transition cursor-pointer"
+                                title="Modifica"
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteResource(res)}
+                                className="text-gray-400 hover:text-red-600 p-1.5 rounded-xl hover:bg-red-50 transition cursor-pointer"
+                                title="Elimina"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* SOTTOSEZIONE 3: SALE RIUNIONI */}
+          {adminActiveSubSection === 'room' && (
+            <div className="bg-white/80 backdrop-blur-xl p-6 rounded-[2rem] shadow-md border border-white/50 space-y-4">
+              <div className="flex justify-between items-center flex-wrap gap-3 border-b border-gray-100 pb-3">
+                <div>
+                  <h4 className="text-base font-extrabold text-gray-900 flex items-center gap-2">
+                    <CalendarDays className="w-4 h-4 text-indigo-600" />
+                    <span>Sale Riunioni ({roomsList.length})</span>
+                  </h4>
+                  <p className="text-xs text-gray-500 font-medium mt-0.5">Gestione delle sale prenotabili per meeting e incontri con clienti.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewResourceData({
+                      id: '',
+                      nome: '',
+                      tipo: 'room',
+                      utenteIngegno: '',
+                      pswUtente: '',
+                      licenzaAutodesk: 'AEC Collection',
+                      programmiInstallati: '',
+                      ipAddress: '',
+                      sede: 'Via Diaz',
+                      modello: '',
+                      targa: '',
+                      programma: 'EDILUS',
+                      tipoLicenza: 'chiavetta USB',
+                      versioneSoftware: '',
+                      serviziAttivi: '',
+                      numeroSerie: ''
+                    });
+                    setIsAdminAddResourceOpen(true);
+                  }}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-3.5 rounded-xl text-xs shadow flex items-center gap-1.5 transition active:scale-95 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" /> Aggiungi Sala
+                </button>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs font-medium text-gray-600">
+                  <thead>
+                    <tr className="border-b border-gray-100 text-gray-400 font-extrabold uppercase tracking-wider text-[10px]">
+                      <th className="py-3 px-3">Identificativo</th>
+                      <th className="py-3 px-3">Nome Sala</th>
+                      <th className="py-3 px-3">Sede</th>
+                      <th className="py-3 px-3 text-center">Azioni</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {roomsList.length === 0 ? (
+                      <tr><td colSpan={4} className="py-6 text-center text-gray-400 font-bold italic">Nessuna sala registrata.</td></tr>
+                    ) : (
+                      roomsList.map(res => (
+                        <tr key={res.docId || res.id} className="hover:bg-gray-50/50 transition">
+                          <td className="py-3 px-3 font-black text-gray-900">{res.id}</td>
+                          <td className="py-3 px-3 font-bold text-gray-800">{res.nome}</td>
+                          <td className="py-3 px-3 font-medium text-gray-600">{res.dettagli.sede || '-'}</td>
+                          <td className="py-3 px-3 text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                onClick={() => handleOpenEditResource(res)}
+                                className="text-gray-400 hover:text-indigo-600 p-1.5 rounded-xl hover:bg-indigo-50 transition cursor-pointer"
+                                title="Modifica"
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteResource(res)}
+                                className="text-gray-400 hover:text-red-600 p-1.5 rounded-xl hover:bg-red-50 transition cursor-pointer"
+                                title="Elimina"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* SOTTOSEZIONE 4: AUTO AZIENDALI */}
+          {adminActiveSubSection === 'car' && (
+            <div className="bg-white/80 backdrop-blur-xl p-6 rounded-[2rem] shadow-md border border-white/50 space-y-4">
+              <div className="flex justify-between items-center flex-wrap gap-3 border-b border-gray-100 pb-3">
+                <div>
+                  <h4 className="text-base font-extrabold text-gray-900 flex items-center gap-2">
+                    <Car className="w-4 h-4 text-teal-600" />
+                    <span>Auto Aziendali ({carsList.length})</span>
+                  </h4>
+                  <p className="text-xs text-gray-500 font-medium mt-0.5">Gestione delle autovetture del parco aziendale per trasferte e cantieri.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewResourceData({
+                      id: '',
+                      nome: '',
+                      tipo: 'car',
+                      utenteIngegno: '',
+                      pswUtente: '',
+                      licenzaAutodesk: 'AEC Collection',
+                      programmiInstallati: '',
+                      ipAddress: '',
+                      sede: 'Via Diaz',
+                      modello: '',
+                      targa: '',
+                      programma: 'EDILUS',
+                      tipoLicenza: 'chiavetta USB',
+                      versioneSoftware: '',
+                      serviziAttivi: '',
+                      numeroSerie: ''
+                    });
+                    setIsAdminAddResourceOpen(true);
+                  }}
+                  className="bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-3.5 rounded-xl text-xs shadow flex items-center gap-1.5 transition active:scale-95 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" /> Aggiungi Auto
+                </button>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs font-medium text-gray-600">
+                  <thead>
+                    <tr className="border-b border-gray-100 text-gray-400 font-extrabold uppercase tracking-wider text-[10px]">
+                      <th className="py-3 px-3">Identificativo</th>
+                      <th className="py-3 px-3">Nome Display</th>
+                      <th className="py-3 px-3">Modello</th>
+                      <th className="py-3 px-3">Targa</th>
+                      <th className="py-3 px-3">Sede</th>
+                      <th className="py-3 px-3 text-center">Azioni</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {carsList.length === 0 ? (
+                      <tr><td colSpan={6} className="py-6 text-center text-gray-400 font-bold italic">Nessun'auto registrata.</td></tr>
+                    ) : (
+                      carsList.map(res => (
+                        <tr key={res.docId || res.id} className="hover:bg-gray-50/50 transition">
+                          <td className="py-3 px-3 font-black text-gray-900">{res.id}</td>
+                          <td className="py-3 px-3 font-bold text-gray-800">{res.nome}</td>
+                          <td className="py-3 px-3 font-medium text-gray-700">{res.dettagli.modello || '-'}</td>
+                          <td className="py-3 px-3 font-mono font-bold text-gray-900 uppercase">{res.dettagli.targa || '-'}</td>
+                          <td className="py-3 px-3 font-medium text-gray-600">{res.dettagli.sede || '-'}</td>
+                          <td className="py-3 px-3 text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                onClick={() => handleOpenEditResource(res)}
+                                className="text-gray-400 hover:text-indigo-600 p-1.5 rounded-xl hover:bg-indigo-50 transition cursor-pointer"
+                                title="Modifica"
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteResource(res)}
+                                className="text-gray-400 hover:text-red-600 p-1.5 rounded-xl hover:bg-red-50 transition cursor-pointer"
+                                title="Elimina"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* SOTTOSEZIONE 5: LIMITI LICENZE AUTODESK */}
+          {adminActiveSubSection === 'licenses' && (
+            <div className="bg-white/80 backdrop-blur-xl p-6 rounded-[2rem] shadow-md border border-white/50 space-y-4">
               <div>
-                <h3 className="text-lg font-black text-gray-900 mb-2 flex items-center gap-2">
-                  <Laptop className="w-5 h-5 text-indigo-600" />
-                  <span>Configura Limiti Licenze CAD</span>
-                </h3>
-                <p className="text-xs font-bold text-gray-500 mb-4 leading-normal">
-                  Imposta il limite massimo di licenze Revit, AutoCAD Completo e AutoCAD LT della ditta da monitorare.
+                <h4 className="text-base font-extrabold text-gray-900 flex items-center gap-2">
+                  <Laptop className="w-4 h-4 text-indigo-600" />
+                  <span>Configura Limiti Licenze Autodesk Globali</span>
+                </h4>
+                <p className="text-xs text-gray-500 font-medium mt-0.5">
+                  Imposta il limite massimo di licenze simultanee della ditta da monitorare nei cruscotti di allerta.
                 </p>
               </div>
 
-              <form onSubmit={handleSaveLicenseLimits} className="flex flex-col gap-4">
+              <form onSubmit={handleSaveLicenseLimits} className="flex flex-col gap-4 max-w-xl">
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full">
                   <div>
                     <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5 ml-1">Revit Totali</label>
@@ -2049,93 +2968,17 @@ export default function Prenotazioni() {
                     />
                   </div>
                 </div>
-                <div className="flex justify-end">
+                <div>
                   <button
                     type="submit"
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-6 rounded-xl text-xs shadow transition active:scale-95 whitespace-nowrap w-full sm:w-auto"
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-6 rounded-xl text-xs shadow transition active:scale-95 whitespace-nowrap"
                   >
-                    Salva Limiti
+                    Salva Limiti Licenze
                   </button>
                 </div>
               </form>
             </div>
-          </div>
-
-          {/* Elenco Risorse Esistenti */}
-          <div className="bg-white/80 backdrop-blur-xl p-6 rounded-[2rem] shadow-md border border-white/50">
-            <h3 className="text-base font-extrabold text-gray-900 mb-4">Elenco Risorse Attive in Database ({resources.length})</h3>
-            
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs font-medium text-gray-600">
-                <thead>
-                  <tr className="border-b border-gray-100 text-gray-400 font-extrabold uppercase tracking-wider text-[10px]">
-                    <th className="py-3 px-4">Tipo</th>
-                    <th className="py-3 px-4">Identificativo</th>
-                    <th className="py-3 px-4">Nome Display</th>
-                    <th className="py-3 px-4">Dettagli Risorsa</th>
-                    <th className="py-3 px-4 text-center">Azioni</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {resources.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="py-8 text-center text-gray-400 font-bold italic">Nessuna risorsa presente nel database. Premi "Carica Risorse Standard" in alto.</td>
-                    </tr>
-                  ) : (
-                    resources
-                      .sort((a, b) => a.tipo.localeCompare(b.tipo) || a.id.localeCompare(b.id))
-                      .map(res => {
-                        let detailsStr = '';
-                        if (res.tipo === 'pc') {
-                          detailsStr = `IP: ${res.dettagli.ipAddress} | Licenza: ${res.dettagli.licenzaAutodesk} | Utente: ${res.dettagli.utenteIngegno}`;
-                        } else if (res.tipo === 'room') {
-                          detailsStr = `Sede: ${res.dettagli.sede}`;
-                        } else if (res.tipo === 'car') {
-                          detailsStr = `Modello: ${res.dettagli.modello} | Targa: ${res.dettagli.targa || '-'} | Sede: ${res.dettagli.sede}`;
-                        }
-
-                        return (
-                          <tr key={res.docId || `${res.tipo}_${res.id}`} className="border-b border-gray-50 hover:bg-gray-50/50 transition">
-                            <td className="py-3 px-4">
-                              <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
-                                res.tipo === 'pc' 
-                                  ? 'bg-teal-100 text-teal-800' 
-                                  : res.tipo === 'room' 
-                                    ? 'bg-indigo-100 text-indigo-800' 
-                                    : 'bg-amber-100 text-amber-800'
-                              }`}>
-                                {res.tipo === 'pc' ? 'Workstation' : res.tipo === 'room' ? 'Sala Riunioni' : 'Autovettura'}
-                              </span>
-                            </td>
-                            <td className="py-3 px-4 font-bold text-gray-900">{res.id}</td>
-                            <td className="py-3 px-4 font-bold text-gray-800">{res.nome}</td>
-                            <td className="py-3 px-4 text-gray-500 font-medium">{detailsStr}</td>
-                            <td className="py-3 px-4 text-center">
-                              <div className="flex items-center justify-center gap-1">
-                                <button
-                                  onClick={() => handleOpenEditResource(res)}
-                                  className="text-gray-400 hover:text-indigo-600 p-1.5 rounded-xl hover:bg-indigo-50 transition cursor-pointer"
-                                  title="Modifica risorsa"
-                                >
-                                  <Pencil className="w-4 h-4" />
-                                </button>
-                                <button
-                                  onClick={() => handleDeleteResource(res)}
-                                  className="text-gray-400 hover:text-red-600 p-1.5 rounded-xl hover:bg-red-50 transition cursor-pointer"
-                                  title="Elimina risorsa"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          )}
         </div>
       )}
 
@@ -2157,7 +3000,7 @@ export default function Prenotazioni() {
                 </h3>
                 <button 
                   onClick={() => setIsClaimPCModalOpen(false)}
-                  className="text-gray-400 hover:text-gray-600 p-1.5 rounded-xl hover:bg-gray-100 transition"
+                  className="text-gray-400 hover:text-gray-600 p-1.5 rounded-xl hover:bg-gray-100 transition cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -2245,13 +3088,13 @@ export default function Prenotazioni() {
                   <button
                     type="button"
                     onClick={() => setIsClaimPCModalOpen(false)}
-                    className="flex-1 py-3 px-4 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 hover:bg-gray-50 transition"
+                    className="flex-1 py-3 px-4 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 hover:bg-gray-50 transition cursor-pointer"
                   >
                     Annulla
                   </button>
                   <button
                     type="submit"
-                    className="flex-1 py-3 px-4 rounded-xl bg-teal-600 text-white text-xs font-bold hover:bg-teal-700 transition active:scale-95 shadow"
+                    className="flex-1 py-3 px-4 rounded-xl bg-teal-600 text-white text-xs font-bold hover:bg-teal-700 transition active:scale-95 shadow cursor-pointer"
                   >
                     Conferma Collegamento
                   </button>
@@ -2277,7 +3120,7 @@ export default function Prenotazioni() {
                 </h3>
                 <button 
                   onClick={() => setIsEditPCModalOpen(false)}
-                  className="text-gray-400 hover:text-gray-600 p-1.5 rounded-xl hover:bg-gray-100 transition"
+                  className="text-gray-400 hover:text-gray-600 p-1.5 rounded-xl hover:bg-gray-100 transition cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -2357,13 +3200,13 @@ export default function Prenotazioni() {
                   <button
                     type="button"
                     onClick={() => setIsEditPCModalOpen(false)}
-                    className="flex-1 py-3 px-4 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 hover:bg-gray-50 transition"
+                    className="flex-1 py-3 px-4 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 hover:bg-gray-50 transition cursor-pointer"
                   >
                     Annulla
                   </button>
                   <button
                     type="submit"
-                    className="flex-1 py-3 px-4 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition active:scale-95 shadow"
+                    className="flex-1 py-3 px-4 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition active:scale-95 shadow cursor-pointer"
                   >
                     Salva Modifiche
                   </button>
@@ -2383,7 +3226,7 @@ export default function Prenotazioni() {
                 <Car className="w-5 h-5 text-emerald-600" />
                 <span>Prendi in consegna auto</span>
               </h3>
-              <button onClick={() => setIsCarCheckInModalOpen(false)} className="text-gray-400 hover:text-gray-600 p-1">
+              <button onClick={() => setIsCarCheckInModalOpen(false)} className="text-gray-400 hover:text-gray-600 p-1 cursor-pointer">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -2405,13 +3248,13 @@ export default function Prenotazioni() {
                 <button
                   type="button"
                   onClick={() => setIsCarCheckInModalOpen(false)}
-                  className="flex-1 py-3 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 hover:bg-gray-50 transition"
+                  className="flex-1 py-3 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 hover:bg-gray-50 transition cursor-pointer"
                 >
                   Annulla
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-3 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition"
+                  className="flex-1 py-3 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition cursor-pointer"
                 >
                   Inizia Viaggio
                 </button>
@@ -2430,7 +3273,7 @@ export default function Prenotazioni() {
                 <Car className="w-5 h-5 text-amber-600" />
                 <span>Restituisci auto aziendale</span>
               </h3>
-              <button onClick={() => setIsCarCheckOutModalOpen(false)} className="text-gray-400 hover:text-gray-600 p-1">
+              <button onClick={() => setIsCarCheckOutModalOpen(false)} className="text-gray-400 hover:text-gray-600 p-1 cursor-pointer">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -2467,13 +3310,13 @@ export default function Prenotazioni() {
                 <button
                   type="button"
                   onClick={() => setIsCarCheckOutModalOpen(false)}
-                  className="flex-1 py-3 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 hover:bg-gray-50 transition"
+                  className="flex-1 py-3 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 hover:bg-gray-50 transition cursor-pointer"
                 >
                   Annulla
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-3 rounded-xl bg-amber-600 text-white text-xs font-bold hover:bg-amber-700 transition"
+                  className="flex-1 py-3 rounded-xl bg-amber-600 text-white text-xs font-bold hover:bg-amber-700 transition cursor-pointer"
                 >
                   Termina Utilizzo
                 </button>
@@ -2492,7 +3335,7 @@ export default function Prenotazioni() {
                 <Plus className="w-5 h-5 text-indigo-600" />
                 <span>Aggiungi Nuova Risorsa</span>
               </h3>
-              <button onClick={() => setIsAdminAddResourceOpen(false)} className="text-gray-400 hover:text-gray-600 p-1">
+              <button onClick={() => setIsAdminAddResourceOpen(false)} className="text-gray-400 hover:text-gray-600 p-1 cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -2502,21 +3345,22 @@ export default function Prenotazioni() {
                 <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Tipo Risorsa</label>
                 <select
                   value={newResourceData.tipo}
-                  onChange={e => setNewResourceData(prev => ({ ...prev, tipo: e.target.value as 'pc' | 'room' | 'car' }))}
+                  onChange={e => setNewResourceData(prev => ({ ...prev, tipo: e.target.value as 'pc' | 'room' | 'car' | 'software_key' }))}
                   className="w-full p-3 text-sm border-none rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 shadow-inner font-bold text-gray-700 outline-none"
                 >
                   <option value="pc">Postazione CAD (PC Remoto)</option>
+                  <option value="software_key">Chiavetta / Licenza Software ACCA</option>
                   <option value="room">Sala Riunioni</option>
                   <option value="car">Autovettura Aziendale</option>
                 </select>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Identificativo Risorsa (ID unico, es. ING_PC_20, diaz, panda)</label>
+                <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Identificativo Risorsa (ID unico, es. KEY_EDILUS_USB, ING_WSN_20)</label>
                 <input
                   required
                   type="text"
-                  placeholder="Es. ING_WSN_20 o diaz"
+                  placeholder="Es. KEY_EDILUS_USB o ING_WSN_20"
                   value={newResourceData.id}
                   onChange={e => setNewResourceData(prev => ({ ...prev, id: e.target.value }))}
                   className="w-full p-3 text-sm border-none rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 shadow-inner font-bold text-gray-700 outline-none"
@@ -2524,11 +3368,11 @@ export default function Prenotazioni() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Nome Display (es. Sala Diaz, ING_WSN_20)</label>
+                <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Nome Display (es. EdiLus Chiavetta, Sala Diaz)</label>
                 <input
                   required
                   type="text"
-                  placeholder="Es. Sala Diaz o Fiat C3"
+                  placeholder="Es. EdiLus (Chiavetta USB) o Sala Diaz"
                   value={newResourceData.nome}
                   onChange={e => setNewResourceData(prev => ({ ...prev, nome: e.target.value }))}
                   className="w-full p-3 text-sm border-none rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 shadow-inner font-bold text-gray-700 outline-none"
@@ -2596,6 +3440,69 @@ export default function Prenotazioni() {
                 </div>
               )}
 
+              {/* Software Key Specific Details */}
+              {newResourceData.tipo === 'software_key' && (
+                <div className="space-y-4 border-t border-gray-100 pt-3">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Programma</label>
+                    <select
+                      value={newResourceData.programma}
+                      onChange={e => setNewResourceData(prev => ({ ...prev, programma: e.target.value }))}
+                      className="w-full p-3 text-sm border-none rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 shadow-inner font-bold text-gray-700 outline-none"
+                    >
+                      <option value="EDILUS">EDILUS</option>
+                      <option value="PRIMUS">PRIMUS</option>
+                      <option value="SOLARIUS">SOLARIUS</option>
+                      <option value="TERMUS">TERMUS</option>
+                      <option value="ALTRO">ALTRO SOFTWARE</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Tipo Licenza</label>
+                    <input
+                      required
+                      type="text"
+                      placeholder="Es. chiavetta USB o 2° licenza senza USB"
+                      value={newResourceData.tipoLicenza}
+                      onChange={e => setNewResourceData(prev => ({ ...prev, tipoLicenza: e.target.value }))}
+                      className="w-full p-3 text-sm border-none rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 shadow-inner font-bold text-gray-700 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Versione Software</label>
+                    <input
+                      required
+                      type="text"
+                      placeholder="Es. PriMus usBIM (PowerPack) o TerMus BIM + E 52.00"
+                      value={newResourceData.versioneSoftware}
+                      onChange={e => setNewResourceData(prev => ({ ...prev, versioneSoftware: e.target.value }))}
+                      className="w-full p-3 text-sm border-none rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 shadow-inner font-bold text-gray-700 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Servizi Attivi</label>
+                    <input
+                      type="text"
+                      placeholder="Es. AmicUS o POWER PACK"
+                      value={newResourceData.serviziAttivi}
+                      onChange={e => setNewResourceData(prev => ({ ...prev, serviziAttivi: e.target.value }))}
+                      className="w-full p-3 text-sm border-none rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 shadow-inner font-bold text-gray-700 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Numero di Serie / ID Licenza</label>
+                    <input
+                      required
+                      type="text"
+                      placeholder="Es. 20020677 o 13041419"
+                      value={newResourceData.numeroSerie}
+                      onChange={e => setNewResourceData(prev => ({ ...prev, numeroSerie: e.target.value }))}
+                      className="w-full p-3 text-sm border-none rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 shadow-inner font-bold text-gray-700 outline-none font-mono"
+                    />
+                  </div>
+                </div>
+              )}
+
               {/* Room Specific Details */}
               {newResourceData.tipo === 'room' && (
                 <div className="space-y-4 border-t border-gray-100 pt-3">
@@ -2656,13 +3563,13 @@ export default function Prenotazioni() {
                 <button
                   type="button"
                   onClick={() => setIsAdminAddResourceOpen(false)}
-                  className="flex-1 py-3.5 px-4 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 hover:bg-gray-50 transition"
+                  className="flex-1 py-3.5 px-4 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 hover:bg-gray-50 transition cursor-pointer"
                 >
                   Annulla
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-3.5 px-4 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition active:scale-95 shadow"
+                  className="flex-1 py-3.5 px-4 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition active:scale-95 shadow cursor-pointer"
                 >
                   Salva Risorsa
                 </button>
@@ -2681,7 +3588,7 @@ export default function Prenotazioni() {
                 <Pencil className="w-5 h-5 text-indigo-600" />
                 <span>Modifica Risorsa ({editResourceData.id})</span>
               </h3>
-              <button onClick={() => setIsAdminEditResourceOpen(false)} className="text-gray-400 hover:text-gray-600 p-1">
+              <button onClick={() => setIsAdminEditResourceOpen(false)} className="text-gray-400 hover:text-gray-600 p-1 cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -2695,6 +3602,7 @@ export default function Prenotazioni() {
                   className="w-full p-3 text-sm border-none rounded-xl bg-gray-100 font-bold text-gray-700 outline-none cursor-not-allowed"
                 >
                   <option value="pc">Postazione CAD (PC Remoto)</option>
+                  <option value="software_key">Chiavetta / Licenza Software ACCA</option>
                   <option value="room">Sala Riunioni</option>
                   <option value="car">Autovettura Aziendale</option>
                 </select>
@@ -2788,6 +3696,69 @@ export default function Prenotazioni() {
                 </div>
               )}
 
+              {/* Software Key Specific Details */}
+              {editResourceData.tipo === 'software_key' && (
+                <div className="space-y-4 border-t border-gray-100 pt-3">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Programma</label>
+                    <select
+                      value={editResourceData.programma}
+                      onChange={e => setEditResourceData(prev => ({ ...prev, programma: e.target.value }))}
+                      className="w-full p-3 text-sm border-none rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 shadow-inner font-bold text-gray-700 outline-none"
+                    >
+                      <option value="EDILUS">EDILUS</option>
+                      <option value="PRIMUS">PRIMUS</option>
+                      <option value="SOLARIUS">SOLARIUS</option>
+                      <option value="TERMUS">TERMUS</option>
+                      <option value="ALTRO">ALTRO SOFTWARE</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Tipo Licenza</label>
+                    <input
+                      required
+                      type="text"
+                      placeholder="Es. chiavetta USB o 2° licenza senza USB"
+                      value={editResourceData.tipoLicenza}
+                      onChange={e => setEditResourceData(prev => ({ ...prev, tipoLicenza: e.target.value }))}
+                      className="w-full p-3 text-sm border-none rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 shadow-inner font-bold text-gray-700 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Versione Software</label>
+                    <input
+                      required
+                      type="text"
+                      placeholder="Es. PriMus usBIM (PowerPack) o TerMus BIM + E 52.00"
+                      value={editResourceData.versioneSoftware}
+                      onChange={e => setEditResourceData(prev => ({ ...prev, versioneSoftware: e.target.value }))}
+                      className="w-full p-3 text-sm border-none rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 shadow-inner font-bold text-gray-700 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Servizi Attivi</label>
+                    <input
+                      type="text"
+                      placeholder="Es. AmicUS o POWER PACK"
+                      value={editResourceData.serviziAttivi}
+                      onChange={e => setEditResourceData(prev => ({ ...prev, serviziAttivi: e.target.value }))}
+                      className="w-full p-3 text-sm border-none rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 shadow-inner font-bold text-gray-700 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-600 mb-1.5 ml-1">Numero di Serie / ID Licenza</label>
+                    <input
+                      required
+                      type="text"
+                      placeholder="Es. 20020677 o 13041419"
+                      value={editResourceData.numeroSerie}
+                      onChange={e => setEditResourceData(prev => ({ ...prev, numeroSerie: e.target.value }))}
+                      className="w-full p-3 text-sm border-none rounded-xl bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-500 shadow-inner font-bold text-gray-700 outline-none font-mono"
+                    />
+                  </div>
+                </div>
+              )}
+
               {/* Room Specific Details */}
               {editResourceData.tipo === 'room' && (
                 <div className="space-y-4 border-t border-gray-100 pt-3">
@@ -2848,13 +3819,13 @@ export default function Prenotazioni() {
                 <button
                   type="button"
                   onClick={() => setIsAdminEditResourceOpen(false)}
-                  className="flex-1 py-3.5 px-4 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 hover:bg-gray-50 transition"
+                  className="flex-1 py-3.5 px-4 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 hover:bg-gray-50 transition cursor-pointer"
                 >
                   Annulla
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-3.5 px-4 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition active:scale-95 shadow"
+                  className="flex-1 py-3.5 px-4 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition active:scale-95 shadow cursor-pointer"
                 >
                   Aggiorna Risorsa
                 </button>

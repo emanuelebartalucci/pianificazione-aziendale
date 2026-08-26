@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
+import { useAuth, isTechnicalUser, areNamesEqual } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, doc, setDoc, getDocs, query, where, updateDoc, getDoc, deleteDoc, deleteField } from 'firebase/firestore';
 import { FileText, Printer, Save, Send, CheckCircle, AlertCircle, Edit, Edit3, Trash2, MessageSquare, Clock, MapPin, Check, X, ShieldAlert, Download, RefreshCw, Plus, Bell, ChevronRight } from 'lucide-react';
@@ -2055,8 +2055,9 @@ export default function Presenze() {
             await saveCollabProfileRates(reviewingRapportino.collaboratoreData, reviewingRapportino.dipendenteNome);
           }
 
-          // Invia notifica personale informativa al dipendente/collaboratore
-          if (reviewingRapportino.dipendenteEmail) {
+          // Invia notifica personale informativa al dipendente/collaboratore (solo se non è l'utente operante)
+          const isSelfTarget = (reviewingRapportino.dipendenteEmail?.toLowerCase() === (userEmail || '').toLowerCase()) || (myAssociatedName && areNamesEqual(reviewingRapportino.dipendenteNome, myAssociatedName));
+          if (reviewingRapportino.dipendenteEmail && !isSelfTarget) {
             const meseLabel = MESI[reviewingRapportino.mese - 1] || `Mese ${reviewingRapportino.mese}`;
             await createUserNotification({
               destinatarioEmail: reviewingRapportino.dipendenteEmail,

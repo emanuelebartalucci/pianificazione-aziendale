@@ -1,4 +1,4 @@
-import { LogOut, Home, KeyRound, X, Shield, RefreshCw, Network, Bell, CheckCircle2, FileText, Calendar, Check, Clock, ExternalLink, Phone } from 'lucide-react';
+import { LogOut, Home, KeyRound, X, Shield, RefreshCw, Network, Bell, CheckCircle2, FileText, Calendar, Check, Clock, Phone } from 'lucide-react';
 import { signOut, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from 'firebase/auth';
 import { auth, db } from '../services/firebase';
 import { collection, query, where, getDocs } from 'firebase/firestore';
@@ -128,11 +128,26 @@ export default function Navbar() {
     userNotif?: UserNotification;
   }
 
+  // Deduplicazione delle notifiche utente per evitare ripetizioni identiche a schermo
+  const deduplicatedUserNotifs = useMemo(() => {
+    const seen = new Set<string>();
+    const res: UserNotification[] = [];
+    userNotifications.forEach(n => {
+      const normMsg = (n.messaggio || '').trim();
+      const key = `${n.titolo}_${normMsg}_${n.link || ''}_${n.letta}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        res.push(n);
+      }
+    });
+    return res;
+  }, [userNotifications]);
+
   const filteredHistoryItems = useMemo((): UnifiedHistoryItem[] => {
     let list: UnifiedHistoryItem[] = [];
 
     if (notifFilter === 'unread') {
-      list = userNotifications
+      list = deduplicatedUserNotifs
         .filter(n => !n.letta)
         .map(n => ({
           id: n.id || `un-${Math.random()}`,
@@ -158,7 +173,7 @@ export default function Navbar() {
         letta: true
       }));
 
-      const usrRead: UnifiedHistoryItem[] = userNotifications
+      const usrRead: UnifiedHistoryItem[] = deduplicatedUserNotifs
         .filter(n => n.letta)
         .map(n => ({
           id: n.id || `un-${Math.random()}`,
@@ -187,7 +202,7 @@ export default function Navbar() {
         letta: true
       }));
 
-      const usrAll: UnifiedHistoryItem[] = userNotifications.map(n => ({
+      const usrAll: UnifiedHistoryItem[] = deduplicatedUserNotifs.map(n => ({
         id: n.id || `un-${Math.random()}`,
         isOperative: false,
         titolo: n.titolo,
@@ -203,7 +218,7 @@ export default function Navbar() {
     }
 
     return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [userNotifications, managedOperativeItems, notifFilter]);
+  }, [deduplicatedUserNotifs, managedOperativeItems, notifFilter]);
 
   const visibleHistoryItems = useMemo(() => {
     return filteredHistoryItems.slice(0, visibleNotifLimit);
@@ -648,12 +663,13 @@ export default function Navbar() {
                               return (
                                 <div
                                   key={item.id}
-                                  onClick={() => isUnread && handleNotifClick(n)}
-                                  className={`p-3.5 flex items-start gap-3 transition-colors ${
+                                  onClick={() => handleNotifClick(n)}
+                                  className={`p-3.5 flex items-start gap-3 transition-colors cursor-pointer ${
                                     isUnread 
-                                      ? 'bg-blue-50/30 border-l-4 border-blue-500 hover:bg-blue-50/50 cursor-pointer' 
-                                      : 'bg-white select-text cursor-default'
+                                      ? 'bg-blue-50/30 border-l-4 border-blue-500 hover:bg-blue-50/60' 
+                                      : 'bg-white hover:bg-gray-50'
                                   }`}
+                                  title={n.link ? "Clicca per aprire la sezione" : undefined}
                                 >
                                   <div className="mt-0.5 p-2 rounded-xl bg-gray-50 border border-gray-100 shrink-0 shadow-2xs">
                                     {getNotifIcon(n.tipo)}
@@ -671,11 +687,6 @@ export default function Navbar() {
                                     <p className="text-[11px] text-gray-600 line-clamp-2 leading-relaxed">
                                       {n.messaggio}
                                     </p>
-                                    {isUnread && n.link && (
-                                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-600 mt-1 hover:underline">
-                                        Visualizza <ExternalLink className="w-2.5 h-2.5" />
-                                      </span>
-                                    )}
                                   </div>
                                   {isUnread && (
                                     <span className="w-2 h-2 rounded-full bg-blue-600 shrink-0 mt-1.5" title="Non letta" />

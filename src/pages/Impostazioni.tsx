@@ -1896,7 +1896,7 @@ export default function Impostazioni() {
                 const sampleVars: Record<string, string> = {};
                 currentTmplDef.placeholders.forEach(p => { sampleVars[p.code] = p.sample; });
 
-                const isLegacyBody = !editBody.includes('background: linear-gradient');
+                const isLegacyBody = editBody.includes('max-width: 680px') || editBody.includes('-apple-system') || editBody.includes('overflow: hidden');
                 const bodyToRender = isLegacyBody ? currentTmplDef.defaultBody : editBody;
                 const subjToRender = isLegacyBody ? currentTmplDef.defaultSubject : editSubject;
 

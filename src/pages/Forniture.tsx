@@ -33,7 +33,7 @@ import {
 import ConfirmModal from '../components/ConfirmModal';
 import { createUserNotification } from '../utils/userNotificationService';
 
-export type SedeAziendale = 'Sede Via Diaz' | 'Sede Via Gramsci';
+export type SedeAziendale = 'Sede Via Diaz' | 'Sede Via Gramsci' | 'Sede Siena/Rosia';
 
 export type CategoriaFornitura = 
   | 'Distributore Caffè'
@@ -482,8 +482,8 @@ export default function Forniture() {
               <h2 className="text-base font-extrabold text-gray-900">Seleziona la Sede di Riferimento</h2>
             </div>
             
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {(['Sede Via Diaz', 'Sede Via Gramsci'] as const).map(sedeName => {
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {(['Sede Via Diaz', 'Sede Via Gramsci', 'Sede Siena/Rosia'] as const).map(sedeName => {
                 const isSelected = selectedSede === sedeName;
                 return (
                   <div
