@@ -235,6 +235,7 @@ export default function Commesse() {
     approvedLeaves = [], 
     coordinatori = [], 
     pmsEmails = [],
+    responsabiliCommesseEmails = [],
     prioritaCommesse = {},
     loadPlanningData,
     loadAllCommesse,
@@ -1712,18 +1713,28 @@ export default function Commesse() {
   }, [selectedClient, newCommessaTipologia, newCommessaAnno, commesse]);
 
   const responsabiliMacroAreeList = useMemo(() => {
-    const coordEmails = new Set((coordinatori || []).map(c => (c && c.email && typeof c.email === 'string') ? c.email.toLowerCase() : '').filter(Boolean));
+    const explicitEmails = new Set((responsabiliCommesseEmails || []).map(e => (e || '').toLowerCase().trim()).filter(Boolean));
     const sociIdentifiers = ['aprofeti@ingegno06.it', 'mcorbellini@ingegno06.it', 'profeti andrea', 'corbellini matteo', 'profeti', 'corbellini'];
 
     return (dipendenti || []).filter(d => {
       if (!d || !d.nome) return false;
-      const dEmail = (d.email || '').toLowerCase();
-      const dNome = d.nome.toLowerCase();
-      const isCoord = dEmail && coordEmails.has(dEmail);
+      const dEmail = (d.email || '').toLowerCase().trim();
+      const dNome = d.nome.toLowerCase().trim();
       const isSocio = sociIdentifiers.some(s => dEmail.includes(s) || dNome.includes(s));
-      return isCoord || isSocio;
+
+      // Se sono presenti Responsabili espliciti configurati in Impostazioni, usa quella lista (+ Soci)
+      if (explicitEmails.size > 0) {
+        return isSocio || explicitEmails.has(dEmail);
+      }
+
+      // Fallback predefinito: esclude esplicitamente Marchetti Davide e Romanello Andrea
+      const isExcluded = dEmail.includes('marchetti') || dNome.includes('marchetti') || dEmail.includes('romanello') || dNome.includes('romanello');
+      if (isExcluded) return false;
+
+      const coordEmails = new Set((coordinatori || []).map(c => (c && c.email && typeof c.email === 'string') ? c.email.toLowerCase().trim() : '').filter(Boolean));
+      return isSocio || coordEmails.has(dEmail);
     });
-  }, [dipendenti, coordinatori]);
+  }, [dipendenti, coordinatori, responsabiliCommesseEmails]);
 
   const pmsList = useMemo(() => {
     const safePms = (pmsEmails || []).map(e => (e && typeof e === 'string') ? e.toLowerCase() : '').filter(Boolean);

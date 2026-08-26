@@ -138,6 +138,7 @@ interface AuthContextType {
   isCommerciale: boolean;
   gestoriCommesseEmails: string[];
   isGestoreCommesse: boolean;
+  responsabiliCommesseEmails: string[];
   gestoriFornitureEmails: string[];
   isGestoreForniture: boolean;
   prioritaCommesse: Record<string, 'Alta' | 'Standard' | 'Bassa'>;
@@ -187,6 +188,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   // seniorsEmails: rimosso il fetch Firestore, ora sempre array vuoto per retrocompatibilità
   const [dynamicCommerciali, setDynamicCommerciali] = useState<string[]>([]);
   const [dynamicGestoriCommesse, setDynamicGestoriCommesse] = useState<string[]>([]);
+  const [dynamicResponsabiliCommesse, setDynamicResponsabiliCommesse] = useState<string[]>([]);
   const [dynamicGestoriForniture, setDynamicGestoriForniture] = useState<string[]>([]);
   const [prioritaCommesse, setPrioritaCommesse] = useState<Record<string, 'Alta' | 'Standard' | 'Bassa'>>({});
   const [isPlanningLoaded, setIsPlanningLoaded] = useState(false);
@@ -199,6 +201,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         hrsSnap,
         devsSnap,
         gestoriSnap,
+        responsabiliCommesseSnap,
         gestoriFornitureSnap,
         dipendentiSnap,
         coordinatoriSnap,
@@ -212,6 +215,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         getDocs(collection(db, 'hr')),
         getDocs(collection(db, 'sviluppatori')),
         getDocs(collection(db, 'gestori_commesse')),
+        getDocs(collection(db, 'responsabili_commesse')),
         getDocs(collection(db, 'gestori_forniture')),
         getDocs(collection(db, 'dipendenti')),
         getDocs(collection(db, 'coordinatori')),
@@ -241,7 +245,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const gestoriList = gestoriSnap.docs.map(doc => (doc.data().email || '').toLowerCase().trim()).filter(Boolean);
       setDynamicGestoriCommesse(gestoriList);
 
-      // 4b. Gestori forniture & materiali
+      // 4b. Responsabili commesse
+      const respCommesseList = responsabiliCommesseSnap.docs.map(doc => (doc.data().email || '').toLowerCase().trim()).filter(Boolean);
+      setDynamicResponsabiliCommesse(respCommesseList);
+
+      // 4c. Gestori forniture & materiali
       const fornitureList = gestoriFornitureSnap.docs.map(doc => (doc.data().email || '').toLowerCase().trim()).filter(Boolean);
       setDynamicGestoriForniture(fornitureList);
 
@@ -537,6 +545,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setPmsEmails([]);
         setDynamicCommerciali([]);
         setDynamicGestoriCommesse([]);
+        setDynamicResponsabiliCommesse([]);
         setDynamicGestoriForniture([]);
         setPrioritaCommesse({});
         setLoading(false);
@@ -732,6 +741,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       isCommerciale,
       gestoriCommesseEmails: dynamicGestoriCommesse,
       isGestoreCommesse,
+      responsabiliCommesseEmails: dynamicResponsabiliCommesse,
       gestoriFornitureEmails: dynamicGestoriForniture,
       isGestoreForniture,
       prioritaCommesse,

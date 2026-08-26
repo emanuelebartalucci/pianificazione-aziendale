@@ -222,6 +222,8 @@ export default function Impostazioni() {
   const [gestoriCommesseList, setGestoriCommesseList] = useState<{id: string, email: string}[]>([]);
   const [newGestoreFornitureEmail, setNewGestoreFornitureEmail] = useState('');
   const [gestoriFornitureList, setGestoriFornitureList] = useState<{id: string, email: string}[]>([]);
+  const [newResponsabileCommessaEmail, setNewResponsabileCommessaEmail] = useState('');
+  const [responsabiliCommesseList, setResponsabiliCommesseList] = useState<{id: string, email: string}[]>([]);
 
   const [editingEmployeeAreaId, setEditingEmployeeAreaId] = useState<string | null>(null);
   
@@ -230,14 +232,15 @@ export default function Impostazioni() {
   const loadImpostazioniLists = async () => {
     if (!isDev) return;
     try {
-      const [snapA, snapH, snapD, snapC, snapPM, snapGC, snapGF] = await Promise.all([
+      const [snapA, snapH, snapD, snapC, snapPM, snapGC, snapGF, snapRC] = await Promise.all([
         getDocs(collection(db, 'admins')),
         getDocs(collection(db, 'hr')),
         getDocs(collection(db, 'sviluppatori')),
         getDocs(collection(db, 'clienti')),
         getDocs(collection(db, 'project_managers')),
         getDocs(collection(db, 'gestori_commesse')),
-        getDocs(collection(db, 'gestori_forniture'))
+        getDocs(collection(db, 'gestori_forniture')),
+        getDocs(collection(db, 'responsabili_commesse'))
       ]);
 
       setAdminsList(snapA.docs.map(d => ({ id: d.id, email: d.data().email })));
@@ -251,6 +254,7 @@ export default function Impostazioni() {
       setPmsList(snapPM.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
       setGestoriCommesseList(snapGC.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
       setGestoriFornitureList(snapGF.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
+      setResponsabiliCommesseList(snapRC.docs.map(d => ({ id: d.id, email: d.data().email || '' })).filter(x => x.email));
     } catch (err) {
       console.error("Errore caricamento liste impostazioni:", err);
     }
@@ -372,6 +376,28 @@ export default function Impostazioni() {
     await refreshData();
     await loadImpostazioniLists();
     showToast("Gestore Forniture rimosso con successo!", "success");
+  };
+
+  const handleAddResponsabileCommessa = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newResponsabileCommessaEmail) {
+      if (responsabiliCommesseList.some(r => r.email.toLowerCase().trim() === newResponsabileCommessaEmail.toLowerCase().trim())) {
+        showToast("Questo utente è già un Responsabile di Commessa.", "warning");
+        return;
+      }
+      await addDoc(collection(db, 'responsabili_commesse'), { email: newResponsabileCommessaEmail.toLowerCase().trim() });
+      await refreshData();
+      await loadImpostazioniLists();
+      setNewResponsabileCommessaEmail('');
+      showToast("Responsabile di Commessa aggiunto con successo!", "success");
+    }
+  };
+
+  const handleRemoveResponsabileCommessa = async (id: string) => {
+    await deleteDoc(doc(db, 'responsabili_commesse', id));
+    await refreshData();
+    await loadImpostazioniLists();
+    showToast("Responsabile di Commessa rimosso con successo!", "success");
   };
 
 
@@ -701,6 +727,16 @@ export default function Impostazioni() {
       }))
       .sort((a, b) => a.name.localeCompare(b.name, 'it'));
   }, [gestoriFornitureList, dipendenti]);
+
+  const sortedResponsabiliCommesseList = useMemo(() => {
+    return responsabiliCommesseList
+      .map(r => ({
+        id: r.id,
+        email: r.email,
+        name: getDipNomeFromEmail(r.email)
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'it'));
+  }, [responsabiliCommesseList, dipendenti]);
 
   const maxCoordinatorsCount = useMemo(() => {
     const counts = (['Disegnatori', 'Ingegneria', 'Sicurezza Cantieri', 'Consulenza Sicurezza', 'Amministrazione'] as const).map(
@@ -1119,6 +1155,40 @@ export default function Impostazioni() {
                           <div className="text-xs text-amber-700/70">{g.email}</div>
                         </div>
                         <button onClick={() => handleRemoveGestoreForniture(g.id)} className="text-amber-500 hover:text-red-600 p-1 cursor-pointer"><Trash2 className="w-4 h-4"/></button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </section>
+
+              {/* Responsabili di Commessa */}
+              <section className="bg-gradient-to-br from-indigo-50 via-slate-50 to-blue-50/50 p-6 rounded-3xl border border-indigo-100 shadow-sm h-full flex flex-col justify-between">
+                <div>
+                  <h3 className="text-xl font-bold text-indigo-950 mb-1 flex items-center gap-2">
+                    <UserCheck className="w-6 h-6 text-indigo-600" /> Responsabili di Commessa
+                  </h3>
+                  <p className="text-xs text-indigo-800/80 mb-4">Dipendenti e Soci selezionabili come Responsabili formali in apertura e modifica commessa.</p>
+                  <form onSubmit={handleAddResponsabileCommessa} className="flex gap-2 mb-4">
+                    <select required value={newResponsabileCommessaEmail} onChange={e => setNewResponsabileCommessaEmail(e.target.value)} className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition shadow-inner font-medium text-indigo-950 text-xs">
+                      <option value="">Seleziona dipendente</option>
+                      {sortedDipendentiWithEmail
+                        .filter((d: any) => !responsabiliCommesseList.some(r => (r.email || '').toLowerCase().trim() === (d.email || '').toLowerCase().trim()))
+                        .map((d: any) => <option key={d.id} value={d.email}>{d.nome}</option>)}
+                    </select>
+                    <button type="submit" className="bg-indigo-600 text-white px-4 py-3 rounded-xl hover:bg-indigo-700 transition font-bold shadow-md active:scale-95 text-xs cursor-pointer">Nomina</button>
+                  </form>
+                </div>
+                <div className="h-48 overflow-y-auto bg-white/50 rounded-xl divide-y border border-indigo-100">
+                  {sortedResponsabiliCommesseList.length === 0 ? (
+                    <p className="p-4 text-xs text-gray-400 italic font-bold">Nessun Responsabile configurato. (Vengono usati i Soci e i Coordinatori abilitati come fallback).</p>
+                  ) : (
+                    sortedResponsabiliCommesseList.map((r: any) => (
+                      <div key={r.id} className="p-3 flex justify-between items-center text-sm">
+                        <div>
+                          <div className="font-bold text-indigo-950">{r.name}</div>
+                          <div className="text-xs text-indigo-700/70">{r.email}</div>
+                        </div>
+                        <button onClick={() => handleRemoveResponsabileCommessa(r.id)} className="text-indigo-400 hover:text-red-600 p-1 cursor-pointer" title="Rimuovi Responsabile"><Trash2 className="w-4 h-4"/></button>
                       </div>
                     ))
                   )}
