@@ -269,6 +269,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           macroArea: doc.data().macroArea,
           dataCessazione: doc.data().dataCessazione || '',
           dataNascita: doc.data().dataNascita || '',
+          orarioSettimanale: doc.data().orarioSettimanale || undefined,
           notificheEmail: doc.data().notificheEmail === true,
         }))
         .filter(d => !isTechnicalUser(d));

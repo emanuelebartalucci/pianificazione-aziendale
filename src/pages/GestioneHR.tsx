@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, addDoc, doc, deleteDoc, query, orderBy, setDoc, getDocs, getDoc, limit } from 'firebase/firestore';
-import { MessageSquare, Plus, Trash2, Edit, HeartPulse, Lightbulb, FileText, RefreshCw, Archive, Download, Smile, Eye, Users } from 'lucide-react';
+import { collection, addDoc, doc, deleteDoc, setDoc, getDocs, getDoc } from 'firebase/firestore';
+import { MessageSquare, Plus, Trash2, Edit, HeartPulse, Lightbulb, FileText, RefreshCw, Download, Smile, Eye, Users, CheckCircle2, Clock, FolderPlus, Tag } from 'lucide-react';
 import ConfirmModal from '../components/ConfirmModal';
 import QuestionnaireModal from '../components/QuestionnaireModal';
 import AnagraficaRisorseSection from '../components/AnagraficaRisorseSection';
@@ -167,6 +167,8 @@ export default function GestioneHR() {
 
   // 4. Cassetta Idee / Suggerimenti
   const [suggerimenti, setSuggerimenti] = useState<Suggerimento[]>([]);
+  const [categories, setCategories] = useState<{ id: string; nome: string }[]>([]);
+  const [newCategoryName, setNewCategoryName] = useState('');
 
   const [confirmConfig, setConfirmConfig] = useState<{
     isOpen: boolean;
@@ -199,11 +201,22 @@ export default function GestioneHR() {
     });
   };
 
+  const sortCategoriesWithAltroLast = (list: { id: string; nome: string }[]): { id: string; nome: string }[] => {
+    return [...list].sort((a, b) => {
+      const isAltroA = a.nome.trim().toLowerCase() === 'altro';
+      const isAltroB = b.nome.trim().toLowerCase() === 'altro';
+      if (isAltroA && !isAltroB) return 1;
+      if (!isAltroA && isAltroB) return -1;
+      return a.nome.localeCompare(b.nome, 'it', { sensitivity: 'base' });
+    });
+  };
+
   // Caricamento Dati Generali HR
   const loadData = async () => {
     if (!isHR && !isDev) return;
+
+    // 1. Frasi di Benvenuto
     try {
-      // Frasi di Benvenuto
       const greetSnap = await getDocs(collection(db, 'dashboard_greetings'));
       const greetList: { id: string; testo: string; time: number; createdAt?: string }[] = [];
 
@@ -232,19 +245,25 @@ export default function GestioneHR() {
         });
       });
 
-      // Ordinamento dalla più recente alla meno recente (time desc).
-      // Le nuove frasi con timestamp recente vanno SEMPRE in cima.
       greetList.sort((a, b) => b.time - a.time);
-
       setGreetingsList(greetList);
+    } catch (err) {
+      console.error("Errore caricamento frasi benvenuto:", err);
+    }
 
-      // Clima
-      const climaSnap = await getDocs(query(collection(db, 'risposte_clima'), orderBy('createdAt', 'desc'), limit(100)));
+    // 2. Clima
+    try {
+      const climaSnap = await getDocs(collection(db, 'risposte_clima'));
       const climaList: RispostaClima[] = [];
       climaSnap.forEach(d => climaList.push({ id: d.id, ...d.data() } as RispostaClima));
-      setClimaResponses(climaList);
+      climaList.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+      setClimaResponses(climaList.slice(0, 100));
+    } catch (err) {
+      console.error("Errore caricamento risposte clima:", err);
+    }
 
-      // Questionario Config
+    // 3. Questionario Config
+    try {
       const questDoc = await getDoc(doc(db, 'configurazioni', 'questionario'));
       if (questDoc.exists()) {
         setActiveQuestionnaire(questDoc.data() as any);
@@ -253,15 +272,48 @@ export default function GestioneHR() {
         await setDoc(doc(db, 'configurazioni', 'questionario'), initialConfig);
         setActiveQuestionnaire(initialConfig);
       }
+    } catch (err) {
+      console.error("Errore configurazione questionario:", err);
+    }
 
-      // Risposte Questionario
+    // 4. Risposte Questionario
+    try {
       const ansSnap = await getDocs(collection(db, 'risposte_questionario'));
       const ansList: any[] = [];
       ansSnap.forEach(d => ansList.push({ id: d.id, ...d.data() }));
       setQuestionAnswers(ansList);
+    } catch (err) {
+      console.error("Errore risposte questionario:", err);
+    }
 
-      // Suggerimenti
-      const sugSnap = await getDocs(query(collection(db, 'suggerimenti'), orderBy('data', 'desc')));
+    // 5. Categorie Suggerimenti
+    try {
+      const catSnap = await getDocs(collection(db, 'categorie_suggerimenti'));
+      if (catSnap.empty) {
+        const defaultCats = ['Ambiente di lavoro', 'Strumenti e Risorse', 'Processi e Organizzazione', 'Altro'];
+        await Promise.all(defaultCats.map(catName => addDoc(collection(db, 'categorie_suggerimenti'), { nome: catName })));
+        const reloadSnap = await getDocs(collection(db, 'categorie_suggerimenti'));
+        const list: { id: string; nome: string }[] = [];
+        reloadSnap.forEach(d => {
+          const name = d.data().nome || d.data().name || d.data().categoria || d.data().titolo || '';
+          if (name) list.push({ id: d.id, nome: name });
+        });
+        setCategories(sortCategoriesWithAltroLast(list));
+      } else {
+        const list: { id: string; nome: string }[] = [];
+        catSnap.forEach(d => {
+          const name = d.data().nome || d.data().name || d.data().categoria || d.data().titolo || '';
+          if (name) list.push({ id: d.id, nome: name });
+        });
+        setCategories(sortCategoriesWithAltroLast(list));
+      }
+    } catch (err) {
+      console.error("Errore caricamento categorie suggerimenti:", err);
+    }
+
+    // 6. Suggerimenti
+    try {
+      const sugSnap = await getDocs(collection(db, 'suggerimenti'));
       const sugList: Suggerimento[] = [];
       sugSnap.forEach(d => {
         const data = d.data();
@@ -273,9 +325,10 @@ export default function GestioneHR() {
           stato: data.stato || 'Nuovo'
         });
       });
+      sugList.sort((a, b) => (b.data || '').localeCompare(a.data || ''));
       setSuggerimenti(sugList);
     } catch (err) {
-      console.error("Errore caricamento dati HR:", err);
+      console.error("Errore caricamento suggerimenti:", err);
     }
   };
 
@@ -490,7 +543,7 @@ export default function GestioneHR() {
     try {
       await setDoc(doc(db, 'suggerimenti', id), { stato: newStato }, { merge: true });
       loadData();
-      showToast(`Stato aggiornato a ${newStato}`);
+      showToast(newStato === 'Letto' ? "Suggerimento contrassegnato come Letto!" : "Suggerimento ripristinato come Non Letto!");
     } catch (err) {
       showToast("Errore aggiornamento stato", "error");
     }
@@ -507,6 +560,44 @@ export default function GestioneHR() {
           showToast("Suggerimento eliminato!");
         } catch (err) {
           showToast("Errore eliminazione", "error");
+        }
+      }
+    );
+  };
+
+  const handleAddCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const clean = newCategoryName.trim();
+    if (!clean) return;
+
+    if (categories.some(c => c.nome.toLowerCase() === clean.toLowerCase())) {
+      showToast("Questa categoria è già presente!", "warning");
+      return;
+    }
+
+    try {
+      await addDoc(collection(db, 'categorie_suggerimenti'), { nome: clean });
+      setNewCategoryName('');
+      await loadData();
+      showToast("Categoria aggiunta con successo!");
+    } catch (err) {
+      console.error("Errore aggiunta categoria:", err);
+      showToast("Errore durante l'aggiunta della categoria", "error");
+    }
+  };
+
+  const handleDeleteCategory = (id: string, nome: string) => {
+    triggerConfirm(
+      "Elimina Categoria",
+      `Sei sicuro di voler eliminare la categoria "${nome}"? Non sarà più selezionabile per i nuovi suggerimenti.`,
+      async () => {
+        try {
+          await deleteDoc(doc(db, 'categorie_suggerimenti', id));
+          await loadData();
+          showToast("Categoria eliminata con successo!");
+        } catch (err) {
+          console.error("Errore eliminazione categoria:", err);
+          showToast("Errore eliminazione categoria", "error");
         }
       }
     );
@@ -596,7 +687,14 @@ export default function GestioneHR() {
           }`}
         >
           <Lightbulb className="w-4 h-4" />
-          <span>Cassetta delle Idee ({suggerimenti.filter(s => s.stato !== 'Archiviato').length})</span>
+          <span>Cassetta delle Idee</span>
+          {suggerimenti.filter(s => s.stato !== 'Letto' && s.stato !== 'Archiviato').length > 0 ? (
+            <span className="px-2 py-0.5 bg-red-500 text-white text-[10.5px] font-black rounded-full shadow-xs animate-pulse">
+              {suggerimenti.filter(s => s.stato !== 'Letto' && s.stato !== 'Archiviato').length}
+            </span>
+          ) : (
+            <span className="text-xs opacity-75 font-semibold">({suggerimenti.length})</span>
+          )}
         </button>
 
         <button
@@ -879,13 +977,74 @@ export default function GestioneHR() {
       {/* TAB 4: CASSETTA DELLE IDEE & SUGGERIMENTI */}
       {activeTab === 'ideas' && (
         <div className="space-y-6 animate-in fade-in duration-200">
+          {/* Sezione Gestione Categorie Suggerimenti */}
+          <div className="bg-gradient-to-br from-purple-50 to-pink-50/40 p-6 sm:p-7 rounded-3xl border border-purple-150 space-y-4 shadow-xs">
+            <div className="flex justify-between items-start flex-wrap gap-2">
+              <div>
+                <h3 className="text-lg font-black text-purple-950 flex items-center gap-2">
+                  <FolderPlus className="w-5 h-5 text-purple-700" /> Gestione Categorie Suggerimenti
+                </h3>
+                <p className="text-xs text-purple-800 mt-0.5 font-medium">
+                  Aggiungi o rimuovi le categorie selezionabili dai dipendenti quando aprono la Cassetta delle Idee.
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleAddCategory} className="flex flex-col sm:flex-row gap-3 pt-1">
+              <input
+                type="text"
+                required
+                placeholder="Nuova categoria (es. Benessere, Spazi di lavoro, Strumenti software...)"
+                value={newCategoryName}
+                onChange={e => setNewCategoryName(e.target.value)}
+                className="flex-1 p-3 rounded-2xl border border-purple-200 bg-white font-bold text-xs text-purple-950 focus:ring-2 focus:ring-purple-500 outline-none shadow-inner"
+              />
+              <button
+                type="submit"
+                className="bg-purple-700 hover:bg-purple-800 text-white font-extrabold px-5 py-3 rounded-2xl transition text-xs flex items-center justify-center gap-2 cursor-pointer shadow-md active:scale-95 shrink-0"
+              >
+                <Plus className="w-4 h-4" /> Aggiungi Categoria
+              </button>
+            </form>
+
+            <div className="space-y-2 pt-1">
+              <div className="text-[11px] font-black text-purple-900/70 uppercase tracking-wider">
+                Categorie Attive ({categories.length})
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {categories.length === 0 ? (
+                  <span className="text-xs text-gray-400 italic">Nessuna categoria presente.</span>
+                ) : (
+                  categories.map(cat => (
+                    <div 
+                      key={cat.id} 
+                      className="flex items-center gap-2 bg-white px-3.5 py-1.5 rounded-xl border border-purple-200 shadow-xs hover:border-purple-300 transition"
+                    >
+                      <Tag className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                      <span className="text-xs font-bold text-purple-950">{cat.nome}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteCategory(cat.id, cat.nome)}
+                        className="text-gray-400 hover:text-red-600 transition p-1 rounded-lg hover:bg-red-50 cursor-pointer ml-1"
+                        title={`Elimina categoria "${cat.nome}"`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Sezione Ricezione Suggerimenti Dipendenti */}
           <div className="bg-gradient-to-br from-amber-50 to-orange-50 p-6 sm:p-8 rounded-3xl border border-amber-150 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
               <h3 className="text-xl font-black text-amber-950 flex items-center gap-2">
                 <Lightbulb className="w-6 h-6 text-amber-600" /> Ricezione Suggerimenti Dipendenti
               </h3>
               <p className="text-xs text-amber-800 mt-1 font-semibold">
-                Suggerimenti e proposte inviate dal personale.
+                Suggerimenti e proposte inviate dal personale in forma anonima.
               </p>
             </div>
           </div>
@@ -899,21 +1058,43 @@ export default function GestioneHR() {
               <div className="grid grid-cols-1 gap-3">
                 {suggerimenti.map(s => (
                   <div key={s.id} className="bg-white p-5 rounded-2xl border border-gray-200 space-y-2 shadow-xs">
-                    <div className="flex justify-between items-center">
-                      <div className="flex items-center gap-2">
+                    <div className="flex justify-between items-center flex-wrap gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="px-3 py-1 bg-amber-100 text-amber-900 font-extrabold text-[11px] rounded-full">
                           📂 {s.categoria || 'Generale'}
                         </span>
                         <span className="text-xs font-bold text-gray-400">📅 {s.data}</span>
+                        {(s.stato === 'Letto' || s.stato === 'Archiviato') ? (
+                          <span className="px-2.5 py-0.5 bg-slate-100 text-slate-600 font-extrabold text-[10.5px] rounded-full flex items-center gap-1 border border-slate-200">
+                            ✓ Letto
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-0.5 bg-rose-100 text-rose-700 font-black text-[10.5px] rounded-full flex items-center gap-1 border border-rose-200 animate-pulse">
+                            🔴 Nuovo
+                          </span>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleUpdateIdeaStatus(s.id, s.stato === 'Archiviato' ? 'Nuovo' : 'Archiviato')}
-                          className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold rounded-xl transition flex items-center gap-1 cursor-pointer"
-                        >
-                          <Archive className="w-3.5 h-3.5" /> {s.stato === 'Archiviato' ? 'Ripristina' : 'Archivia'}
-                        </button>
+                        {(s.stato === 'Letto' || s.stato === 'Archiviato') ? (
+                          <button
+                            onClick={() => handleUpdateIdeaStatus(s.id, 'Nuovo')}
+                            className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+                            title="Segna come da leggere"
+                          >
+                            <Clock className="w-3.5 h-3.5 text-gray-500" />
+                            <span>Segna come da leggere</span>
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleUpdateIdeaStatus(s.id, 'Letto')}
+                            className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-extrabold rounded-xl transition flex items-center gap-1.5 cursor-pointer border border-emerald-200 shadow-xs"
+                            title="Segna come letto"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Segna come letto</span>
+                          </button>
+                        )}
                         <button
                           onClick={() => handleDeleteIdea(s.id)}
                           className="p-1.5 text-red-500 hover:bg-red-50 rounded-xl transition cursor-pointer"

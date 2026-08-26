@@ -254,7 +254,7 @@ export default function Dashboard() {
           getDocs(query(collection(db, 'richieste_ferie'), where('stato', 'in', ['In attesa', 'Richiesta Annullamento', 'Richiesta Modifica']))),
           getDocs(query(collection(db, 'presenze'), where('stato', '==', 'Inviato'))),
           getDocs(query(collection(db, 'richieste_weekend'), where('stato', 'in', ['In attesa', 'Richiesta Annullamento', 'Richiesta Modifica']))),
-          getDocs(query(collection(db, 'suggerimenti'), where('stato', '==', 'In attesa')))
+          getDocs(collection(db, 'suggerimenti'))
         ]);
 
         const todayStr = new Date().toLocaleDateString('sv-SE');
@@ -266,9 +266,14 @@ export default function Dashboard() {
             pendingFerie++;
           }
         });
+        const unreadSuggerimenti = sugSnap.docs.filter(d => {
+          const st = (d.data().stato || '').trim();
+          return st !== 'Letto' && st !== 'Archiviato';
+        }).length;
+
         setPendingFerieCount(pendingFerie);
         setPendingPresenzeCount(presenzeSnap.size + weekendSnap.size);
-        setPendingSuggerimentiCount(sugSnap.size);
+        setPendingSuggerimentiCount(unreadSuggerimenti);
       } else {
         setPendingFerieCount(0);
         setPendingPresenzeCount(0);
@@ -777,7 +782,7 @@ export default function Dashboard() {
       <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-sm p-6 sm:p-8 border border-white/50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div className="flex items-center gap-4">
           <h1 className="text-2xl font-extrabold text-indigo-600 tracking-tight">
-            Ciao, {welcomeName}! {welcomePhrase}
+            Ciao {welcomeName}! {welcomePhrase}
           </h1>
         </div>
         <div className="text-xs sm:text-sm font-extrabold text-indigo-500/80 bg-indigo-50/50 border border-indigo-100/50 px-4 py-2 rounded-2xl shadow-inner shrink-0 self-start md:self-auto flex items-center gap-2">

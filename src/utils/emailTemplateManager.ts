@@ -475,7 +475,34 @@ export async function loadSavedEmailTemplates(): Promise<Record<string, { subjec
   try {
     const docSnap = await getDoc(doc(db, 'configurazioni', 'email_templates'));
     if (docSnap.exists()) {
-      return docSnap.data() as Record<string, { subject: string; body: string }>;
+      const data = docSnap.data() as Record<string, { subject: string; body: string }>;
+      let hasChanges = false;
+      const cleaned: Record<string, { subject: string; body: string }> = {};
+
+      Object.keys(data).forEach(key => {
+        let { subject, body } = data[key] || { subject: '', body: '' };
+        if (body) {
+          // Riconversione automatica e definitiva di eventuali vecchi blocchi <div> in tabelle 100% Outlook-Safe
+          if (body.includes('<div style="padding: 22px 24px; font-family: Arial, Helvetica, sans-serif; color: #1e293b;">')) {
+            body = body.replace(
+              '<div style="padding: 22px 24px; font-family: Arial, Helvetica, sans-serif; color: #1e293b;">',
+              '<!-- Corpo Contenuto 100% Table Based -->\n<table width="100%" border="0" cellpadding="0" cellspacing="0" style="width: 100%; border-collapse: collapse; background-color: #ffffff;">\n  <tr>\n    <td style="padding: 22px 24px; font-family: Arial, Helvetica, sans-serif; color: #1e293b;">'
+            );
+            if (body.trim().endsWith('</div>')) {
+              body = body.replace(/<\/div>\s*$/, '    </td>\n  </tr>\n</table>');
+            }
+            hasChanges = true;
+          }
+        }
+        cleaned[key] = { subject, body };
+      });
+
+      // Se sono stati sanificati vecchi template legacy con div, aggiorniamo silenziosamente Firestore
+      if (hasChanges) {
+        saveEmailTemplates(cleaned).catch(e => console.error("Errore auto-aggiornamento template:", e));
+      }
+
+      return cleaned;
     }
   } catch (err) {
     console.error("Errore lettura template e-mail da Firestore:", err);

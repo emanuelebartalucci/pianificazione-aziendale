@@ -6,6 +6,7 @@ import { Send, MessageSquare, Shield, RefreshCw, HeartPulse } from 'lucide-react
 import { useNavigate } from 'react-router-dom';
 import QuestionnaireModal from '../components/QuestionnaireModal';
 import { isSoci } from './Impostazioni';
+import { createUserNotification } from '../utils/userNotificationService';
 
 export default function Suggerimenti() {
   const navigate = useNavigate();
@@ -32,6 +33,16 @@ export default function Suggerimenti() {
     setTimeout(() => setToast(null), 4500);
   };
 
+  const sortCategoriesWithAltroLast = (list: { id: string; nome: string }[]): { id: string; nome: string }[] => {
+    return [...list].sort((a, b) => {
+      const isAltroA = a.nome.trim().toLowerCase() === 'altro';
+      const isAltroB = b.nome.trim().toLowerCase() === 'altro';
+      if (isAltroA && !isAltroB) return 1;
+      if (!isAltroA && isAltroB) return -1;
+      return a.nome.localeCompare(b.nome, 'it', { sensitivity: 'base' });
+    });
+  };
+
   const loadData = async () => {
     try {
       // 1. Categorie suggerimenti
@@ -41,14 +52,18 @@ export default function Suggerimenti() {
         await Promise.all(defaultCats.map(catName => addDoc(collection(db, 'categorie_suggerimenti'), { nome: catName })));
         const reloadSnap = await getDocs(collection(db, 'categorie_suggerimenti'));
         const list: { id: string; nome: string }[] = [];
-        reloadSnap.forEach(d => { if (d.data().nome) list.push({ id: d.id, nome: d.data().nome }); });
-        list.sort((a, b) => a.nome.localeCompare(b.nome));
-        setCategories(list);
+        reloadSnap.forEach(d => {
+          const name = d.data().nome || d.data().name || d.data().categoria || d.data().titolo || '';
+          if (name) list.push({ id: d.id, nome: name });
+        });
+        setCategories(sortCategoriesWithAltroLast(list));
       } else {
         const list: { id: string; nome: string }[] = [];
-        catSnap.forEach(d => { if (d.data().nome) list.push({ id: d.id, nome: d.data().nome }); });
-        list.sort((a, b) => a.nome.localeCompare(b.nome));
-        setCategories(list);
+        catSnap.forEach(d => {
+          const name = d.data().nome || d.data().name || d.data().categoria || d.data().titolo || '';
+          if (name) list.push({ id: d.id, nome: name });
+        });
+        setCategories(sortCategoriesWithAltroLast(list));
       }
 
       // 2. Questionario Attivo per Dipendenti
@@ -106,6 +121,27 @@ export default function Suggerimenti() {
         data: todayStr,
         stato: 'Nuovo'
       });
+
+      // Invia notifica in-app anonima a tutti gli account HR
+      try {
+        const hrSnap = await getDocs(collection(db, 'hr'));
+        const hrDocs = hrSnap.docs;
+        for (const hrDoc of hrDocs) {
+          const hrEmail = (hrDoc.data().email || '').toLowerCase().trim();
+          if (hrEmail) {
+            await createUserNotification({
+              destinatarioEmail: hrEmail,
+              destinatarioNome: 'Ufficio HR',
+              titolo: 'Cassetta delle Idee',
+              messaggio: `È arrivato un nuovo suggerimento anonimo nella Cassetta delle Idee (Categoria: ${categoria}).`,
+              tipo: 'suggerimento_ricevuto',
+              link: '/gestione-hr'
+            });
+          }
+        }
+      } catch (notifErr) {
+        console.error("Errore invio notifica agli HR:", notifErr);
+      }
 
       setCategoria('');
       setTesto('');

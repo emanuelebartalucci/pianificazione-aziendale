@@ -205,15 +205,22 @@ export default function AnagraficaRisorseSection() {
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
 
-    const listDip = dipendenti.filter(d => !isCollaboratore(d.nome, d.tipo) && !isSoci(d.nome));
+    const todayStr = new Date().toLocaleDateString('sv-SE');
+    const listAttivi = dipendenti
+      .filter(d => !isCollaboratore(d.nome, d.tipo) && !isSoci(d.nome) && !isTechnicalUser(d) && (!d.dataCessazione || d.dataCessazione >= todayStr))
+      .sort((a, b) => a.nome.localeCompare(b.nome, 'it'));
+
+    const listCessati = dipendenti
+      .filter(d => !isCollaboratore(d.nome, d.tipo) && !isSoci(d.nome) && !isTechnicalUser(d) && d.dataCessazione && d.dataCessazione < todayStr)
+      .sort((a, b) => a.nome.localeCompare(b.nome, 'it'));
     
-    const rowsHtml = listDip.length === 0 ? `
+    const rowsAttiviHtml = listAttivi.length === 0 ? `
       <tr>
         <td colspan="4" style="text-align: center; padding: 20px; color: #9ca3af; font-weight: 700;">
-          Nessun dipendente censito.
+          Nessun dipendente in forza censito.
         </td>
       </tr>
-    ` : listDip.map((d, idx) => {
+    ` : listAttivi.map((d, idx) => {
       const rowBg = idx % 2 === 1 ? 'background-color: #f9fafb;' : 'background-color: #ffffff;';
       const area = d.macroArea || 'Dipendente';
       return `
@@ -222,6 +229,21 @@ export default function AnagraficaRisorseSection() {
           <td style="padding: 4px 6px; border: 1px solid #d1d5db; font-weight: 800; color: #111827;">${d.nome}</td>
           <td style="padding: 4px 6px; border: 1px solid #d1d5db; font-weight: 600; color: #374151;">${area}</td>
           <td style="padding: 4px 6px; border: 1px solid #d1d5db; font-weight: 500; color: #4b5563;">${d.email || '—'}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const rowsCessatiHtml = listCessati.map((d, idx) => {
+      const rowBg = idx % 2 === 1 ? 'background-color: #f8fafc;' : 'background-color: #ffffff;';
+      const area = d.macroArea || 'Dipendente';
+      const dateFormatted = d.dataCessazione ? d.dataCessazione.split('-').reverse().join('/') : '—';
+      return `
+        <tr style="${rowBg}; color: #475569;">
+          <td style="padding: 4px 6px; border: 1px solid #cbd5e1; text-align: center; font-weight: 800;">${idx + 1}</td>
+          <td style="padding: 4px 6px; border: 1px solid #cbd5e1; font-weight: 700; color: #334155;">${d.nome}</td>
+          <td style="padding: 4px 6px; border: 1px solid #cbd5e1; font-weight: 600; color: #64748b;">${area}</td>
+          <td style="padding: 4px 6px; border: 1px solid #cbd5e1; font-weight: 500; color: #64748b;">${d.email || '—'}</td>
+          <td style="padding: 4px 6px; border: 1px solid #cbd5e1; text-align: center; font-weight: 800; color: #b91c1c;">${dateFormatted}</td>
         </tr>
       `;
     }).join('');
@@ -256,6 +278,9 @@ export default function AnagraficaRisorseSection() {
           table.report-table th { background-color: #f3f4f6 !important; color: #111827 !important; font-size: 8.5px !important; font-weight: 800 !important; text-transform: uppercase !important; letter-spacing: 0.5px !important; padding: 4.5px 6px !important; border: 1px solid #6b7280 !important; }
           table.report-table td { padding: 4px 6px !important; border: 1px solid #d1d5db !important; vertical-align: middle !important; }
           table.report-table tr { page-break-inside: avoid !important; break-inside: avoid !important; }
+
+          .cessati-section-header { margin-top: 18px; margin-bottom: 6px; background-color: #475569; color: #ffffff; padding: 5px 10px; border-radius: 5px; display: flex; justify-content: space-between; align-items: center; break-inside: avoid; }
+          .cessati-section-text { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; }
           
           .print-footer-static { margin-top: 10px; padding-top: 6px; padding-bottom: 4px; border-top: 1px solid #9ca3af; display: flex; justify-content: space-between; align-items: center; font-size: 8.5px; font-weight: 600; color: #4b5563; font-family: monospace; }
           .page-number::after { content: counter(page); }
@@ -271,8 +296,8 @@ export default function AnagraficaRisorseSection() {
                   <div class="header-title-right">INGEGNO P&C S.R.L. · ANAGRAFICA DIPENDENTI</div>
                 </div>
                 <div class="title-banner">
-                  <span class="title-banner-text">ANAGRAFICA DIPENDENTI TEAM</span>
-                  <span class="count-badge">${listDip.length} DIPENDENTE/I</span>
+                  <span class="title-banner-text">ANAGRAFICA DIPENDENTI TEAM (IN FORZA)</span>
+                  <span class="count-badge">${listAttivi.length} DIPENDENTE/I IN FORZA</span>
                 </div>
               </td>
             </tr>
@@ -282,7 +307,8 @@ export default function AnagraficaRisorseSection() {
               <td>
                 <div class="filter-box">
                   <span><strong>Data Stampa:</strong> ${getPrintDateString()}</span>
-                  <span><strong>Totale Dipendenti Censiti:</strong> ${listDip.length}</span>
+                  <span><strong>Dipendenti in Forza:</strong> ${listAttivi.length}</span>
+                  ${listCessati.length > 0 ? `<span><strong>Dipendenti Cessati:</strong> ${listCessati.length}</span>` : ''}
                 </div>
 
                 <table class="report-table">
@@ -295,9 +321,30 @@ export default function AnagraficaRisorseSection() {
                     </tr>
                   </thead>
                   <tbody>
-                    ${rowsHtml}
+                    ${rowsAttiviHtml}
                   </tbody>
                 </table>
+
+                ${listCessati.length > 0 ? `
+                  <div class="cessati-section-header">
+                    <span class="cessati-section-text">DIPENDENTI CESSATI ARCHIVIATI</span>
+                    <span class="count-badge">${listCessati.length} CESSATO/I</span>
+                  </div>
+                  <table class="report-table">
+                    <thead>
+                      <tr>
+                        <th style="width: 7%; text-align: center;">#</th>
+                        <th style="width: 31%; text-align: left;">Nome Completo</th>
+                        <th style="width: 22%; text-align: left;">Macro Area</th>
+                        <th style="width: 25%; text-align: left;">Email Aziendale</th>
+                        <th style="width: 15%; text-align: center;">Data Cessazione</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${rowsCessatiHtml}
+                    </tbody>
+                  </table>
+                ` : ''}
               </td>
             </tr>
           </tbody>
@@ -331,15 +378,22 @@ export default function AnagraficaRisorseSection() {
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
 
-    const listCollab = dipendenti.filter(d => isCollaboratore(d.nome, d.tipo) && !isSoci(d.nome));
+    const todayStr = new Date().toLocaleDateString('sv-SE');
+    const listCollabAttivi = dipendenti
+      .filter(d => isCollaboratore(d.nome, d.tipo) && !isSoci(d.nome) && !isTechnicalUser(d) && (!d.dataCessazione || d.dataCessazione >= todayStr))
+      .sort((a, b) => a.nome.localeCompare(b.nome, 'it'));
+
+    const listCollabCessati = dipendenti
+      .filter(d => isCollaboratore(d.nome, d.tipo) && !isSoci(d.nome) && !isTechnicalUser(d) && d.dataCessazione && d.dataCessazione < todayStr)
+      .sort((a, b) => a.nome.localeCompare(b.nome, 'it'));
     
-    const rowsHtml = listCollab.length === 0 ? `
+    const rowsAttiviHtml = listCollabAttivi.length === 0 ? `
       <tr>
         <td colspan="4" style="text-align: center; padding: 20px; color: #9ca3af; font-weight: 700;">
-          Nessun collaboratore esterno censito.
+          Nessun collaboratore esterno attivo censito.
         </td>
       </tr>
-    ` : listCollab.map((c, idx) => {
+    ` : listCollabAttivi.map((c, idx) => {
       const rowBg = idx % 2 === 1 ? 'background-color: #f9fafb;' : 'background-color: #ffffff;';
       const area = c.macroArea || 'Collaboratore';
       return `
@@ -348,6 +402,21 @@ export default function AnagraficaRisorseSection() {
           <td style="padding: 4px 6px; border: 1px solid #d1d5db; font-weight: 800; color: #111827;">${c.nome}</td>
           <td style="padding: 4px 6px; border: 1px solid #d1d5db; font-weight: 600; color: #374151;">${area}</td>
           <td style="padding: 4px 6px; border: 1px solid #d1d5db; font-weight: 500; color: #4b5563;">${c.email || '—'}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const rowsCessatiHtml = listCollabCessati.map((c, idx) => {
+      const rowBg = idx % 2 === 1 ? 'background-color: #f8fafc;' : 'background-color: #ffffff;';
+      const area = c.macroArea || 'Collaboratore';
+      const dateFormatted = c.dataCessazione ? c.dataCessazione.split('-').reverse().join('/') : '—';
+      return `
+        <tr style="${rowBg}; color: #475569;">
+          <td style="padding: 4px 6px; border: 1px solid #cbd5e1; text-align: center; font-weight: 800;">${idx + 1}</td>
+          <td style="padding: 4px 6px; border: 1px solid #cbd5e1; font-weight: 700; color: #334155;">${c.nome}</td>
+          <td style="padding: 4px 6px; border: 1px solid #cbd5e1; font-weight: 600; color: #64748b;">${area}</td>
+          <td style="padding: 4px 6px; border: 1px solid #cbd5e1; font-weight: 500; color: #64748b;">${c.email || '—'}</td>
+          <td style="padding: 4px 6px; border: 1px solid #cbd5e1; text-align: center; font-weight: 800; color: #b91c1c;">${dateFormatted}</td>
         </tr>
       `;
     }).join('');
@@ -382,6 +451,9 @@ export default function AnagraficaRisorseSection() {
           table.report-table th { background-color: #f3f4f6 !important; color: #111827 !important; font-size: 8.5px !important; font-weight: 800 !important; text-transform: uppercase !important; letter-spacing: 0.5px !important; padding: 4.5px 6px !important; border: 1px solid #6b7280 !important; }
           table.report-table td { padding: 4px 6px !important; border: 1px solid #d1d5db !important; vertical-align: middle !important; }
           table.report-table tr { page-break-inside: avoid !important; break-inside: avoid !important; }
+
+          .cessati-section-header { margin-top: 18px; margin-bottom: 6px; background-color: #475569; color: #ffffff; padding: 5px 10px; border-radius: 5px; display: flex; justify-content: space-between; align-items: center; break-inside: avoid; }
+          .cessati-section-text { font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; }
           
           .print-footer-static { margin-top: 10px; padding-top: 6px; padding-bottom: 4px; border-top: 1px solid #9ca3af; display: flex; justify-content: space-between; align-items: center; font-size: 8.5px; font-weight: 600; color: #4b5563; font-family: monospace; }
           .page-number::after { content: counter(page); }
@@ -397,8 +469,8 @@ export default function AnagraficaRisorseSection() {
                   <div class="header-title-right">INGEGNO P&C S.R.L. · ANAGRAFICA COLLABORATORI</div>
                 </div>
                 <div class="title-banner">
-                  <span class="title-banner-text">ANAGRAFICA COLLABORATORI ESTERNI</span>
-                  <span class="count-badge">${listCollab.length} COLLAB.</span>
+                  <span class="title-banner-text">ANAGRAFICA COLLABORATORI ESTERNI (IN FORZA)</span>
+                  <span class="count-badge">${listCollabAttivi.length} COLLAB. ATTIVI</span>
                 </div>
               </td>
             </tr>
@@ -408,7 +480,8 @@ export default function AnagraficaRisorseSection() {
               <td>
                 <div class="filter-box">
                   <span><strong>Data Stampa:</strong> ${getPrintDateString()}</span>
-                  <span><strong>Totale Collaboratori Censiti:</strong> ${listCollab.length}</span>
+                  <span><strong>Collaboratori in Forza:</strong> ${listCollabAttivi.length}</span>
+                  ${listCollabCessati.length > 0 ? `<span><strong>Collaboratori Cessati:</strong> ${listCollabCessati.length}</span>` : ''}
                 </div>
 
                 <table class="report-table">
@@ -421,9 +494,30 @@ export default function AnagraficaRisorseSection() {
                     </tr>
                   </thead>
                   <tbody>
-                    ${rowsHtml}
+                    ${rowsAttiviHtml}
                   </tbody>
                 </table>
+
+                ${listCollabCessati.length > 0 ? `
+                  <div class="cessati-section-header">
+                    <span class="cessati-section-text">COLLABORATORI CESSATI ARCHIVIATI</span>
+                    <span class="count-badge">${listCollabCessati.length} CESSATO/I</span>
+                  </div>
+                  <table class="report-table">
+                    <thead>
+                      <tr>
+                        <th style="width: 7%; text-align: center;">#</th>
+                        <th style="width: 31%; text-align: left;">Nome Completo</th>
+                        <th style="width: 22%; text-align: left;">Macro Area / Ruolo</th>
+                        <th style="width: 25%; text-align: left;">Email Contatto</th>
+                        <th style="width: 15%; text-align: center;">Data Cessazione</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${rowsCessatiHtml}
+                    </tbody>
+                  </table>
+                ` : ''}
               </td>
             </tr>
           </tbody>

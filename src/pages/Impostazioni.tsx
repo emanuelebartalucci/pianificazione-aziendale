@@ -158,9 +158,24 @@ export default function Impostazioni() {
     }
   };
 
-  const handleResetTemplate = () => {
+  const handleResetTemplate = async () => {
     setEditSubject(currentTmplDef.defaultSubject);
     setEditBody(currentTmplDef.defaultBody);
+    try {
+      const updated = {
+        ...customTemplates,
+        [selectedTemplateId]: {
+          subject: currentTmplDef.defaultSubject,
+          body: currentTmplDef.defaultBody
+        }
+      };
+      await saveEmailTemplates(updated);
+      setCustomTemplates(updated);
+      showToast(`Template "${currentTmplDef.label}" ripristinato e salvato con la versione 100% table-based compatibile con Outlook!`, "success");
+    } catch (err) {
+      console.error("Errore ripristino template:", err);
+      showToast("Errore durante il ripristino del template.", "error");
+    }
   };
 
   // Stato per la modale di conferma personalizzata
@@ -1862,34 +1877,14 @@ export default function Impostazioni() {
                       {savingTemplate ? 'Salvataggio...' : '💾 Salva Modifiche Template'}
                     </button>
 
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={handleResetTemplate}
-                        className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold py-2 rounded-xl transition text-xs cursor-pointer flex items-center justify-center gap-1"
-                        title="Ripristina layout predefinito per questo modello"
-                      >
-                        <span>↺ Ripristina</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          const freshTmpl = EMAIL_TEMPLATES_LIST.find(t => t.id === selectedTemplateId);
-                          if (freshTmpl) {
-                            setEditSubject(freshTmpl.defaultSubject);
-                            setEditBody(freshTmpl.defaultBody);
-                            const updated = { ...customTemplates, [selectedTemplateId]: { subject: freshTmpl.defaultSubject, body: freshTmpl.defaultBody } };
-                            setCustomTemplates(updated);
-                            await saveEmailTemplates(updated);
-                            showToast(`Nuova Grafica Premium applicata al modello "${freshTmpl.label}"!`, "success");
-                          }
-                        }}
-                        className="flex-1 bg-indigo-100 hover:bg-indigo-200 text-indigo-800 font-extrabold py-2 rounded-xl transition text-xs cursor-pointer flex items-center justify-center gap-1 border border-indigo-300"
-                        title="Carica la nuova veste grafica ultra-premium per questo modello"
-                      >
-                        <span>✨ Carica Nuova Grafica</span>
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={handleResetTemplate}
+                      className="w-full bg-gray-100 hover:bg-gray-200 border border-gray-200 text-gray-700 font-bold py-2 rounded-xl transition text-xs cursor-pointer flex items-center justify-center gap-1.5"
+                      title="Ripristina e salva il layout predefinito per questo modello"
+                    >
+                      <span>↺ Ripristina Modello Predefinito</span>
+                    </button>
                   </div>
                 </div>
 
