@@ -1,6 +1,6 @@
-// Development & production release - v1.0.13
-export const APP_VERSION = "v1.0.13";
-export const APP_RELEASE_DATE = "25/08/2026";
+// Development & production release - v1.0.14
+export const APP_VERSION = "v1.0.14";
+export const APP_RELEASE_DATE = "27/08/2026";
 
 export const getPrintDateString = () => {
   const d = new Date();

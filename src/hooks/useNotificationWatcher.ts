@@ -25,9 +25,18 @@ interface UseNotificationWatcherParams {
   isGestoreForniture?: boolean;
 }
 
+export interface SectionBadgeCounts {
+  forniture: number;
+  ferie: number;
+  presenze: number;
+  pianificazione: number;
+  gestioneHr: number;
+  commesse: number;
+}
+
 export interface OperativeNotificationItem {
   id: string;
-  category: 'ferie' | 'presenze' | 'weekend' | 'disponibilita' | 'richiesta_personale' | 'sollecito_presenze' | 'forniture';
+  category: 'ferie' | 'presenze' | 'weekend' | 'disponibilita' | 'richiesta_personale' | 'sollecito_presenze' | 'forniture' | 'suggerimenti';
   titolo: string;
   messaggio: string;
   link: string;
@@ -68,6 +77,14 @@ export function useNotificationWatcher({
   const [permissionState, setPermissionState] = useState<NotificationPermission>(getNotificationPermission());
   const [userNotifications, setUserNotifications] = useState<UserNotification[]>([]);
   const [unreadUserNotificationsCount, setUnreadUserNotificationsCount] = useState<number>(0);
+  const [sectionBadgeCounts, setSectionBadgeCounts] = useState<SectionBadgeCounts>({
+    forniture: 0,
+    ferie: 0,
+    presenze: 0,
+    pianificazione: 0,
+    gestioneHr: 0,
+    commesse: 0
+  });
   
   // Traccia gli ID già noti per evitare di mandare notifiche desktop all'avvio su record vecchi già presenti
   const knownIdsRef = useRef<Set<string>>(new Set());
@@ -95,6 +112,14 @@ export function useNotificationWatcher({
       setOperativeNotifications([]);
       setUserNotifications([]);
       setUnreadUserNotificationsCount(0);
+      setSectionBadgeCounts({
+        forniture: 0,
+        ferie: 0,
+        presenze: 0,
+        pianificazione: 0,
+        gestioneHr: 0,
+        commesse: 0
+      });
       return;
     }
 
@@ -110,22 +135,38 @@ export function useNotificationWatcher({
       disponibilita: [],
       richiestePersonale: [],
       solleciti: [],
-      forniture: []
+      forniture: [],
+      suggerimenti: []
     };
 
     const countsMap = {
       ferieHR: 0,
       presenzeHR: 0,
       weekendHR: 0,
+      suggerimentiHR: 0,
       disponibilitaCoord: 0,
       richiesteDisegnatoriCoord: 0,
       sollecitiPresenzeUser: 0,
       fornitureGestore: 0,
-      notifichePersonali: 0
+      notifichePersonali: 0,
+      personalUnreadForniture: 0,
+      personalUnreadFerie: 0,
+      personalUnreadPresenze: 0,
+      personalUnreadCommesse: 0,
+      personalUnreadGestioneHr: 0
     };
 
     const updateAndNotify = () => {
-      const operativeCount = (countsMap.ferieHR + countsMap.presenzeHR + countsMap.weekendHR + countsMap.disponibilitaCoord + countsMap.richiesteDisegnatoriCoord + countsMap.sollecitiPresenzeUser + countsMap.fornitureGestore);
+      const operativeCount = (
+        countsMap.ferieHR + 
+        countsMap.presenzeHR + 
+        countsMap.weekendHR + 
+        countsMap.suggerimentiHR +
+        countsMap.disponibilitaCoord + 
+        countsMap.richiesteDisegnatoriCoord + 
+        countsMap.sollecitiPresenzeUser + 
+        countsMap.fornitureGestore
+      );
       const personalCount = countsMap.notifichePersonali;
       const total = operativeCount + personalCount;
 
@@ -136,13 +177,24 @@ export function useNotificationWatcher({
         ...operativeItemsMap.disponibilita,
         ...operativeItemsMap.richiestePersonale,
         ...operativeItemsMap.solleciti,
-        ...operativeItemsMap.forniture
+        ...operativeItemsMap.forniture,
+        ...operativeItemsMap.suggerimenti
       ];
       combinedOperative.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
       setOperativePendingCount(operativeCount);
       setOperativeNotifications(combinedOperative);
       setTotalPendingCount(total);
+
+      // Conteggi specifici per singola sezione / card
+      setSectionBadgeCounts({
+        forniture: countsMap.fornitureGestore + countsMap.personalUnreadForniture,
+        ferie: countsMap.ferieHR + countsMap.personalUnreadFerie,
+        presenze: countsMap.presenzeHR + countsMap.weekendHR + countsMap.sollecitiPresenzeUser + countsMap.personalUnreadPresenze,
+        pianificazione: countsMap.disponibilitaCoord + countsMap.richiesteDisegnatoriCoord,
+        gestioneHr: countsMap.suggerimentiHR + countsMap.personalUnreadGestioneHr,
+        commesse: countsMap.personalUnreadCommesse
+      });
 
       if (operativeCount > 0) {
         // Badge Rosso: ci sono richieste operative da gestire
@@ -313,6 +365,21 @@ export function useNotificationWatcher({
         updateAndNotify();
       }, (err) => console.error("Errore listener weekend HR:", err));
       unsubscribers.push(unsubWeekend);
+
+      // Suggerimenti non letti per HR / Gestione HR
+      const qSuggerimentiHR = collection(db, 'suggerimenti');
+      const unsubSug = onSnapshot(qSuggerimentiHR, (snap) => {
+        let unreadCount = 0;
+        snap.forEach(docSnap => {
+          const st = (docSnap.data().stato || '').trim();
+          if (st !== 'Letto' && st !== 'Archiviato') {
+            unreadCount++;
+          }
+        });
+        countsMap.suggerimentiHR = unreadCount;
+        updateAndNotify();
+      }, (err) => console.error("Errore listener suggerimenti HR:", err));
+      unsubscribers.push(unsubSug);
     }
 
     // 2. ASCOLTO ESCLUSIVO PER COORDINATORI (Segnalazioni disponibilità e richieste personale della PROPRIA AREA in attesa)
@@ -323,10 +390,9 @@ export function useNotificationWatcher({
     const isCoordinator = myCoordinatedAreas.length > 0;
 
     if (isCoordinator) {
-      // Segnalazioni disponibilità (solo in_attesa)
+      // Segnalazioni disponibilità (in attesa e storiche gestite)
       const qDispCoord = query(
-        collection(db, 'segnalazioni_disponibilita'),
-        where('stato', '==', 'in_attesa')
+        collection(db, 'segnalazioni_disponibilita')
       );
       const unsubDisp = onSnapshot(qDispCoord, (snap) => {
         let matchingCount = 0;
@@ -382,10 +448,9 @@ export function useNotificationWatcher({
       }, (err) => console.error("Errore listener disponibilità coordinatore:", err));
       unsubscribers.push(unsubDisp);
 
-      // Richieste disegnatori / personale d'area (solo in_attesa)
+      // Richieste disegnatori / personale d'area (in attesa e storiche approvate/rifiutate)
       const qReqDisCoord = query(
-        collection(db, 'richieste_disegnatori'),
-        where('stato', '==', 'in_attesa')
+        collection(db, 'richieste_disegnatori')
       );
       const unsubReqDis = onSnapshot(qReqDisCoord, (snap) => {
         let matchingCount = 0;
@@ -394,7 +459,7 @@ export function useNotificationWatcher({
           const data = docSnap.data();
           if (myCoordinatedAreas.includes(data.area)) {
             const isPending = data.stato === 'in_attesa';
-            const created = data.createdAt || data.dataApprovazione || '';
+            const created = data.createdAt || data.dataApprovazione || data.timestamp || '';
 
             if (isPending) matchingCount++;
             const reqPerson = data.richiedenteNome || data.richiedente || '';
@@ -560,7 +625,31 @@ export function useNotificationWatcher({
 
         // Ordina per data decrescente
         list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        const unreadCount = list.filter(n => !n.letta).length;
+        const unreadList = list.filter(n => !n.letta);
+        const unreadCount = unreadList.length;
+
+        // Distribuzione notifiche personali non lette per sezione di destinazione
+        let personalForniture = 0;
+        let personalFerie = 0;
+        let personalPresenze = 0;
+        let personalCommesse = 0;
+        let personalGestioneHr = 0;
+
+        unreadList.forEach(n => {
+          const l = (n.link || '').toLowerCase();
+          if (l.includes('/forniture')) personalForniture++;
+          else if (l.includes('/ferie')) personalFerie++;
+          else if (l.includes('/presenze')) personalPresenze++;
+          else if (l.includes('/commesse')) personalCommesse++;
+          else if (l.includes('/gestione-hr')) personalGestioneHr++;
+        });
+
+        countsMap.personalUnreadForniture = personalForniture;
+        countsMap.personalUnreadFerie = personalFerie;
+        countsMap.personalUnreadPresenze = personalPresenze;
+        countsMap.personalUnreadCommesse = personalCommesse;
+        countsMap.personalUnreadGestioneHr = personalGestioneHr;
+
         setUserNotifications(list);
         setUnreadUserNotificationsCount(unreadCount);
         countsMap.notifichePersonali = unreadCount;
@@ -604,6 +693,7 @@ export function useNotificationWatcher({
     userNotifications,
     unreadUserNotificationsCount,
     markNotificationAsRead,
-    markAllNotificationsAsRead
+    markAllNotificationsAsRead,
+    sectionBadgeCounts
   };
 }

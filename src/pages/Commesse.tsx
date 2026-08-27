@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { useAuth, isTechnicalUser, type PunchListItem, TODO_CATEGORIE } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, doc, setDoc, updateDoc, addDoc, deleteDoc, getDocs, runTransaction } from 'firebase/firestore';
-import { Briefcase, ChevronLeft, ChevronRight, ChevronDown, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw, Printer, Plus, UserCheck, MoveVertical, Building2, Send, Info, Mail, User, Folder, FolderPlus, FolderOpen, ListTodo, Check } from 'lucide-react';
+import { Briefcase, ChevronLeft, ChevronRight, ChevronDown, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw, Printer, Plus, UserCheck, MoveVertical, Building2, Send, Info, Mail, User, Folder, FolderPlus, FolderOpen, ListTodo, Check, CheckCircle2, Clock, AlertTriangle, ExternalLink } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays } from '../utils/date';
 import { queueMail } from '../utils/mailSender';
 import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
@@ -225,6 +225,7 @@ const getWeeksSpannedByDates = (startDateStr: string, endDateStr: string): strin
 export default function Commesse() {
   const { 
     isAdmin = false, 
+    isDev = false,
     isGestoreCommesse = false,
     myAssociatedName = '', 
     userEmail = '',
@@ -554,14 +555,6 @@ export default function Commesse() {
     return names.sort((a, b) => a.localeCompare(b, 'it', { sensitivity: 'base' }));
   }, [commesse, dipendenti]);
 
-  const selectableTipologiePerFiltro = useMemo(() => {
-    const set = new Set<string>();
-    commesse.forEach(c => {
-      if ((c.stato || 'Aperta') !== 'Chiusa' && c.tipologia) set.add(c.tipologia.trim());
-    });
-    return Array.from(set).sort();
-  }, [commesse]);
-
   const toggleCommessaIdFilter = (commId: string) => {
     setSelectedCommessaIdsFilter(prev => {
       const next = prev.includes(commId) ? prev.filter(id => id !== commId) : [...prev, commId];
@@ -680,33 +673,33 @@ export default function Commesse() {
     }
   };
 
-  // Configurazione Categorie ToDo List (18 categorie con icone e stili dedicati)
+  // Configurazione Categorie ToDo List (18 categorie ordinate alfabeticamente con icone e stili dedicati)
   const CATEGORIA_CONFIG: Record<string, { label: string; icon: string; bg: string; text: string; border: string }> = {
-    'chiamare': { label: 'Chiamare', icon: '📞', bg: 'bg-emerald-50', text: 'text-emerald-800', border: 'border-emerald-200' },
-    'inviare mail': { label: 'Inviare mail', icon: '✉️', bg: 'bg-blue-50', text: 'text-blue-800', border: 'border-blue-200' },
-    'rispondere': { label: 'Rispondere', icon: '💬', bg: 'bg-indigo-50', text: 'text-indigo-800', border: 'border-indigo-200' },
-    'stampare': { label: 'Stampare', icon: '🖨️', bg: 'bg-slate-100', text: 'text-slate-800', border: 'border-slate-300' },
-    'archiviare': { label: 'Archiviare', icon: '🗄️', bg: 'bg-gray-100', text: 'text-gray-800', border: 'border-gray-300' },
-    'da fare': { label: 'Da fare', icon: '📋', bg: 'bg-purple-50', text: 'text-purple-800', border: 'border-purple-200' },
-    'fissare appuntamento': { label: 'Fissare appuntamento', icon: '📅', bg: 'bg-amber-50', text: 'text-amber-800', border: 'border-amber-200' },
-    'fatturare': { label: 'Fatturare', icon: '💶', bg: 'bg-teal-50', text: 'text-teal-800', border: 'border-teal-200' },
-    'attesa feedback': { label: 'Attesa feedback', icon: '⏳', bg: 'bg-yellow-50', text: 'text-yellow-800', border: 'border-yellow-300' },
-    'scansionare': { label: 'Scansionare', icon: '📄', bg: 'bg-cyan-50', text: 'text-cyan-800', border: 'border-cyan-200' },
-    'registrare': { label: 'Registrare', icon: '📝', bg: 'bg-sky-50', text: 'text-sky-800', border: 'border-sky-200' },
-    'firmare': { label: 'Firmare', icon: '✍️', bg: 'bg-rose-50', text: 'text-rose-800', border: 'border-rose-200' },
-    'ordinare': { label: 'Ordinare', icon: '🛒', bg: 'bg-pink-50', text: 'text-pink-800', border: 'border-pink-200' },
-    'consegnare': { label: 'Consegnare', icon: '🚚', bg: 'bg-lime-50', text: 'text-lime-800', border: 'border-lime-300' },
-    'prenotare': { label: 'Prenotare', icon: '🎟️', bg: 'bg-orange-50', text: 'text-orange-800', border: 'border-orange-200' },
     'aggiornare': { label: 'Aggiornare', icon: '🔄', bg: 'bg-blue-50', text: 'text-blue-800', border: 'border-blue-300' },
+    'archiviare': { label: 'Archiviare', icon: '🗄️', bg: 'bg-gray-100', text: 'text-gray-800', border: 'border-gray-300' },
+    'attesa feedback': { label: 'Attesa feedback', icon: '⏳', bg: 'bg-yellow-50', text: 'text-yellow-800', border: 'border-yellow-300' },
+    'chiamare': { label: 'Chiamare', icon: '📞', bg: 'bg-emerald-50', text: 'text-emerald-800', border: 'border-emerald-200' },
+    'consegnare': { label: 'Consegnare', icon: '🚚', bg: 'bg-lime-50', text: 'text-lime-800', border: 'border-lime-300' },
+    'da fare': { label: 'Da fare', icon: '📋', bg: 'bg-purple-50', text: 'text-purple-800', border: 'border-purple-200' },
     'effettuare revisione': { label: 'Effettuare revisione', icon: '🔍', bg: 'bg-violet-50', text: 'text-violet-800', border: 'border-violet-200' },
+    'fatturare': { label: 'Fatturare', icon: '💶', bg: 'bg-teal-50', text: 'text-teal-800', border: 'border-teal-200' },
+    'firmare': { label: 'Firmare', icon: '✍️', bg: 'bg-rose-50', text: 'text-rose-800', border: 'border-rose-200' },
+    'fissare appuntamento': { label: 'Fissare appuntamento', icon: '📅', bg: 'bg-amber-50', text: 'text-amber-800', border: 'border-amber-200' },
+    'inviare mail': { label: 'Inviare mail', icon: '✉️', bg: 'bg-blue-50', text: 'text-blue-800', border: 'border-blue-200' },
+    'ordinare': { label: 'Ordinare', icon: '🛒', bg: 'bg-pink-50', text: 'text-pink-800', border: 'border-pink-200' },
     'pagare': { label: 'Pagare', icon: '💳', bg: 'bg-red-50', text: 'text-red-800', border: 'border-red-200' },
+    'prenotare': { label: 'Prenotare', icon: '🎟️', bg: 'bg-orange-50', text: 'text-orange-800', border: 'border-orange-200' },
+    'registrare': { label: 'Registrare', icon: '📝', bg: 'bg-sky-50', text: 'text-sky-800', border: 'border-sky-200' },
+    'rispondere': { label: 'Rispondere', icon: '💬', bg: 'bg-indigo-50', text: 'text-indigo-800', border: 'border-indigo-200' },
+    'scansionare': { label: 'Scansionare', icon: '📄', bg: 'bg-cyan-50', text: 'text-cyan-800', border: 'border-cyan-200' },
+    'stampare': { label: 'Stampare', icon: '🖨️', bg: 'bg-slate-100', text: 'text-slate-800', border: 'border-slate-300' },
   };
 
   // Gestione ToDo List Commessa
   const [isPunchListModalOpen, setIsPunchListModalOpen] = useState(false);
   const [selectedCommessaForPunchList, setSelectedCommessaForPunchList] = useState<any | null>(null);
-  const [punchListFilter, setPunchListFilter] = useState<'all' | 'da_fare' | 'da_rivedere' | 'eseguito'>('all');
-  const [newTaskCategoria, setNewTaskCategoria] = useState<string>('da fare');
+  const [punchListFilter, setPunchListFilter] = useState<'all' | 'da_fare' | 'completato'>('all');
+  const [newTaskCategoria, setNewTaskCategoria] = useState<string>(TODO_CATEGORIE[0] || 'aggiornare');
   const [newTaskTitolo, setNewTaskTitolo] = useState('');
   const [newTaskDescrizione, setNewTaskDescrizione] = useState('');
   const [newTaskScadenza, setNewTaskScadenza] = useState('');
@@ -714,30 +707,271 @@ export default function Commesse() {
   const [isSavingTask, setIsSavingTask] = useState(false);
   const [editingTask, setEditingTask] = useState<PunchListItem | null>(null);
 
-  // Chiunque lavori alla commessa può inserire punti
-  const canUserAddToPunchList = (comm?: any) => {
-    if (!comm) return false;
-    if (isAdmin || isSoci(myAssociatedName) || isGestoreCommesse) return true;
-    if (comm.responsabile && areNamesEqual(comm.responsabile, myAssociatedName)) return true;
+  // Stati e ref per menu a tendina personalizzati ToDo List (zero flickering)
+  const [isCatDropdownOpen, setIsCatDropdownOpen] = useState(false);
+  const [isAssDropdownOpen, setIsAssDropdownOpen] = useState(false);
+  const catDropdownRef = useRef<HTMLDivElement>(null);
+  const assDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutsideDropdowns = (e: MouseEvent) => {
+      if (catDropdownRef.current && !catDropdownRef.current.contains(e.target as Node)) {
+        setIsCatDropdownOpen(false);
+      }
+      if (assDropdownRef.current && !assDropdownRef.current.contains(e.target as Node)) {
+        setIsAssDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutsideDropdowns);
+    return () => document.removeEventListener('mousedown', handleClickOutsideDropdowns);
+  }, []);
+
+  // Gestione Modale "I Miei ToDo nelle Commesse" (Attività Da Fare assegnate all'utente attivo)
+  const [isMyTasksModalOpen, setIsMyTasksModalOpen] = useState(false);
+
+  interface MyCommessaTaskGroup {
+    commessa: any;
+    tasks: PunchListItem[];
+  }
+
+  // Estrazione di tutte le attività "Da Fare" assegnate all'utente attivo, divise per commessa e ordinate per scadenza
+  const myAssignedPendingTasks = useMemo((): MyCommessaTaskGroup[] => {
+    if (!myAssociatedName && !userEmail) return [];
+    const myNameClean = (myAssociatedName || '').trim();
+    const myMailClean = (userEmail || '').trim().toLowerCase();
+
+    const groups: MyCommessaTaskGroup[] = [];
+
+    (commesse || []).forEach(comm => {
+      const punchList: PunchListItem[] = comm.punchList || [];
+      const myTasks = punchList.filter(t => {
+        // Solo compiti non completati ("da_fare")
+        if (t.stato !== 'da_fare') return false;
+        const ass = (t.assegnatoA || '').trim();
+        if (!ass) return false;
+        return areNamesEqual(ass, myNameClean) || (myMailClean && ass.toLowerCase().includes(myMailClean.split('@')[0]));
+      });
+
+      if (myTasks.length > 0) {
+        // Ordina i compiti della commessa per data di scadenza:
+        // 1. Quelli con data di scadenza (i più imminenti/scaduti per primi)
+        // 2. Quelli senza data di scadenza in fondo (per data di creazione decrescente)
+        const sortedTasks = [...myTasks].sort((a, b) => {
+          if (a.scadenza && b.scadenza) {
+            return a.scadenza.localeCompare(b.scadenza);
+          }
+          if (a.scadenza && !b.scadenza) return -1;
+          if (!a.scadenza && b.scadenza) return 1;
+          return (b.creatoIl || '').localeCompare(a.creatoIl || '');
+        });
+
+        groups.push({
+          commessa: comm,
+          tasks: sortedTasks
+        });
+      }
+    });
+
+    // Ordina i gruppi di commesse: quelle con la scadenza più imminente per prime
+    return groups.sort((gA, gB) => {
+      const minScadA = gA.tasks.find(t => t.scadenza)?.scadenza || '9999-99-99';
+      const minScadB = gB.tasks.find(t => t.scadenza)?.scadenza || '9999-99-99';
+      if (minScadA !== minScadB) {
+        return minScadA.localeCompare(minScadB);
+      }
+      return (gA.commessa.nome || '').localeCompare(gB.commessa.nome || '');
+    });
+  }, [commesse, myAssociatedName, userEmail]);
+
+  const totalMyPendingTasksCount = useMemo(() => {
+    return myAssignedPendingTasks.reduce((acc, g) => acc + g.tasks.length, 0);
+  }, [myAssignedPendingTasks]);
+
+  const handleOpenCommessaToDoFromMyTasks = (comm: any) => {
+    setIsMyTasksModalOpen(false);
+    setSelectedCommessaForPunchList(comm);
+    setPunchListFilter('all');
+    setNewTaskTitolo('');
+    setNewTaskDescrizione('');
+    setNewTaskScadenza('');
+    setNewTaskAssegnatoA('');
+    setNewTaskCategoria(TODO_CATEGORIE[0] || 'aggiornare');
+    setEditingTask(null);
+    setIsPunchListModalOpen(true);
+  };
+
+  const getScadenzaStatus = (scadenzaStr?: string) => {
+    if (!scadenzaStr) return null;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const target = new Date(scadenzaStr);
+    target.setHours(0, 0, 0, 0);
+
+    const diffTime = target.getTime() - today.getTime();
+    const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+
+    const parts = scadenzaStr.split('-');
+    const formattedDate = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : scadenzaStr;
+
+    if (diffDays < 0) {
+      return {
+        label: `Scaduto il ${formattedDate}`,
+        subLabel: `${Math.abs(diffDays)} gg fa`,
+        isOverdue: true,
+        badgeClass: 'bg-rose-50 text-rose-700 border-rose-200 font-bold',
+        cardBorderClass: 'border-rose-300 bg-rose-50/20'
+      };
+    } else if (diffDays === 0) {
+      return {
+        label: `Scade Oggi (${formattedDate})`,
+        subLabel: 'Oggi',
+        isToday: true,
+        badgeClass: 'bg-amber-50 text-amber-800 border-amber-300 font-black',
+        cardBorderClass: 'border-amber-300 bg-amber-50/20'
+      };
+    } else if (diffDays === 1) {
+      return {
+        label: `Scade Domani (${formattedDate})`,
+        subLabel: 'Domani',
+        isNear: true,
+        badgeClass: 'bg-orange-50 text-orange-700 border-orange-200 font-bold',
+        cardBorderClass: 'border-orange-200'
+      };
+    } else {
+      return {
+        label: `Entro il ${formattedDate}`,
+        subLabel: `tra ${diffDays} gg`,
+        isFuture: true,
+        badgeClass: 'bg-blue-50 text-blue-700 border-blue-200 font-medium',
+        cardBorderClass: 'border-gray-200'
+      };
+    }
+  };
+
+  // Helper per estrarre ESCLUSIVAMENTE le risorse pianificate sulla commessa + Resp e PM
+  const getEligibleAssigneesForCommessa = (comm: any, currentTaskAssignee?: string): string[] => {
+    if (!comm) return [];
+    const assignedNamesSet = new Set<string>();
+
+    // 1. Risorse con assegnazioni attive sulla commessa nella pianificazione
+    if (assignments) {
+      Object.entries(assignments).forEach(([key, listAss]) => {
+        if (!listAss || !Array.isArray(listAss)) return;
+        const match = key.match(/^(.*)-(\d{4}-W\d{1,2})$/);
+        const dipName = match ? match[1] : key.split('-')[0];
+        if (!dipName) return;
+
+        const hasAssignment = listAss.some(ass => ass && ass.commessaId === comm.id && Number(ass.percentuale) > 0);
+        if (hasAssignment) {
+          const foundDip = (dipendenti || []).find(d => areNamesEqual(d.nome, dipName));
+          assignedNamesSet.add(foundDip ? foundDip.nome : dipName);
+        }
+      });
+    }
+
+    // 2. Eventuali risorse assegnate direttamente nel catalogo commessa
+    if (Array.isArray(comm.assegnati)) {
+      comm.assegnati.forEach((a: any) => {
+        const aName = typeof a === 'string' ? a : (a?.nome || a?.name);
+        if (aName) {
+          const found = (dipendenti || []).find(d => areNamesEqual(d.nome, aName));
+          assignedNamesSet.add(found ? found.nome : aName);
+        }
+      });
+    }
+
+    // 3. Responsabile di Commessa
+    if (comm.responsabile) {
+      const foundResp = (dipendenti || []).find(d => areNamesEqual(d.nome, comm.responsabile));
+      assignedNamesSet.add(foundResp ? foundResp.nome : comm.responsabile);
+    }
+
+    // 4. Project Manager (PM) della Commessa (singolo o multiplo)
     const pms = Array.isArray(comm.pm) ? comm.pm : (comm.pm ? [comm.pm] : []);
-    if (pms.some((p: string) => areNamesEqual(p, myAssociatedName))) return true;
+    pms.forEach((pm: string) => {
+      if (pm) {
+        const foundPm = (dipendenti || []).find(d => areNamesEqual(d.nome, pm));
+        assignedNamesSet.add(foundPm ? foundPm.nome : pm);
+      }
+    });
+
+    // 5. Risorsa già assegnata al task (per preservare assegnazioni storiche durante l'editing)
+    if (currentTaskAssignee) {
+      assignedNamesSet.add(currentTaskAssignee);
+    }
+
+    return Array.from(assignedNamesSet).filter(Boolean).sort((a, b) => a.localeCompare(b));
+  };
+
+  // Verifica se l'utente ha ruolo di coordinatore, responsabile, PM o direzione sulla commessa
+  const isManagerOfCommessa = (comm?: any): boolean => {
+    if (!comm) return false;
+    if (isAdmin || isSoci(myAssociatedName) || isDev || isGestoreCommesse) return true;
+
+    // 1. Responsabile di Commessa
+    if (comm.responsabile && (areNamesEqual(comm.responsabile, myAssociatedName) || (userEmail && comm.responsabile.toLowerCase().includes(userEmail.split('@')[0])))) {
+      return true;
+    }
+
+    // 2. Project Manager (PM)
+    const pms = Array.isArray(comm.pm) ? comm.pm : (comm.pm ? [comm.pm] : []);
+    if (pms.some((p: string) => areNamesEqual(p, myAssociatedName) || (userEmail && p.toLowerCase().includes(userEmail.split('@')[0])))) {
+      return true;
+    }
+
+    // 3. Coordinatori d'Area / Aziendali
+    const uClean = (userEmail || '').toLowerCase().trim();
+    const nClean = (myAssociatedName || '').toLowerCase().trim();
+    const isCoord = (coordinatori || []).some(c => {
+      const cEmail = (c.email || '').toLowerCase().trim();
+      if (cEmail && uClean && (cEmail === uClean || cEmail.includes(uClean) || uClean.includes(cEmail))) return true;
+      const cUser = cEmail.split('@')[0];
+      const uUser = uClean.split('@')[0];
+      if (cUser && uUser && (cUser.includes(uUser) || uUser.includes(cUser))) return true;
+      return false;
+    }) || uClean.includes('badalassi') || uClean.includes('taddei') || nClean.includes('badalassi') || nClean.includes('taddei')
+       || uClean.includes('romanello') || nClean.includes('romanello')
+       || uClean.includes('bondi') || nClean.includes('bondi')
+       || uClean.includes('votino') || nClean.includes('votino')
+       || uClean.includes('corbellini') || nClean.includes('corbellini');
+
+    return isCoord;
+  };
+
+  // Chiunque lavori alla commessa può inserire punti
+  const canUserAddToPunchList = (_comm?: any) => {
     return true; // Tutti gli utenti della ditta possono inserire punti ToDo nelle commesse attive
   };
 
-  // Solo chi ha aperto quel punto specifico lo può modificare o eliminare (con fallback admin)
-  const canUserEditOrDeleteTask = (task: PunchListItem) => {
-    if (isAdmin || isSoci(myAssociatedName)) return true;
-    if (task.creatoDa && (areNamesEqual(task.creatoDa, myAssociatedName) || task.creatoDa.toLowerCase() === (userEmail || '').toLowerCase())) return true;
+  // Chi può spuntare come completato / riaprire: Assegnatario oppure Manager/Coordinatori/PM
+  const canUserToggleTask = (task: PunchListItem, comm?: any) => {
+    const targetComm = comm || selectedCommessaForPunchList;
+    if (isManagerOfCommessa(targetComm)) return true;
+    if (task.assegnatoA && (areNamesEqual(task.assegnatoA, myAssociatedName) || (userEmail && task.assegnatoA.toLowerCase().includes(userEmail.split('@')[0])))) {
+      return true;
+    }
+    return false;
+  };
+
+  // Chi può modificare o eliminare: Autore del punto oppure Manager/Coordinatori/PM
+  const canUserEditOrDeleteTask = (task: PunchListItem, comm?: any) => {
+    const targetComm = comm || selectedCommessaForPunchList;
+    if (isManagerOfCommessa(targetComm)) return true;
+    if (task.creatoDa && (areNamesEqual(task.creatoDa, myAssociatedName) || task.creatoDa.toLowerCase() === (userEmail || '').toLowerCase())) {
+      return true;
+    }
     return false;
   };
 
   const sanitizePunchListForFirestore = (list: PunchListItem[]): any[] => {
     return list.map(item => {
+      const rawState = item.stato || 'da_fare';
+      const cleanState = (rawState === 'completato' || rawState === 'eseguito') ? 'completato' : 'da_fare';
       const cleanItem: Record<string, any> = {
         id: item.id || `task_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
         categoria: item.categoria || 'da fare',
         titolo: item.titolo ? item.titolo.trim() : '',
-        stato: item.stato || 'da_fare',
+        stato: cleanState,
         assegnatoA: item.assegnatoA ? item.assegnatoA.trim() : '',
         creatoDa: item.creatoDa || 'Utente',
         creatoIl: item.creatoIl || new Date().toISOString()
@@ -791,9 +1025,9 @@ export default function Commesse() {
       let updatedList: PunchListItem[] = [];
 
       if (editingTask) {
-        // Controllo che solo l'autore possa modificare
-        if (!canUserEditOrDeleteTask(editingTask)) {
-          showToast("Puoi modificare solo i punti che hai creato tu.", "error");
+        // Controllo permessi modifica
+        if (!canUserEditOrDeleteTask(editingTask, selectedCommessaForPunchList)) {
+          showToast("Puoi modificare solo i punti che hai creato tu, a meno che tu non sia Coordinatore/Responsabile/PM.", "error");
           setIsSavingTask(false);
           return;
         }
@@ -802,7 +1036,7 @@ export default function Commesse() {
           if (t.id === editingTask.id) {
             const updated: PunchListItem = {
               ...t,
-              categoria: newTaskCategoria || 'da fare',
+              categoria: newTaskCategoria || TODO_CATEGORIE[0] || 'aggiornare',
               titolo: newTaskTitolo.trim(),
               assegnatoA: newTaskAssegnatoA.trim()
             };
@@ -821,7 +1055,7 @@ export default function Commesse() {
         // Nuovo task creato
         const newTask: PunchListItem = {
           id: `task_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-          categoria: newTaskCategoria || 'da fare',
+          categoria: newTaskCategoria || TODO_CATEGORIE[0] || 'aggiornare',
           titolo: newTaskTitolo.trim(),
           assegnatoA: newTaskAssegnatoA.trim(),
           stato: 'da_fare',
@@ -840,7 +1074,7 @@ export default function Commesse() {
       setNewTaskDescrizione('');
       setNewTaskScadenza('');
       setNewTaskAssegnatoA('');
-      setNewTaskCategoria('da fare');
+      setNewTaskCategoria(TODO_CATEGORIE[0] || 'aggiornare');
       setEditingTask(null);
     } catch (err: any) {
       console.error("Errore salvataggio task:", err);
@@ -850,10 +1084,15 @@ export default function Commesse() {
     }
   };
 
-  const handleChangeTaskStatus = async (task: PunchListItem, nextStatus: 'da_fare' | 'da_rivedere' | 'eseguito') => {
-    if (!selectedCommessaForPunchList) return;
-    const commId = selectedCommessaForPunchList.id;
-    const currentList: PunchListItem[] = selectedCommessaForPunchList.punchList || [];
+  const handleChangeTaskStatus = async (task: PunchListItem, nextStatus: 'da_fare' | 'completato', customComm?: any) => {
+    const comm = customComm || selectedCommessaForPunchList;
+    if (!comm) return;
+    if (!canUserToggleTask(task, comm)) {
+      showToast(`Solo ${task.assegnatoA || 'la risorsa assegnata'} o i Coordinatori/Responsabili/PM possono spuntare questa attività.`, "warning");
+      return;
+    }
+    const commId = comm.id;
+    const currentList: PunchListItem[] = comm.punchList || [];
 
     const nowIso = new Date().toISOString();
     const updaterName = myAssociatedName || userEmail || 'Utente';
@@ -861,13 +1100,9 @@ export default function Commesse() {
     const updatedList = currentList.map(t => {
       if (t.id === task.id) {
         const updated: PunchListItem = { ...t, stato: nextStatus };
-        if (nextStatus === 'da_rivedere' || nextStatus === 'eseguito') {
+        if (nextStatus === 'completato') {
           updated.completatoDa = updaterName;
           updated.completatoIl = nowIso;
-          if (nextStatus === 'eseguito') {
-            updated.approvatoDa = updaterName;
-            updated.approvatoIl = nowIso;
-          }
         } else if (nextStatus === 'da_fare') {
           delete updated.completatoDa;
           delete updated.completatoIl;
@@ -882,13 +1117,8 @@ export default function Commesse() {
     try {
       await handleSavePunchListToFirestore(commId, updatedList);
 
-      if (nextStatus === 'da_rivedere' || nextStatus === 'eseguito') {
-        const creator = task.creatoDa || 'il creatore';
-        if (!areNamesEqual(task.creatoDa, updaterName)) {
-          showToast(`✓ Voce completata da ${updaterName}! (Notifica registrata per ${creator})`, "success");
-        } else {
-          showToast("✓ Voce ToDo completata!", "success");
-        }
+      if (nextStatus === 'completato') {
+        showToast("✓ Voce ToDo completata!", "success");
       } else {
         showToast("Spunta rimossa: voce ToDo riportata a 'Da Fare'.", "info" as any);
       }
@@ -900,8 +1130,9 @@ export default function Commesse() {
 
   const handleDeletePunchTask = async (task: PunchListItem) => {
     if (!selectedCommessaForPunchList) return;
-    if (!canUserEditOrDeleteTask(task)) {
-      showToast("Puoi eliminare solo i punti che hai creato tu.", "error");
+    const comm = selectedCommessaForPunchList;
+    if (!canUserEditOrDeleteTask(task, comm)) {
+      showToast("Puoi eliminare solo i punti che hai creato tu, a meno che tu non sia Coordinatore/Responsabile/PM.", "error");
       return;
     }
     setConfirmConfig({
@@ -3047,21 +3278,6 @@ export default function Commesse() {
                     </select>
                   </div>
 
-                  {/* Filtro Tipologia */}
-                  <div className="flex flex-col">
-                    <label className="text-[10px] font-extrabold text-gray-455 uppercase tracking-wider ml-1 mb-1">Tipo</label>
-                    <select
-                      value={selectedTipologiaFilter}
-                      onChange={e => setSelectedTipologiaFilter(e.target.value)}
-                      className="p-2 border bg-white rounded-xl font-bold text-gray-700 text-xs outline-none focus:ring-2 focus:ring-blue-400 w-32 shadow-sm cursor-pointer h-[38px]"
-                    >
-                      <option value="">Tutte le Tipologie</option>
-                      {selectableTipologiePerFiltro.map(t => (
-                        <option key={t} value={t}>{t}</option>
-                      ))}
-                    </select>
-                  </div>
-
                   {/* Filtro Commessa Multi-selezione */}
                   <div className="relative flex flex-col">
                     <label className="text-[10px] font-extrabold text-gray-455 uppercase tracking-wider ml-1 mb-1">Commesse</label>
@@ -3200,7 +3416,7 @@ export default function Commesse() {
                   </div>
 
                   {/* Pulsante Azzera Tutti i Filtri */}
-                  {(selectedClientFilter || selectedPMFilter || selectedTipologiaFilter || selectedCommessaIdsFilter.length > 0) && (
+                  {(selectedClientFilter || selectedPMFilter || selectedCommessaIdsFilter.length > 0) && (
                     <button
                       type="button"
                       onClick={() => {
@@ -3246,6 +3462,25 @@ export default function Commesse() {
                     />
                   </div>
                   
+                  <button 
+                    type="button"
+                    onClick={() => setIsMyTasksModalOpen(true)} 
+                    className="flex items-center gap-2 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white px-3.5 py-2 rounded-xl text-xs font-bold transition shadow-md active:scale-95 cursor-pointer relative"
+                    title="Riepilogo delle tue attività ToDo assegnate su tutte le commesse"
+                  >
+                    <ListTodo className="w-4 h-4 text-indigo-200" />
+                    <span>I Miei ToDo</span>
+                    {totalMyPendingTasksCount > 0 ? (
+                      <span className="bg-rose-500 text-white text-[10px] font-black px-1.5 py-0.2 rounded-full shadow-xs border border-white/40">
+                        {totalMyPendingTasksCount}
+                      </span>
+                    ) : (
+                      <span className="bg-emerald-500 text-white text-[10px] font-black px-1.5 py-0.2 rounded-full shadow-xs border border-white/40">
+                        0
+                      </span>
+                    )}
+                  </button>
+
                   <button onClick={handleExportToExcel} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition shadow-md active:scale-95 cursor-pointer">
                     <Download className="w-4 h-4" /> Esporta Excel
                   </button>
@@ -3261,14 +3496,14 @@ export default function Commesse() {
             >
               <table 
                 className="w-full text-left border-separate border-spacing-0 text-xs"
-                style={{ minWidth: `${240 + activeWeeks.length * parseInt(weekColumnMinWidth)}px` }}
+                style={{ minWidth: `${264 + activeWeeks.length * parseInt(weekColumnMinWidth)}px` }}
               >
                 <thead className="sticky top-0 z-30 bg-white shadow-sm border-b-2 border-gray-200">
                   {/* Month Group Header Row */}
                   <tr className="bg-gray-50 border-b text-[11px] font-black text-gray-500 text-center uppercase tracking-wider" style={{ height: '40px', minHeight: '40px', maxHeight: '40px' }}>
                     <th 
                       className="p-0 text-center sticky left-0 top-0 z-35 bg-gray-50 shadow-[1px_0_0_0_#e5e7eb] font-black truncate whitespace-nowrap"
-                      style={{ width: '240px', minWidth: '240px', maxWidth: '240px', height: '40px', minHeight: '40px', maxHeight: '40px', lineHeight: '40px' }}
+                      style={{ width: '264px', minWidth: '264px', maxWidth: '264px', height: '40px', minHeight: '40px', maxHeight: '40px', lineHeight: '40px' }}
                     >
                       Mesi
                     </th>
@@ -3282,7 +3517,7 @@ export default function Commesse() {
                   <tr className="h-12">
                     <th 
                       className="p-4 font-extrabold text-gray-900 sticky left-0 z-35 bg-white shadow-[1px_0_0_0_#e5e7eb] h-12 truncate"
-                      style={{ width: '240px', minWidth: '240px', maxWidth: '240px', top: '39px' }}
+                      style={{ width: '264px', minWidth: '264px', maxWidth: '264px', top: '39px' }}
                     >
                       Commesse e Clienti
                     </th>
@@ -3328,9 +3563,9 @@ export default function Commesse() {
                         <tr key={comm.id} className="hover:bg-blue-50/20 transition-colors bg-white">
                           <td 
                             className="p-3 font-bold text-gray-800 bg-white sticky left-0 z-10 shadow-[1px_0_0_0_#f3f4f6] border-b align-middle text-left"
-                            style={{ width: '252px', minWidth: '252px', maxWidth: '252px' }}
+                            style={{ width: '264px', minWidth: '264px', maxWidth: '264px' }}
                           >
-                            <div className="flex items-stretch gap-2">
+                            <div className="flex items-stretch gap-2.5">
                               <span className="w-3 h-3 rounded-full shadow-inner shrink-0 mt-1" style={{backgroundColor: (comm.tipologia && TIPOLOGIA_COLORS[comm.tipologia]) || comm.colore || '#64748b'}}></span>
                               
                               <div className="min-w-0 flex-1 text-left flex flex-col justify-between">
@@ -3362,19 +3597,16 @@ export default function Commesse() {
                               {(() => {
                                 const pList: PunchListItem[] = comm.punchList || [];
                                 const totalTasks = pList.length;
-                                const completedTasks = pList.filter(t => t.stato === 'eseguito').length;
-                                const reviewTasks = pList.filter(t => t.stato === 'da_rivedere').length;
+                                const completedTasks = pList.filter(t => t.stato === 'completato' || t.stato === 'eseguito').length;
                                 const openTasks = pList.filter(t => t.stato === 'da_fare').length;
-                                const hasPendingReview = reviewTasks > 0;
-                                const totalUncompleted = openTasks + reviewTasks;
 
                                 return (
-                                  <div className="flex flex-col items-center justify-between shrink-0 bg-slate-50/90 p-1 rounded-xl border border-slate-200/80 shadow-2xs self-stretch min-h-[84px]">
+                                  <div className="flex flex-col items-center justify-between shrink-0 bg-slate-50/95 py-2 px-1.5 rounded-2xl border border-slate-200/90 shadow-2xs self-stretch min-h-[96px] w-[36px]">
                                     {/* 1. In alto: Info */}
                                     <button 
                                       type="button"
                                       onClick={() => handleOpenInfoModal(comm)}
-                                      className="text-gray-400 hover:text-blue-600 p-1 rounded-lg hover:bg-blue-50 transition-colors shrink-0 cursor-pointer"
+                                      className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50/80 rounded-xl transition-all shrink-0 cursor-pointer"
                                       title="Visualizza dettagli e specifiche commessa"
                                     >
                                       <Info className="w-4 h-4" />
@@ -3382,11 +3614,11 @@ export default function Commesse() {
 
                                     {/* 2. Al centro: Cartella di Rete */}
                                     {comm.percorsoRete ? (
-                                      <div className="flex items-center gap-0.5">
+                                      <div className="relative group/folder">
                                         <button
                                           type="button"
                                           onClick={(e) => handleOpenNetworkPath(comm, e)}
-                                          className="text-indigo-600 hover:text-indigo-800 p-1 rounded-lg hover:bg-indigo-50 transition-colors cursor-pointer"
+                                          className="w-7 h-7 flex items-center justify-center text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-xl transition-all cursor-pointer"
                                           title={`📁 Apri / Copia percorso di rete:\n${comm.percorsoRete}`}
                                         >
                                           <Folder className="w-4 h-4" />
@@ -3399,7 +3631,7 @@ export default function Commesse() {
                                             setNetworkPathInput(comm.percorsoRete || '');
                                             setIsNetworkPathModalOpen(true);
                                           }}
-                                          className="text-gray-400 hover:text-indigo-600 p-0.5 rounded hover:bg-indigo-50 transition-colors cursor-pointer"
+                                          className="absolute -bottom-1 -right-1 p-0.5 bg-white text-gray-400 hover:text-indigo-600 rounded-full border border-gray-200 shadow-2xs hover:bg-indigo-50 transition-colors cursor-pointer"
                                           title="Modifica percorso di rete"
                                         >
                                           <Pencil className="w-2.5 h-2.5" />
@@ -3414,7 +3646,7 @@ export default function Commesse() {
                                           setNetworkPathInput('');
                                           setIsNetworkPathModalOpen(true);
                                         }}
-                                        className="text-gray-400 hover:text-indigo-600 p-1 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
+                                        className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-gray-100 rounded-xl transition-all cursor-pointer"
                                         title="Collega cartella di rete (UNC)"
                                       >
                                         <FolderPlus className="w-4 h-4" />
@@ -3432,21 +3664,20 @@ export default function Commesse() {
                                         setNewTaskDescrizione('');
                                         setNewTaskScadenza('');
                                         setNewTaskAssegnatoA('');
+                                        setNewTaskCategoria(TODO_CATEGORIE[0] || 'aggiornare');
                                         setIsPunchListModalOpen(true);
                                       }}
-                                      className={`relative p-1 rounded-lg transition-all cursor-pointer ${
-                                        hasPendingReview
-                                          ? 'bg-amber-100 text-amber-900 border border-amber-300 ring-2 ring-amber-400 animate-pulse'
-                                          : totalUncompleted > 0
-                                            ? 'text-indigo-600 hover:bg-indigo-100/70 font-black'
-                                            : 'text-gray-400 hover:text-indigo-600 hover:bg-gray-100'
+                                      className={`relative w-7 h-7 flex items-center justify-center rounded-xl transition-all cursor-pointer ${
+                                        openTasks > 0
+                                          ? 'text-indigo-600 hover:bg-indigo-100/70 font-black'
+                                          : 'text-gray-400 hover:text-indigo-600 hover:bg-gray-100'
                                       }`}
-                                      title={`📋 ToDo List (${completedTasks}/${totalTasks} completati)${hasPendingReview ? ` - ${reviewTasks} da revisionare!` : ''}`}
+                                      title={`📋 ToDo List (${completedTasks}/${totalTasks} completati)${openTasks > 0 ? ` - ${openTasks} da fare` : ''}`}
                                     >
                                       <ListTodo className="w-4 h-4" />
-                                      {totalUncompleted > 0 && (
-                                        <span className={`absolute -top-1 -right-1 text-[8px] font-black min-w-[14px] h-3.5 px-0.5 rounded-full flex items-center justify-center text-white ${hasPendingReview ? 'bg-amber-600' : 'bg-indigo-600'}`}>
-                                          {totalUncompleted}
+                                      {openTasks > 0 && (
+                                        <span className="absolute -top-1 -right-1.5 text-[8.5px] font-black min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center text-white bg-indigo-600 shadow-xs border border-white">
+                                          {openTasks}
                                         </span>
                                       )}
                                     </button>
@@ -3570,6 +3801,8 @@ export default function Commesse() {
                                        `Clicca per gestire`
                                      ].join('\n');
 
+                                     const isSelf = (!!myAssociatedName && areNamesEqual(person.name, myAssociatedName)) || (!!dip?.email && !!userEmail && dip.email.toLowerCase() === userEmail.toLowerCase());
+
                                      if (isUltraNarrow) {
                                        return (
                                          <div 
@@ -3578,11 +3811,15 @@ export default function Commesse() {
                                            onAuxClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
                                            onClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
                                            className={`text-[8.5px] font-black text-center py-0.5 px-0.5 rounded border flex items-center justify-center shadow-2xs select-none cursor-pointer hover:ring-2 hover:ring-indigo-400 transition-all ${
-                                             isAllWeekOnLeave
-                                               ? 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100'
-                                               : hasLeaves 
-                                                 ? 'bg-rose-50 text-rose-800 border-rose-200 ring-1 ring-rose-300' 
-                                                 : 'bg-indigo-50 text-indigo-900 border-indigo-150 hover:bg-indigo-100'
+                                             isSelf
+                                               ? isAllWeekOnLeave
+                                                 ? 'bg-amber-500 text-white border-amber-600 ring-2 ring-amber-300 shadow-xs'
+                                                 : 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white border-indigo-700 ring-2 ring-indigo-400 shadow-xs hover:brightness-110'
+                                               : isAllWeekOnLeave
+                                                 ? 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100'
+                                                 : hasLeaves 
+                                                   ? 'bg-rose-50 text-rose-800 border-rose-200 ring-1 ring-rose-300' 
+                                                   : 'bg-indigo-50 text-indigo-900 border-indigo-150 hover:bg-indigo-100'
                                            }`}
                                            title={tooltipText}
                                          >
@@ -3600,17 +3837,21 @@ export default function Commesse() {
                                            onAuxClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
                                            onClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
                                            className={`text-[9px] font-bold py-0.5 px-1 rounded border flex items-center justify-between gap-0.5 shadow-2xs truncate select-none w-full cursor-pointer hover:ring-2 hover:ring-indigo-400 transition-all ${
-                                             isAllWeekOnLeave
-                                               ? 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100'
-                                               : hasLeaves 
-                                                 ? 'bg-rose-50 text-rose-800 border-rose-200' 
-                                                 : 'bg-indigo-50 text-indigo-900 border-indigo-150 hover:bg-indigo-100'
+                                             isSelf
+                                               ? isAllWeekOnLeave
+                                                 ? 'bg-amber-500 text-white border-amber-600 ring-2 ring-amber-300 shadow-xs font-black'
+                                                 : 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white border-indigo-700 ring-2 ring-indigo-400/80 shadow-xs font-black hover:brightness-110'
+                                               : isAllWeekOnLeave
+                                                 ? 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100'
+                                                 : hasLeaves 
+                                                   ? 'bg-rose-50 text-rose-800 border-rose-200' 
+                                                   : 'bg-indigo-50 text-indigo-900 border-indigo-150 hover:bg-indigo-100'
                                            }`}
                                            title={tooltipText}
                                          >
-                                           <span className="truncate text-left">{initials}</span>
-                                           <span className="font-extrabold text-[8.5px] text-indigo-655 shrink-0 text-right">{displayHoursText}</span>
-                                           {hasLeaves && <span className="text-[7.5px] text-amber-500 shrink-0 ml-0.5" title={`Assenze: ${leavesFormatted}`}>⚠️</span>}
+                                           <span className="truncate text-left font-black">{initials}</span>
+                                           <span className={`font-extrabold text-[8.5px] shrink-0 text-right ${isSelf ? 'text-white/95' : 'text-indigo-655'}`}>{displayHoursText}</span>
+                                           {hasLeaves && <span className={`text-[7.5px] shrink-0 ml-0.5 ${isSelf ? 'text-amber-300' : 'text-amber-500'}`} title={`Assenze: ${leavesFormatted}`}>⚠️</span>}
                                          </div>
                                        );
                                      }
@@ -3621,18 +3862,22 @@ export default function Commesse() {
                                          onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
                                          onAuxClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
                                          onClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
-                                         className={`text-[10px] p-1 rounded-md border flex items-center justify-between gap-1 shadow-2xs w-full select-none cursor-pointer hover:ring-2 hover:ring-indigo-400 transition-all hover:scale-[1.01] ${
-                                           isAllWeekOnLeave
-                                             ? 'bg-amber-50/90 text-amber-950 border-amber-200 hover:bg-amber-100'
-                                             : 'bg-indigo-50/80 text-indigo-950 border-indigo-100/60 hover:bg-indigo-100'
+                                         className={`text-[10px] p-1 px-1.5 rounded-lg border flex items-center justify-between gap-1 shadow-2xs w-full select-none cursor-pointer transition-all hover:scale-[1.02] ${
+                                           isSelf
+                                             ? isAllWeekOnLeave
+                                               ? 'bg-amber-500 text-white border-amber-600 ring-2 ring-amber-300 shadow-xs'
+                                               : 'bg-gradient-to-r from-indigo-600 via-indigo-700 to-blue-700 text-white border-indigo-700 ring-2 ring-indigo-400/70 shadow-xs font-bold hover:brightness-110'
+                                             : isAllWeekOnLeave
+                                               ? 'bg-amber-50/90 text-amber-950 border-amber-200 hover:bg-amber-100'
+                                               : 'bg-indigo-50/80 text-indigo-950 border-indigo-100/60 hover:bg-indigo-100'
                                          }`}
                                          title={tooltipText}
                                        >
                                          <div className="flex items-center gap-1 min-w-0 flex-1">
-                                           {hasLeaves && <span className="text-[11px] shrink-0 text-amber-500" title={`Assenze: ${leavesFormatted}`}>⚠️</span>}
-                                           <span className="truncate font-bold text-left">{person.name}</span>
+                                           {hasLeaves && <span className={`text-[11px] shrink-0 ${isSelf ? 'text-amber-300' : 'text-amber-500'}`} title={`Assenze: ${leavesFormatted}`}>⚠️</span>}
+                                           <span className={`truncate text-left ${isSelf ? 'font-black text-white' : 'font-bold text-gray-900'}`}>{person.name}</span>
                                          </div>
-                                         <span className="text-indigo-650 font-black shrink-0 text-right text-[10px]">{displayHoursText}</span>
+                                         <span className={`font-black shrink-0 text-right text-[10px] ${isSelf ? 'text-white bg-white/20 px-1 py-0.2 rounded' : 'text-indigo-650'}`}>{displayHoursText}</span>
                                        </div>
                                      );
                                    })}
@@ -3660,12 +3905,16 @@ export default function Commesse() {
               </span>
             </div>
 
-            {/* Legenda Priorità Settimanali */}
+            {/* Legenda Priorità Settimanali & Assegnazioni Personali */}
             <div className="p-4 bg-gray-50/50 flex flex-wrap items-center justify-between gap-4 text-xs border-t border-gray-150">
               <div className="flex items-center gap-2">
-                <span className="text-xs font-black uppercase text-indigo-950 tracking-wider">Legenda Priorità Settimanale:</span>
+                <span className="text-xs font-black uppercase text-indigo-950 tracking-wider">Legenda:</span>
               </div>
               <div className="flex flex-wrap items-center gap-3 text-xs font-bold text-gray-700">
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 text-white font-extrabold shadow-xs">
+                  <User className="w-3.5 h-3.5 text-indigo-200" />
+                  <span>Le Mie Assegnazioni (Tu)</span>
+                </div>
                 <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-50/80 border border-red-300 ring-2 ring-inset ring-red-500">
                   <span>🔴</span>
                   <span className="font-extrabold text-red-950">Priorità Alta</span>
@@ -6111,22 +6360,23 @@ export default function Commesse() {
       {isPunchListModalOpen && selectedCommessaForPunchList && (() => {
         const canAdd = canUserAddToPunchList(selectedCommessaForPunchList);
         const allTasks: PunchListItem[] = selectedCommessaForPunchList.punchList || [];
+        const eligibleAssignees = getEligibleAssigneesForCommessa(selectedCommessaForPunchList, editingTask?.assegnatoA);
         
+        const isDone = (t: PunchListItem) => t.stato === 'completato' || t.stato === 'eseguito';
         const countTotal = allTasks.length;
-        const countDone = allTasks.filter(t => t.stato === 'eseguito').length;
-        const countReview = allTasks.filter(t => t.stato === 'da_rivedere').length;
+        const countDone = allTasks.filter(isDone).length;
         const countTodo = allTasks.filter(t => t.stato === 'da_fare').length;
 
         const filteredTasks = allTasks.filter(t => {
           if (punchListFilter === 'da_fare') return t.stato === 'da_fare';
-          if (punchListFilter === 'da_rivedere') return t.stato === 'da_rivedere';
-          if (punchListFilter === 'eseguito') return t.stato === 'eseguito';
+          if (punchListFilter === 'completato') return isDone(t);
           return true;
         }).sort((a, b) => {
-          // Ordinamento prioritario: prima 'da_rivedere', poi 'da_fare', poi 'eseguito'
-          const stateScore = (s: string) => s === 'da_rivedere' ? 1 : (s === 'da_fare' ? 2 : 3);
-          if (stateScore(a.stato) !== stateScore(b.stato)) {
-            return stateScore(a.stato) - stateScore(b.stato);
+          // Ordinamento prioritario: prima 'da_fare' (score 1), poi 'completato' (score 2)
+          const scoreA = isDone(a) ? 2 : 1;
+          const scoreB = isDone(b) ? 2 : 1;
+          if (scoreA !== scoreB) {
+            return scoreA - scoreB;
           }
           // Per 'da_fare', ordina per data di scadenza (le più vicine per prime)
           if (a.scadenza && b.scadenza) return a.scadenza.localeCompare(b.scadenza);
@@ -6141,12 +6391,20 @@ export default function Commesse() {
           return dStr < today;
         };
 
+        const curCatConfig = (newTaskCategoria && CATEGORIA_CONFIG[newTaskCategoria]) ? CATEGORIA_CONFIG[newTaskCategoria] : {
+          label: newTaskCategoria || 'Generale',
+          icon: '📌',
+          bg: 'bg-gray-50',
+          text: 'text-gray-700',
+          border: 'border-gray-200'
+        };
+
         return (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
-            <div className="bg-white rounded-3xl shadow-2xl max-w-4xl w-full border border-gray-150 flex flex-col max-h-[90vh] overflow-hidden animate-in zoom-in-95 duration-200">
+          <div className="fixed inset-0 bg-slate-900/70 z-[9999] flex items-center justify-center p-3 sm:p-4">
+            <div className="bg-white rounded-3xl shadow-2xl max-w-5xl w-full border border-gray-150 flex flex-col max-h-[92vh] overflow-hidden">
               
               {/* Header Modale ToDo List */}
-              <div className="p-6 pb-4 border-b border-gray-150 bg-gradient-to-r from-slate-900 via-indigo-950 to-blue-900 text-white rounded-t-3xl flex justify-between items-start shrink-0">
+              <div className="p-5 sm:p-6 pb-4 border-b border-gray-150 bg-gradient-to-r from-slate-900 via-indigo-950 to-blue-900 text-white rounded-t-3xl flex justify-between items-start shrink-0">
                 <div className="space-y-1 min-w-0 flex-1 pr-3">
                   <div className="flex items-center gap-2">
                     <span className="p-1.5 bg-white/10 rounded-xl">
@@ -6171,6 +6429,8 @@ export default function Commesse() {
                     setIsPunchListModalOpen(false);
                     setSelectedCommessaForPunchList(null);
                     setEditingTask(null);
+                    setIsCatDropdownOpen(false);
+                    setIsAssDropdownOpen(false);
                   }}
                   className="text-white/70 hover:text-white p-2 hover:bg-white/10 rounded-xl transition cursor-pointer shrink-0"
                 >
@@ -6178,11 +6438,204 @@ export default function Commesse() {
                 </button>
               </div>
 
+              {/* Form Inserimento / Modifica Voce ToDo (Fisso in alto per evitare layout shift o scrollbar indesiderate) */}
+              {canAdd && (
+                <div className="p-4 sm:px-6 bg-slate-50/80 border-b border-slate-200/90 shrink-0 relative z-30">
+                  <form onSubmit={handleAddOrEditPunchTask} className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
+                        <span>{editingTask ? '✏️ Modifica Voce ToDo List' : '➕ Nuovo Punto ToDo List'}</span>
+                      </span>
+                      {editingTask && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingTask(null);
+                            setNewTaskTitolo('');
+                            setNewTaskDescrizione('');
+                            setNewTaskScadenza('');
+                            setNewTaskAssegnatoA('');
+                            setNewTaskCategoria(TODO_CATEGORIE[0] || 'aggiornare');
+                            setIsCatDropdownOpen(false);
+                            setIsAssDropdownOpen(false);
+                          }}
+                          className="text-[11px] font-bold text-gray-500 hover:text-gray-800 underline cursor-pointer"
+                        >
+                          Annulla Modifica
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Riga 1: Categoria (Menu a 2 Colonne Concentrato & Tutto Visibile) + Descrizione/Titolo */}
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5">
+                      <div className="md:col-span-4 relative" ref={catDropdownRef}>
+                        <label className="text-[10px] font-extrabold text-gray-500 uppercase tracking-wider block mb-0.5">
+                           Categoria Attività *
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsCatDropdownOpen(!isCatDropdownOpen);
+                            setIsAssDropdownOpen(false);
+                          }}
+                          className="w-full py-1.5 px-2.5 border border-slate-200 bg-white rounded-xl text-xs font-black text-gray-800 flex items-center justify-between gap-2 hover:border-indigo-400 focus:ring-2 focus:ring-indigo-500 transition-colors cursor-pointer shadow-2xs h-[38px]"
+                        >
+                          <div className="flex items-center gap-1.5 min-w-0 truncate">
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black border ${curCatConfig.bg} ${curCatConfig.text} ${curCatConfig.border}`}>
+                              <span>{curCatConfig.icon}</span>
+                              <span className="uppercase">{curCatConfig.label}</span>
+                            </span>
+                          </div>
+                          <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform duration-150 shrink-0 ${isCatDropdownOpen ? 'rotate-180 text-indigo-600' : ''}`} />
+                        </button>
+
+                        {isCatDropdownOpen && (
+                          <div className="absolute top-full left-0 mt-1 w-[380px] sm:w-[420px] max-w-[90vw] bg-white rounded-2xl border border-gray-200 shadow-2xl z-50 p-2 grid grid-cols-2 gap-1 animate-in fade-in zoom-in-95 duration-150">
+                            {TODO_CATEGORIE.map(cat => {
+                              const cfg = CATEGORIA_CONFIG[cat] || { label: cat, icon: '📌', bg: 'bg-gray-50', text: 'text-gray-700', border: 'border-gray-200' };
+                              const isSelected = newTaskCategoria === cat;
+                              return (
+                                <button
+                                  key={cat}
+                                  type="button"
+                                  onClick={() => {
+                                    setNewTaskCategoria(cat);
+                                    setIsCatDropdownOpen(false);
+                                  }}
+                                  className={`p-1 px-2 rounded-lg text-left text-[11px] flex items-center justify-between gap-1 transition cursor-pointer ${
+                                    isSelected ? 'bg-indigo-50 font-black text-indigo-900 border border-indigo-200' : 'hover:bg-gray-50 text-gray-700 border border-transparent'
+                                  }`}
+                                >
+                                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9.5px] font-black border ${cfg.bg} ${cfg.text} ${cfg.border} truncate`}>
+                                    <span>{cfg.icon}</span>
+                                    <span className="uppercase truncate">{cfg.label}</span>
+                                  </span>
+                                  {isSelected && <Check className="w-3 h-3 text-indigo-600 shrink-0" />}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="md:col-span-8">
+                        <label className="text-[10px] font-extrabold text-gray-500 uppercase tracking-wider block mb-0.5">
+                          Descrizione del punto ToDo *
+                        </label>
+                        <input
+                          required
+                          type="text"
+                          placeholder="es. Telefonare a Studio Tecnico per conferma misure, Inviare computo via mail..."
+                          value={newTaskTitolo}
+                          onChange={e => setNewTaskTitolo(e.target.value)}
+                          className="w-full py-1.5 px-3 border border-slate-200 bg-white rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs h-[38px]"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Riga 2: Risorsa Assegnata + Scadenza + Pulsante Salva */}
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 items-end">
+                      <div className="md:col-span-6 relative" ref={assDropdownRef}>
+                        <label className="text-[10px] font-extrabold text-indigo-700 uppercase tracking-wider block mb-0.5">
+                          👤 Assegna a (Pianificati / Resp / PM) *
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsAssDropdownOpen(!isAssDropdownOpen);
+                            setIsCatDropdownOpen(false);
+                          }}
+                          className={`w-full py-1.5 px-2.5 border bg-white rounded-xl text-xs font-black flex items-center justify-between gap-2 hover:border-indigo-400 focus:ring-2 focus:ring-indigo-500 transition-colors cursor-pointer shadow-2xs h-[38px] ${
+                            newTaskAssegnatoA ? 'text-gray-900 border-indigo-200' : 'text-gray-400 border-slate-200'
+                          }`}
+                        >
+                          <div className="flex items-center gap-1.5 truncate">
+                            {newTaskAssegnatoA ? (
+                              <span className="inline-flex items-center gap-1.5 text-gray-900 font-black truncate">
+                                <User className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                                <span className="truncate">{newTaskAssegnatoA}</span>
+                              </span>
+                            ) : (
+                              <span className="text-gray-400 font-semibold truncate text-[11px]">
+                                {eligibleAssignees.length === 0 
+                                  ? '-- Nessuna risorsa pianificata su questa commessa --' 
+                                  : '-- Seleziona Risorsa Incaricata * --'}
+                              </span>
+                            )}
+                          </div>
+                          <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform duration-150 shrink-0 ${isAssDropdownOpen ? 'rotate-180 text-indigo-600' : ''}`} />
+                        </button>
+
+                        {isAssDropdownOpen && (
+                          <div className="absolute top-full left-0 mt-1 w-full max-h-56 overflow-y-auto bg-white rounded-2xl border border-gray-200 shadow-2xl z-50 p-1.5 divide-y divide-gray-50 scrollbar-thin animate-in fade-in zoom-in-95 duration-150">
+                            {eligibleAssignees.length === 0 ? (
+                              <div className="p-3 text-center text-xs text-gray-400">
+                                Nessuna risorsa pianificata trovata per questa commessa.
+                              </div>
+                            ) : (
+                              eligibleAssignees.map(name => {
+                                const isSelected = newTaskAssegnatoA === name;
+                                return (
+                                  <button
+                                    key={name}
+                                    type="button"
+                                    onClick={() => {
+                                      setNewTaskAssegnatoA(name);
+                                      setIsAssDropdownOpen(false);
+                                    }}
+                                    className={`w-full py-2 px-3 rounded-lg text-left text-xs flex items-center justify-between gap-2 transition cursor-pointer ${
+                                      isSelected ? 'bg-indigo-50 font-black text-indigo-900' : 'hover:bg-gray-50 text-gray-800 font-medium'
+                                    }`}
+                                  >
+                                    <span className="truncate">{name}</span>
+                                    {isSelected && <Check className="w-3.5 h-3.5 text-indigo-600 shrink-0" />}
+                                  </button>
+                                );
+                              })
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="md:col-span-4">
+                        <label className="text-[10px] font-extrabold text-gray-500 uppercase tracking-wider block mb-0.5">
+                          📅 Scadenza (Opzionale)
+                        </label>
+                        <input
+                          type="date"
+                          value={newTaskScadenza}
+                          onChange={e => setNewTaskScadenza(e.target.value)}
+                          className="w-full py-1.5 px-2.5 border border-slate-200 bg-white rounded-xl text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs cursor-pointer h-[38px]"
+                          title="Data di scadenza (opzionale)"
+                        />
+                      </div>
+
+                      <div className="md:col-span-2 flex justify-end">
+                        <button
+                          type="submit"
+                          disabled={isSavingTask || !newTaskTitolo.trim() || !newTaskAssegnatoA.trim()}
+                          className="w-full h-[38px] px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-xs transition active:scale-95 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1.5"
+                        >
+                          {isSavingTask ? (
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <>
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>{editingTask ? 'Salva' : 'Aggiungi'}</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </form>
+                </div>
+              )}
+
               {/* Barra Filtri & Conteggi Voci */}
-              <div className="bg-slate-50 px-6 py-3 border-b border-slate-200/80 flex flex-wrap items-center justify-between gap-3 shrink-0">
+              <div className="bg-slate-100/70 px-6 py-2.5 border-b border-slate-200/80 flex flex-wrap items-center justify-between gap-3 shrink-0">
                 <div className="text-xs font-bold text-gray-500 flex items-center gap-1.5">
                   <span>Totale Punti:</span>
-                  <span className="px-2.5 py-0.5 rounded-lg bg-gray-200/80 font-black text-gray-800 text-xs">
+                  <span className="px-2.5 py-0.5 rounded-lg bg-white border border-gray-200 font-black text-gray-800 text-xs">
                     {countTotal}
                   </span>
                   <span className="text-[11px] text-emerald-700 font-bold">
@@ -6208,139 +6661,16 @@ export default function Commesse() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setPunchListFilter('da_rivedere')}
-                    className={`px-3 py-1.5 rounded-xl font-bold transition cursor-pointer flex items-center gap-1.5 ${punchListFilter === 'da_rivedere' ? 'bg-amber-600 text-white shadow-xs' : countReview > 0 ? 'bg-amber-50 text-amber-900 border border-amber-300 font-extrabold' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-100'}`}
+                    onClick={() => setPunchListFilter('completato')}
+                    className={`px-3 py-1.5 rounded-xl font-bold transition cursor-pointer ${punchListFilter === 'completato' ? 'bg-emerald-600 text-white shadow-xs' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-100'}`}
                   >
-                    <span>Da Rivedere</span>
-                    {countReview > 0 && <span className="px-1.5 py-0.2 bg-amber-500 text-white rounded-full text-[10px] font-black">{countReview}</span>}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPunchListFilter('eseguito')}
-                    className={`px-3 py-1.5 rounded-xl font-bold transition cursor-pointer ${punchListFilter === 'eseguito' ? 'bg-emerald-600 text-white shadow-xs' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-100'}`}
-                  >
-                    Eseguite ({countDone})
+                    Completate ({countDone})
                   </button>
                 </div>
               </div>
 
-              {/* Corpo Scrollabile */}
-              <div className="p-6 overflow-y-auto flex-1 space-y-4">
-
-                {/* Form Inserimento / Modifica Voce ToDo (Aperto a tutti coloro che lavorano sulla commessa) */}
-                {canAdd && (
-                  <form onSubmit={handleAddOrEditPunchTask} className="bg-slate-50/90 p-4 rounded-2xl border border-slate-200 shadow-2xs space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
-                        <span>{editingTask ? '✏️ Modifica Voce ToDo List' : '➕ Nuovo Punto ToDo List'}</span>
-                      </span>
-                      {editingTask && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setEditingTask(null);
-                            setNewTaskTitolo('');
-                            setNewTaskDescrizione('');
-                            setNewTaskScadenza('');
-                            setNewTaskAssegnatoA('');
-                            setNewTaskCategoria('da fare');
-                          }}
-                          className="text-[11px] font-bold text-gray-500 hover:text-gray-800 underline cursor-pointer"
-                        >
-                          Annulla Modifica
-                        </button>
-                      )}
-                    </div>
-
-                    {/* Riga 1: Categoria (Menù a tendina 18 opzioni) + Descrizione/Titolo */}
-                    <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5">
-                      <div className="md:col-span-4">
-                        <label className="text-[10px] font-extrabold text-gray-500 uppercase tracking-wider block mb-1">
-                          Categoria Attività *
-                        </label>
-                        <select
-                          required
-                          value={newTaskCategoria}
-                          onChange={e => setNewTaskCategoria(e.target.value)}
-                          className="w-full p-2.5 border border-slate-200 bg-white rounded-xl text-xs font-black text-gray-800 outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs cursor-pointer"
-                        >
-                          {TODO_CATEGORIE.map(cat => {
-                            const cfg = CATEGORIA_CONFIG[cat];
-                            return (
-                              <option key={cat} value={cat}>
-                                {cfg?.icon || '📌'} {cfg?.label || cat}
-                              </option>
-                            );
-                          })}
-                        </select>
-                      </div>
-
-                      <div className="md:col-span-8">
-                        <label className="text-[10px] font-extrabold text-gray-500 uppercase tracking-wider block mb-1">
-                          Descrizione del punto ToDo *
-                        </label>
-                        <input
-                          required
-                          type="text"
-                          placeholder="es. Telefonare a Studio Tecnico per conferma misure, Inviare computo via mail..."
-                          value={newTaskTitolo}
-                          onChange={e => setNewTaskTitolo(e.target.value)}
-                          className="w-full p-2.5 border border-slate-200 bg-white rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Riga 2: Risorsa Assegnata (OBBLIGATORIA) + Scadenza + Pulsante Salva */}
-                    <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 items-end">
-                      <div className="md:col-span-6">
-                        <label className="text-[10px] font-extrabold text-indigo-700 uppercase tracking-wider block mb-1">
-                          👤 Assegna a (Obbligatorio) *
-                        </label>
-                        <select
-                          required
-                          value={newTaskAssegnatoA}
-                          onChange={e => setNewTaskAssegnatoA(e.target.value)}
-                          className="w-full p-2.5 border border-indigo-200 bg-white rounded-xl text-xs font-black text-gray-800 outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs cursor-pointer"
-                        >
-                          <option value="">-- Seleziona Risorsa Incaricata * --</option>
-                          {dipendenti.map(d => (
-                            <option key={d.id} value={d.nome}>{d.nome}</option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="md:col-span-4">
-                        <label className="text-[10px] font-extrabold text-gray-500 uppercase tracking-wider block mb-1">
-                          📅 Scadenza (Opzionale)
-                        </label>
-                        <input
-                          type="date"
-                          value={newTaskScadenza}
-                          onChange={e => setNewTaskScadenza(e.target.value)}
-                          className="w-full p-2.5 border border-slate-200 bg-white rounded-xl text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs cursor-pointer"
-                          title="Data di scadenza (opzionale)"
-                        />
-                      </div>
-
-                      <div className="md:col-span-2 flex justify-end">
-                        <button
-                          type="submit"
-                          disabled={isSavingTask || !newTaskTitolo.trim() || !newTaskAssegnatoA.trim()}
-                          className="w-full py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-xs transition active:scale-95 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1.5"
-                        >
-                          {isSavingTask ? (
-                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <>
-                              <Plus className="w-3.5 h-3.5" />
-                              <span>{editingTask ? 'Salva' : 'Aggiungi'}</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  </form>
-                )}
+              {/* Corpo Scrollabile con Lista Task (con scrollbar-gutter:stable per eliminare qualsiasi layout shift) */}
+              <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-3 [scrollbar-gutter:stable]">
 
                 {/* Lista Voci ToDo Compatta da Spuntare */}
                 {filteredTasks.length === 0 ? (
@@ -6350,15 +6680,14 @@ export default function Commesse() {
                 ) : (
                   <div className="divide-y divide-gray-150 border border-gray-200 rounded-2xl overflow-hidden bg-white shadow-2xs">
                     {filteredTasks.map(task => {
-                      const isDone = task.stato === 'eseguito';
-                      const isReview = task.stato === 'da_rivedere';
-                      const isExpired = !isDone && isTodayOrPast(task.scadenza);
+                      const done = isDone(task);
+                      const isExpired = !done && isTodayOrPast(task.scadenza);
                       const catConfig = CATEGORIA_CONFIG[task.categoria || 'da fare'] || CATEGORIA_CONFIG['da fare'];
-                      const canEditOrDelete = canUserEditOrDeleteTask(task);
+                      const canToggle = canUserToggleTask(task, selectedCommessaForPunchList);
+                      const canEditOrDelete = canUserEditOrDeleteTask(task, selectedCommessaForPunchList);
 
                       let rowBg = "hover:bg-slate-50/80";
-                      if (isReview) rowBg = "bg-amber-50/30 hover:bg-amber-50/60";
-                      if (isDone) rowBg = "bg-slate-50/40 hover:bg-slate-50/60";
+                      if (done) rowBg = "bg-slate-50/40 hover:bg-slate-50/60";
 
                       return (
                         <div key={task.id} className={`p-3 px-3.5 flex items-center justify-between gap-3 transition-colors ${rowBg}`}>
@@ -6366,45 +6695,36 @@ export default function Commesse() {
                           {/* A Sinistra: Checkbox Interattivo, Categoria e Titolo */}
                           <div className="flex items-center gap-3 min-w-0 flex-1">
                             
-                            {/* 1. Casella non spuntata (Da Fare) -> Cliccando si spunta (Da Rivedere) */}
-                            {task.stato === 'da_fare' && (
+                            {/* 1. Casella non spuntata (Da Fare) -> Cliccando si completa */}
+                            {!done && (
                               <button
                                 type="button"
-                                onClick={() => handleChangeTaskStatus(task, 'da_rivedere')}
-                                className="w-5 h-5 rounded-full border-2 border-slate-300 hover:border-amber-500 hover:bg-amber-50 flex items-center justify-center cursor-pointer transition shrink-0 group"
-                                title="Clicca per spuntare l'attività (invia a verifica)"
+                                disabled={!canToggle}
+                                onClick={() => handleChangeTaskStatus(task, 'completato')}
+                                className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition shrink-0 group ${
+                                  canToggle
+                                    ? 'border-slate-300 hover:border-emerald-500 hover:bg-emerald-50 cursor-pointer'
+                                    : 'border-slate-200 bg-slate-100/50 cursor-not-allowed opacity-60'
+                                }`}
+                                title={canToggle ? "Clicca per segnare l'attività come completata" : `Solo ${task.assegnatoA || 'la risorsa assegnata'} o i Coordinatori/PM possono completare questa attività`}
                               >
-                                <Check className="w-3 h-3 text-transparent group-hover:text-amber-600 transition" />
+                                <Check className={`w-3 h-3 text-transparent ${canToggle ? 'group-hover:text-emerald-600' : ''} transition`} />
                               </button>
                             )}
 
-                            {/* 2. Casella spuntata in attesa di verifica (Da Rivedere) -> Cliccando si toglie la spunta (torna a Da Fare) */}
-                            {task.stato === 'da_rivedere' && (
+                            {/* 2. Casella spuntata (Completato) -> Cliccando si toglie la spunta (torna a Da Fare) */}
+                            {done && (
                               <button
                                 type="button"
+                                disabled={!canToggle}
                                 onClick={() => handleChangeTaskStatus(task, 'da_fare')}
-                                className="w-5 h-5 rounded-full border-2 border-amber-500 bg-amber-500 text-white hover:bg-rose-500 hover:border-rose-600 flex items-center justify-center cursor-pointer transition shrink-0 group"
-                                title="Spuntata (in attesa di verifica) - Clicca per togliere la spunta"
+                                className={`w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center shrink-0 ${
+                                  canToggle ? 'cursor-pointer hover:bg-rose-500 transition group' : 'cursor-default'
+                                }`}
+                                title={canToggle ? "Completato - Clicca per togliere la spunta e riaprire a 'Da Fare'" : "Completato"}
                               >
-                                <Check className="w-3.5 h-3.5 group-hover:hidden" />
-                                <X className="w-3 h-3 hidden group-hover:block" />
-                              </button>
-                            )}
-
-                            {/* 3. Casella approvata definitivamente (Eseguito) -> Cliccando (se autore/PM) si toglie la spunta */}
-                            {task.stato === 'eseguito' && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  if (canEditOrDelete) {
-                                    handleChangeTaskStatus(task, 'da_fare');
-                                  }
-                                }}
-                                className={`w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center shrink-0 ${canEditOrDelete ? 'cursor-pointer hover:bg-rose-500 transition group' : 'cursor-default'}`}
-                                title={canEditOrDelete ? "Approvato - Clicca per togliere la spunta e riaprire" : "Approvato ed Eseguito"}
-                              >
-                                <Check className={`w-3.5 h-3.5 ${canEditOrDelete ? 'group-hover:hidden' : ''}`} />
-                                {canEditOrDelete && <X className="w-3 h-3 hidden group-hover:block" />}
+                                <Check className={`w-3.5 h-3.5 ${canToggle ? 'group-hover:hidden' : ''}`} />
+                                {canToggle && <X className="w-3 h-3 hidden group-hover:block" />}
                               </button>
                             )}
 
@@ -6419,19 +6739,14 @@ export default function Commesse() {
                                 </span>
 
                                 {/* Titolo / Descrizione */}
-                                <span className={`text-xs ${isDone ? 'line-through text-gray-400 font-medium' : 'font-extrabold text-gray-900'}`}>
+                                <span className={`text-xs ${done ? 'line-through text-gray-400 font-medium' : 'font-extrabold text-gray-900'}`}>
                                   {task.titolo}
                                 </span>
 
-                                {/* Badge Stato compatti */}
-                                {isReview && (
-                                  <span className="px-1.5 py-0.2 rounded-md text-[9.5px] font-black bg-amber-100 text-amber-900 border border-amber-300">
-                                    DA RIVEDERE
-                                  </span>
-                                )}
-                                {isDone && (
+                                {/* Badge Stato completato */}
+                                {done && (
                                   <span className="px-1.5 py-0.2 rounded-md text-[9.5px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                                    ✓ ESEGUITO
+                                    ✓ COMPLETATO
                                   </span>
                                 )}
 
@@ -6453,30 +6768,14 @@ export default function Commesse() {
                               {/* Dettagli Autore / Completamento */}
                               <div className="text-[10px] text-gray-400 flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5">
                                 <span>✍️ Creato da: <strong>{task.creatoDa}</strong></span>
-                                {task.completatoDa && <span className="text-amber-800 font-bold">✓ Spuntato da: {task.completatoDa}</span>}
-                                {task.approvatoDa && <span className="text-emerald-800 font-bold">Approvato da: {task.approvatoDa}</span>}
+                                {task.completatoDa && <span className="text-emerald-800 font-bold">✓ Completato da: {task.completatoDa}</span>}
                               </div>
                             </div>
 
                           </div>
 
-                          {/* A Destra: Pulsanti di Azione per PM e Modifica/Elimina SOLO per l'autore */}
+                          {/* A Destra: Modifica ed Elimina (riservati all'autore o Coordinatori/PM/Admin) */}
                           <div className="flex items-center gap-1.5 shrink-0">
-                            
-                            {/* Azione Rapida Approva per PM in stato Da Rivedere */}
-                            {isReview && (
-                              <button
-                                type="button"
-                                onClick={() => handleChangeTaskStatus(task, 'eseguito')}
-                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10.5px] rounded-lg shadow-2xs transition active:scale-95 cursor-pointer flex items-center gap-1"
-                                title="Approva definitivamente come Eseguito"
-                              >
-                                <Check className="w-3 h-3" />
-                                <span>Approva</span>
-                              </button>
-                            )}
-
-                            {/* Modifica ed Elimina: riservati ESCLUSIVAMENTE all'autore del punto (o Admin) */}
                             {canEditOrDelete && (
                               <div className="flex items-center gap-0.5 ml-1 border-l border-gray-200 pl-1.5">
                                 <button
@@ -6490,7 +6789,7 @@ export default function Commesse() {
                                     setNewTaskAssegnatoA(task.assegnatoA || '');
                                   }}
                                   className="text-gray-400 hover:text-indigo-600 p-1 rounded-md hover:bg-gray-100 transition cursor-pointer"
-                                  title="Modifica punto (creato da te)"
+                                  title="Modifica punto"
                                 >
                                   <Pencil className="w-3.5 h-3.5" />
                                 </button>
@@ -6498,7 +6797,7 @@ export default function Commesse() {
                                   type="button"
                                   onClick={() => handleDeletePunchTask(task)}
                                   className="text-gray-400 hover:text-rose-600 p-1 rounded-md hover:bg-rose-50 transition cursor-pointer"
-                                  title="Elimina punto (creato da te)"
+                                  title="Elimina punto"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
                                 </button>
@@ -6534,6 +6833,221 @@ export default function Commesse() {
           </div>
         );
       })()}
+
+      {/* MODALE "I MIEI TODO NELLE COMMESSE" */}
+      {isMyTasksModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/70 z-[9999] flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-5xl w-full border border-gray-150 flex flex-col max-h-[92vh] overflow-hidden">
+            
+            {/* Header Modale */}
+            <div className="p-5 sm:p-6 pb-4 border-b border-gray-150 bg-gradient-to-r from-slate-900 via-indigo-950 to-blue-900 text-white rounded-t-3xl flex justify-between items-start shrink-0">
+              <div className="space-y-1 min-w-0 flex-1 pr-3">
+                <div className="flex items-center gap-2">
+                  <span className="p-2 bg-indigo-500/20 text-indigo-300 rounded-xl border border-indigo-500/30">
+                    <ListTodo className="w-5 h-5" />
+                  </span>
+                  <div>
+                    <h3 className="text-lg font-black text-white tracking-tight flex items-center gap-2">
+                      I Miei ToDo nelle Commesse
+                    </h3>
+                    <p className="text-xs text-indigo-200/90 font-medium">
+                      Attività assegnate a <span className="font-bold text-white underline decoration-indigo-400">{myAssociatedName || 'te'}</span> &bull; Raggruppate per commessa e ordinate per scadenza
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="text-right hidden sm:block">
+                  <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black border ${
+                    totalMyPendingTasksCount > 0 
+                      ? 'bg-rose-500/20 text-rose-300 border-rose-500/30' 
+                      : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                  }`}>
+                    {totalMyPendingTasksCount > 0 ? (
+                      <>
+                        <span className="w-2 h-2 rounded-full bg-rose-400 animate-pulse" />
+                        {totalMyPendingTasksCount} {totalMyPendingTasksCount === 1 ? 'attività da completare' : 'attività da completare'}
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                        Nessuna attività in sospeso
+                      </>
+                    )}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsMyTasksModalOpen(false)}
+                  className="p-2 text-indigo-200 hover:text-white hover:bg-white/10 rounded-xl transition cursor-pointer"
+                  title="Chiudi"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Corpo Modale Scrollabile */}
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-6 flex-1 bg-slate-50/50 [scrollbar-gutter:stable]">
+              {totalMyPendingTasksCount === 0 ? (
+                <div className="bg-white rounded-2xl p-10 text-center border border-gray-200 shadow-sm max-w-lg mx-auto my-6 space-y-4">
+                  <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto border border-emerald-100 shadow-inner">
+                    <CheckCircle2 className="w-8 h-8 text-emerald-600" />
+                  </div>
+                  <div className="space-y-1">
+                    <h4 className="text-base font-black text-gray-800">Tutto completato! 🎉</h4>
+                    <p className="text-xs text-gray-500 leading-relaxed">
+                      Non hai attività "Da Fare" assegnate a tuo nome nelle commesse attualmente aperte. Sei perfettamente in pari con i tuoi compiti.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                myAssignedPendingTasks.map(group => {
+                  const comm = group.commessa;
+                  const respStr = comm.responsabile || '-';
+                  const pmStr = Array.isArray(comm.pm) ? comm.pm.join(', ') : (comm.pm || '-');
+
+                  return (
+                    <div key={comm.id} className="bg-white rounded-2xl border border-gray-200/90 shadow-sm overflow-hidden transition hover:shadow-md">
+                      {/* Intestazione Gruppo Commessa */}
+                      <div className="px-5 py-3.5 bg-gradient-to-r from-gray-50 to-indigo-50/30 border-b border-gray-200 flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span 
+                            className="w-3.5 h-3.5 rounded-full shrink-0 shadow-xs border border-white"
+                            style={{ backgroundColor: comm.colore || '#3b82f6' }}
+                          />
+                          <div>
+                            <h4 className="text-sm font-black text-gray-900 tracking-tight flex items-center gap-1.5 truncate">
+                              <span>{comm.codiceCommessa ? `${comm.codiceCommessa} - ` : ''}{comm.nome}</span>
+                            </h4>
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-gray-500 mt-0.5">
+                              {comm.cliente && (
+                                <span className="font-semibold text-gray-700">🏢 {comm.cliente}</span>
+                              )}
+                              <span>👤 Resp: <strong className="text-gray-700">{respStr}</strong></span>
+                              {pmStr !== '-' && <span>PM: <strong className="text-gray-700">{pmStr}</strong></span>}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-[11px] font-black px-2.5 py-1 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-lg">
+                            {group.tasks.length} {group.tasks.length === 1 ? 'compito' : 'compiti'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenCommessaToDoFromMyTasks(comm)}
+                            className="flex items-center gap-1 text-[11px] font-bold text-gray-700 hover:text-indigo-600 bg-white hover:bg-gray-100 border border-gray-200 px-2.5 py-1 rounded-lg transition cursor-pointer shadow-2xs"
+                            title="Apri la ToDo List completa di questa commessa"
+                          >
+                            <span>Apri ToDo</span>
+                            <ExternalLink className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Lista dei Task per questa Commessa */}
+                      <div className="p-4 space-y-2.5">
+                        {group.tasks.map(task => {
+                          const catConf = (task.categoria && CATEGORIA_CONFIG[task.categoria]) ? CATEGORIA_CONFIG[task.categoria] : {
+                            label: task.categoria || 'Generale',
+                            icon: '📋',
+                            bg: 'bg-gray-50',
+                            text: 'text-gray-700',
+                            border: 'border-gray-200'
+                          };
+                          const scadStatus = getScadenzaStatus(task.scadenza);
+
+                          return (
+                            <div 
+                              key={task.id}
+                              className={`p-3.5 sm:p-4 rounded-2xl border transition-all flex items-start gap-3.5 bg-white hover:bg-indigo-50/20 shadow-2xs ${scadStatus?.cardBorderClass || 'border-gray-200'}`}
+                            >
+                              {/* Spunta rapida */}
+                              <button
+                                type="button"
+                                onClick={() => handleChangeTaskStatus(task, 'completato', comm)}
+                                className="mt-0.5 w-6 h-6 rounded-full border-2 border-gray-300 hover:border-emerald-500 hover:bg-emerald-50 text-emerald-600 flex items-center justify-center transition cursor-pointer shrink-0 shadow-2xs group"
+                                title="Clicca per contrassegnare come Completato"
+                              >
+                                <Check className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 text-emerald-600 transition-opacity" />
+                              </button>
+
+                              {/* Dettaglio Task */}
+                              <div className="flex-1 min-w-0 space-y-1">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    {/* Badge Categoria */}
+                                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black border ${catConf.bg} ${catConf.text} ${catConf.border}`}>
+                                      <span>{catConf.icon}</span>
+                                      <span className="uppercase">{catConf.label}</span>
+                                    </span>
+
+                                    {/* Titolo Attività */}
+                                    <span className="text-xs font-bold text-gray-900">
+                                      {task.titolo}
+                                    </span>
+                                  </div>
+
+                                  {/* Badge Scadenza */}
+                                  {scadStatus ? (
+                                    <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md border shrink-0 ${scadStatus.badgeClass}`}>
+                                      {scadStatus.isOverdue ? (
+                                        <AlertTriangle className="w-3 h-3 text-rose-600 shrink-0" />
+                                      ) : (
+                                        <Clock className="w-3 h-3 shrink-0" />
+                                      )}
+                                      <span>{scadStatus.label}</span>
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] text-gray-400 font-medium shrink-0">
+                                      Nessuna scadenza
+                                    </span>
+                                  )}
+                                </div>
+
+                                {/* Descrizione/Note aggiuntive se presenti */}
+                                {task.descrizione && (
+                                  <p className="text-[11px] text-gray-600 bg-gray-50/80 p-2 rounded-lg border border-gray-100 whitespace-pre-wrap leading-relaxed">
+                                    {task.descrizione}
+                                  </p>
+                                )}
+
+                                {/* Info creazione */}
+                                <div className="text-[10px] text-gray-400 flex items-center gap-2 pt-0.5">
+                                  <span>Assegnato a: <strong className="text-gray-600">{task.assegnatoA}</strong></span>
+                                  {task.creatoDa && (
+                                    <span>&bull; Creato da <span className="text-gray-500 font-medium">{task.creatoDa}</span></span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Footer Modale */}
+            <div className="p-4 px-6 border-t border-gray-150 bg-gray-50 flex items-center justify-between text-xs text-gray-500 rounded-b-3xl shrink-0">
+              <span className="font-medium hidden sm:inline">
+                💡 Clicca sul cerchietto di un'attività per completarla subito, oppure su <strong>Apri ToDo</strong> per accedere alla checklist completa della commessa.
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsMyTasksModalOpen(false)}
+                className="px-5 py-2 bg-gray-800 hover:bg-gray-900 text-white font-bold rounded-xl transition cursor-pointer text-xs ml-auto"
+              >
+                Chiudi
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
 
       <ConfirmModal
         isOpen={confirmConfig.isOpen}

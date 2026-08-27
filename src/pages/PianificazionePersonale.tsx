@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth, isTechnicalUser, type Dipendente } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
-import { collection, doc, writeBatch, addDoc, updateDoc, deleteDoc, query, where, getDocs, onSnapshot, limit } from 'firebase/firestore';
+import { collection, doc, writeBatch, addDoc, updateDoc, deleteDoc, query, where, getDocs, onSnapshot } from 'firebase/firestore';
 import { Users, ChevronLeft, ChevronRight, ChevronDown, Save, Download, ZoomIn, ZoomOut, Trash2, Plus, RefreshCw, CalendarDays, FileText, X, UserCheck, MoveVertical, Clock, Pencil, ExternalLink, Calendar } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays, isItalianHoliday } from '../utils/date';
 
@@ -1135,9 +1135,6 @@ export default function PianificazionePersonale() {
   const [segnalazioniDisponibilita, setSegnalazioniDisponibilita] = useState<any[]>([]);
   const [segnalazioneToManage, setSegnalazioneToManage] = useState<any | null>(null);
   const [isConfirmManageOpen, setIsConfirmManageOpen] = useState(false);
-  const [isHistoryDisponibilitaOpen, setIsHistoryDisponibilitaOpen] = useState(false);
-  const [historyDisponibilitaList, setHistoryDisponibilitaList] = useState<any[]>([]);
-  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
 
   const fetchSegnalazioni = async () => {
     if (isDev && !impersonatedEmail) {
@@ -1165,41 +1162,6 @@ export default function PianificazionePersonale() {
     fetchSegnalazioni();
   }, [isDev, impersonatedEmail]);
 
-  // Carica lo storico delle segnalazioni degli ultimi 30 giorni on-demand (zero spreco letture)
-  const fetchHistoryDisponibilita = async () => {
-    setIsHistoryLoading(true);
-    try {
-      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-      const q = query(
-        collection(db, 'segnalazioni_disponibilita'),
-        limit(100)
-      );
-      const snap = await getDocs(q);
-      const list: any[] = [];
-      snap.forEach(docSnap => {
-        const data = docSnap.data();
-        const dateStr = data.timestamp || data.createdAt || '';
-        // Includi solo segnalazioni degli ultimi 30 giorni relative alla macro-area coordinata
-        if (!dateStr || dateStr >= thirtyDaysAgo) {
-          if (myCoordinatedAreas.includes(data.macroArea)) {
-            list.push({ id: docSnap.id, ...data });
-          }
-        }
-      });
-      list.sort((a, b) => (b.timestamp || b.createdAt || '').localeCompare(a.timestamp || a.createdAt || ''));
-      setHistoryDisponibilitaList(list);
-    } catch (err) {
-      console.error("Errore caricamento storico disponibilità:", err);
-    } finally {
-      setIsHistoryLoading(false);
-    }
-  };
-
-  const handleOpenHistoryDisponibilita = () => {
-    setIsHistoryDisponibilitaOpen(true);
-    fetchHistoryDisponibilita();
-  };
-
   const handlePianificaRisorsaDaSegnalazione = (nomeRisorsa: string) => {
     if (!nomeRisorsa) return;
     setActiveTab('risorsa');
@@ -1224,13 +1186,10 @@ export default function PianificazionePersonale() {
         gestitaEmail: userEmail || '',
         dataGestione: new Date().toISOString()
       });
-      showToast(`Segnalazione di ${segnalazioneToManage.risorsaNome || segnalazioneToManage.dipendenteNome || 'risorsa'} archiviata nello storico.`, 'success');
+      showToast(`Segnalazione di ${segnalazioneToManage.risorsaNome || segnalazioneToManage.dipendenteNome || 'risorsa'} archiviata.`, 'success');
       setIsConfirmManageOpen(false);
       setSegnalazioneToManage(null);
       await fetchSegnalazioni();
-      if (isHistoryDisponibilitaOpen) {
-        await fetchHistoryDisponibilita();
-      }
     } catch (err) {
       console.error("Errore aggiornamento segnalazione:", err);
       showToast("Errore durante l'archiviazione della segnalazione.", "error");
@@ -2943,19 +2902,6 @@ export default function PianificazionePersonale() {
               </button>
             )}
 
-            {/* Pulsante Storico Disponibilità per Coordinatori e Soci */}
-            {(myCoordinatedAreas.length > 0 || (isSoci(myAssociatedName) && !isDev)) && (
-              <button
-                type="button"
-                onClick={handleOpenHistoryDisponibilita}
-                className="flex items-center gap-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 px-3.5 py-2 rounded-xl text-xs font-extrabold transition shadow-2xs active:scale-95 cursor-pointer ml-2"
-                title="Visualizza lo storico delle segnalazioni di disponibilità per la tua area (ultimi 30 giorni)"
-              >
-                <UserCheck className="w-4 h-4 text-emerald-600" />
-                <span>Storico Disponibilità (30gg)</span>
-              </button>
-            )}
-
             {(() => {
               const pendingCount = (myRecentSentRequests || []).filter((r: any) => r.stato === 'in_attesa').length;
 
@@ -3002,13 +2948,6 @@ export default function PianificazionePersonale() {
                 </h3>
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleOpenHistoryDisponibilita}
-                  className="text-xs font-bold text-emerald-800 hover:text-emerald-950 bg-emerald-100/90 hover:bg-emerald-200 px-3 py-1 rounded-xl border border-emerald-300 transition cursor-pointer flex items-center gap-1.5"
-                >
-                  <span>📋 Storico Area (30gg)</span>
-                </button>
                 <span className="text-[11px] font-bold text-emerald-800 bg-emerald-100 px-3 py-1 rounded-full border border-emerald-200">
                   Coordinamento Area
                 </span>
@@ -3614,6 +3553,9 @@ export default function PianificazionePersonale() {
                                             className="p-1 border border-gray-200 rounded-lg bg-white font-bold text-[10px] text-gray-700 outline-none focus:border-indigo-400 cursor-pointer"
                                             title="Modifica % solo per questo sotto-periodo"
                                           >
+                                            {(!Array.from({ length: 20 }, (_, i) => (i + 1) * 5).includes(sp.pct)) && (
+                                              <option value={sp.pct}>{sp.pct}%</option>
+                                            )}
                                             {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
                                               <option key={pct} value={pct}>{pct}%</option>
                                             ))}
@@ -4060,6 +4002,9 @@ export default function PianificazionePersonale() {
                                               className="p-1 border border-gray-200 rounded-lg bg-white font-bold text-[10px] text-gray-700 outline-none focus:border-indigo-400 cursor-pointer"
                                               title="Modifica % solo per questo sotto-periodo"
                                             >
+                                              {(!Array.from({ length: 20 }, (_, i) => (i + 1) * 5).includes(sp.pct)) && (
+                                                <option value={sp.pct}>{sp.pct}%</option>
+                                              )}
                                               {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
                                                 <option key={pct} value={pct}>{pct}%</option>
                                               ))}
@@ -5245,158 +5190,6 @@ export default function PianificazionePersonale() {
                   ✓ Conferma Archiviazione
                 </button>
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODALE STORICO DISPONIBILITÀ (ULTIMI 30 GIORNI - CONDIVISO AREA) */}
-      {isHistoryDisponibilitaOpen && (
-        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-md flex items-center justify-center z-[9999] p-4 no-print animate-in fade-in duration-200">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl border border-gray-100 max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
-            <div className="p-5 bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-700 text-white flex justify-between items-center shrink-0">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-white/20 rounded-xl">
-                  <UserCheck className="w-5 h-5 text-white" />
-                </div>
-                <div>
-                  <h3 className="text-base font-extrabold">Storico Segnalazioni Disponibilità</h3>
-                  <p className="text-[11px] text-white/80 font-medium">
-                    Condiviso per i Coordinatori di Area · Ultimi 30 giorni
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsHistoryDisponibilitaOpen(false)}
-                className="text-white/80 hover:text-white p-1.5 rounded-xl hover:bg-white/10 transition cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-6 overflow-y-auto space-y-4 flex-1">
-              {isHistoryLoading ? (
-                <div className="flex flex-col items-center justify-center py-12 text-gray-400 gap-3">
-                  <RefreshCw className="w-6 h-6 animate-spin text-emerald-600" />
-                  <span className="text-xs font-bold">Caricamento storico in corso...</span>
-                </div>
-              ) : (() => {
-                const filteredHistory = historyDisponibilitaList.filter(s => 
-                  myCoordinatedAreas.includes(s.macroArea) || (isSoci(myAssociatedName) && !isDev)
-                );
-
-                if (filteredHistory.length === 0) {
-                  return (
-                    <div className="text-center py-12 text-gray-400 font-medium text-xs bg-slate-50 rounded-2xl border border-slate-200 p-8">
-                      Nessuna segnalazione di disponibilità registrata negli ultimi 30 giorni per le tue macro-aree coordinate.
-                    </div>
-                  );
-                }
-
-                return (
-                  <div className="space-y-3">
-                    {filteredHistory.map(s => {
-                      const risorsaNome = s.risorsaNome || s.dipendenteNome || 'Risorsa';
-                      const periodoLabel = s.settimanaLabel || (s.dataInizio && s.dataFine ? `${s.dataInizio} → ${s.dataFine}` : s.settimana || 'Periodo corrente');
-                      const notaContent = s.nota || s.note || '';
-                      const isPending = s.stato === 'in_attesa';
-
-                      return (
-                        <div 
-                          key={s.id} 
-                          className={`p-4 rounded-2xl border transition-all ${
-                            isPending 
-                              ? 'bg-emerald-50/60 border-emerald-300 shadow-xs' 
-                              : 'bg-white border-slate-200 hover:border-slate-300'
-                          }`}
-                        >
-                          <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2 mb-2">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="font-extrabold text-sm text-gray-900">{risorsaNome}</span>
-                              <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-slate-100 text-slate-800 border border-slate-200">
-                                {s.macroArea}
-                              </span>
-                              <span className={`text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full border ${
-                                isPending 
-                                  ? 'bg-amber-100 text-amber-800 border-amber-300' 
-                                  : 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                              }`}>
-                                {isPending ? '⏳ In Attesa di Assegnazione' : '✓ Gestita / Assegnata'}
-                              </span>
-                            </div>
-
-                            {s.timestamp && (
-                              <span className="text-[10.5px] text-gray-400 font-medium">
-                                Ricevuta: {new Date(s.timestamp).toLocaleDateString('it-IT')}
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="text-xs text-gray-700 space-y-1">
-                            <p>
-                              Disponibilità: <strong className="text-gray-900">{periodoLabel}</strong>
-                            </p>
-                            {notaContent && (
-                              <p className="italic text-gray-500 bg-slate-50 p-2 rounded-xl border border-slate-100 text-[11.5px]">
-                                &ldquo;{notaContent}&rdquo;
-                              </p>
-                            )}
-                          </div>
-
-                          <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2 mt-3 pt-2.5 border-t border-slate-100 text-[11px]">
-                            <div>
-                              {!isPending && s.gestitaDa && (
-                                <span className="text-gray-500">
-                                  Gestita da <strong className="text-gray-800">{s.gestitaDa}</strong>
-                                  {s.dataGestione ? ` il ${new Date(s.dataGestione).toLocaleDateString('it-IT')} alle ${new Date(s.dataGestione).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}` : ''}
-                                </span>
-                              )}
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setIsHistoryDisponibilitaOpen(false);
-                                  handlePianificaRisorsaDaSegnalazione(risorsaNome);
-                                }}
-                                className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 font-extrabold text-xs rounded-xl border border-indigo-200 transition cursor-pointer flex items-center gap-1"
-                              >
-                                <Calendar className="w-3.5 h-3.5 text-indigo-600" />
-                                <span>Pianifica</span>
-                              </button>
-
-                              {isPending && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setSegnalazioneToManage(s);
-                                    setIsConfirmManageOpen(true);
-                                  }}
-                                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition cursor-pointer"
-                                >
-                                  ✓ Segna come Gestita
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })()}
-            </div>
-
-            <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setIsHistoryDisponibilitaOpen(false)}
-                className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 font-extrabold text-xs rounded-xl transition cursor-pointer"
-              >
-                Chiudi
-              </button>
             </div>
           </div>
         </div>

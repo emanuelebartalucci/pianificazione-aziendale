@@ -9,6 +9,7 @@ import ClimaModal from '../components/ClimaModal';
 import QuestionnaireModal from '../components/QuestionnaireModal';
 import { isSoci, isCollaboratore } from './Impostazioni';
 import { getWeekNumber } from '../utils/date';
+import { useNotifications } from '../contexts/NotificationContext';
 
 interface Announcement {
   id: string;
@@ -20,16 +21,6 @@ interface Announcement {
   anno?: number;
   periods?: Array<{ tipo: 'singolo' | 'intervallo'; inizio: string; fine: string }>;
 }
-
-const areNamesEqual = (n1?: string | null, n2?: string | null): boolean => {
-  if (!n1 || !n2) return false;
-  const clean1 = n1.toLowerCase().trim().replace(/\s+/g, ' ');
-  const clean2 = n2.toLowerCase().trim().replace(/\s+/g, ' ');
-  if (clean1 === clean2) return true;
-  const w1 = clean1.split(' ').sort().join(' ');
-  const w2 = clean2.split(' ').sort().join(' ');
-  return w1 === w2;
-};
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -43,7 +34,8 @@ export default function Dashboard() {
     }
   };
 
-  const { isAdmin, isHR, isDev, impersonatedEmail, myAssociatedName, user, dipendenti, userEmail, assegnazioni, commesse, prioritaCommesse, coordinatori = [], loadPlanningData } = useAuth();
+  const { isAdmin, isHR, isDev, myAssociatedName, user, dipendenti, userEmail, assegnazioni, commesse, prioritaCommesse, isGestoreForniture, loadPlanningData } = useAuth();
+  const { sectionBadgeCounts } = useNotifications();
 
   useEffect(() => {
     loadPlanningData?.();
@@ -72,10 +64,6 @@ export default function Dashboard() {
 
   const isQuestionnaireOpen = !!(activeQuestionnaire && !hasCompletedSurvey && !hasSkippedSurvey);
 
-  // Stati per i badge di notifica HR (solo se isHR && !isAdmin)
-  const [pendingFerieCount, setPendingFerieCount] = useState(0);
-  const [pendingPresenzeCount, setPendingPresenzeCount] = useState(0);
-  const [pendingSuggerimentiCount, setPendingSuggerimentiCount] = useState(0);
   const [myMaternityLeaves, setMyMaternityLeaves] = useState<any[]>([]);
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
@@ -246,38 +234,6 @@ export default function Dashboard() {
         setMyMaternityLeaves(listMat);
       } else {
         setMyMaternityLeaves([]);
-      }
-
-      // 5. Notifiche HR
-      if (isHR && !(isDev && !impersonatedEmail)) {
-        const [ferieSnap, presenzeSnap, weekendSnap, sugSnap] = await Promise.all([
-          getDocs(query(collection(db, 'richieste_ferie'), where('stato', 'in', ['In attesa', 'Richiesta Annullamento', 'Richiesta Modifica']))),
-          getDocs(query(collection(db, 'presenze'), where('stato', '==', 'Inviato'))),
-          getDocs(query(collection(db, 'richieste_weekend'), where('stato', 'in', ['In attesa', 'Richiesta Annullamento', 'Richiesta Modifica']))),
-          getDocs(collection(db, 'suggerimenti'))
-        ]);
-
-        const todayStr = new Date().toLocaleDateString('sv-SE');
-        let pendingFerie = 0;
-        ferieSnap.forEach(docSnap => {
-          const data = docSnap.data();
-          const dateLimit = data.dataFine || data.dataInizio || data.data || '';
-          if (!dateLimit || dateLimit >= todayStr || data.stato === 'Richiesta Annullamento' || data.stato === 'Richiesta Modifica') {
-            pendingFerie++;
-          }
-        });
-        const unreadSuggerimenti = sugSnap.docs.filter(d => {
-          const st = (d.data().stato || '').trim();
-          return st !== 'Letto' && st !== 'Archiviato';
-        }).length;
-
-        setPendingFerieCount(pendingFerie);
-        setPendingPresenzeCount(presenzeSnap.size + weekendSnap.size);
-        setPendingSuggerimentiCount(unreadSuggerimenti);
-      } else {
-        setPendingFerieCount(0);
-        setPendingPresenzeCount(0);
-        setPendingSuggerimentiCount(0);
       }
     } catch (err) {
       console.error("Errore caricamento dati Dashboard:", err);
@@ -648,131 +604,6 @@ export default function Dashboard() {
     return highPrioList;
   }, [myAssociatedName, assegnazioni, commesse, prioritaCommesse, currentWeekId]);
 
-  const myCoordinatedAreas = useMemo(() => {
-    if (isDev && !impersonatedEmail) return [];
-    const areas = new Set<string>();
-    const uClean = (userEmail || '').toLowerCase().trim();
-    const nClean = (myAssociatedName || '').toLowerCase().trim();
-    const uUser = uClean.split('@')[0];
-
-    (coordinatori || []).forEach(c => {
-      const cEmail = (c.email || '').toLowerCase().trim();
-      if (cEmail && uClean && (cEmail === uClean || cEmail.includes(uClean) || uClean.includes(cEmail))) {
-        if (c.area) areas.add(c.area.trim());
-      }
-      const cUser = cEmail.split('@')[0];
-      if (cUser && uUser && (cUser.includes(uUser) || uUser.includes(cUser))) {
-        if (c.area) areas.add(c.area.trim());
-      }
-    });
-
-    if (uClean.includes('badalassi') || uClean.includes('taddei') || nClean.includes('badalassi') || nClean.includes('taddei')) {
-      areas.add('Ingegneria');
-    }
-    if (uClean.includes('romanello') || nClean.includes('romanello')) {
-      areas.add('Disegnatori');
-    }
-    if (uClean.includes('bondi') || nClean.includes('bondi')) {
-      areas.add('Sicurezza Cantieri');
-    }
-    if (uClean.includes('votino') || nClean.includes('votino')) {
-      areas.add('Consulenza Sicurezza');
-    }
-    if (uClean.includes('corbellini') || nClean.includes('corbellini')) {
-      areas.add('Amministrazione');
-    }
-
-    return Array.from(areas);
-  }, [userEmail, myAssociatedName, coordinatori, isDev, impersonatedEmail]);
-
-  const isSelfRequester = (r: any): boolean => {
-    if (!r) return false;
-    const uClean = (userEmail || '').toLowerCase().trim();
-    const nClean = (myAssociatedName || '').toLowerCase().trim();
-
-    const reqEmail = (r.richiedenteEmail || '').toLowerCase().trim();
-    const reqName = (r.richiedenteNome || r.richiedente || '').toLowerCase().trim();
-
-    if (uClean && reqEmail && uClean === reqEmail) return true;
-    if (nClean && reqName && areNamesEqual(nClean, reqName)) return true;
-    return false;
-  };
-
-  const canUserManageRequest = (r: any): boolean => {
-    if (!r || r.stato !== 'in_attesa') return false;
-    if (isDev && !impersonatedEmail) return false;
-    if (isSelfRequester(r)) return false;
-
-    // 1. Se l'utente è Coordinatore dell'area richiesta: la gestisce SEMPRE
-    const rArea = (r.area || 'Disegnatori').toLowerCase().trim();
-    const isCoordinated = myCoordinatedAreas.some(a => (a || '').toLowerCase().trim() === rArea);
-    if (isCoordinated) return true;
-
-    // 2. Se è una richiesta di inserimento commessa, la gestisce il PM / Responsabile di quella commessa
-    if (r.tipoRichiesta === 'inserimento_commessa' || r.fonte === 'altre_commesse') {
-      const commObj = (commesse || []).find(c => c.id === r.commessaId);
-      const commResp = (r.commessaResponsabile || commObj?.responsabile || '').toLowerCase().trim();
-      const commPM = r.commessaPM || commObj?.pm;
-
-      const isCommessaManager = Boolean(
-        (commResp && (areNamesEqual(commResp, myAssociatedName) || (userEmail && commResp.includes(userEmail.split('@')[0])))) ||
-        (commPM && (
-          typeof commPM === 'string' 
-            ? areNamesEqual(commPM, myAssociatedName) 
-            : Array.isArray(commPM) && commPM.some((pmName: string) => areNamesEqual(pmName, myAssociatedName))
-        ))
-      );
-
-      if (isCommessaManager) return true;
-    }
-
-    return false;
-  };
-
-  const [pendingCoordinatorRequestsCount, setPendingCoordinatorRequestsCount] = useState(0);
-
-  useEffect(() => {
-    if (!userEmail || (isDev && !impersonatedEmail)) {
-      setPendingCoordinatorRequestsCount(0);
-      return;
-    }
-    const qReq = query(collection(db, 'richieste_disegnatori'), where('stato', '==', 'in_attesa'));
-    getDocs(qReq).then((snap) => {
-      let count = 0;
-      snap.forEach(docSnap => {
-        const data = docSnap.data();
-        if (canUserManageRequest({ id: docSnap.id, ...data })) {
-          count++;
-        }
-      });
-      setPendingCoordinatorRequestsCount(count);
-    }).catch(err => {
-      console.error("Errore conteggio richieste disegnatori:", err);
-    });
-  }, [userEmail, myCoordinatedAreas, myAssociatedName, isAdmin, commesse, isDev, impersonatedEmail]);
-
-  const [pendingAvailabilityCount, setPendingAvailabilityCount] = useState(0);
-
-  useEffect(() => {
-    if (!userEmail || myCoordinatedAreas.length === 0 || (isDev && !impersonatedEmail)) {
-      setPendingAvailabilityCount(0);
-      return;
-    }
-    const qDisp = query(collection(db, 'segnalazioni_disponibilita'), where('stato', '==', 'in_attesa'));
-    getDocs(qDisp).then((snap) => {
-      let count = 0;
-      snap.forEach(docSnap => {
-        const data = docSnap.data();
-        if (myCoordinatedAreas.includes(data.macroArea)) {
-          count++;
-        }
-      });
-      setPendingAvailabilityCount(count);
-    }).catch(err => {
-      console.error("Errore conteggio disponibilita:", err);
-    });
-  }, [userEmail, myCoordinatedAreas, isDev, impersonatedEmail]);
-
   const canPublish = isAdmin || isHR;
 
   return (
@@ -845,6 +676,14 @@ export default function Dashboard() {
             >
               <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-colors relative mb-3">
                 <Briefcase className="w-6 h-6 sm:w-7 sm:h-7" />
+                {sectionBadgeCounts.commesse > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 flex h-6 w-6" title={`${sectionBadgeCounts.commesse} aggiornamenti commesse`}>
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-6 w-6 bg-blue-600 text-[11px] font-black text-white items-center justify-center border-2 border-white shadow-md">
+                      {sectionBadgeCounts.commesse > 99 ? '99+' : sectionBadgeCounts.commesse}
+                    </span>
+                  </span>
+                )}
               </div>
               <div className="h-11 xl:h-12 shrink-0 flex items-start overflow-hidden">
                 <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-900 leading-snug">Pianificazione Commesse</h2>
@@ -863,11 +702,11 @@ export default function Dashboard() {
             >
               <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-orange-100 text-orange-600 rounded-2xl flex items-center justify-center group-hover:bg-orange-600 group-hover:text-white transition-colors relative mb-3">
                 <Users className="w-6 h-6 sm:w-7 sm:h-7" />
-                {(pendingCoordinatorRequestsCount + pendingAvailabilityCount) > 0 && (
-                  <span className="absolute -top-1.5 -right-1.5 flex h-6 w-6" title={`${pendingCoordinatorRequestsCount + pendingAvailabilityCount} richieste da gestire`}>
+                {sectionBadgeCounts.pianificazione > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 flex h-6 w-6" title={`${sectionBadgeCounts.pianificazione} richieste da gestire`}>
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-6 w-6 bg-red-500 text-[11px] font-black text-white items-center justify-center border-2 border-white shadow-md">
-                      {pendingCoordinatorRequestsCount + pendingAvailabilityCount}
+                      {sectionBadgeCounts.pianificazione > 99 ? '99+' : sectionBadgeCounts.pianificazione}
                     </span>
                   </span>
                 )}
@@ -889,11 +728,11 @@ export default function Dashboard() {
             >
               <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-green-100 text-green-600 rounded-2xl flex items-center justify-center group-hover:bg-green-600 group-hover:text-white transition-colors relative mb-3">
                 <Calendar className="w-6 h-6 sm:w-7 sm:h-7" />
-                {isHR && pendingFerieCount > 0 && (
-                  <span className="absolute -top-1 -right-1 flex h-5 w-5">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-5 w-5 bg-red-500 text-[10px] font-black text-white items-center justify-center border border-white">
-                      {pendingFerieCount}
+                {sectionBadgeCounts.ferie > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 flex h-6 w-6" title={`${sectionBadgeCounts.ferie} notifiche/richieste ferie`}>
+                    <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isHR ? 'bg-red-400' : 'bg-blue-400'}`}></span>
+                    <span className={`relative inline-flex rounded-full h-6 w-6 text-[11px] font-black text-white items-center justify-center border-2 border-white shadow-md ${isHR ? 'bg-red-500' : 'bg-blue-600'}`}>
+                      {sectionBadgeCounts.ferie > 99 ? '99+' : sectionBadgeCounts.ferie}
                     </span>
                   </span>
                 )}
@@ -915,11 +754,11 @@ export default function Dashboard() {
             >
               <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center group-hover:bg-indigo-600 group-hover:text-white transition-colors relative mb-3">
                 <FileText className="w-6 h-6 sm:w-7 sm:h-7" />
-                {isHR && pendingPresenzeCount > 0 && (
-                  <span className="absolute -top-1 -right-1 flex h-5 w-5">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-5 w-5 bg-red-500 text-[10px] font-black text-white items-center justify-center border border-white">
-                      {pendingPresenzeCount}
+                {sectionBadgeCounts.presenze > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 flex h-6 w-6" title={`${sectionBadgeCounts.presenze} notifiche/richieste presenze`}>
+                    <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${(isHR || sectionBadgeCounts.presenze > 0) ? 'bg-red-400' : 'bg-blue-400'}`}></span>
+                    <span className={`relative inline-flex rounded-full h-6 w-6 text-[11px] font-black text-white items-center justify-center border-2 border-white shadow-md ${(isHR || sectionBadgeCounts.presenze > 0) ? 'bg-red-500' : 'bg-blue-600'}`}>
+                      {sectionBadgeCounts.presenze > 99 ? '99+' : sectionBadgeCounts.presenze}
                     </span>
                   </span>
                 )}
@@ -969,8 +808,16 @@ export default function Dashboard() {
               onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
               className="bg-white/80 backdrop-blur-xl p-4 sm:p-5 rounded-[1.5rem] md:rounded-[2rem] shadow-md border border-white/50 hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group flex flex-col min-h-[200px] xl:min-h-[220px] h-auto w-full"
             >
-              <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center group-hover:bg-amber-600 group-hover:text-white transition-colors mb-3">
+              <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center group-hover:bg-amber-600 group-hover:text-white transition-colors relative mb-3">
                 <Package className="w-6 h-6 sm:w-7 sm:h-7" />
+                {sectionBadgeCounts.forniture > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 flex h-6 w-6" title={`${sectionBadgeCounts.forniture} richieste forniture / materiali`}>
+                    <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isGestoreForniture ? 'bg-red-400' : 'bg-blue-400'}`}></span>
+                    <span className={`relative inline-flex rounded-full h-6 w-6 text-[11px] font-black text-white items-center justify-center border-2 border-white shadow-md ${isGestoreForniture ? 'bg-red-500' : 'bg-blue-600'}`}>
+                      {sectionBadgeCounts.forniture > 99 ? '99+' : sectionBadgeCounts.forniture}
+                    </span>
+                  </span>
+                )}
               </div>
               <div className="h-11 xl:h-12 shrink-0 flex items-start overflow-hidden">
                 <h2 className="text-sm sm:text-base xl:text-lg font-extrabold text-gray-900 leading-snug">Forniture & Materiali</h2>
@@ -979,7 +826,6 @@ export default function Dashboard() {
                 <p className="text-xs font-semibold text-gray-500 leading-snug">Invia richieste di rifornimento materiali, cancelleria, igiene e distributori.</p>
               </div>
             </div>
-
 
             {/* Cassetta delle Idee */}
             <div 
@@ -991,9 +837,9 @@ export default function Dashboard() {
               <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-purple-100 text-purple-600 rounded-2xl flex items-center justify-center group-hover:bg-purple-600 group-hover:text-white transition-colors relative mb-3">
                 <MessageSquare className="w-6 h-6 sm:w-7 sm:h-7" />
                 {!isSoci(myAssociatedName) && activeQuestionnaire && activeQuestionnaire.active && !hasCompletedSurvey && (
-                  <span className="absolute -top-1 -right-1 flex h-5 w-5">
+                  <span className="absolute -top-1.5 -right-1.5 flex h-6 w-6" title="Questionario aziendale da completare">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-5 w-5 bg-red-500 text-[10px] font-black text-white items-center justify-center border border-white">
+                    <span className="relative inline-flex rounded-full h-6 w-6 bg-red-500 text-[11px] font-black text-white items-center justify-center border-2 border-white shadow-md">
                       1
                     </span>
                   </span>
@@ -1017,11 +863,11 @@ export default function Dashboard() {
               >
                 <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 bg-purple-100 text-purple-600 rounded-2xl flex items-center justify-center group-hover:bg-purple-600 group-hover:text-white transition-colors relative mb-3">
                   <HeartPulse className="w-6 h-6 sm:w-7 sm:h-7" />
-                  {pendingSuggerimentiCount > 0 && (
-                    <span className="absolute -top-1 -right-1 flex h-5 w-5">
+                  {sectionBadgeCounts.gestioneHr > 0 && (
+                    <span className="absolute -top-1.5 -right-1.5 flex h-6 w-6" title={`${sectionBadgeCounts.gestioneHr} suggerimenti / notifiche HR`}>
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-5 w-5 bg-red-500 text-[10px] font-black text-white items-center justify-center border border-white">
-                        {pendingSuggerimentiCount}
+                      <span className="relative inline-flex rounded-full h-6 w-6 bg-red-500 text-[11px] font-black text-white items-center justify-center border-2 border-white shadow-md">
+                        {sectionBadgeCounts.gestioneHr > 99 ? '99+' : sectionBadgeCounts.gestioneHr}
                       </span>
                     </span>
                   )}

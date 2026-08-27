@@ -6,7 +6,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { isSoci, isCollaboratore } from '../pages/Impostazioni';
-import { useNotificationWatcher } from '../hooks/useNotificationWatcher';
+import { useNotifications } from '../contexts/NotificationContext';
 import type { UserNotification } from '../utils/userNotificationService';
 import NumeriInterniModal from './NumeriInterniModal';
 
@@ -74,7 +74,7 @@ export default function Navbar() {
     }
   };
 
-  const { user, isAdmin, isHR, isDev, impersonatedEmail, myAssociatedName, userEmail, coordinatori, isGestoreForniture, dipendenti } = useAuth();
+  const { user, isAdmin, isHR, isDev, myAssociatedName, userEmail, dipendenti } = useAuth();
   const { 
     totalPendingCount, 
     operativePendingCount,
@@ -85,16 +85,7 @@ export default function Navbar() {
     unreadUserNotificationsCount,
     markNotificationAsRead,
     markAllNotificationsAsRead
-  } = useNotificationWatcher({
-    userEmail,
-    myAssociatedName,
-    isAdmin,
-    isHR,
-    isDev,
-    impersonatedEmail,
-    coordinatori,
-    isGestoreForniture
-  });
+  } = useNotifications();
 
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const [isNumeriInterniOpen, setIsNumeriInterniOpen] = useState(false);
@@ -102,31 +93,6 @@ export default function Navbar() {
 
   const [notifFilter, setNotifFilter] = useState<'all' | 'unread' | 'read'>('all');
   const [visibleNotifLimit, setVisibleNotifLimit] = useState<number>(20);
-
-  // Suddivisione richieste operative: in attesa vs gestite
-  const pendingOperativeItems = useMemo(() => operativeNotifications.filter(op => op.isPending), [operativeNotifications]);
-  const managedOperativeItems = useMemo(() => operativeNotifications.filter(op => !op.isPending), [operativeNotifications]);
-
-  // Conteggi totali
-  const readUserNotifsCount = useMemo(() => userNotifications.filter(n => n.letta).length, [userNotifications]);
-  const totalReadCount = managedOperativeItems.length + readUserNotifsCount;
-  const unreadTotal = unreadUserNotificationsCount + pendingOperativeItems.length;
-  const totalAllCount = pendingOperativeItems.length + managedOperativeItems.length + userNotifications.length;
-
-  // Flusso cronologico storico unificato (richieste gestite + notifiche personali)
-  interface UnifiedHistoryItem {
-    id: string;
-    isOperative: boolean;
-    titolo: string;
-    messaggio: string;
-    link?: string;
-    createdAt: string;
-    badgeLabel?: string;
-    tipo?: string;
-    letta: boolean;
-    category?: string;
-    userNotif?: UserNotification;
-  }
 
   // Deduplicazione delle notifiche utente per evitare ripetizioni identiche a schermo
   const deduplicatedUserNotifs = useMemo(() => {
@@ -142,6 +108,32 @@ export default function Navbar() {
     });
     return res;
   }, [userNotifications]);
+
+  // Suddivisione richieste operative: in attesa vs gestite
+  const pendingOperativeItems = useMemo(() => operativeNotifications.filter(op => op.isPending), [operativeNotifications]);
+  const managedOperativeItems = useMemo(() => operativeNotifications.filter(op => !op.isPending), [operativeNotifications]);
+
+  // Conteggi totali perfettamente sincronizzati con gli elementi deduplicati a schermo
+  const unreadUserNotifsCount = useMemo(() => deduplicatedUserNotifs.filter(n => !n.letta).length, [deduplicatedUserNotifs]);
+  const readUserNotifsCount = useMemo(() => deduplicatedUserNotifs.filter(n => n.letta).length, [deduplicatedUserNotifs]);
+  const totalReadCount = managedOperativeItems.length + readUserNotifsCount;
+  const unreadTotal = unreadUserNotifsCount + pendingOperativeItems.length;
+  const totalAllCount = unreadTotal + totalReadCount;
+
+  // Flusso cronologico storico unificato (richieste gestite + notifiche personali)
+  interface UnifiedHistoryItem {
+    id: string;
+    isOperative: boolean;
+    titolo: string;
+    messaggio: string;
+    link?: string;
+    createdAt: string;
+    badgeLabel?: string;
+    tipo?: string;
+    letta: boolean;
+    category?: string;
+    userNotif?: UserNotification;
+  }
 
   const filteredHistoryItems = useMemo((): UnifiedHistoryItem[] => {
     let list: UnifiedHistoryItem[] = [];

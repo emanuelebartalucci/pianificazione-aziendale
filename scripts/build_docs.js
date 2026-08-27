@@ -74,7 +74,7 @@ async function generateDocs() {
   children.push(new Paragraph({
     children: [
       new TextRun({
-        text: "Pianificazione e Gestione Aziendale — Versione 1.0.7 (Agosto 2026)",
+        text: "Pianificazione e Gestione Aziendale — Versione 1.0.14 (Agosto 2026)",
         bold: true,
         italic: true,
         language: IT_LANG

@@ -792,6 +792,41 @@ export default function Prenotazioni() {
     }
   };
 
+  // Avvio automatico Connessione Desktop Remoto (RDP)
+  const handleConnectRemoteDesktop = (pc: Resource) => {
+    const ip = (pc.dettagli.ipAddress || '').trim();
+    if (!ip) {
+      showToast(`Nessun indirizzo IP specificato per il PC ${pc.id}.`, 'warning');
+      return;
+    }
+
+    // 1. Copia IP negli appunti come backup
+    try {
+      navigator.clipboard.writeText(ip);
+    } catch (err) {
+      console.error("Errore copia appunti IP:", err);
+    }
+
+    // 2. Invoca il protocollo Windows registrato ingegno-rdp
+    try {
+      const protocolUri = `ingegno-rdp:${encodeURIComponent(ip)}`;
+      const tempLink = document.createElement('a');
+      tempLink.href = protocolUri;
+      tempLink.style.display = 'none';
+      document.body.appendChild(tempLink);
+      tempLink.click();
+      setTimeout(() => {
+        if (document.body.contains(tempLink)) {
+          document.body.removeChild(tempLink);
+        }
+      }, 1500);
+      showToast(`🖥️ Avvio Desktop Remoto per ${pc.id} (${ip})...`, 'success');
+    } catch (err) {
+      console.error("Errore protocollo ingegno-rdp:", err);
+      showToast(`IP ${ip} copiato negli appunti.`, 'success');
+    }
+  };
+
   // PC: Claim workstation
   const handleClaimPCSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -812,6 +847,7 @@ export default function Prenotazioni() {
     }
 
     const docId = `pc_${selectedPC.id.toLowerCase()}`;
+    const pcToConnect = selectedPC;
     try {
       await updateDoc(doc(db, 'risorse', docId), {
         'statoCorrente.occupato': true,
@@ -822,7 +858,11 @@ export default function Prenotazioni() {
         'statoCorrente.autocadInUso': isSingle ? false : useAutoCAD,
         'statoCorrente.altriSoftwareInUso': []
       });
-      showToast(`PC ${selectedPC.id} preso in carico!`);
+      showToast(`PC ${pcToConnect.id} preso in carico!`, 'success');
+
+      // Avvio automatico Desktop Remoto compilato
+      handleConnectRemoteDesktop(pcToConnect);
+
       setIsClaimPCModalOpen(false);
       setSelectedPC(null);
       setUseRevit(false);
@@ -1485,7 +1525,17 @@ export default function Prenotazioni() {
               <Check className="w-3.5 h-3.5" /> Prendi in uso
             </button>
           ) : (
-            <div className="flex flex-col sm:flex-row items-center gap-1.5 w-full justify-end">
+            <div className="flex flex-col sm:flex-row items-center gap-1.5 w-full justify-end flex-wrap">
+              {isMe && (
+                <button
+                  type="button"
+                  onClick={() => handleConnectRemoteDesktop(pc)}
+                  className="w-full sm:w-auto px-3 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold rounded-lg transition text-xs shadow flex items-center gap-1 shrink-0 justify-center cursor-pointer"
+                  title="Avvia o riconnetti la sessione di Desktop Remoto"
+                >
+                  <Laptop className="w-3.5 h-3.5" /> Desktop Remoto
+                </button>
+              )}
               {isMe && !isSingle && (
                 <button
                   onClick={() => {
@@ -3007,11 +3057,16 @@ export default function Prenotazioni() {
               </div>
 
               <form onSubmit={handleClaimPCSubmit} className="space-y-4">
-                <div className="bg-gray-50 p-4 rounded-2xl text-xs space-y-1 font-medium text-gray-600">
-                  <div className="font-extrabold text-gray-800 text-sm mb-1">Dettagli Collegamento RDP:</div>
-                  <div>IP: <span className="font-bold text-gray-900">{selectedPC.dettagli.ipAddress || '-'}</span></div>
-                  <div>Credenziali: <span className="font-bold text-gray-900">{selectedPC.dettagli.utenteIngegno}</span> / <span className="font-bold text-gray-900 select-all">{selectedPC.dettagli.pswUtente}</span></div>
-                  <div className="pt-2 text-[10px] text-gray-400">Assicurati di disconnetterti e rilasciare la postazione a fine lavoro!</div>
+                <div className="bg-gray-50 p-4 rounded-2xl text-xs space-y-1.5 font-medium text-gray-600 border border-gray-100">
+                  <div className="font-extrabold text-gray-800 text-sm mb-1 flex items-center gap-1.5">
+                    <Laptop className="w-4 h-4 text-teal-600" />
+                    <span>Dettagli Desktop Remoto:</span>
+                  </div>
+                  <div>IP: <span className="font-bold text-gray-900 bg-white px-1.5 py-0.5 rounded border border-gray-200">{selectedPC.dettagli.ipAddress || '-'}</span></div>
+                  <div>Credenziali: <span className="font-bold text-gray-900">{selectedPC.dettagli.utenteIngegno}</span> / <span className="font-bold text-gray-900 select-all bg-white px-1.5 py-0.5 rounded border border-gray-200">{selectedPC.dettagli.pswUtente}</span></div>
+                  <div className="pt-2 text-[11px] text-teal-700 font-bold flex items-center gap-1">
+                    <span>🚀 Alla conferma verrà avviata automaticamente la sessione di Desktop Remoto.</span>
+                  </div>
                 </div>
 
                 {isSingle ? (

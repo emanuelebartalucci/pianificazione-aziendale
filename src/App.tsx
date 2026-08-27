@@ -18,6 +18,7 @@ const GestioneHR = lazy(() => import('./pages/GestioneHR'));
 const Forniture = lazy(() => import('./pages/Forniture'));
 
 import { auth } from './services/firebase';
+import { NotificationProvider } from './contexts/NotificationContext';
 
 // Components
 import Navbar from './components/Navbar';
@@ -163,53 +164,55 @@ function App() {
       <ScrollToTop />
       <PrintVersionFooter />
       {user ? (
-        <div className="bg-gray-100 text-gray-900 font-sans min-h-screen flex flex-col justify-between print:min-h-0 print:bg-white print:block">
-          <div className="flex-1 print:block">
-            <div className="no-print print:hidden">
-              <Navbar />
-            </div>
-            <DevImpersonator />
-            <main className="max-w-[1400px] mx-auto px-4 py-8 print:p-0 print:m-0 print:max-w-none print:w-full print:block">
-              <ErrorBoundary>
-                <Suspense fallback={<PageLoader />}>
-                  <Routes>
-                    <Route path="/" element={<Dashboard />} />
-                    <Route path="/commesse" element={<Commesse />} />
-                    <Route path="/ferie" element={<Ferie />} />
-                    <Route path="/impostazioni" element={
-                      <ProtectedRoute condition={isDev}>
-                        <Impostazioni />
-                      </ProtectedRoute>
-                    } />
-                    <Route path="/presenze" element={<Presenze />} />
-                    <Route path="/suggerimenti" element={<Suggerimenti />} />
-                    <Route path="/forniture" element={<Forniture />} />
-                    <Route path="/pianificazione-personale" element={<PianificazionePersonale />} />
-                    <Route path="/prenotazioni" element={<Prenotazioni />} />
-                    <Route path="/organigramma" element={<Organigramma />} />
-                    <Route path="/gestione-hr" element={
-                      <ProtectedRoute condition={isHR || isDev}>
-                        <GestioneHR />
-                      </ProtectedRoute>
-                    } />
-                    <Route path="*" element={<Navigate to="/" />} />
-                  </Routes>
-                </Suspense>
-              </ErrorBoundary>
-            </main>
-          </div>
-          <footer className="py-6 px-6 text-xs text-gray-400 select-none print:hidden border-t border-gray-200/50 mt-auto">
-            <div className="max-w-[1400px] mx-auto grid grid-cols-1 sm:grid-cols-3 items-center gap-2 text-center">
-              <div className="hidden sm:block"></div>
-              <span className="opacity-60 font-medium text-center">Sviluppato da Emanuele Bartalucci</span>
-              <div className="sm:text-right">
-                <span className="inline-block font-bold bg-gray-200/70 px-3 py-1 rounded-full text-gray-600 border border-gray-300/50">
-                  {APP_VERSION}
-                </span>
+        <NotificationProvider>
+          <div className="bg-gray-100 text-gray-900 font-sans min-h-screen flex flex-col justify-between print:min-h-0 print:bg-white print:block">
+            <div className="flex-1 print:block">
+              <div className="no-print print:hidden">
+                <Navbar />
               </div>
+              <DevImpersonator />
+              <main className="max-w-[1400px] mx-auto px-4 py-8 print:p-0 print:m-0 print:max-w-none print:w-full print:block">
+                <ErrorBoundary>
+                  <Suspense fallback={<PageLoader />}>
+                    <Routes>
+                      <Route path="/" element={<Dashboard />} />
+                      <Route path="/commesse" element={<Commesse />} />
+                      <Route path="/ferie" element={<Ferie />} />
+                      <Route path="/impostazioni" element={
+                        <ProtectedRoute condition={isDev}>
+                          <Impostazioni />
+                        </ProtectedRoute>
+                      } />
+                      <Route path="/presenze" element={<Presenze />} />
+                      <Route path="/suggerimenti" element={<Suggerimenti />} />
+                      <Route path="/forniture" element={<Forniture />} />
+                      <Route path="/pianificazione-personale" element={<PianificazionePersonale />} />
+                      <Route path="/prenotazioni" element={<Prenotazioni />} />
+                      <Route path="/organigramma" element={<Organigramma />} />
+                      <Route path="/gestione-hr" element={
+                        <ProtectedRoute condition={isHR || isDev}>
+                          <GestioneHR />
+                        </ProtectedRoute>
+                      } />
+                      <Route path="*" element={<Navigate to="/" />} />
+                    </Routes>
+                  </Suspense>
+                </ErrorBoundary>
+              </main>
             </div>
-          </footer>
-        </div>
+            <footer className="py-6 px-6 text-xs text-gray-400 select-none print:hidden border-t border-gray-200/50 mt-auto">
+              <div className="max-w-[1400px] mx-auto grid grid-cols-1 sm:grid-cols-3 items-center gap-2 text-center">
+                <div className="hidden sm:block"></div>
+                <span className="opacity-60 font-medium text-center">Sviluppato da Emanuele Bartalucci</span>
+                <div className="sm:text-right">
+                  <span className="inline-block font-bold bg-gray-200/70 px-3 py-1 rounded-full text-gray-600 border border-gray-300/50">
+                    {APP_VERSION}
+                  </span>
+                </div>
+              </div>
+            </footer>
+          </div>
+        </NotificationProvider>
       ) : (
         <Suspense fallback={<PageLoader />}>
           <Routes>

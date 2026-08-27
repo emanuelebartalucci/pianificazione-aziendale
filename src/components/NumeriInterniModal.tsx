@@ -14,7 +14,9 @@ import {
   Flame, 
   HeartPulse, 
   KeyRound, 
-  AlertCircle
+  AlertCircle,
+  ChevronUp,
+  ChevronDown
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
@@ -200,16 +202,44 @@ export default function NumeriInterniModal({ isOpen, onClose }: NumeriInterniMod
     }));
   };
 
-  const handleAddContact = (sezId: string) => {
-    const newId = `c-${Date.now()}`;
+  const handleMoveContact = (sezId: string, currentIndex: number, direction: 'up' | 'down') => {
     setDraftSezioni(prev => prev.map(sez => {
       if (sez.id !== sezId) return sez;
+      const newContatti = [...sez.contatti];
+      const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+      if (targetIndex < 0 || targetIndex >= newContatti.length) return sez;
+      
+      const temp = newContatti[currentIndex];
+      newContatti[currentIndex] = newContatti[targetIndex];
+      newContatti[targetIndex] = temp;
+      
       return {
         ...sez,
-        contatti: [
-          ...sez.contatti,
-          { id: newId, ufficio: 'Nuovo Ufficio', nominativo: 'Cognome e Nome', numero: '000', categoria: 'ufficio' }
-        ]
+        contatti: newContatti
+      };
+    }));
+  };
+
+  const handleAddContact = (sezId: string, atIndex?: number) => {
+    const newId = `c-${Date.now()}`;
+    const newContact: ContattoInterno = {
+      id: newId,
+      ufficio: 'Nuovo Ufficio',
+      nominativo: 'Cognome e Nome',
+      numero: '000',
+      categoria: 'ufficio'
+    };
+    setDraftSezioni(prev => prev.map(sez => {
+      if (sez.id !== sezId) return sez;
+      const newContatti = [...sez.contatti];
+      if (typeof atIndex === 'number' && atIndex >= 0) {
+        newContatti.splice(atIndex + 1, 0, newContact);
+      } else {
+        newContatti.push(newContact);
+      }
+      return {
+        ...sez,
+        contatti: newContatti
       };
     }));
   };
@@ -259,7 +289,6 @@ export default function NumeriInterniModal({ isOpen, onClose }: NumeriInterniMod
         <div style="margin-bottom: 6px; border-radius: 4px; overflow: hidden; border: 1px solid #94a3b8; page-break-inside: avoid;">
           <div style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: #ffffff; padding: 3px 8px; font-size: 8pt; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #2563eb;">
             <span>🏢 ${headerTitle}</span>
-            <span style="opacity: 0.9; font-size: 7pt; font-weight: 700; background: rgba(255,255,255,0.18); padding: 1px 5px; border-radius: 3px;">${sez.contatti.length} interni</span>
           </div>
           <table style="width: 100%; border-collapse: collapse; font-size: 8pt;">
             <thead>
@@ -505,25 +534,20 @@ export default function NumeriInterniModal({ isOpen, onClose }: NumeriInterniMod
                         {headerTitle}
                       </h4>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10.5px] font-extrabold bg-white/10 px-2 py-0.5 rounded-lg text-slate-200">
-                        {sez.contatti.length} interni
-                      </span>
-                      {isDev && isEditing && (
-                        <button
-                          type="button"
-                          onClick={() => handleAddContact(sez.id)}
-                          className="flex items-center gap-1 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-lg transition cursor-pointer"
-                        >
-                          <Plus className="w-3 h-3" /> Aggiungi
-                        </button>
-                      )}
-                    </div>
+                    {isDev && isEditing && (
+                      <button
+                        type="button"
+                        onClick={() => handleAddContact(sez.id)}
+                        className="flex items-center gap-1 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-lg transition cursor-pointer"
+                      >
+                        <Plus className="w-3 h-3" /> Aggiungi
+                      </button>
+                    )}
                   </div>
 
                   {/* Griglia Contatti */}
                   <div className="divide-y divide-slate-100">
-                    {sez.contatti.map((c) => {
+                    {sez.contatti.map((c, cIdx) => {
                       const isSicurezza = c.categoria === 'sicurezza';
                       const isServizio = c.categoria === 'servizio';
 
@@ -535,7 +559,31 @@ export default function NumeriInterniModal({ isOpen, onClose }: NumeriInterniMod
                           }`}
                         >
                           {/* Dettaglio Ufficio e Nominativo */}
-                          <div className="flex items-start gap-3 min-w-0 flex-1">
+                          <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                            {/* Pulsanti Ordinamento Su / Giù in modalità modifica */}
+                            {isDev && isEditing && (
+                              <div className="flex flex-col gap-1 shrink-0 self-center mr-1">
+                                <button
+                                  type="button"
+                                  disabled={cIdx === 0}
+                                  onClick={() => handleMoveContact(sez.id, cIdx, 'up')}
+                                  className="p-1 rounded bg-slate-100 hover:bg-blue-100 text-slate-600 hover:text-blue-700 disabled:opacity-20 disabled:hover:bg-slate-100 disabled:hover:text-slate-600 disabled:cursor-not-allowed transition cursor-pointer"
+                                  title="Sposta in alto"
+                                >
+                                  <ChevronUp className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={cIdx === sez.contatti.length - 1}
+                                  onClick={() => handleMoveContact(sez.id, cIdx, 'down')}
+                                  className="p-1 rounded bg-slate-100 hover:bg-blue-100 text-slate-600 hover:text-blue-700 disabled:opacity-20 disabled:hover:bg-slate-100 disabled:hover:text-slate-600 disabled:cursor-not-allowed transition cursor-pointer"
+                                  title="Sposta in basso"
+                                >
+                                  <ChevronDown className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            )}
+
                             <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-black shrink-0 mt-0.5 ${
                               isSicurezza 
                                 ? 'bg-amber-100 text-amber-800' 
@@ -554,21 +602,41 @@ export default function NumeriInterniModal({ isOpen, onClose }: NumeriInterniMod
 
                             <div className="min-w-0 flex-1">
                               {isEditing ? (
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-1">
-                                  <input
-                                    type="text"
-                                    placeholder="Ufficio / Reparto"
-                                    value={c.ufficio}
-                                    onChange={e => handleUpdateContact(sez.id, c.id, 'ufficio', e.target.value)}
-                                    className="p-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-400"
-                                  />
-                                  <input
-                                    type="text"
-                                    placeholder="Nominativo (Cognome e Nome)"
-                                    value={c.nominativo}
-                                    onChange={e => handleUpdateContact(sez.id, c.id, 'nominativo', e.target.value)}
-                                    className="p-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-400"
-                                  />
+                                <div className="flex flex-col gap-1.5 min-w-0 flex-1">
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <input
+                                      type="text"
+                                      placeholder="Ufficio / Reparto"
+                                      value={c.ufficio}
+                                      onChange={e => handleUpdateContact(sez.id, c.id, 'ufficio', e.target.value)}
+                                      className="p-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-400"
+                                    />
+                                    <input
+                                      type="text"
+                                      placeholder="Nominativo (Cognome e Nome)"
+                                      value={c.nominativo}
+                                      onChange={e => handleUpdateContact(sez.id, c.id, 'nominativo', e.target.value)}
+                                      className="p-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-blue-400"
+                                    />
+                                  </div>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <input
+                                      type="text"
+                                      placeholder="Note (es. PIN: 1234)"
+                                      value={c.note || ''}
+                                      onChange={e => handleUpdateContact(sez.id, c.id, 'note', e.target.value)}
+                                      className="p-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-700 outline-none focus:ring-2 focus:ring-blue-400"
+                                    />
+                                    <select
+                                      value={c.categoria || 'ufficio'}
+                                      onChange={e => handleUpdateContact(sez.id, c.id, 'categoria', e.target.value as any)}
+                                      className="p-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer"
+                                    >
+                                      <option value="ufficio">🏢 Ufficio / Postazione</option>
+                                      <option value="sicurezza">⚠️ Sicurezza (RSPP / Antincendio / 1° Soccorso)</option>
+                                      <option value="servizio">🔑 Servizio / Sala Riunioni / Centralino</option>
+                                    </select>
+                                  </div>
                                 </div>
                               ) : (
                                 <>
@@ -598,14 +666,22 @@ export default function NumeriInterniModal({ isOpen, onClose }: NumeriInterniMod
                           {/* Numero Interno & Azioni Dev */}
                           <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
                             {isEditing ? (
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-1.5">
                                 <input
                                   type="text"
                                   placeholder="Interno"
                                   value={c.numero}
                                   onChange={e => handleUpdateContact(sez.id, c.id, 'numero', e.target.value)}
-                                  className="w-28 p-1.5 bg-white border border-slate-300 rounded-lg text-xs font-black text-blue-700 text-center outline-none focus:ring-2 focus:ring-blue-400"
+                                  className="w-24 sm:w-28 p-1.5 bg-white border border-slate-300 rounded-lg text-xs font-black text-blue-700 text-center outline-none focus:ring-2 focus:ring-blue-400"
                                 />
+                                <button
+                                  type="button"
+                                  onClick={() => handleAddContact(sez.id, cIdx)}
+                                  className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition cursor-pointer"
+                                  title="Inserisci nuovo interno subito sotto"
+                                >
+                                  <Plus className="w-4 h-4" />
+                                </button>
                                 <button
                                   type="button"
                                   onClick={() => handleDeleteContact(sez.id, c.id)}

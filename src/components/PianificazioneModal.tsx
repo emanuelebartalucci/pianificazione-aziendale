@@ -27,7 +27,9 @@ import {
   CheckCircle2,
   AlertTriangle,
   Lock,
-  Send
+  Send,
+  Search,
+  ChevronDown
 } from 'lucide-react';
 
 export interface PianificazioneModalProps {
@@ -87,6 +89,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     coordinatori = [],
     isAdmin = false,
     isDev = false,
+    isGestoreCommesse = false,
     userEmail = '', 
     myAssociatedName = '', 
     assegnazioni = {},
@@ -107,9 +110,23 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
   const [addResourceName, setAddResourceName] = useState('');
   const [addResourcePercentage, setAddResourcePercentage] = useState('100');
 
-  // Per aggiungere commessa a risorsa
-  const [addCommessaId, setAddCommessaId] = useState('');
+  // Per aggiungere commessa a risorsa (con dropdown ricercabile)
+  const [addCommessaId, setAddCommessaId] = useState(initialCommessaId || '');
   const [addCommessaPercentage, setAddCommessaPercentage] = useState('100');
+  const [isAddCommessaDropdownOpen, setIsAddCommessaDropdownOpen] = useState(false);
+  const [addCommessaSearch, setAddCommessaSearch] = useState('');
+  const addCommessaDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Chiusura dropdown commessa su click esterno
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (addCommessaDropdownRef.current && !addCommessaDropdownRef.current.contains(e.target as Node)) {
+        setIsAddCommessaDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // Per Tab Altre Commesse (Richiesta inserimento per Coordinatori)
   const [altreReqCommessaId, setAltreReqCommessaId] = useState('');
@@ -221,8 +238,10 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
       setHasChanges(false);
       setAddResourceName('');
       setAddResourcePercentage('100');
-      setAddCommessaId('');
+      setAddCommessaId(initialCommessaId || '');
       setAddCommessaPercentage('100');
+      setIsAddCommessaDropdownOpen(false);
+      setAddCommessaSearch('');
 
       const targetWk = initialWeekId || currentWeekOpt.id;
       const matched = selectableWeekOptions.find(o => o.id === targetWk);
@@ -288,13 +307,28 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     });
   }, [userEmail, pmsEmails, myDip, commesse]);
 
+  // Helper per estrarre tutti i nominativi da campi stringa, array o oggetti (gestisce virgole, punti e virgola, slash, trattini)
+  const extractAllNames = (val: any): string[] => {
+    if (!val) return [];
+    if (Array.isArray(val)) {
+      return val.flatMap(v => extractAllNames(v));
+    }
+    if (typeof val === 'object' && val.nome) {
+      return extractAllNames(val.nome);
+    }
+    if (typeof val === 'string') {
+      return val.split(/[,;\/|]+/).map(s => s.trim()).filter(Boolean);
+    }
+    return [String(val).trim()];
+  };
+
   // Helper per verificare se l'utente corrente è PM o Responsabile di una commessa (matching deterministico su Nome e Cognome)
   const isUserPmOrResp = (comm: any): boolean => {
     if (!comm) return false;
 
-    const respStr = String(comm.responsabile || '').trim();
-    const pmList: any[] = Array.isArray(comm.pm) ? comm.pm : (comm.pm ? [comm.pm] : []);
-    const targets = [respStr, ...pmList.map(p => String(p || '').trim())].filter(Boolean);
+    const respNames = extractAllNames(comm.responsabile);
+    const pmNames = extractAllNames(comm.pm);
+    const targets = [...respNames, ...pmNames].filter(Boolean);
 
     if (targets.length === 0) return false;
 
@@ -302,7 +336,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     if (myAssociatedName && targets.some(t => areNamesEqual(t, myAssociatedName))) return true;
     if (myDip?.nome && targets.some(t => areNamesEqual(t, myDip.nome))) return true;
 
-    // 2. Corrispondenza email ed username email (es. "aromanello")
+    // 2. Corrispondenza email ed username email (es. "aromanello", "ebartalucci")
     if (userEmail) {
       const emailClean = userEmail.toLowerCase().trim();
       const username = emailClean.split('@')[0];
@@ -312,14 +346,27 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
       })) return true;
     }
 
+    // 3. Verifica per parti di nome e cognome
+    const fullNamesToCheck = [myAssociatedName, myDip?.nome].filter(Boolean) as string[];
+    for (const fName of fullNamesToCheck) {
+      const parts = fName.toLowerCase().split(/\s+/).filter(p => p.length >= 3);
+      for (const t of targets) {
+        const tLower = t.toLowerCase();
+        if (parts.length >= 2 && parts.every(p => tLower.includes(p))) return true;
+        if (parts.length === 1 && tLower.includes(parts[0])) return true;
+      }
+    }
+
     return false;
   };
 
-  // Commesse selezionabili nei menu a tendina: Solo Admin e Soci vedono tutte le commesse aperte.
-  // Tutti gli altri utenti (compresi Coordinatori d'area e PM) possono gestire solo le proprie commesse (di cui sono nominati PM o Responsabile).
+  // Commesse selezionabili nei menu a tendina:
+  // - Admin, Soci e Gestori Commesse vedono tutte le commesse aperte.
+  // - I Responsabili di commessa e i PM vedono tutte le commesse di cui sono nominati PM o Responsabile.
+  // - Se la modale è aperta per una commessa specifica (initialCommessaId), questa è sempre inclusa.
   const selectableCommesse = useMemo(() => {
     const openCommesse = commesse.filter(c => !c.stato || c.stato !== 'Chiusa');
-    if (isAdmin || isSoci(myAssociatedName)) {
+    if (isAdmin || isSoci(myAssociatedName) || isGestoreCommesse) {
       return openCommesse;
     }
     const filtered = openCommesse.filter(c => isUserPmOrResp(c));
@@ -330,7 +377,21 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
       }
     }
     return filtered;
-  }, [commesse, isAdmin, myAssociatedName, userEmail, myDip, initialCommessaId]);
+  }, [commesse, isAdmin, isGestoreCommesse, myAssociatedName, userEmail, myDip, initialCommessaId]);
+
+  // Commesse filtrate in tempo reale per la ricerca nel dropdown Aggiungi Commessa
+  const filteredAddCommesse = useMemo(() => {
+    const q = addCommessaSearch.toLowerCase().trim();
+    if (!q) return selectableCommesse;
+    return selectableCommesse.filter(c => {
+      const name = (c.nome || '').toLowerCase();
+      const code = ((c as any).codiceCommessa || '').toLowerCase();
+      const title = ((c as any).titolo || '').toLowerCase();
+      const client = (c.cliente || '').toLowerCase();
+      const resp = (c.responsabile || '').toLowerCase();
+      return name.includes(q) || code.includes(q) || title.includes(q) || client.includes(q) || resp.includes(q);
+    });
+  }, [selectableCommesse, addCommessaSearch]);
 
 
   // Dipendenti direttamente assegnabili (Admin e Soci vedono tutti; Coordinatori/PM vedono solo la propria area di appartenenza)
@@ -497,12 +558,6 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
 
     return Object.values(commMap);
   }, [selectedResourceForTab, allocDataInizio, allocDataFine, draftAssignments]);
-
-  // Commesse NON ancora assegnate alla Risorsa
-  const commesseNonAssegnateAllaRisorsa = useMemo(() => {
-    const assignedIds = new Set(commesseAssegnateAllaRisorsa.map(c => c.id));
-    return selectableCommesse.filter(c => !assignedIds.has(c.id));
-  }, [commesseAssegnateAllaRisorsa, selectableCommesse]);
 
   // ===========================================================
   // UTILITY: Calcola i sotto-periodi consecutivi per una risorsa
@@ -1483,6 +1538,9 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                                                     className="p-1 border border-gray-200 rounded-lg bg-white font-bold text-xs text-gray-700 outline-none focus:border-indigo-400 cursor-pointer"
                                                     title="Modifica % per questo sotto-periodo"
                                                   >
+                                                    {(!Array.from({ length: 20 }, (_, i) => (i + 1) * 5).includes(sp.pct)) && (
+                                                      <option value={sp.pct}>{sp.pct}%</option>
+                                                    )}
                                                     {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
                                                       <option key={pct} value={pct}>{pct}%</option>
                                                     ))}
@@ -1642,18 +1700,117 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                 
                 {/* RIGA AGGIUNTA RAPIDA COMMESSA (Sempre attiva per Carichi di Lavoro) */}
                 <div className="bg-indigo-50/50 p-3.5 rounded-xl border border-indigo-100 flex flex-col sm:flex-row items-stretch sm:items-end justify-between gap-3">
-                  <div className="flex-1 min-w-[200px]">
-                    <label className="block text-[10px] uppercase font-extrabold text-indigo-900 mb-1">Aggiungi Commessa a {selectedResourceForTab}</label>
-                    <select
-                      value={addCommessaId}
-                      onChange={e => setAddCommessaId(e.target.value)}
-                      className="w-full h-[38px] p-2 border border-indigo-150 bg-white rounded-lg text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs"
-                    >
-                      <option value="">-- Seleziona Commessa da assegnare --</option>
-                      {commesseNonAssegnateAllaRisorsa.map(c => (
-                        <option key={c.id} value={c.id}>{c.nome}</option>
-                      ))}
-                    </select>
+                  
+                  {/* Selettore Commessa Ricercabile (Combobox) */}
+                  <div className="relative flex-1 min-w-[220px]" ref={addCommessaDropdownRef}>
+                    <label className="block text-[10px] uppercase font-extrabold text-indigo-900 mb-1">
+                      Aggiungi Commessa a {selectedResourceForTab}
+                    </label>
+                    {(() => {
+                      const selectedAddCommObj = commesse.find(c => c.id === addCommessaId);
+                      return (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => setIsAddCommessaDropdownOpen(prev => !prev)}
+                            className="w-full h-[38px] px-3 border border-indigo-200 bg-white hover:bg-slate-50 rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs flex items-center justify-between gap-2 transition cursor-pointer text-left"
+                          >
+                            {selectedAddCommObj ? (
+                              <div className="flex items-center gap-2 truncate min-w-0">
+                                <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs" style={{ backgroundColor: selectedAddCommObj.colore || '#3b82f6' }} />
+                                <span className="truncate text-gray-900 font-extrabold">{selectedAddCommObj.nome}</span>
+                              </div>
+                            ) : (
+                              <span className="text-gray-400 font-medium italic truncate">-- Cerca o seleziona commessa da assegnare --</span>
+                            )}
+                            <div className="flex items-center gap-1.5 shrink-0 text-gray-400">
+                              {selectedAddCommObj && (
+                                <span
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setAddCommessaId('');
+                                  }}
+                                  className="hover:text-red-500 p-0.5 rounded cursor-pointer transition"
+                                  title="Deseleziona commessa"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </span>
+                              )}
+                              <ChevronDown className={`w-4 h-4 text-indigo-600 transition-transform ${isAddCommessaDropdownOpen ? 'rotate-180' : ''}`} />
+                            </div>
+                          </button>
+
+                          {/* Pannello Dropdown Menu con Campo di Ricerca dedicato */}
+                          {isAddCommessaDropdownOpen && (
+                            <div className="absolute left-0 top-full mt-1.5 w-full min-w-[320px] sm:min-w-[420px] bg-white rounded-2xl shadow-xl border border-slate-200 z-50 overflow-hidden flex flex-col max-h-[320px]">
+                              <div className="p-2.5 border-b border-slate-100 bg-slate-50/90 shrink-0">
+                                <div className="relative">
+                                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                                  <input
+                                    type="text"
+                                    autoFocus
+                                    placeholder="Cerca per codice, nome o cliente..."
+                                    value={addCommessaSearch}
+                                    onChange={e => setAddCommessaSearch(e.target.value)}
+                                    className="w-full pl-8 pr-7 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                  />
+                                  {addCommessaSearch && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setAddCommessaSearch('')}
+                                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="overflow-y-auto divide-y divide-slate-100 flex-1">
+                                {filteredAddCommesse.length === 0 ? (
+                                  <div className="p-4 text-center text-xs text-slate-400 italic">
+                                    Nessuna commessa trovata{addCommessaSearch ? ` per "${addCommessaSearch}"` : ''}.
+                                  </div>
+                                ) : (
+                                  filteredAddCommesse.map(c => {
+                                    const isSelected = c.id === addCommessaId;
+                                    const isAlreadyAssigned = commesseAssegnateAllaRisorsa.some(a => a.id === c.id);
+
+                                    return (
+                                      <button
+                                        key={c.id}
+                                        type="button"
+                                        onClick={() => {
+                                          setAddCommessaId(c.id);
+                                          setIsAddCommessaDropdownOpen(false);
+                                          setAddCommessaSearch('');
+                                        }}
+                                        className={`w-full text-left px-3 py-2 flex items-center justify-between gap-2 transition cursor-pointer ${
+                                          isSelected ? 'bg-indigo-50/90 text-indigo-950 font-black' : 'hover:bg-slate-50 text-slate-800 font-medium'
+                                        }`}
+                                      >
+                                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                                          <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs" style={{ backgroundColor: c.colore || '#3b82f6' }} />
+                                          <div className="min-w-0 flex-1">
+                                            <div className="text-xs truncate font-bold">{c.nome}</div>
+                                            {c.cliente && <div className="text-[10px] text-slate-400 truncate">💼 {c.cliente}</div>}
+                                          </div>
+                                        </div>
+                                        {isAlreadyAssigned && (
+                                          <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 shrink-0">
+                                            Assegnata
+                                          </span>
+                                        )}
+                                      </button>
+                                    );
+                                  })
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
 
                   <div className="w-28 shrink-0">
@@ -1661,7 +1818,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                     <select
                       value={addCommessaPercentage}
                       onChange={e => setAddCommessaPercentage(e.target.value)}
-                      className="w-full h-[38px] p-2 border border-indigo-150 bg-white rounded-lg text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs"
+                      className="w-full h-[38px] p-2 border border-indigo-150 bg-white rounded-lg text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs cursor-pointer"
                     >
                       {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
                         <option key={pct} value={pct}>{pct}%</option>

@@ -47,24 +47,24 @@ export const areNamesEqual = (n1?: string | null, n2?: string | null): boolean =
 };
 
 export const TODO_CATEGORIE = [
-  'chiamare',
-  'inviare mail',
-  'rispondere',
-  'stampare',
-  'archiviare',
-  'da fare',
-  'fissare appuntamento',
-  'fatturare',
-  'attesa feedback',
-  'scansionare',
-  'registrare',
-  'firmare',
-  'ordinare',
-  'consegnare',
-  'prenotare',
   'aggiornare',
+  'archiviare',
+  'attesa feedback',
+  'chiamare',
+  'consegnare',
+  'da fare',
   'effettuare revisione',
-  'pagare'
+  'fatturare',
+  'firmare',
+  'fissare appuntamento',
+  'inviare mail',
+  'ordinare',
+  'pagare',
+  'prenotare',
+  'registrare',
+  'rispondere',
+  'scansionare',
+  'stampare'
 ] as const;
 
 export type ToDoCategoria = typeof TODO_CATEGORIE[number];
@@ -76,7 +76,7 @@ export interface PunchListItem {
   descrizione?: string;
   scadenza?: string; // YYYY-MM-DD
   assegnatoA: string; // Nome dipendente incaricato (obbligatorio)
-  stato: 'da_fare' | 'da_rivedere' | 'eseguito';
+  stato: 'da_fare' | 'completato' | 'eseguito' | 'da_rivedere';
   creatoDa: string;
   creatoIl: string; // ISO date
   completatoDa?: string;
@@ -318,148 +318,61 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  // Caricamento On-Demand (Lazy Loading) e Mirato per la Pianificazione
+  // Caricamento On-Demand (Lazy Loading) e Centralizzato per la Pianificazione
   const loadPlanningData = async () => {
     if (isPlanningLoadingRef.current) return;
     isPlanningLoadingRef.current = true;
     try {
-      const uClean = (userEmail || '').toLowerCase().trim();
-      const nClean = (myAssociatedName || '').toLowerCase().trim();
-      const isCoord = coordinatori.some(c => 
-        (c.email && c.email.toLowerCase().trim() === uClean) || 
-        (c.email && nClean && c.email.toLowerCase().trim() === nClean) ||
-        (c.id && c.id.toLowerCase().includes(uClean))
-      );
-      const isSocioUser = isSocio || isSoci(myAssociatedName) || isSoci(userEmail);
-      const isDirezione = isAdmin || isSocioUser;
+      // Scarica tutte le commesse dal catalogo, clienti, priorità e tutte le assegnazioni del team
+      const [commesseSnap, clientiSnap, prioritySnap, assSnap] = await Promise.all([
+        getDocs(collection(db, 'catalogo_commesse')),
+        getDocs(collection(db, 'clienti')),
+        getDocs(collection(db, 'priorita_commesse')),
+        getDocs(collection(db, 'assegnazioni'))
+      ]);
 
-      const isPM = pmsEmails.some(e => e && e.toLowerCase().trim() === uClean);
-      const isGestore = dynamicGestoriCommesse.some(e => e && e.toLowerCase().trim() === uClean);
-      const isCoordOrPM = isCoord || isPM || isGestore;
+      const commesseList = commesseSnap.docs.map(doc => ({
+        id: doc.id,
+        nome: doc.data().nome || '',
+        colore: doc.data().colore || '#3b82f6',
+        dataInizio: doc.data().dataInizio || '',
+        dataFine: doc.data().dataFine || '',
+        responsabile: doc.data().responsabile || '',
+        pm: doc.data().pm || '',
+        codiceCommessa: doc.data().codiceCommessa || '',
+        anno: doc.data().anno || '',
+        tipologia: doc.data().tipologia || '',
+        cliente: doc.data().cliente || '',
+        stato: doc.data().stato || 'Aperta',
+        percorsoRete: doc.data().percorsoRete || '',
+        punchList: doc.data().punchList || [],
+        giornateSeniorProject: doc.data().giornateSeniorProject,
+        giornateProject: doc.data().giornateProject,
+        giornateJuniorProject: doc.data().giornateJuniorProject,
+        apertaDa: doc.data().apertaDa || '',
+        progetti: doc.data().progetti || []
+      }));
+      setCommesse(commesseList.sort((a, b) => a.nome.localeCompare(b.nome)));
 
-      if (isDirezione || isCoordOrPM) {
-        // Scarica TUTTE le commesse dal catalogo (inclusi record storici senza campo stato esplicito e commesse chiuse)
-        const [commesseSnap, clientiSnap, prioritySnap, assSnap] = await Promise.all([
-          getDocs(collection(db, 'catalogo_commesse')),
-          getDocs(collection(db, 'clienti')),
-          getDocs(collection(db, 'priorita_commesse')),
-          getDocs(collection(db, 'assegnazioni'))
-        ]);
+      const clientiList = clientiSnap.docs.map(doc => ({
+        id: doc.id,
+        codice: doc.data().codice || '',
+        nome: doc.data().nome || ''
+      })).sort((a, b) => Number(a.codice) - Number(b.codice));
+      setClienti(clientiList);
 
-        const commesseList = commesseSnap.docs.map(doc => ({
-          id: doc.id,
-          nome: doc.data().nome || '',
-          colore: doc.data().colore || '#3b82f6',
-          dataInizio: doc.data().dataInizio || '',
-          dataFine: doc.data().dataFine || '',
-          responsabile: doc.data().responsabile || '',
-          pm: doc.data().pm || '',
-          codiceCommessa: doc.data().codiceCommessa || '',
-          anno: doc.data().anno || '',
-          tipologia: doc.data().tipologia || '',
-          cliente: doc.data().cliente || '',
-          stato: doc.data().stato || 'Aperta',
-          percorsoRete: doc.data().percorsoRete || '',
-          punchList: doc.data().punchList || [],
-          giornateSeniorProject: doc.data().giornateSeniorProject,
-          giornateProject: doc.data().giornateProject,
-          giornateJuniorProject: doc.data().giornateJuniorProject,
-          apertaDa: doc.data().apertaDa || '',
-          progetti: doc.data().progetti || []
-        }));
-        setCommesse(commesseList.sort((a, b) => a.nome.localeCompare(b.nome)));
+      const prioritaMap: Record<string, 'Alta' | 'Standard' | 'Bassa'> = {};
+      prioritySnap.forEach(docSnap => {
+        const data = docSnap.data();
+        if (data.priorita) prioritaMap[docSnap.id] = data.priorita;
+      });
+      setPrioritaCommesse(prioritaMap);
 
-        const clientiList = clientiSnap.docs.map(doc => ({
-          id: doc.id,
-          codice: doc.data().codice || '',
-          nome: doc.data().nome || ''
-        })).sort((a, b) => Number(a.codice) - Number(b.codice));
-        setClienti(clientiList);
-
-        const prioritaMap: Record<string, 'Alta' | 'Standard' | 'Bassa'> = {};
-        prioritySnap.forEach(docSnap => {
-          const data = docSnap.data();
-          if (data.priorita) prioritaMap[docSnap.id] = data.priorita;
-        });
-        setPrioritaCommesse(prioritaMap);
-
-        const ass: Record<string, any[]> = {};
-        assSnap.forEach(docSnap => {
-          ass[docSnap.id] = docSnap.data().lista || [];
-        });
-        setAssegnazioni(ass);
-
-      } else {
-        // Utente Standard (Dipendente / Disegnatore): scarica SOLO le proprie assegnazioni e SOLO le commesse assegnate
-        const ass: Record<string, any[]> = {};
-        const commesseIdsSet = new Set<string>();
-
-        if (myAssociatedName) {
-          const namesToQuery = new Set<string>();
-          namesToQuery.add(myAssociatedName);
-          const parts = myAssociatedName.trim().split(/\s+/);
-          if (parts.length === 2) {
-            namesToQuery.add(`${parts[1]} ${parts[0]}`);
-          }
-
-          for (const nameCandidate of namesToQuery) {
-            const qAss = query(
-              collection(db, 'assegnazioni'),
-              where(documentId(), '>=', `${nameCandidate}-`),
-              where(documentId(), '<=', `${nameCandidate}-\uf8ff`)
-            );
-            const assSnap = await getDocs(qAss);
-            assSnap.forEach(docSnap => {
-              const lista = docSnap.data().lista || [];
-              ass[docSnap.id] = lista;
-              lista.forEach((item: any) => {
-                if (item.commessaId) commesseIdsSet.add(item.commessaId);
-              });
-            });
-          }
-        }
-
-        setAssegnazioni(ass);
-
-        if (commesseIdsSet.size > 0) {
-          const commesseIds = Array.from(commesseIdsSet);
-          const BATCH_SIZE = 30;
-          const commList: Commessa[] = [];
-          for (let i = 0; i < commesseIds.length; i += BATCH_SIZE) {
-            const batch = commesseIds.slice(i, i + BATCH_SIZE);
-            const qComm = query(collection(db, 'catalogo_commesse'), where(documentId(), 'in', batch));
-            const commSnap = await getDocs(qComm);
-            commSnap.forEach(doc => {
-              commList.push({
-                id: doc.id,
-                nome: doc.data().nome || '',
-                colore: doc.data().colore || '#3b82f6',
-                dataInizio: doc.data().dataInizio || '',
-                dataFine: doc.data().dataFine || '',
-                responsabile: doc.data().responsabile || '',
-                pm: doc.data().pm || '',
-                codiceCommessa: doc.data().codiceCommessa || '',
-                anno: doc.data().anno || '',
-                tipologia: doc.data().tipologia || '',
-                cliente: doc.data().cliente || '',
-                stato: doc.data().stato || 'Aperta',
-                percorsoRete: doc.data().percorsoRete || '',
-                punchList: doc.data().punchList || [],
-                giornateSeniorProject: doc.data().giornateSeniorProject,
-                giornateProject: doc.data().giornateProject,
-                giornateJuniorProject: doc.data().giornateJuniorProject,
-                apertaDa: doc.data().apertaDa || '',
-                progetti: doc.data().progetti || []
-              });
-            });
-          }
-          setCommesse(commList.sort((a, b) => a.nome.localeCompare(b.nome)));
-        } else {
-          setCommesse([]);
-        }
-
-        setClienti([]);
-      }
+      const ass: Record<string, any[]> = {};
+      assSnap.forEach(docSnap => {
+        ass[docSnap.id] = docSnap.data().lista || [];
+      });
+      setAssegnazioni(ass);
 
       setIsPlanningLoaded(true);
     } catch (err) {
@@ -660,44 +573,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return () => unsubPriority();
   }, [user, isPlanningLoaded]);
 
-  // Listener real-time per assegnazioni commesse (attivo solo quando la pianificazione è richiesta)
+  // Listener real-time per assegnazioni commesse (attivo quando la pianificazione è richiesta)
   useEffect(() => {
     if (!user || !isPlanningLoaded) return;
 
-    const uClean = (userEmail || '').toLowerCase().trim();
-    const isCoord = coordinatori.some(c => c.email && c.email.toLowerCase().trim() === uClean);
-    const isPM = pmsEmails.some(e => e && e.toLowerCase().trim() === uClean);
-    const isGestore = dynamicGestoriCommesse.some(e => e && e.toLowerCase().trim() === uClean);
-    const isPrivileged = isAdmin || isSocio || isCoord || isPM || isGestore;
-
-    let unsubAssignments: () => void;
-    if (isPrivileged) {
-      unsubAssignments = onSnapshot(collection(db, 'assegnazioni'), (snap) => {
-        const ass: Record<string, any[]> = {};
-        snap.forEach(docSnap => {
-          ass[docSnap.id] = docSnap.data().lista || [];
-        });
-        setAssegnazioni(ass);
-      }, (err) => console.error("Errore listener real-time assegnazioni:", err));
-    } else if (myAssociatedName) {
-      const qAss = query(
-        collection(db, 'assegnazioni'),
-        where(documentId(), '>=', `${myAssociatedName}-`),
-        where(documentId(), '<=', `${myAssociatedName}-\uf8ff`)
-      );
-      unsubAssignments = onSnapshot(qAss, (snap) => {
-        const ass: Record<string, any[]> = {};
-        snap.forEach(docSnap => {
-          ass[docSnap.id] = docSnap.data().lista || [];
-        });
-        setAssegnazioni(ass);
-      }, (err) => console.error("Errore listener real-time assegnazioni utente:", err));
-    } else {
-      return;
-    }
+    const unsubAssignments = onSnapshot(collection(db, 'assegnazioni'), (snap) => {
+      const ass: Record<string, any[]> = {};
+      snap.forEach(docSnap => {
+        ass[docSnap.id] = docSnap.data().lista || [];
+      });
+      setAssegnazioni(ass);
+    }, (err) => console.error("Errore listener real-time assegnazioni:", err));
 
     return () => unsubAssignments();
-  }, [user, isPlanningLoaded, isAdmin, isDev, isSocio, myAssociatedName, userEmail, coordinatori, pmsEmails, dynamicGestoriCommesse]);
+  }, [user, isPlanningLoaded]);
 
   const loadAssegnazioniForWeeks = async (requestedWeekIds: string[]) => {
     if (!requestedWeekIds || requestedWeekIds.length === 0) return;
