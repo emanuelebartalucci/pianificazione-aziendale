@@ -800,16 +800,24 @@ export default function Prenotazioni() {
       return;
     }
 
-    // 1. Copia IP negli appunti come backup
+    const user = (pc.dettagli.utenteIngegno || '').trim();
+    const pass = (pc.dettagli.pswUtente || '').trim();
+
+    // 1. Copia password o IP negli appunti come backup
     try {
-      navigator.clipboard.writeText(ip);
+      navigator.clipboard.writeText(pass || ip);
     } catch (err) {
       console.error("Errore copia appunti IP:", err);
     }
 
-    // 2. Invoca il protocollo Windows registrato ingegno-rdp
+    // 2. Invoca il protocollo Windows registrato ingegno-rdp con parametri
     try {
-      const protocolUri = `ingegno-rdp:${encodeURIComponent(ip)}`;
+      const params = new URLSearchParams();
+      if (user) params.append('user', user);
+      if (pass) params.append('pwd', pass);
+      const queryStr = params.toString() ? `?${params.toString()}` : '';
+
+      const protocolUri = `ingegno-rdp:${encodeURIComponent(ip)}${queryStr}`;
       const tempLink = document.createElement('a');
       tempLink.href = protocolUri;
       tempLink.style.display = 'none';
@@ -820,10 +828,10 @@ export default function Prenotazioni() {
           document.body.removeChild(tempLink);
         }
       }, 1500);
-      showToast(`🖥️ Avvio Desktop Remoto per ${pc.id} (${ip})...`, 'success');
+      showToast(`🖥️ Connessione a ${pc.id} (${ip}) in corso...`, 'success');
     } catch (err) {
       console.error("Errore protocollo ingegno-rdp:", err);
-      showToast(`IP ${ip} copiato negli appunti.`, 'success');
+      showToast(`Credenziali per ${pc.id} copiate negli appunti.`, 'success');
     }
   };
 
