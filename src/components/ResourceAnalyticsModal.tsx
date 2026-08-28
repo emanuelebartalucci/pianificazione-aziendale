@@ -183,8 +183,27 @@ export default function ResourceAnalyticsModal({
     }
 
     const dipObj = dipendenti.find(d => d.nome && d.nome.trim().toLowerCase() === dipNameClean);
-    const dailyContractHours = (dipObj && dipObj.oreSettimanali) ? (Number(dipObj.oreSettimanali) / 5) : 8;
-    const halfDayContractHours = dailyContractHours / 2;
+    
+    const getDayContractHours = (dateStrOrDate: string | Date): number => {
+      const d = typeof dateStrOrDate === 'string' ? new Date(dateStrOrDate) : dateStrOrDate;
+      const dayIdx = d.getDay(); // 0 = dom, 1 = lun, ..., 5 = ven, 6 = sab
+      if (dayIdx === 0 || dayIdx === 6) return 0;
+      const mapKey: Record<number, 'lun' | 'mar' | 'mer' | 'gio' | 'ven'> = {
+        1: 'lun',
+        2: 'mar',
+        3: 'mer',
+        4: 'gio',
+        5: 'ven'
+      };
+      const key = mapKey[dayIdx];
+      if (dipObj?.orarioSettimanale && key && typeof dipObj.orarioSettimanale[key] === 'number') {
+        return dipObj.orarioSettimanale[key];
+      }
+      if (dipObj?.oreSettimanali) {
+        return Number(dipObj.oreSettimanali) / 5;
+      }
+      return 8;
+    };
     
     // Richieste approvate per questo dipendente nell'anno selezionato (pieYear)
     const filteredReqs = allRequests.filter(r => {
@@ -229,7 +248,6 @@ export default function ResourceAnalyticsModal({
         if (y === pieYear) dates.push(req.data);
       }
 
-      const numDays = dates.length || 1;
       const isPart = req.frazioneTipo === 'mattina' || req.frazioneTipo === 'pomeriggio';
       const isOrario = req.frazioneTipo === 'orario';
 
@@ -241,11 +259,12 @@ export default function ResourceAnalyticsModal({
         if (req.pausaPranzo && req.pausaPranzoOre) {
           diff -= req.pausaPranzoOre;
         }
-        hours = Math.max(0, diff);
-      } else if (isPart) {
-        hours = numDays * halfDayContractHours;
+        hours = Math.max(0, diff) * (dates.length || 1);
       } else {
-        hours = numDays * dailyContractHours;
+        dates.forEach(dStr => {
+          const dHours = getDayContractHours(dStr);
+          hours += isPart ? (dHours / 2) : dHours;
+        });
       }
 
       if (t === 'ferie' || t.includes('ferie')) {
@@ -335,8 +354,27 @@ export default function ResourceAnalyticsModal({
       });
 
       const dipObj = dipendenti.find(d => d.nome && d.nome.trim().toLowerCase() === dipNameClean);
-      const dailyContractHours = (dipObj && dipObj.oreSettimanali) ? (Number(dipObj.oreSettimanali) / 5) : 8;
-      const halfDayContractHours = dailyContractHours / 2;
+      
+      const getDayContractHours = (dateStrOrDate: string | Date): number => {
+        const d = typeof dateStrOrDate === 'string' ? new Date(dateStrOrDate) : dateStrOrDate;
+        const dayIdx = d.getDay();
+        if (dayIdx === 0 || dayIdx === 6) return 0;
+        const mapKey: Record<number, 'lun' | 'mar' | 'mer' | 'gio' | 'ven'> = {
+          1: 'lun',
+          2: 'mar',
+          3: 'mer',
+          4: 'gio',
+          5: 'ven'
+        };
+        const key = mapKey[dayIdx];
+        if (dipObj?.orarioSettimanale && key && typeof dipObj.orarioSettimanale[key] === 'number') {
+          return dipObj.orarioSettimanale[key];
+        }
+        if (dipObj?.oreSettimanali) {
+          return Number(dipObj.oreSettimanali) / 5;
+        }
+        return 8;
+      };
 
       allRequests.forEach(req => {
         if (req.stato !== 'Approvato' || req.note === 'Chiusure Aziendali') return;
@@ -345,7 +383,7 @@ export default function ResourceAnalyticsModal({
         const reqTipo = (req.tipo || '').toLowerCase();
         if (reqTipo === 'smart' || reqTipo.includes('smart') || reqTipo.includes('lavoro da casa')) return;
 
-        const dates: { year: number; month: number }[] = [];
+        const dates: { year: number; month: number; dateStr: string }[] = [];
 
         if (req.dataInizio && req.dataFine) {
           const [sY, sM, sD] = req.dataInizio.split('-').map(Number);
@@ -356,7 +394,9 @@ export default function ResourceAnalyticsModal({
             while (curr <= end) {
               const yr = curr.getFullYear();
               if (selectedYearsList.includes(yr) && !processedYearsFromSummary.has(yr)) {
-                dates.push({ year: yr, month: curr.getMonth() + 1 });
+                const mm = String(curr.getMonth() + 1).padStart(2, '0');
+                const dd = String(curr.getDate()).padStart(2, '0');
+                dates.push({ year: yr, month: curr.getMonth() + 1, dateStr: `${yr}-${mm}-${dd}` });
               }
               curr.setDate(curr.getDate() + 1);
             }
@@ -364,27 +404,28 @@ export default function ResourceAnalyticsModal({
         } else if (req.data) {
           const [sY, sM] = req.data.split('-').map(Number);
           if (selectedYearsList.includes(sY) && !processedYearsFromSummary.has(sY)) {
-            dates.push({ year: sY, month: sM });
+            dates.push({ year: sY, month: sM, dateStr: req.data });
           }
         }
 
         const isPart = req.frazioneTipo === 'mattina' || req.frazioneTipo === 'pomeriggio';
         const isOrario = req.frazioneTipo === 'orario';
 
-        let hoursPerDay = dailyContractHours;
-        if (isOrario && req.oraInizio && req.oraFine) {
-          const [h1, m1] = req.oraInizio.split(':').map(Number);
-          const [h2, m2] = req.oraFine.split(':').map(Number);
-          let diff = (h2 + m2 / 60) - (h1 + m1 / 60);
-          if (req.pausaPranzo && req.pausaPranzoOre) diff -= req.pausaPranzoOre;
-          hoursPerDay = Math.max(0, diff);
-        } else if (isPart) {
-          hoursPerDay = halfDayContractHours;
-        }
-
         dates.forEach(d => {
+          const dHours = getDayContractHours(d.dateStr);
+          let hours = dHours;
+          if (isOrario && req.oraInizio && req.oraFine) {
+            const [h1, m1] = req.oraInizio.split(':').map(Number);
+            const [h2, m2] = req.oraFine.split(':').map(Number);
+            let diff = (h2 + m2 / 60) - (h1 + m1 / 60);
+            if (req.pausaPranzo && req.pausaPranzoOre) diff -= req.pausaPranzoOre;
+            hours = Math.max(0, diff);
+          } else if (isPart) {
+            hours = dHours / 2;
+          }
+
           if (yearDataMap[d.year]) {
-            yearDataMap[d.year][d.month - 1] += hoursPerDay;
+            yearDataMap[d.year][d.month - 1] += hours;
           }
         });
       });

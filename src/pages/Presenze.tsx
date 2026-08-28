@@ -1152,11 +1152,24 @@ export default function Presenze() {
                 const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
                 const isHoliday = isItalianHoliday(dateStr);
 
-                // Ricava le ore di contratto specifiche di questa giornata (con fallback alle ore del profilo)
-                const dayContractHours = currentDay.oreContratto ?? contractHours;
+                // Ricava le ore di contratto specifiche di questa giornata dall'orario settimanale del dipendente
+                let expectedDayContractHours = contractHours;
+                if (profile?.orarioSettimanale) {
+                  if (isWeekend || isHoliday) {
+                    expectedDayContractHours = 0;
+                  } else {
+                    const weekdayKeys = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
+                    const key = weekdayKeys[dayOfWeek];
+                    expectedDayContractHours = profile.orarioSettimanale[key as 'lun' | 'mar' | 'mer' | 'gio' | 'ven'] ?? contractHours;
+                  }
+                } else if (isWeekend || isHoliday) {
+                  expectedDayContractHours = 0;
+                }
 
-                // Auto-migrazione per fogli esistenti creati precedentemente
-                if (!currentDay.oreContratto) {
+                const dayContractHours = expectedDayContractHours;
+
+                // Auto-allineamento oreContratto con l'orario contrattuale attuale del profilo
+                if (currentDay.oreContratto !== dayContractHours) {
                   currentDay.oreContratto = dayContractHours;
                   hasChanges = true;
                 }
@@ -1257,7 +1270,7 @@ export default function Presenze() {
                   // Nessuna assenza approvata per questo giorno → ripristina i campi se erano stati impostati automaticamente
                   const isCleanFerie = 
                     currentDay.ore === 0 &&
-                    currentDay.ferie === dayContractHours &&
+                    currentDay.ferie > 0 &&
                     currentDay.straordinari === 0 &&
                     currentDay.permessi === 0 &&
                     !currentDay.malattia &&
@@ -1276,7 +1289,7 @@ export default function Presenze() {
                   const permessiSum = currentDay.permessi + currentDay.ore;
                   const isCleanPermesso = 
                     currentDay.permessi > 0 &&
-                    Math.abs(permessiSum - dayContractHours) < 0.05 &&
+                    (Math.abs(permessiSum - dayContractHours) < 0.05 || currentDay.ore === 0) &&
                     currentDay.straordinari === 0 &&
                     currentDay.ferie === 0 &&
                     !currentDay.malattia &&
@@ -1284,7 +1297,7 @@ export default function Presenze() {
 
                   const isCleanStudio = 
                     currentDay.ore === 0 &&
-                    currentDay.permessoStudio === dayContractHours &&
+                    (currentDay.permessoStudio || 0) > 0 &&
                     currentDay.straordinari === 0 &&
                     currentDay.ferie === 0 &&
                     currentDay.permessi === 0 &&
@@ -1293,7 +1306,7 @@ export default function Presenze() {
 
                   const isCleanDonazione = 
                     currentDay.ore === 0 &&
-                    currentDay.permessoDonazione === dayContractHours &&
+                    (currentDay.permessoDonazione || 0) > 0 &&
                     currentDay.straordinari === 0 &&
                     currentDay.ferie === 0 &&
                     currentDay.permessi === 0 &&
@@ -1302,7 +1315,7 @@ export default function Presenze() {
 
                   const isCleanElettorale = 
                     currentDay.ore === 0 &&
-                    currentDay.permessoElettorale === dayContractHours &&
+                    (currentDay.permessoElettorale || 0) > 0 &&
                     currentDay.straordinari === 0 &&
                     currentDay.ferie === 0 &&
                     currentDay.permessi === 0 &&
@@ -1317,10 +1330,22 @@ export default function Presenze() {
                     isCleanDonazione || 
                     isCleanElettorale;
 
-                  if (wasModifiedDueToAbsence) {
+                  const isStandardWorkDay = 
+                    currentDay.ferie === 0 &&
+                    currentDay.permessi === 0 &&
+                    !currentDay.malattia &&
+                    (currentDay.permessoStudio || 0) === 0 &&
+                    (currentDay.permessoDonazione || 0) === 0 &&
+                    (currentDay.permessoElettorale || 0) === 0 &&
+                    !currentDay.trasferta &&
+                    currentDay.straordinari === 0;
+
+                  const expectedWorkHours = (isWeekend || isHoliday) ? 0 : dayContractHours;
+
+                  if (wasModifiedDueToAbsence || (isStandardWorkDay && currentDay.ore !== expectedWorkHours)) {
                     updatedGiorni[String(day)] = {
                       ...currentDay,
-                      ore: (isWeekend || isHoliday) ? 0 : dayContractHours,
+                      ore: expectedWorkHours,
                       ferie: 0,
                       permessi: 0,
                       malattia: false,

@@ -65,6 +65,43 @@ const formatShortDateRange = (start?: string, end?: string): string => {
   return formatDate(start || end || '');
 };
 
+const normalizeIsoDate = (val: any, fallbackDateStr?: string): string => {
+  if (!val) {
+    if (fallbackDateStr && typeof fallbackDateStr === 'string' && fallbackDateStr.length >= 10) {
+      const parsedFallback = new Date(fallbackDateStr);
+      if (!isNaN(parsedFallback.getTime())) {
+        return parsedFallback.toISOString();
+      }
+    }
+    return '';
+  }
+  if (typeof val === 'string') {
+    const d = new Date(val);
+    if (!isNaN(d.getTime())) return d.toISOString();
+  }
+  if (typeof val === 'number') {
+    const d = new Date(val);
+    if (!isNaN(d.getTime())) return d.toISOString();
+  }
+  if (typeof val === 'object') {
+    if (typeof val.toDate === 'function') {
+      try {
+        return val.toDate().toISOString();
+      } catch {}
+    }
+    if (typeof val.seconds === 'number') {
+      return new Date(val.seconds * 1000).toISOString();
+    }
+  }
+  if (fallbackDateStr && typeof fallbackDateStr === 'string' && fallbackDateStr.length >= 10) {
+    const parsedFallback = new Date(fallbackDateStr);
+    if (!isNaN(parsedFallback.getTime())) {
+      return parsedFallback.toISOString();
+    }
+  }
+  return '';
+};
+
 export function useNotificationWatcher({
   userEmail,
   myAssociatedName,
@@ -236,7 +273,8 @@ export function useNotificationWatcher({
         snap.forEach(docSnap => {
           const data = docSnap.data();
           const isPending = ['In attesa', 'Richiesta Annullamento', 'Richiesta Modifica'].includes(data.stato);
-          const created = data.createdAt || data.dataInserimento || '';
+          const rawDate = data.createdAt || data.dataInserimento || data.dataRichiesta || data.timestamp;
+          const created = normalizeIsoDate(rawDate, data.dataInizio) || (data.dataApprovazione ? normalizeIsoDate(data.dataApprovazione) : '') || '';
 
           if (isPending) matchingCount++;
           const dipName = data.dipendenteName || data.dipendenteNome || data.nome || 'Collaboratore';
@@ -249,7 +287,7 @@ export function useNotificationWatcher({
             titolo: `🌴 Richiesta Assenza: ${dipName}`,
             messaggio: `${data.tipo || 'Ferie'} per ${dipName} (${data.dataInizio || ''} - ${data.dataFine || ''})`,
             link: '/ferie',
-            createdAt: created || new Date().toISOString(),
+            createdAt: created || new Date(0).toISOString(),
             badgeLabel: statoLabel,
             isPending,
             stato: data.stato
@@ -289,7 +327,8 @@ export function useNotificationWatcher({
           const data = docSnap.data();
           const isPending = data.stato === 'Inviato' || data.stato === 'Richiesta Sblocco';
 
-          const created = data.dataInvio || data.updatedAt || '';
+          const rawDate = data.dataInvio || data.updatedAt || data.createdAt || data.timestamp;
+          const created = normalizeIsoDate(rawDate) || '';
 
           if (isPending) matchingCount++;
           const dipName = data.dipendenteNome || data.dipendenteName || data.nome || 'Collaboratore';
@@ -302,7 +341,7 @@ export function useNotificationWatcher({
             titolo: `⏱️ Foglio Presenze: ${dipName}`,
             messaggio: `${data.stato === 'Richiesta Sblocco' ? 'Richiesta sblocco' : 'Presenze'} mese ${data.mese}/${data.anno} di ${dipName}`,
             link: '/presenze',
-            createdAt: created || new Date().toISOString(),
+            createdAt: created || new Date(0).toISOString(),
             badgeLabel: statoLabel,
             isPending,
             stato: data.stato
@@ -340,7 +379,8 @@ export function useNotificationWatcher({
         snap.forEach(docSnap => {
           const data = docSnap.data();
           const isPending = ['In attesa', 'Richiesta Annullamento', 'Richiesta Modifica'].includes(data.stato);
-          const created = data.createdAt || '';
+          const rawDate = data.createdAt || data.richiestoIl || data.timestamp;
+          const created = normalizeIsoDate(rawDate, data.data) || '';
 
           if (isPending) matchingCount++;
           const dipName = data.dipendenteName || data.dipendenteNome || data.nome || 'Collaboratore';
@@ -353,7 +393,7 @@ export function useNotificationWatcher({
             titolo: `📅 Lavoro Festivo: ${dipName}`,
             messaggio: `Richiesta da ${dipName} per il ${data.data || ''} - ${data.motivo || 'Richiesta autorizzazione'}`,
             link: '/ferie',
-            createdAt: created || new Date().toISOString(),
+            createdAt: created || new Date(0).toISOString(),
             badgeLabel: statoLabel,
             isPending,
             stato: data.stato
@@ -416,7 +456,8 @@ export function useNotificationWatcher({
           const data = docSnap.data();
           if (myCoordinatedAreas.includes(data.macroArea)) {
             const isPending = data.stato === 'in_attesa';
-            const created = data.createdAt || data.timestamp || '';
+            const rawDate = data.createdAt || data.timestamp;
+            const created = normalizeIsoDate(rawDate, data.data || data.dataInizio) || '';
 
             if (isPending) matchingCount++;
             const resName = data.risorsaNome || data.dipendenteNome || data.nome || 'Collaboratore';
@@ -432,7 +473,7 @@ export function useNotificationWatcher({
               titolo: `🙋 Chiedi Lavoro: ${resName}`,
               messaggio: `${resName} (Area ${data.macroArea || ''}) segnala disponibilità${details}`,
               link: '/pianificazione-personale',
-              createdAt: created || new Date().toISOString(),
+              createdAt: created || new Date(0).toISOString(),
               badgeLabel: statoLabel,
               isPending,
               stato: data.stato
@@ -555,7 +596,8 @@ export function useNotificationWatcher({
           }
 
           if (isTargetRecipient) {
-            const created = data.createdAt || data.dataApprovazione || data.timestamp || '';
+            const rawDate = data.createdAt || data.dataCreazione || data.dataRichiesta || data.dataInvio || data.timestamp;
+            const created = normalizeIsoDate(rawDate, data.dataInizio) || (data.dataApprovazione ? normalizeIsoDate(data.dataApprovazione) : '') || '';
             if (isPending) matchingCount++;
 
             const reqPerson = data.richiedenteNome || data.richiedente || '';
@@ -582,7 +624,7 @@ export function useNotificationWatcher({
               titolo: title,
               messaggio: msg,
               link: '/pianificazione-personale',
-              createdAt: created || new Date().toISOString(),
+              createdAt: created || new Date(0).toISOString(),
               badgeLabel: statoLabel,
               isPending,
               stato: data.stato
@@ -686,13 +728,15 @@ export function useNotificationWatcher({
         const items: OperativeNotificationItem[] = [];
         snap.forEach(docSnap => {
           const data = docSnap.data();
+          const rawDate = data.updatedAt || data.timestamp || data.createdAt;
+          const created = normalizeIsoDate(rawDate) || '';
           items.push({
             id: `sollecito-${docSnap.id}`,
             category: 'sollecito_presenze',
             titolo: `⚠️ Revisione Presenze Richiesta`,
             messaggio: `L'HR ha richiesto modifiche sul tuo foglio ore (${data.mese}/${data.anno})`,
             link: '/presenze',
-            createdAt: data.updatedAt || new Date().toISOString(),
+            createdAt: created || new Date(0).toISOString(),
             badgeLabel: 'Da Modificare',
             isPending: true,
             stato: data.stato
@@ -734,6 +778,8 @@ export function useNotificationWatcher({
           const reqPerson = data.richiedenteNome || data.richiedenteEmail || 'Collaboratore';
           const artStr = data.cosaManca || (data.articoliSelezionati || []).join(', ') || data.altroDettaglio || '';
           const detailStr = artStr ? `: ${artStr}` : '';
+          const rawDate = data.createdAt || data.dataRichiesta || data.timestamp;
+          const created = normalizeIsoDate(rawDate) || '';
 
           items.push({
             id: `forniture-${docSnap.id}`,
@@ -741,7 +787,7 @@ export function useNotificationWatcher({
             titolo: `📦 Richiesta Forniture: ${data.categoria || 'Materiali'}`,
             messaggio: `${reqPerson} (${data.sede || 'Sede'})${detailStr}`,
             link: '/forniture?tab=gestione',
-            createdAt: data.createdAt || new Date().toISOString(),
+            createdAt: created || new Date(0).toISOString(),
             badgeLabel: 'Da Rifornire',
             isPending,
             stato: data.stato

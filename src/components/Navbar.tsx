@@ -21,8 +21,12 @@ interface UpcomingHolidayWork {
 const formatRelativeTime = (isoString?: string): string => {
   if (!isoString) return '';
   const date = new Date(isoString);
+  if (isNaN(date.getTime()) || date.getTime() === 0) return '';
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
+  if (diffMs < 0) {
+    return 'Poco fa';
+  }
   const diffMinutes = Math.floor(diffMs / 60000);
   const diffHours = Math.floor(diffMinutes / 60);
   const diffDays = Math.floor(diffHours / 24);
@@ -32,12 +36,13 @@ const formatRelativeTime = (isoString?: string): string => {
   if (diffHours < 24) return `${diffHours}h fa`;
   if (diffDays === 1) return 'Ieri';
   if (diffDays < 7) return `${diffDays}gg fa`;
-  return `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')}`;
+  return `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`;
 };
 
 const getNotificationGroup = (isoString?: string): 'Oggi' | 'Questa settimana' | 'Questo mese' | 'Mese scorso' | 'Più vecchie' => {
   if (!isoString) return 'Più vecchie';
   const date = new Date(isoString);
+  if (isNaN(date.getTime()) || date.getTime() === 0) return 'Più vecchie';
   const now = new Date();
   
   const isSameDay = date.getFullYear() === now.getFullYear() &&

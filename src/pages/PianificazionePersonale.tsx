@@ -207,6 +207,7 @@ export default function PianificazionePersonale() {
 
   // Sincronizzazione in tempo reale delle sole richieste di personale in attesa (filtro mirato alla fonte)
   const [localRichiesteDisegnatori, setLocalRichiesteDisegnatori] = useState<any[]>([]);
+  const [isLoadedReqs, setIsLoadedReqs] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -217,11 +218,12 @@ export default function PianificazionePersonale() {
         list.push({ id: docSnap.id, ...docSnap.data() });
       });
       setLocalRichiesteDisegnatori(list);
+      setIsLoadedReqs(true);
     });
     return () => unsub();
   }, [user]);
 
-  const richiesteDisegnatori = localRichiesteDisegnatori.length > 0 ? localRichiesteDisegnatori : globalRichiesteDisegnatori;
+  const richiesteDisegnatori = isLoadedReqs ? localRichiesteDisegnatori : globalRichiesteDisegnatori.filter(r => r.stato === 'in_attesa');
 
   const isSelfRequester = (r: any): boolean => {
     if (!r) return false;
@@ -1409,10 +1411,15 @@ export default function PianificazionePersonale() {
       batch.update(reqRef, {
         stato: 'approvata',
         risorseAssegnata: risorsaNome,
-        percentuale: effectivePercent
+        percentuale: effectivePercent,
+        dataApprovazione: new Date().toISOString(),
+        approvatoDa: myAssociatedName || userEmail || ''
       });
       
       await batch.commit();
+
+      // Rimuovi immediatamente dalla lista locale per aggiornare la UI in tempo reale
+      setLocalRichiesteDisegnatori(prev => prev.filter(r => r.id !== req.id));
 
       showToast(isCancellation ? `Annullamento approvato: ${risorsaNome} rimosso dalla commessa!` : `Richiesta approvata per ${risorsaNome} con carico ${effectivePercent}%!`, "success");
     } catch (err) {
@@ -1422,12 +1429,15 @@ export default function PianificazionePersonale() {
   };
 
   const handleFixHistoryRequest = async (req: any, chosenRisorsa: string) => {
-    if (!chosenRisorsa || !dipendenti.some(d => d.nome === chosenRisorsa)) {
-      showToast("Seleziona una risorsa valida dall'elenco.", "warning");
+    if (!chosenRisorsa) {
+      showToast("Seleziona una risorsa per salvare l'assegnazione.", "warning");
       return;
     }
-
     try {
+      const isCancellation = Number(req.percentuale) === 0 || 
+        (req.tipoRichiesta || '').toLowerCase().includes('annullamento') || 
+        (req.tipoRichiesta || '').toLowerCase().includes('rimozione');
+
       const start = new Date(req.dataInizio);
       const end = new Date(req.dataFine);
       
@@ -1442,7 +1452,7 @@ export default function PianificazionePersonale() {
       if (finalWkId) weekIds.add(finalWkId);
 
       const batch = writeBatch(db);
-      const commObj = commesse.find(c => c.id === req.commessaId);
+      const commObj = commesse.find(c => (req.commessaId && c.id === req.commessaId) || (c.nome && (c.nome === req.commessaName || c.nome === req.commessaNome)));
       const colore = commObj ? (TIPOLOGIA_COLORS[commObj.tipologia || ''] || commObj.colore || '#64748b') : '#64748b';
 
       for (const wkId of weekIds) {
@@ -1450,7 +1460,7 @@ export default function PianificazionePersonale() {
         const currentList = [...(assignments[docId] || [])];
         const filtered = currentList.filter(c => c.commessaId !== req.commessaId);
 
-        if (Number(req.percentuale) > 0) {
+        if (!isCancellation) {
           filtered.push({
             commessaId: req.commessaId,
             commessaName: req.commessaName,
@@ -1466,10 +1476,13 @@ export default function PianificazionePersonale() {
       const reqRef = doc(db, 'richieste_disegnatori', req.id);
       batch.update(reqRef, {
         stato: 'approvata',
-        risorseAssegnata: chosenRisorsa
+        risorseAssegnata: chosenRisorsa,
+        dataApprovazione: new Date().toISOString(),
+        approvatoDa: myAssociatedName || userEmail || ''
       });
       
       await batch.commit();
+      setLocalRichiesteDisegnatori(prev => prev.filter(r => r.id !== req.id));
       showToast(`Assegnazione salvata nel calendario per ${chosenRisorsa}!`, "success");
     } catch (err) {
       console.error("Errore salvataggio correzione:", err);
@@ -1498,8 +1511,13 @@ export default function PianificazionePersonale() {
       onConfirm: async () => {
         try {
           const reqRef = doc(db, 'richieste_disegnatori', reqId);
-          await updateDoc(reqRef, { stato: 'rifiutata' });
+          await updateDoc(reqRef, {
+            stato: 'rifiutata',
+            dataRifiuto: new Date().toISOString(),
+            rifiutatoDa: myAssociatedName || userEmail || ''
+          });
 
+          setLocalRichiesteDisegnatori(prev => prev.filter(r => r.id !== reqId));
           showToast("Richiesta rifiutata con successo.");
           setConfirmConfig(prev => ({ ...prev, isOpen: false }));
         } catch (err) {
@@ -1509,8 +1527,6 @@ export default function PianificazionePersonale() {
       }
     });
   };
-
-
 
   const leavesMap = useMemo(() => {
     const map: Record<string, { giorno: string; tipo: string; frazioneTipo?: string; oraInizio?: string; oraFine?: string; pausaPranzo?: boolean; pausaPranzoOre?: number; dettagli: string }[]> = {};
@@ -1598,6 +1614,21 @@ export default function PianificazionePersonale() {
     return uniqueDays.size >= 5;
   };
 
+  const getDayContractHoursForDip = (dip: any, dayName: string, defaultHours: number = 8): number => {
+    if (dip?.tipo === 'collaboratore') return 8;
+    if (dip?.orarioSettimanale) {
+      const mapKey: Record<string, 'lun' | 'mar' | 'mer' | 'gio' | 'ven'> = {
+        'lun': 'lun', 'mar': 'mar', 'mer': 'mer', 'gio': 'gio', 'ven': 'ven',
+        'lunedì': 'lun', 'martedì': 'mar', 'mercoledì': 'mer', 'giovedì': 'gio', 'venerdì': 'ven'
+      };
+      const key = mapKey[dayName.toLowerCase().slice(0, 3)];
+      if (key && typeof dip.orarioSettimanale[key] === 'number') {
+        return dip.orarioSettimanale[key];
+      }
+    }
+    return dip?.oreContratto ?? defaultHours;
+  };
+
   const getDayLoad = (dayName: string, commesseLoad: number, dayLeaves: any[], dailyContractHours: number = 8) => {
     const leavesForDay = dayLeaves.filter(l => l.giorno === dayName);
     let leaveLoad = 0;
@@ -1619,14 +1650,18 @@ export default function PianificazionePersonale() {
             }
           }
         } else if (l.tipo === 'permesso' || l.tipo === 'ex_l104' || l.tipo === 'studio') {
-          hrs = dailyContractHours / 2;
+          if (l.frazioneTipo === 'giornata') {
+            hrs = dailyContractHours;
+          } else {
+            hrs = dailyContractHours / 2;
+          }
         } else {
           // 'giornata', 'ferie', 'assenza', 'malattia', 'maternita'
           hrs = dailyContractHours;
         }
         return acc + Math.min(dailyContractHours, hrs);
       }, 0);
-      leaveLoad = Math.min(100, Math.round((leaveHrs / dailyContractHours) * 100));
+      leaveLoad = dailyContractHours > 0 ? Math.min(100, Math.round((leaveHrs / dailyContractHours) * 100)) : 0;
     }
     return leaveLoad + commesseLoad;
   };
@@ -1636,10 +1671,12 @@ export default function PianificazionePersonale() {
     const list = isFullLeave ? [] : rawList;
     const leaves = getLeavesForResourceInWeek(dipName, wkId);
     const commesseLoad = list.reduce((acc, c) => acc + Number(c.percentuale), 0);
+    const dip = dipendenti.find(d => areNamesEqual(d.nome, dipName));
     const baseDays = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
     let totalWeekPct = 0;
     for (const day of baseDays) {
-      totalWeekPct += getDayLoad(day, commesseLoad, leaves);
+      const dayContract = getDayContractHoursForDip(dip, day, 8);
+      totalWeekPct += getDayLoad(day, commesseLoad, leaves, dayContract);
     }
     return Math.round(totalWeekPct / 5);
   };

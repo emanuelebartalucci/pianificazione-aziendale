@@ -28,6 +28,33 @@ const hexToRgba = (hex: string, alpha: number): string => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 };
 
+export const getDayContractHoursForDip = (dip: any, dayName: string, defaultHours: number = 8): number => {
+  if (dip?.tipo === 'collaboratore') return 8;
+  if (dip?.orarioSettimanale) {
+    const mapKey: Record<string, 'lun' | 'mar' | 'mer' | 'gio' | 'ven'> = {
+      'lun': 'lun', 'mar': 'mar', 'mer': 'mer', 'gio': 'gio', 'ven': 'ven',
+      'lunedì': 'lun', 'martedì': 'mar', 'mercoledì': 'mer', 'giovedì': 'gio', 'venerdì': 'ven'
+    };
+    const key = mapKey[dayName.toLowerCase().slice(0, 3)];
+    if (key && typeof dip.orarioSettimanale[key] === 'number') {
+      return dip.orarioSettimanale[key];
+    }
+  }
+  return dip?.oreContratto ?? defaultHours;
+};
+
+export const getWeeklyContractHoursForDip = (dip: any): number => {
+  if (dip?.tipo === 'collaboratore') return 40;
+  if (dip?.orarioSettimanale) {
+    const vals = Object.values(dip.orarioSettimanale).map(v => Number(v) || 0);
+    const sum = vals.reduce((a, b) => a + b, 0);
+    if (sum > 0) return sum;
+  }
+  if (dip?.oreSettimanali) return Number(dip.oreSettimanali);
+  if (dip?.oreContratto) return dip.oreContratto * 5;
+  return 40;
+};
+
 export const getLeaveHoursForDay = (
   l: {
     tipo?: string;
@@ -77,6 +104,7 @@ export const getLeaveHoursForDay = (
   }
 
   if (l.tipo === 'permesso' || l.tipo === 'ex_l104' || l.tipo === 'studio') {
+    if (l.frazioneTipo === 'giornata') return dailyContractHours;
     return dailyContractHours / 2;
   }
 
@@ -3687,14 +3715,14 @@ export default function Commesse() {
                                   isCurrentWeek ? 'ring-2 ring-inset ring-blue-300' : ''
                                 } ${priorityBorderStyle} cursor-pointer hover:bg-indigo-100/70 hover:ring-2 hover:ring-inset hover:ring-indigo-400 hover:shadow-md transition-all`}
                                 style={{ backgroundColor: cellBg, minWidth: weekColumnMinWidth }}
-                              >
-                                <div 
-                                  className="flex flex-col"
-                                  style={{ 
-                                    minHeight: isNarrow ? '30px' : '40px', 
-                                    gap: '4px' 
-                                  }}
                                 >
+                                  <div 
+                                    className="flex flex-col"
+                                    style={{ 
+                                      minHeight: isNarrow ? '30px' : '40px', 
+                                      gap: '4px' 
+                                    }}
+                                  >
                                   {/* Barra colorata tenue in cima alla casella stile intestazione */}
                                   <div
                                     onMouseDown={(e) => {
@@ -3718,13 +3746,16 @@ export default function Commesse() {
                                   {assignedPeople.map((person, pIdx) => {
                                      const normName = person.name.toLowerCase().trim();
                                      const dip = dipendentiMap.get(normName);
-                                     const dailyContractHours = dip?.tipo === 'collaboratore' ? 8 : (dip?.oreContratto ?? 8);
-                                     const weeklyContractHours = dailyContractHours * 5;
+                                     const weeklyContractHours = getWeeklyContractHoursForDip(dip);
+                                     const dailyContractHours = dip?.tipo === 'collaboratore' ? 8 : (dip?.oreContratto ?? (weeklyContractHours / 5));
                                      const leaves = resourceWeekLeavesMap.get(`${normName}_${wk.id}`) || [];
 
                                      const totalLeaveHoursInWeek = Math.min(
                                        weeklyContractHours,
-                                       leaves.reduce((acc, l) => acc + getLeaveHoursForDay(l, dailyContractHours), 0)
+                                       leaves.reduce((acc, l) => {
+                                         const dayContract = getDayContractHoursForDip(dip, l.giorno, dailyContractHours);
+                                         return acc + getLeaveHoursForDay(l, dayContract);
+                                       }, 0)
                                      );
                                      const leavePctRaw = (totalLeaveHoursInWeek / weeklyContractHours) * 100;
                                      const leavePctInWeek = Math.round(leavePctRaw * 10) / 10;
