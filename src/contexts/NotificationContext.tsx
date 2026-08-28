@@ -27,7 +27,9 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     isDev, 
     impersonatedEmail, 
     coordinatori, 
-    isGestoreForniture 
+    isGestoreForniture,
+    dipendenti,
+    commesse
   } = useAuth();
 
   const watcher = useNotificationWatcher({
@@ -38,7 +40,9 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     isDev,
     impersonatedEmail,
     coordinatori,
-    isGestoreForniture
+    isGestoreForniture,
+    dipendenti,
+    commesse
   });
 
   return (

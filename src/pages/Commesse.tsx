@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { useAuth, isTechnicalUser, type PunchListItem, TODO_CATEGORIE } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, doc, setDoc, updateDoc, addDoc, deleteDoc, getDocs, runTransaction } from 'firebase/firestore';
-import { Briefcase, ChevronLeft, ChevronRight, ChevronDown, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw, Printer, Plus, UserCheck, MoveVertical, Building2, Send, Info, Mail, User, Folder, FolderPlus, FolderOpen, ListTodo, Check, CheckCircle2, Clock, AlertTriangle, ExternalLink } from 'lucide-react';
+import { Briefcase, ChevronLeft, ChevronRight, ChevronDown, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw, Printer, Plus, UserCheck, MoveVertical, Building2, Send, Info, Mail, User, Folder, FolderOpen, ListTodo, Check, CheckCircle2, Clock, AlertTriangle, ExternalLink } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays } from '../utils/date';
 import { queueMail } from '../utils/mailSender';
 import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
@@ -1269,33 +1269,11 @@ export default function Commesse() {
 
     const dip = dipendenti.find(d => areNamesEqual(d.nome, personName));
     const macroArea = dip?.macroArea || '';
-    const targetCommessa = commesse.find(c => c.id === commId);
-
-    const checkIsUserPmOrResp = (cObj: any): boolean => {
-      if (!cObj) return false;
-      const respStr = String(cObj.responsabile || '').trim();
-      const pmList: any[] = Array.isArray(cObj.pm) ? cObj.pm : (cObj.pm ? [cObj.pm] : []);
-      const targets = [respStr, ...pmList.map((p: any) => String(p || '').trim())].filter(Boolean);
-
-      if (targets.length === 0) return false;
-
-      if (myAssociatedName && targets.some(t => areNamesEqual(t, myAssociatedName))) return true;
-
-      if (userEmail) {
-        const emailClean = userEmail.toLowerCase().trim();
-        const username = emailClean.split('@')[0];
-        if (targets.some(t => {
-          const tl = t.toLowerCase();
-          return tl.includes(emailClean) || (username.length >= 4 && tl.includes(username));
-        })) return true;
-      }
-
-      return false;
-    };
-
-    const isPMOrRespOfCommessa = checkIsUserPmOrResp(targetCommessa);
+    const isResourceInMyCoordinatedArea = myCoordinatedAreas.some(a => (a || '').toLowerCase().trim() === macroArea.toLowerCase().trim());
     const isSelfPerson = areNamesEqual(personName, myAssociatedName);
-    const canDirectlyManage = isAdmin || isSoci(myAssociatedName) || isPMOrRespOfCommessa;
+
+    // Solo Admin, Soci e il Coordinatore della SPECIFICA area a cui appartiene la risorsa possono modificarla direttamente
+    const canDirectlyManage = isAdmin || isSoci(myAssociatedName) || isResourceInMyCoordinatedArea;
 
     if (e.button === 1) {
       // Rotellina (Middle Click) -> Nuova Scheda
@@ -1315,19 +1293,13 @@ export default function Commesse() {
         weekId: wkId
       });
     } else {
-      const isAnyCoordinator = (coordinatori || []).some(c => c.email?.toLowerCase() === userEmail?.toLowerCase());
-      const canSendChangeRequest = isAnyCoordinator || isSelfPerson;
-
-      if (!canSendChangeRequest) {
-        return;
-      }
-
+      // Risorsa di ALTRA area -> Apre sempre la Modale per Richiedere la Modifica al Coordinatore dell'area di appartenenza
       const weekRange = getWeekDateRange(wkId);
       const isSelf = isSelfPerson;
       setIsSelfChangeRequest(isSelf);
       setReqAreaTarget(macroArea || 'Disegnatori');
       setReqCommessaId(commId);
-      setReqPreferredResource(isSelf ? (myAssociatedName || personName) : (personName && dipendenti.some(d => d.nome === personName) ? personName : ''));
+      setReqPreferredResource(personName && dipendenti.some(d => d.nome === personName) ? personName : '');
       setReqPercentuale(personPct || 100);
       setReqDataInizio(weekRange.startStr);
       setReqDataFine(weekRange.endStr);
@@ -1411,12 +1383,15 @@ export default function Commesse() {
       const commObj = commesse.find(c => c.id === reqCommessaId);
       const commName = commObj ? commObj.nome : '';
       
-      const finalTipoRichiesta = isSelfChangeRequest ? 'modifica_assegnazione' : 'richiesta_area';
+      const isAltreCommessa = Boolean(selectedAltreCommessa && selectedAltreCommessa.id === reqCommessaId);
+      const finalTipoRichiesta = isAltreCommessa ? 'inserimento_commessa' : (isSelfChangeRequest ? 'modifica_assegnazione' : 'richiesta_area');
 
       await addDoc(collection(db, 'richieste_disegnatori'), {
         commessaId: reqCommessaId,
         commessaName: commName,
         commessaNome: commName,
+        commessaResponsabile: commObj?.responsabile || '',
+        commessaPM: commObj?.pm || [],
         dataInizio: reqDataInizio,
         dataFine: reqDataFine,
         percentuale: Number(reqPercentuale),
@@ -1427,6 +1402,7 @@ export default function Commesse() {
         stato: 'in_attesa',
         area: reqAreaTarget,
         tipoRichiesta: finalTipoRichiesta,
+        fonte: isAltreCommessa ? 'altre_commesse' : 'planning',
         createdAt: new Date().toISOString()
       });
 
@@ -2095,11 +2071,7 @@ export default function Commesse() {
     }
   }, [activeTab, canAccessAltreCommesseTab]);
 
-  useEffect(() => {
-    if (myCoordinatedAreas.length > 0 && !myCoordinatedAreas.includes(reqAreaTarget)) {
-      setReqAreaTarget(myCoordinatedAreas[0]);
-    }
-  }, [myCoordinatedAreas, reqAreaTarget]);
+
 
   const selectableResponsabiliCatalogo = useMemo(() => {
     const set = new Set<string>();
@@ -3614,29 +3586,14 @@ export default function Commesse() {
 
                                     {/* 2. Al centro: Cartella di Rete */}
                                     {comm.percorsoRete ? (
-                                      <div className="relative group/folder">
-                                        <button
-                                          type="button"
-                                          onClick={(e) => handleOpenNetworkPath(comm, e)}
-                                          className="w-7 h-7 flex items-center justify-center text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-xl transition-all cursor-pointer"
-                                          title={`📁 Apri / Copia percorso di rete:\n${comm.percorsoRete}`}
-                                        >
-                                          <Folder className="w-4 h-4" />
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setSelectedCommessaForNetworkPath(comm);
-                                            setNetworkPathInput(comm.percorsoRete || '');
-                                            setIsNetworkPathModalOpen(true);
-                                          }}
-                                          className="absolute -bottom-1 -right-1 p-0.5 bg-white text-gray-400 hover:text-indigo-600 rounded-full border border-gray-200 shadow-2xs hover:bg-indigo-50 transition-colors cursor-pointer"
-                                          title="Modifica percorso di rete"
-                                        >
-                                          <Pencil className="w-2.5 h-2.5" />
-                                        </button>
-                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => handleOpenNetworkPath(comm, e)}
+                                        className="w-7 h-7 flex items-center justify-center text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-xl transition-all cursor-pointer"
+                                        title={`📁 Apri / Copia percorso di rete:\n${comm.percorsoRete}`}
+                                      >
+                                        <Folder className="w-4 h-4" />
+                                      </button>
                                     ) : (
                                       <button
                                         type="button"
@@ -3647,9 +3604,9 @@ export default function Commesse() {
                                           setIsNetworkPathModalOpen(true);
                                         }}
                                         className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-gray-100 rounded-xl transition-all cursor-pointer"
-                                        title="Collega cartella di rete (UNC)"
+                                        title="Imposta percorso cartella di rete (UNC)"
                                       >
-                                        <FolderPlus className="w-4 h-4" />
+                                        <Folder className="w-4 h-4" />
                                       </button>
                                     )}
 

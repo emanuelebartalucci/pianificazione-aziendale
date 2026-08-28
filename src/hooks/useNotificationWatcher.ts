@@ -13,6 +13,7 @@ import {
   cleanupExpiredReadNotifications,
   type UserNotification 
 } from '../utils/userNotificationService';
+import { areNamesEqual, isSoci } from '../contexts/AuthContext';
 
 interface UseNotificationWatcherParams {
   userEmail: string | null;
@@ -23,6 +24,8 @@ interface UseNotificationWatcherParams {
   impersonatedEmail: string | null;
   coordinatori: Array<{ email: string; area: string }>;
   isGestoreForniture?: boolean;
+  dipendenti?: Array<{ id: string; nome: string; email?: string; macroArea?: string }>;
+  commesse?: Array<{ id: string; nome: string; responsabile?: string; pm?: string | string[]; codiceCommessa?: string }>;
 }
 
 export interface SectionBadgeCounts {
@@ -65,11 +68,14 @@ const formatShortDateRange = (start?: string, end?: string): string => {
 export function useNotificationWatcher({
   userEmail,
   myAssociatedName,
+  isAdmin,
   isHR,
   isDev,
   impersonatedEmail,
   coordinatori,
-  isGestoreForniture
+  isGestoreForniture,
+  dipendenti = [],
+  commesse = []
 }: UseNotificationWatcherParams) {
   const [totalPendingCount, setTotalPendingCount] = useState<number>(0);
   const [operativePendingCount, setOperativePendingCount] = useState<number>(0);
@@ -89,6 +95,15 @@ export function useNotificationWatcher({
   // Traccia gli ID già noti per evitare di mandare notifiche desktop all'avvio su record vecchi già presenti
   const knownIdsRef = useRef<Set<string>>(new Set());
   const isInitialLoadRef = useRef<boolean>(true);
+
+  const dipendentiRef = useRef(dipendenti);
+  dipendentiRef.current = dipendenti;
+  const commesseRef = useRef(commesse);
+  commesseRef.current = commesse;
+  const coordinatoriRef = useRef(coordinatori);
+  coordinatoriRef.current = coordinatori;
+
+  const coordKey = (coordinatori || []).map(c => `${(c.email || '').toLowerCase().trim()}_${c.area}`).sort().join(';');
 
   // Aggiorna lo stato dei permessi quando la finestra torna attiva
   useEffect(() => {
@@ -447,21 +462,102 @@ export function useNotificationWatcher({
         updateAndNotify();
       }, (err) => console.error("Errore listener disponibilità coordinatore:", err));
       unsubscribers.push(unsubDisp);
+    }
 
-      // Richieste disegnatori / personale d'area (in attesa e storiche approvate/rifiutate)
-      const qReqDisCoord = query(
-        collection(db, 'richieste_disegnatori')
+    // 2b. ASCOLTO RICHIESTE PERSONALE / INSERIMENTO COMMESSA (Coordinatori d'area e Responsabili/PM di Commessa)
+    if (normalizedEmail) {
+      const currentDip = (dipendenti || []).find(d => 
+        (d.email && normalizedEmail && d.email.toLowerCase().trim() === normalizedEmail) ||
+        (myAssociatedName && areNamesEqual(d.nome, myAssociatedName))
       );
-      const unsubReqDis = onSnapshot(qReqDisCoord, (snap) => {
+      const effectiveName = myAssociatedName || currentDip?.nome || '';
+
+      const checkNameMatch = (targetName?: string | null): boolean => {
+        if (!targetName) return false;
+        const tClean = targetName.toLowerCase().trim();
+        if (effectiveName && areNamesEqual(effectiveName, targetName)) return true;
+        if (currentDip?.nome && areNamesEqual(currentDip.nome, targetName)) return true;
+        if (normalizedEmail) {
+          const userOnly = normalizedEmail.split('@')[0].toLowerCase().trim();
+          if (userOnly.length >= 3 && tClean.includes(userOnly)) return true;
+          if (currentDip?.email && currentDip.email.toLowerCase().trim() === tClean) return true;
+        }
+        return false;
+      };
+
+      const commesseMap = new Map<string, { id: string; nome?: string; responsabile?: string; pm?: string | string[]; codiceCommessa?: string }>();
+      (commesse || []).forEach(c => {
+        if (c && c.id) {
+          commesseMap.set(c.id, {
+            id: c.id,
+            nome: c.nome,
+            responsabile: c.responsabile,
+            pm: c.pm,
+            codiceCommessa: c.codiceCommessa
+          });
+        }
+      });
+
+      const findCommData = (cId?: string, cName?: string, cCode?: string) => {
+        if (cId && commesseMap.has(cId)) return commesseMap.get(cId);
+        for (const c of commesseMap.values()) {
+          if (cId && (c.id === cId || c.codiceCommessa === cId)) return c;
+          if (cName && (c.nome === cName || areNamesEqual(c.nome || '', cName))) return c;
+          if (cCode && (c.codiceCommessa === cCode || c.id === cCode)) return c;
+        }
+        return undefined;
+      };
+
+      let latestReqSnaps: any[] = [];
+
+      const processRichieste = () => {
         let matchingCount = 0;
         const items: OperativeNotificationItem[] = [];
-        snap.forEach(docSnap => {
-          const data = docSnap.data();
-          if (myCoordinatedAreas.includes(data.area)) {
-            const isPending = data.stato === 'in_attesa';
-            const created = data.createdAt || data.dataApprovazione || data.timestamp || '';
 
+        latestReqSnaps.forEach(docSnap => {
+          const data = docSnap.data();
+          const docId = docSnap.id;
+          const reqEmail = (data.richiedenteEmail || '').toLowerCase().trim();
+          const reqName = data.richiedenteNome || data.richiedente;
+
+          const isSelf = Boolean(
+            (normalizedEmail && reqEmail && normalizedEmail === reqEmail) ||
+            (effectiveName && reqName && areNamesEqual(effectiveName, reqName)) ||
+            (currentDip?.nome && reqName && areNamesEqual(currentDip.nome, reqName))
+          );
+
+          // 1. Il richiedente NON riceve MAI la notifica operativa "Richiesta da Gestire" per la propria richiesta
+          if (isSelf) return;
+
+          const isPending = data.stato === 'in_attesa';
+
+          // Lookup commessa per ID o Nome o Codice
+          const commData = findCommData(data.commessaId, data.commessaName || data.commessaNome, data.codiceCommessa);
+
+          const commResp = data.commessaResponsabile || commData?.responsabile;
+          const commPM = data.commessaPM || commData?.pm;
+
+          const isCommManager = checkNameMatch(commResp) || (
+            typeof commPM === 'string' 
+              ? checkNameMatch(commPM) 
+              : Array.isArray(commPM) && commPM.some(p => checkNameMatch(p))
+          );
+
+          const isInserimentoCommessa = data.tipoRichiesta === 'inserimento_commessa' || data.fonte === 'altre_commesse';
+          let isTargetRecipient = false;
+
+          if (isAdmin || (effectiveName && isSoci(effectiveName)) || (normalizedEmail && isSoci(normalizedEmail))) {
+            isTargetRecipient = true;
+          } else if (isCommManager) {
+            isTargetRecipient = true;
+          } else if (!isInserimentoCommessa && myCoordinatedAreas.includes(data.area)) {
+            isTargetRecipient = true;
+          }
+
+          if (isTargetRecipient) {
+            const created = data.createdAt || data.dataApprovazione || data.timestamp || '';
             if (isPending) matchingCount++;
+
             const reqPerson = data.richiedenteNome || data.richiedente || '';
             const reqPrefix = reqPerson ? `Richiesta da ${reqPerson} • ` : '';
             const periodStr = formatShortDateRange(data.dataInizio, data.dataFine) || data.weekLabel || (data.settimana ? `Sett. ${data.settimana}` : '');
@@ -469,14 +565,22 @@ export function useNotificationWatcher({
             const prefStr = data.risorsaPreferita ? ` • Preferenza: ${data.risorsaPreferita}` : '';
             const details = periodStr ? ` (${periodStr}${pctStr}${prefStr})` : (pctStr ? ` (${pctStr.slice(3)})` : '');
             const statoLabel = isPending
-              ? 'Richiesta Personale'
+              ? (isCommManager ? 'Inserimento Risorsa' : 'Richiesta Personale')
               : (data.stato === 'approvata' ? '✓ Approvata' : (data.stato === 'rifiutata' ? '❌ Rifiutata' : data.stato));
 
+            const title = isCommManager
+              ? `💼 Inserimento Risorsa: ${data.commessaName || data.commessaNome || ''}`
+              : `💼 Richiesta Personale: Area ${data.area || ''}`;
+
+            const msg = isCommManager
+              ? `${reqPrefix}Inserimento ${data.risorsaPreferita || 'personale'} su "${data.commessaName || data.commessaNome || ''}"${details}`
+              : `${reqPrefix}Commessa "${data.commessaName || ''}"${details}`;
+
             items.push({
-              id: `reqdis-${docSnap.id}`,
+              id: `reqdis-${docId}`,
               category: 'richiesta_personale',
-              titolo: `💼 Richiesta Personale: Area ${data.area || ''}`,
-              messaggio: `${reqPrefix}Commessa "${data.commessaName || ''}"${details}`,
+              titolo: title,
+              messaggio: msg,
               link: '/pianificazione-personale',
               createdAt: created || new Date().toISOString(),
               badgeLabel: statoLabel,
@@ -485,27 +589,88 @@ export function useNotificationWatcher({
             });
           }
         });
+
         operativeItemsMap.richiestePersonale = items;
         countsMap.richiesteDisegnatoriCoord = matchingCount;
+        updateAndNotify();
+      };
+
+      // Listener su catalogo_commesse per lookup responsabile/pm
+      const qCommesse = collection(db, 'catalogo_commesse');
+      const unsubCommesse = onSnapshot(qCommesse, (snap) => {
+        snap.forEach(docSnap => {
+          const d = docSnap.data();
+          commesseMap.set(docSnap.id, {
+            id: docSnap.id,
+            nome: d.nome || d.denominazione || d.titolo || d.codiceCommessa,
+            responsabile: d.responsabile || d.responsabileCommessa || d.pm,
+            pm: d.pm || d.projectManager,
+            codiceCommessa: d.codiceCommessa
+          });
+        });
+        processRichieste();
+      }, (err) => console.error("Errore listener catalogo_commesse watcher:", err));
+      unsubscribers.push(unsubCommesse);
+
+      // Listener su richieste disegnatori / personale
+      const qReqDis = collection(db, 'richieste_disegnatori');
+      const unsubReqDis = onSnapshot(qReqDis, (snap) => {
+        latestReqSnaps = snap.docs;
+        processRichieste();
 
         snap.docChanges().forEach((change) => {
           if (change.type === 'added') {
             const docId = change.doc.id;
             const data = change.doc.data();
-            if (myCoordinatedAreas.includes(data.area) && data.stato === 'in_attesa') {
+            const reqEmail = (data.richiedenteEmail || '').toLowerCase().trim();
+            const reqName = data.richiedenteNome || data.richiedente;
+            const isSelf = Boolean(
+              (normalizedEmail && reqEmail && normalizedEmail === reqEmail) ||
+              (effectiveName && reqName && areNamesEqual(effectiveName, reqName)) ||
+              (currentDip?.nome && reqName && areNamesEqual(currentDip.nome, reqName))
+            );
+
+            if (isSelf) return;
+
+            const commData = findCommData(data.commessaId, data.commessaName || data.commessaNome, data.codiceCommessa);
+
+            const commResp = data.commessaResponsabile || commData?.responsabile;
+            const commPM = data.commessaPM || commData?.pm;
+            const isCommManager = checkNameMatch(commResp) || (
+              typeof commPM === 'string' 
+                ? checkNameMatch(commPM) 
+                : Array.isArray(commPM) && commPM.some(p => checkNameMatch(p))
+            );
+
+            const isInserimentoCommessa = data.tipoRichiesta === 'inserimento_commessa' || data.fonte === 'altre_commesse';
+            let isTargetRecipient = false;
+
+            if (isAdmin || (effectiveName && isSoci(effectiveName)) || (normalizedEmail && isSoci(normalizedEmail))) {
+              isTargetRecipient = true;
+            } else if (isCommManager) {
+              isTargetRecipient = true;
+            } else if (!isInserimentoCommessa && myCoordinatedAreas.includes(data.area)) {
+              isTargetRecipient = true;
+            }
+
+            if (isTargetRecipient && data.stato === 'in_attesa') {
               if (!isInitialLoadRef.current && !knownIdsRef.current.has(docId)) {
                 const periodStr = formatShortDateRange(data.dataInizio, data.dataFine) || data.weekLabel || (data.settimana ? `Sett. ${data.settimana}` : '');
-                sendDesktopNotification("Pianificazione: Nuova Richiesta Personale", {
-                  body: `Richiesta risorsa per area ${data.area || ''} sulla commessa "${data.commessaName || ''}"${periodStr ? ` (${periodStr})` : ''}.`,
-                  tag: `reqdis-${docId}`
-                });
+                sendDesktopNotification(
+                  isCommManager ? "Pianificazione: Richiesta Inserimento Risorsa" : "Pianificazione: Nuova Richiesta Personale",
+                  {
+                    body: isCommManager
+                      ? `Richiesta inserimento ${data.risorsaPreferita || 'personale'} da ${data.richiedenteNome || ''} sulla commessa "${data.commessaName || ''}"${periodStr ? ` (${periodStr})` : ''}.`
+                      : `Richiesta risorsa per area ${data.area || ''} sulla commessa "${data.commessaName || ''}"${periodStr ? ` (${periodStr})` : ''}.`,
+                    tag: `reqdis-${docId}`
+                  }
+                );
               }
               knownIdsRef.current.add(docId);
             }
           }
         });
-        updateAndNotify();
-      }, (err) => console.error("Errore listener richieste disegnatori coordinatore:", err));
+      }, (err) => console.error("Errore listener richieste disegnatori coordinatore/PM:", err));
       unsubscribers.push(unsubReqDis);
     }
 
@@ -682,7 +847,7 @@ export function useNotificationWatcher({
       unsubscribers.forEach(unsub => unsub());
       setGlobalBadgeNotification(0);
     };
-  }, [userEmail, myAssociatedName, isHR, isDev, impersonatedEmail, coordinatori, isGestoreForniture]);
+  }, [userEmail, myAssociatedName, isAdmin, isHR, isDev, impersonatedEmail, coordKey, isGestoreForniture]);
 
   return {
     totalPendingCount,

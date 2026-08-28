@@ -243,27 +243,46 @@ export default function PianificazionePersonale() {
     // 1. Il richiedente NON può MAI approvare o rifiutare le proprie richieste
     if (isSelfRequester(r)) return false;
 
-    // 2. Se l'utente è il Coordinatore dell'area richiesta: la gestisce SEMPRE
-    const rArea = (r.area || 'Disegnatori').toLowerCase().trim();
-    const isCoordinated = myCoordinatedAreas.some(a => (a || '').toLowerCase().trim() === rArea);
-    if (isCoordinated) return true;
+    // Se l'utente è Admin o Socio di Direzione, può sempre gestire qualsiasi richiesta
+    if (isAdmin || (myAssociatedName && isSoci(myAssociatedName))) return true;
 
-    // 3. Se è una richiesta di inserimento commessa, la gestisce il PM / Responsabile di quella commessa
-    if (r.tipoRichiesta === 'inserimento_commessa' || r.fonte === 'altre_commesse') {
-      const commObj = commesse.find(c => c.id === r.commessaId);
-      const commResp = (r.commessaResponsabile || commObj?.responsabile || '').toLowerCase().trim();
-      const commPM = r.commessaPM || commObj?.pm;
+    // Recupera la commessa associata (ricerca per ID o per Nome)
+    const commObj = commesse.find(c => 
+      (r.commessaId && c.id === r.commessaId) || 
+      (c.nome && (c.nome === r.commessaName || c.nome === r.commessaNome))
+    );
 
-      const isCommessaManager = Boolean(
-        (commResp && (areNamesEqual(commResp, myAssociatedName) || (userEmail && commResp.includes(userEmail.split('@')[0])))) ||
-        (commPM && (
-          typeof commPM === 'string' 
-            ? areNamesEqual(commPM, myAssociatedName) 
-            : Array.isArray(commPM) && commPM.some((pmName: string) => areNamesEqual(pmName, myAssociatedName))
-        ))
-      );
+    const commResp = (r.commessaResponsabile || commObj?.responsabile || '').toLowerCase().trim();
+    const commPM = r.commessaPM || commObj?.pm;
 
-      if (isCommessaManager) return true;
+    const myDip = dipendenti.find(d => 
+      areNamesEqual(d.nome, myAssociatedName) || 
+      (d.email && userEmail && d.email.toLowerCase() === userEmail.toLowerCase())
+    );
+
+    const isCommessaManager = Boolean(
+      (commResp && (
+        areNamesEqual(commResp, myAssociatedName) || 
+        (userEmail && commResp.includes(userEmail.split('@')[0])) ||
+        (myDip?.nome && areNamesEqual(commResp, myDip.nome))
+      )) ||
+      (commPM && (
+        typeof commPM === 'string' 
+          ? (areNamesEqual(commPM, myAssociatedName) || (userEmail && commPM.toLowerCase().includes(userEmail.split('@')[0])) || (myDip?.nome && areNamesEqual(commPM, myDip.nome)))
+          : Array.isArray(commPM) && commPM.some((pmName: string) => areNamesEqual(pmName, myAssociatedName) || (userEmail && pmName.toLowerCase().includes(userEmail.split('@')[0])) || (myDip?.nome && areNamesEqual(pmName, myDip.nome)))
+      ))
+    );
+
+    // 2. Se l'utente loggato è il Responsabile o PM della commessa: può SEMPRE gestire la richiesta!
+    if (isCommessaManager) return true;
+
+    // 3. Se l'utente coordina l'area della risorsa richiesta (es. Disegnatori):
+    // Può gestirla a meno che non sia una richiesta di inserimento su commessa altrui
+    const isInserimentoAltraCommessa = r.tipoRichiesta === 'inserimento_commessa' || r.fonte === 'altre_commesse';
+    if (!isInserimentoAltraCommessa) {
+      const rArea = (r.area || 'Disegnatori').toLowerCase().trim();
+      const isCoordinated = myCoordinatedAreas.some(a => (a || '').toLowerCase().trim() === rArea);
+      if (isCoordinated) return true;
     }
 
     return false;
@@ -1129,6 +1148,7 @@ export default function PianificazionePersonale() {
   const [reqNota, setReqNota] = useState('');
   const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
   const [selectedRisorsePerRichiesta, setSelectedRisorsePerRichiesta] = useState<Record<string, string>>({});
+  const [customPercentagesPerRichiesta, setCustomPercentagesPerRichiesta] = useState<Record<string, number>>({});
   const [showApprovedHistoryModal, setShowApprovedHistoryModal] = useState(false);
   const [historySelectedResource, setHistorySelectedResource] = useState<Record<string, string>>({});
   const [isAvailabilityModalOpen, setIsAvailabilityModalOpen] = useState(false);
@@ -1309,16 +1329,41 @@ export default function PianificazionePersonale() {
       (req.tipoRichiesta || '').toLowerCase().includes('annullamento') || 
       (req.tipoRichiesta || '').toLowerCase().includes('rimozione');
 
+    const commObj = commesse.find(c => (req.commessaId && c.id === req.commessaId) || (c.nome && (c.nome === req.commessaName || c.nome === req.commessaNome)));
+    const commResp = (req.commessaResponsabile || commObj?.responsabile || '').toLowerCase().trim();
+    const commPM = req.commessaPM || commObj?.pm;
+    const isCommManager = Boolean(
+      (commResp && (areNamesEqual(commResp, myAssociatedName) || (userEmail && commResp.includes(userEmail.split('@')[0])))) ||
+      (commPM && (
+        typeof commPM === 'string' 
+          ? areNamesEqual(commPM, myAssociatedName) 
+          : Array.isArray(commPM) && commPM.some((pmName: string) => areNamesEqual(pmName, myAssociatedName))
+      ))
+    );
+
+    const isInserimentoCommessa = req.tipoRichiesta === 'inserimento_commessa' || req.fonte === 'altre_commesse' || Boolean(req.risorsaPreferita && isCommManager);
+
     let risorsaNome = '';
     if (isCancellation) {
       risorsaNome = req.risorseAssegnata || req.risorsaPreferita || selectedRisorsePerRichiesta[req.id] || '';
+    } else if (isInserimentoCommessa && req.risorsaPreferita) {
+      risorsaNome = req.risorsaPreferita;
     } else {
       const isPreferredValid = req.risorsaPreferita && dipendenti.some(d => d.nome === req.risorsaPreferita);
       risorsaNome = selectedRisorsePerRichiesta[req.id] || (isPreferredValid ? req.risorsaPreferita : '');
     }
 
     if (!risorsaNome || !dipendenti.some(d => d.nome === risorsaNome)) {
-      showToast("Seleziona una risorsa dall'elenco prima di approvare la richiesta.", "warning");
+      showToast("Seleziona una risorsa valida prima di approvare la richiesta.", "warning");
+      return;
+    }
+
+    const effectivePercent = customPercentagesPerRichiesta[req.id] !== undefined
+      ? Number(customPercentagesPerRichiesta[req.id])
+      : Number(req.percentuale || 100);
+
+    if (effectivePercent <= 0 || effectivePercent > 100) {
+      showToast("La percentuale deve essere compresa tra 1% e 100%.", "warning");
       return;
     }
 
@@ -1338,7 +1383,7 @@ export default function PianificazionePersonale() {
 
       const batch = writeBatch(db);
       
-      const commObj = commesse.find(c => c.id === req.commessaId);
+      const commName = commObj?.nome || req.commessaName || req.commessaNome || 'Commessa';
       const colore = commObj ? (TIPOLOGIA_COLORS[commObj.tipologia || ''] || commObj.colore || '#64748b') : '#64748b';
 
       for (const wkId of weekIds) {
@@ -1347,11 +1392,11 @@ export default function PianificazionePersonale() {
         const filtered = currentList.filter(c => c.commessaId !== req.commessaId);
 
         // Aggiungiamo l'assegnazione SOLO se non si tratta di un annullamento/rimozione
-        if (!isCancellation && Number(req.percentuale) > 0) {
+        if (!isCancellation && effectivePercent > 0) {
           filtered.push({
             commessaId: req.commessaId,
-            commessaName: req.commessaName,
-            percentuale: Number(req.percentuale),
+            commessaName: commName,
+            percentuale: effectivePercent,
             colore: colore
           });
         }
@@ -1363,12 +1408,13 @@ export default function PianificazionePersonale() {
       const reqRef = doc(db, 'richieste_disegnatori', req.id);
       batch.update(reqRef, {
         stato: 'approvata',
-        risorseAssegnata: risorsaNome
+        risorseAssegnata: risorsaNome,
+        percentuale: effectivePercent
       });
       
       await batch.commit();
 
-      showToast(isCancellation ? `Annullamento approvato: ${risorsaNome} rimosso dalla commessa!` : `Richiesta approvata per ${risorsaNome}!`, "success");
+      showToast(isCancellation ? `Annullamento approvato: ${risorsaNome} rimosso dalla commessa!` : `Richiesta approvata per ${risorsaNome} con carico ${effectivePercent}%!`, "success");
     } catch (err) {
       console.error("Errore approvazione richiesta:", err);
       showToast("Errore durante l'approvazione.", "error");
@@ -3116,21 +3162,32 @@ export default function PianificazionePersonale() {
                     );
                   }
 
+                  const commObj = commesse.find(c => (req.commessaId && c.id === req.commessaId) || (c.nome && (c.nome === req.commessaName || c.nome === req.commessaNome)));
+                  const commResp = (req.commessaResponsabile || commObj?.responsabile || '').toLowerCase().trim();
+                  const commPM = req.commessaPM || commObj?.pm;
+                  const isCommManager = Boolean(
+                    (commResp && (areNamesEqual(commResp, myAssociatedName) || (userEmail && commResp.includes(userEmail.split('@')[0])))) ||
+                    (commPM && (
+                      typeof commPM === 'string' 
+                        ? areNamesEqual(commPM, myAssociatedName) 
+                        : Array.isArray(commPM) && commPM.some((pmName: string) => areNamesEqual(pmName, myAssociatedName))
+                    ))
+                  );
+                  const isInserimentoCommessa = req.tipoRichiesta === 'inserimento_commessa' || req.fonte === 'altre_commesse' || Boolean(req.risorsaPreferita && isCommManager);
+                  const lockedResource = req.risorsaPreferita || req.risorseAssegnata || '';
+                  const currentPercent = customPercentagesPerRichiesta[req.id] !== undefined ? customPercentagesPerRichiesta[req.id] : (req.percentuale || 100);
+
                   return (
                     <div key={req.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-between gap-3 text-xs">
                       <div>
                         <div className="flex justify-between items-center mb-1">
                           <span className={`font-extrabold ${colors.heading} text-sm`}>{req.commessaName}</span>
-                          <span className={`${colors.badge} px-2 py-0.5 rounded-full font-bold uppercase tracking-wider text-[9px]`}>In Attesa</span>
+                          <span className={`${colors.badge} px-2 py-0.5 rounded-full font-bold uppercase tracking-wider text-[9px]`}>
+                            {isInserimentoCommessa ? 'Inserimento Risorsa' : 'In Attesa'}
+                          </span>
                         </div>
                         <div className="text-gray-500 mt-1 space-y-1">
                           <div>📅 Periodo: <strong className="text-gray-700">{formatCommDate(req.dataInizio)}</strong> al <strong className="text-gray-700">{formatCommDate(req.dataFine)}</strong></div>
-                          <div>⚡ Carico Richiesto: <strong className="text-gray-800">{req.percentuale}%</strong></div>
-                          {req.risorsaPreferita && (
-                            <div className="text-indigo-900 bg-indigo-50/70 px-2 py-1 rounded-lg border border-indigo-100 w-fit">
-                              ⭐ Risorsa Preferita: <strong className="text-indigo-700 font-black">{req.risorsaPreferita}</strong>
-                            </div>
-                          )}
                           <div>👤 Richiedente: <span className="font-semibold text-gray-700">{req.richiedenteNome}</span> ({req.richiedenteEmail})</div>
                           {req.nota && (
                             <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 italic text-gray-600 mt-2">
@@ -3140,35 +3197,98 @@ export default function PianificazionePersonale() {
                         </div>
                       </div>
 
-                      <div className="flex flex-col gap-2 mt-3 pt-3 border-t border-gray-100">
-                        <label className={`block text-[10px] font-bold ${colors.heading} uppercase tracking-wider`}>Seleziona Risorsa {areaName} da Assegnare</label>
-                        <div className="flex gap-2">
-                          <select
-                            value={selectedRisorsa}
-                            onChange={e => setSelectedRisorsePerRichiesta(prev => ({ ...prev, [req.id]: e.target.value }))}
-                            className={`flex-1 p-2.5 border ${colors.select} rounded-xl bg-slate-50 text-xs font-bold text-gray-750 focus:ring-2 outline-none`}
-                          >
-                            <option value="">-- Scegli Risorsa --</option>
-                            {areaMembers.map(d => (
-                              <option key={d.id} value={d.nome}>{d.nome}</option>
-                            ))}
-                          </select>
+                      <div className="flex flex-col gap-2.5 mt-3 pt-3 border-t border-gray-100">
+                        {isInserimentoCommessa ? (
+                          // CASO 1: RICHIESTA INSERIMENTO DA ALTRO COORDINATORE (Risorsa Bloccata & Percentuale Modificabile)
+                          <>
+                            <div className="flex items-center gap-2 bg-indigo-50/80 p-2.5 rounded-xl border border-indigo-150">
+                              <span className="text-[11px] font-extrabold text-indigo-950">👤 Risorsa Proposta:</span>
+                              <span className="bg-indigo-600 text-white font-black px-2.5 py-1 rounded-lg text-xs shadow-2xs">
+                                {lockedResource}
+                              </span>
+                              <span className="text-[10px] text-indigo-600 font-bold italic ml-auto">🔒 Fissata da richiesta</span>
+                            </div>
 
-                          <button
-                            onClick={() => handleApproveRequest(req)}
-                            disabled={!selectedRisorsa}
-                            className={`${colors.btn} text-white font-extrabold px-4 py-2.5 rounded-xl shadow transition active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer`}
-                          >
-                            Approva
-                          </button>
+                            <div className="flex items-center justify-between gap-3 bg-slate-50 p-2.5 rounded-xl border border-slate-200/80">
+                              <label className="text-xs font-bold text-gray-750 flex items-center gap-1.5">
+                                <span>⚡ Percentuale di Carico:</span>
+                                <span className="text-[10px] text-gray-400 font-normal">(modificabile a scaglioni del 5%)</span>
+                              </label>
+                              <select
+                                value={currentPercent}
+                                onChange={e => setCustomPercentagesPerRichiesta(prev => ({ ...prev, [req.id]: Number(e.target.value) }))}
+                                className="w-24 p-1.5 border border-indigo-200 rounded-lg bg-white text-xs font-black text-indigo-900 text-center outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs cursor-pointer"
+                              >
+                                {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
+                                  <option key={pct} value={pct}>{pct}%</option>
+                                ))}
+                              </select>
+                            </div>
 
-                          <button
-                            onClick={() => handleRejectRequest(req.id)}
-                            className="bg-transparent hover:bg-rose-50 text-rose-600 font-extrabold px-3 py-2.5 rounded-xl border border-rose-200 transition active:scale-95 cursor-pointer"
-                          >
-                            Rifiuta
-                          </button>
-                        </div>
+                            <div className="flex gap-2 justify-end pt-1">
+                              <button
+                                type="button"
+                                onClick={() => handleApproveRequest(req)}
+                                className="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-5 py-2.5 rounded-xl shadow-md transition active:scale-95 cursor-pointer flex items-center gap-1.5 text-xs"
+                              >
+                                <span>✓ Approva Inserimento ({currentPercent}%)</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleRejectRequest(req.id)}
+                                className="bg-transparent hover:bg-rose-50 text-rose-600 font-extrabold px-3 py-2.5 rounded-xl border border-rose-200 transition active:scale-95 cursor-pointer text-xs"
+                              >
+                                Rifiuta
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          // CASO 2: RICHIESTA STANDARD RISORSA PER AREA (Scelta della risorsa & Percentuale)
+                          <>
+                            <div className="flex items-center justify-between gap-3 bg-slate-50 p-2 rounded-xl border border-slate-200/80 mb-1">
+                              <label className="text-[11px] font-bold text-gray-700">⚡ Percentuale Carico:</label>
+                              <select
+                                value={currentPercent}
+                                onChange={e => setCustomPercentagesPerRichiesta(prev => ({ ...prev, [req.id]: Number(e.target.value) }))}
+                                className="w-20 p-1 border border-gray-300 rounded-lg bg-white text-xs font-bold text-gray-800 text-center outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                              >
+                                {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(pct => (
+                                  <option key={pct} value={pct}>{pct}%</option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <label className={`block text-[10px] font-bold ${colors.heading} uppercase tracking-wider`}>Seleziona Risorsa {areaName} da Assegnare</label>
+                            <div className="flex gap-2">
+                              <select
+                                value={selectedRisorsa}
+                                onChange={e => setSelectedRisorsePerRichiesta(prev => ({ ...prev, [req.id]: e.target.value }))}
+                                className={`flex-1 p-2.5 border ${colors.select} rounded-xl bg-slate-50 text-xs font-bold text-gray-750 focus:ring-2 outline-none`}
+                              >
+                                <option value="">-- Scegli Risorsa --</option>
+                                {areaMembers.map(d => (
+                                  <option key={d.id} value={d.nome}>{d.nome}</option>
+                                ))}
+                              </select>
+
+                              <button
+                                onClick={() => handleApproveRequest(req)}
+                                disabled={!selectedRisorsa}
+                                className={`${colors.btn} text-white font-extrabold px-4 py-2.5 rounded-xl shadow transition active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer`}
+                              >
+                                Approva
+                              </button>
+
+                              <button
+                                onClick={() => handleRejectRequest(req.id)}
+                                className="bg-transparent hover:bg-rose-50 text-rose-600 font-extrabold px-3 py-2.5 rounded-xl border border-rose-200 transition active:scale-95 cursor-pointer"
+                              >
+                                Rifiuta
+                              </button>
+                            </div>
+                          </>
+                        )}
                       </div>
                     </div>
                   );

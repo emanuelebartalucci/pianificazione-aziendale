@@ -670,7 +670,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
 
     for (const wkId of weekIds) {
       if (isResourceOnFullWeekLeave(resName, wkId)) {
-        showToast(`${resName} è in ferie/assenza per la settimana ${wkId.split('-W')[1]}.`, 'warning');
+        showToast(`${resName} è assente per l'intera settimana (${wkId.split('-W')[1]}).`, 'warning');
         continue;
       }
       const docId = `${resName}-${wkId}`;
@@ -741,7 +741,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     
     for (const wkId of targetWeekIds) {
       if (isResourceOnFullWeekLeave(resName, wkId)) {
-        showToast(`Impossibile assegnare commessa: ${resName} è in ferie/assenza per l'intera settimana (${wkId}).`, 'warning');
+        showToast(`Impossibile assegnare commessa: ${resName} è assente per l'intera settimana (${wkId}).`, 'warning');
         return;
       }
     }
@@ -1262,7 +1262,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                         const isFullLeave = isResourceOnFullWeekLeave(d.nome, selectedStartWeekId);
                         return (
                           <option key={d.id} value={d.nome} disabled={isFullLeave} className={isFullLeave ? 'text-gray-400 font-normal italic' : ''}>
-                            {d.nome} {d.macroArea ? `(${d.macroArea})` : ''} {isFullLeave ? '🏖️ (In ferie tutta la settimana)' : ''}
+                            {d.nome} {d.macroArea ? `(${d.macroArea})` : ''} {isFullLeave ? '(Assente tutta la settimana)' : ''}
                           </option>
                         );
                       })}
@@ -2001,6 +2001,9 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                       await addDoc(collection(db, 'richieste_disegnatori'), {
                         commessaId: altreReqCommessaId,
                         commessaName: commName,
+                        commessaNome: commName,
+                        commessaResponsabile: targetComm?.responsabile || '',
+                        commessaPM: targetComm?.pm || [],
                         richiedenteNome: myAssociatedName || userEmail,
                         richiedenteEmail: userEmail,
                         risorsaPreferita: resTarget,
@@ -2012,6 +2015,8 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                         percentuale: Number(altreReqPercentage),
                         nota: altreReqNota || '',
                         stato: 'in_attesa',
+                        tipoRichiesta: 'inserimento_commessa',
+                        fonte: 'altre_commesse',
                         createdAt: new Date().toISOString()
                       });
 
