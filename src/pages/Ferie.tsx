@@ -406,7 +406,9 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         const data = docSnap.data();
         const dInizio = data.dataInizio || data.data || '';
         const dFine = data.dataFine || data.data || '';
-        if (dInizio > endLimit || dFine < startLimit) return null;
+        const isPending = ['In attesa', 'Richiesta Annullamento', 'Richiesta Modifica'].includes(data.stato);
+        // Se non è una richiesta pendente/da gestire, applica il filtro del range date del mese per il calendario
+        if (!isPending && (dInizio > endLimit || dFine < startLimit)) return null;
         return {
           id: docSnap.id,
           dipendenteName: data.dipendenteName,
@@ -428,15 +430,26 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       };
 
       if (isHR || isAdmin) {
+        // Query per TUTTE le richieste in attesa o con richiesta modifica/annullamento (senza limiti di data)
+        const qPending = query(
+          collection(db, 'richieste_ferie'),
+          where('stato', 'in', ['In attesa', 'Richiesta Annullamento', 'Richiesta Modifica'])
+        );
+        // Query per le richieste del mese corrente (per visualizzazione calendario/storico)
         const qRange = query(collection(db, 'richieste_ferie'), where('dataFine', '>=', startLimit));
         const qSingle = query(
           collection(db, 'richieste_ferie'),
           where('data', '>=', startLimit),
           where('data', '<=', endLimit)
         );
-        const [snapRange, snapSingle] = await Promise.all([getDocs(qRange), getDocs(qSingle)]);
+        const [snapPending, snapRange, snapSingle] = await Promise.all([
+          getDocs(qPending),
+          getDocs(qRange),
+          getDocs(qSingle)
+        ]);
         const mapHR = new Map<string, RichiestaFerie>();
-        snapRange.forEach(d => { const r = fetchAndMapDoc(d); if (r) mapHR.set(r.id, r); });
+        snapPending.forEach(d => { const r = fetchAndMapDoc(d); if (r) mapHR.set(r.id, r); });
+        snapRange.forEach(d => { const r = fetchAndMapDoc(d); if (r && !mapHR.has(r.id)) mapHR.set(r.id, r); });
         snapSingle.forEach(d => { const r = fetchAndMapDoc(d); if (r && !mapHR.has(r.id)) mapHR.set(r.id, r); });
         setHrRichieste(Array.from(mapHR.values()));
       }

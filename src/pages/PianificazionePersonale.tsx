@@ -245,49 +245,43 @@ export default function PianificazionePersonale() {
     // 1. Il richiedente NON può MAI approvare o rifiutare le proprie richieste
     if (isSelfRequester(r)) return false;
 
-    // Se l'utente è Admin o Socio di Direzione, può sempre gestire qualsiasi richiesta
-    if (isAdmin || (myAssociatedName && isSoci(myAssociatedName))) return true;
+    const isInserimentoAltraCommessa = r.fonte === 'altre_commesse';
 
-    // Recupera la commessa associata (ricerca per ID o per Nome)
-    const commObj = commesse.find(c => 
-      (r.commessaId && c.id === r.commessaId) || 
-      (c.nome && (c.nome === r.commessaName || c.nome === r.commessaNome))
-    );
+    if (isInserimentoAltraCommessa) {
+      // 2. Se è una richiesta di inserimento da "Altre Commesse", la gestisce il Responsabile o PM della commessa target
+      const commObj = commesse.find(c => 
+        (r.commessaId && c.id === r.commessaId) || 
+        (c.nome && (c.nome === r.commessaName || c.nome === r.commessaNome))
+      );
 
-    const commResp = (r.commessaResponsabile || commObj?.responsabile || '').toLowerCase().trim();
-    const commPM = r.commessaPM || commObj?.pm;
+      const commResp = (r.commessaResponsabile || commObj?.responsabile || '').toLowerCase().trim();
+      const commPM = r.commessaPM || commObj?.pm;
 
-    const myDip = dipendenti.find(d => 
-      areNamesEqual(d.nome, myAssociatedName) || 
-      (d.email && userEmail && d.email.toLowerCase() === userEmail.toLowerCase())
-    );
+      const myDip = dipendenti.find(d => 
+        areNamesEqual(d.nome, myAssociatedName) || 
+        (d.email && userEmail && d.email.toLowerCase() === userEmail.toLowerCase())
+      );
 
-    const isCommessaManager = Boolean(
-      (commResp && (
-        areNamesEqual(commResp, myAssociatedName) || 
-        (userEmail && commResp.includes(userEmail.split('@')[0])) ||
-        (myDip?.nome && areNamesEqual(commResp, myDip.nome))
-      )) ||
-      (commPM && (
-        typeof commPM === 'string' 
-          ? (areNamesEqual(commPM, myAssociatedName) || (userEmail && commPM.toLowerCase().includes(userEmail.split('@')[0])) || (myDip?.nome && areNamesEqual(commPM, myDip.nome)))
-          : Array.isArray(commPM) && commPM.some((pmName: string) => areNamesEqual(pmName, myAssociatedName) || (userEmail && pmName.toLowerCase().includes(userEmail.split('@')[0])) || (myDip?.nome && areNamesEqual(pmName, myDip.nome)))
-      ))
-    );
+      const isCommessaManager = Boolean(
+        (commResp && (
+          areNamesEqual(commResp, myAssociatedName) || 
+          (userEmail && commResp.includes(userEmail.split('@')[0])) ||
+          (myDip?.nome && areNamesEqual(commResp, myDip.nome))
+        )) ||
+        (commPM && (
+          typeof commPM === 'string' 
+            ? (areNamesEqual(commPM, myAssociatedName) || (userEmail && commPM.toLowerCase().includes(userEmail.split('@')[0])) || (myDip?.nome && areNamesEqual(commPM, myDip.nome)))
+            : Array.isArray(commPM) && commPM.some((pmName: string) => areNamesEqual(pmName, myAssociatedName) || (userEmail && pmName.toLowerCase().includes(userEmail.split('@')[0])) || (myDip?.nome && areNamesEqual(pmName, myDip.nome)))
+        ))
+      );
 
-    // 2. Se l'utente loggato è il Responsabile o PM della commessa: può SEMPRE gestire la richiesta!
-    if (isCommessaManager) return true;
-
-    // 3. Se l'utente coordina l'area della risorsa richiesta (es. Disegnatori):
-    // Può gestirla a meno che non sia una richiesta di inserimento su commessa altrui
-    const isInserimentoAltraCommessa = r.tipoRichiesta === 'inserimento_commessa' || r.fonte === 'altre_commesse';
-    if (!isInserimentoAltraCommessa) {
+      return isCommessaManager;
+    } else {
+      // 3. Richiesta ordinaria per un'area (es. Disegnatori): la gestisce ESCLUSIVAMENTE il coordinatore dell'area richiesta
       const rArea = (r.area || 'Disegnatori').toLowerCase().trim();
       const isCoordinated = myCoordinatedAreas.some(a => (a || '').toLowerCase().trim() === rArea);
-      if (isCoordinated) return true;
+      return isCoordinated;
     }
-
-    return false;
   };
 
   useEffect(() => {
@@ -1279,10 +1273,6 @@ export default function PianificazionePersonale() {
       const commResp = commObj ? (commObj.responsabile || '') : '';
       const commPM = commObj ? (typeof commObj.pm === 'string' ? commObj.pm : (Array.isArray(commObj.pm) ? commObj.pm.join(', ') : '')) : '';
 
-      // Determina il tipo di richiesta: se ha una commessa specifica dove si chiede l'inserimento
-      const isCommessaInsertion = Boolean(reqCommessaId);
-      const finalTipo = isCommessaInsertion ? 'inserimento_commessa' : 'richiesta_area';
-
       await addDoc(collection(db, 'richieste_disegnatori'), {
         commessaId: reqCommessaId,
         commessaName: commName,
@@ -1297,7 +1287,8 @@ export default function PianificazionePersonale() {
         richiedenteEmail: userEmail,
         stato: 'in_attesa',
         area: reqAreaTarget,
-        tipoRichiesta: finalTipo,
+        tipoRichiesta: 'richiesta_area',
+        fonte: 'planning',
         createdAt: new Date().toISOString()
       });
 
@@ -1332,18 +1323,7 @@ export default function PianificazionePersonale() {
       (req.tipoRichiesta || '').toLowerCase().includes('rimozione');
 
     const commObj = commesse.find(c => (req.commessaId && c.id === req.commessaId) || (c.nome && (c.nome === req.commessaName || c.nome === req.commessaNome)));
-    const commResp = (req.commessaResponsabile || commObj?.responsabile || '').toLowerCase().trim();
-    const commPM = req.commessaPM || commObj?.pm;
-    const isCommManager = Boolean(
-      (commResp && (areNamesEqual(commResp, myAssociatedName) || (userEmail && commResp.includes(userEmail.split('@')[0])))) ||
-      (commPM && (
-        typeof commPM === 'string' 
-          ? areNamesEqual(commPM, myAssociatedName) 
-          : Array.isArray(commPM) && commPM.some((pmName: string) => areNamesEqual(pmName, myAssociatedName))
-      ))
-    );
-
-    const isInserimentoCommessa = req.tipoRichiesta === 'inserimento_commessa' || req.fonte === 'altre_commesse' || Boolean(req.risorsaPreferita && isCommManager);
+    const isInserimentoCommessa = req.fonte === 'altre_commesse';
 
     let risorsaNome = '';
     if (isCancellation) {
@@ -3199,18 +3179,7 @@ export default function PianificazionePersonale() {
                     );
                   }
 
-                  const commObj = commesse.find(c => (req.commessaId && c.id === req.commessaId) || (c.nome && (c.nome === req.commessaName || c.nome === req.commessaNome)));
-                  const commResp = (req.commessaResponsabile || commObj?.responsabile || '').toLowerCase().trim();
-                  const commPM = req.commessaPM || commObj?.pm;
-                  const isCommManager = Boolean(
-                    (commResp && (areNamesEqual(commResp, myAssociatedName) || (userEmail && commResp.includes(userEmail.split('@')[0])))) ||
-                    (commPM && (
-                      typeof commPM === 'string' 
-                        ? areNamesEqual(commPM, myAssociatedName) 
-                        : Array.isArray(commPM) && commPM.some((pmName: string) => areNamesEqual(pmName, myAssociatedName))
-                    ))
-                  );
-                  const isInserimentoCommessa = req.tipoRichiesta === 'inserimento_commessa' || req.fonte === 'altre_commesse' || Boolean(req.risorsaPreferita && isCommManager);
+                  const isInserimentoCommessa = req.fonte === 'altre_commesse';
                   const lockedResource = req.risorsaPreferita || req.risorseAssegnata || '';
                   const currentPercent = customPercentagesPerRichiesta[req.id] !== undefined ? customPercentagesPerRichiesta[req.id] : (req.percentuale || 100);
 

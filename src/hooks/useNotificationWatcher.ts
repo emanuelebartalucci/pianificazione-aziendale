@@ -13,7 +13,7 @@ import {
   cleanupExpiredReadNotifications,
   type UserNotification 
 } from '../utils/userNotificationService';
-import { areNamesEqual, isSoci } from '../contexts/AuthContext';
+import { areNamesEqual } from '../contexts/AuthContext';
 
 interface UseNotificationWatcherParams {
   userEmail: string | null;
@@ -22,7 +22,7 @@ interface UseNotificationWatcherParams {
   isHR: boolean;
   isDev: boolean;
   impersonatedEmail: string | null;
-  coordinatori: Array<{ email: string; area: string }>;
+  coordinatori: Array<{ email: string; area: string; nome?: string }>;
   isGestoreForniture?: boolean;
   dipendenti?: Array<{ id: string; nome: string; email?: string; macroArea?: string }>;
   commesse?: Array<{ id: string; nome: string; responsabile?: string; pm?: string | string[]; codiceCommessa?: string }>;
@@ -438,9 +438,46 @@ export function useNotificationWatcher({
     }
 
     // 2. ASCOLTO ESCLUSIVO PER COORDINATORI (Segnalazioni disponibilità e richieste personale della PROPRIA AREA in attesa)
-    const myCoordinatedAreas = isPureDev ? [] : coordinatori
-      .filter(c => c.email && c.email.toLowerCase().trim() === normalizedEmail)
-      .map(c => c.area);
+    const myCoordinatedAreas = (() => {
+      if (isPureDev) return [];
+      const areas = new Set<string>();
+      const uClean = normalizedEmail || '';
+      const nClean = (myAssociatedName || '').toLowerCase().trim();
+      const uUser = uClean.split('@')[0];
+
+      (coordinatori || []).forEach(c => {
+        const cEmail = (c.email || '').toLowerCase().trim();
+        const cNome = (c.nome || '').toLowerCase().trim();
+        if (cEmail && uClean && (cEmail === uClean || cEmail.includes(uClean) || uClean.includes(cEmail))) {
+          if (c.area) areas.add(c.area.trim());
+        }
+        if (cNome && nClean && areNamesEqual(cNome, nClean)) {
+          if (c.area) areas.add(c.area.trim());
+        }
+        const cUser = cEmail.split('@')[0];
+        if (cUser && uUser && (cUser.includes(uUser) || uUser.includes(cUser))) {
+          if (c.area) areas.add(c.area.trim());
+        }
+      });
+
+      if (uClean.includes('badalassi') || uClean.includes('taddei') || nClean.includes('badalassi') || nClean.includes('taddei')) {
+        areas.add('Ingegneria');
+      }
+      if (uClean.includes('romanello') || nClean.includes('romanello')) {
+        areas.add('Disegnatori');
+      }
+      if (uClean.includes('bondi') || nClean.includes('bondi')) {
+        areas.add('Sicurezza Cantieri');
+      }
+      if (uClean.includes('votino') || nClean.includes('votino')) {
+        areas.add('Consulenza Sicurezza');
+      }
+      if (uClean.includes('corbellini') || nClean.includes('corbellini')) {
+        areas.add('Amministrazione');
+      }
+
+      return Array.from(areas);
+    })();
 
     const isCoordinator = myCoordinatedAreas.length > 0;
 
@@ -584,15 +621,20 @@ export function useNotificationWatcher({
               : Array.isArray(commPM) && commPM.some(p => checkNameMatch(p))
           );
 
-          const isInserimentoCommessa = data.tipoRichiesta === 'inserimento_commessa' || data.fonte === 'altre_commesse';
+          const isInserimentoCommessa = data.fonte === 'altre_commesse';
           let isTargetRecipient = false;
 
-          if (isAdmin || (effectiveName && isSoci(effectiveName)) || (normalizedEmail && isSoci(normalizedEmail))) {
-            isTargetRecipient = true;
-          } else if (isCommManager) {
-            isTargetRecipient = true;
-          } else if (!isInserimentoCommessa && myCoordinatedAreas.includes(data.area)) {
-            isTargetRecipient = true;
+          if (isInserimentoCommessa) {
+            // Richiesta di inserimento da "Altre Commesse": destinata al Responsabile e PM della commessa
+            if (isCommManager) {
+              isTargetRecipient = true;
+            }
+          } else {
+            // Richiesta standard di personale per un'area: destinata ESCLUSIVAMENTE al Coordinatore di quell'Area
+            const reqArea = (data.area || 'Disegnatori').toLowerCase().trim();
+            if (myCoordinatedAreas.some(a => (a || '').toLowerCase().trim() === reqArea)) {
+              isTargetRecipient = true;
+            }
           }
 
           if (isTargetRecipient) {
@@ -684,15 +726,20 @@ export function useNotificationWatcher({
                 : Array.isArray(commPM) && commPM.some(p => checkNameMatch(p))
             );
 
-            const isInserimentoCommessa = data.tipoRichiesta === 'inserimento_commessa' || data.fonte === 'altre_commesse';
+            const isInserimentoCommessa = data.fonte === 'altre_commesse';
             let isTargetRecipient = false;
 
-            if (isAdmin || (effectiveName && isSoci(effectiveName)) || (normalizedEmail && isSoci(normalizedEmail))) {
-              isTargetRecipient = true;
-            } else if (isCommManager) {
-              isTargetRecipient = true;
-            } else if (!isInserimentoCommessa && myCoordinatedAreas.includes(data.area)) {
-              isTargetRecipient = true;
+            if (isInserimentoCommessa) {
+              // Richiesta di inserimento da "Altre Commesse": destinata al Responsabile e PM della commessa
+              if (isCommManager) {
+                isTargetRecipient = true;
+              }
+            } else {
+              // Richiesta standard di personale per un'area: destinata ESCLUSIVAMENTE al Coordinatore di quell'Area
+              const reqArea = (data.area || 'Disegnatori').toLowerCase().trim();
+              if (myCoordinatedAreas.some(a => (a || '').toLowerCase().trim() === reqArea)) {
+                isTargetRecipient = true;
+              }
             }
 
             if (isTargetRecipient && data.stato === 'in_attesa') {
