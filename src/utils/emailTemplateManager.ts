@@ -1,5 +1,6 @@
 import { db } from '../services/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { queueMail } from './mailSender';
 
 export interface EmailTemplateDefinition {
   id: string;
@@ -11,6 +12,86 @@ export interface EmailTemplateDefinition {
 }
 
 export const EMAIL_TEMPLATES_LIST: EmailTemplateDefinition[] = [
+  {
+    id: 'cliente_creazione',
+    label: 'Notifica Creazione Nuovo Cliente',
+    category: 'Commesse',
+    defaultSubject: '[Nuovo Cliente] {CODICE_CLIENTE} - {RAGIONE_SOCIALE}',
+    defaultBody: `<!-- Header Dark Navy Email-Safe con Fallback Outlook -->
+<table width="100%" border="0" cellpadding="0" cellspacing="0" bgcolor="#0f172a" style="width: 100%; background-color: #0f172a; border-collapse: collapse;">
+  <tr>
+    <td bgcolor="#0f172a" style="background-color: #0f172a; padding: 22px 24px; color: #ffffff; font-family: Arial, Helvetica, sans-serif;">
+      <table border="0" cellpadding="0" cellspacing="0" width="100%" style="width: 100%; border-collapse: collapse;">
+        <tr>
+          <td valign="top" align="left" style="font-family: Arial, Helvetica, sans-serif;">
+            <p style="margin: 0 0 6px 0; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 1.5px; color: #93c5fd; font-family: Arial, Helvetica, sans-serif;">
+              Anagrafica Aziendale — Nuovo Cliente
+            </p>
+            <h1 style="margin: 0; font-size: 20px; font-weight: bold; color: #ffffff; line-height: 1.3; font-family: Arial, Helvetica, sans-serif;">
+              {CODICE_CLIENTE} — {RAGIONE_SOCIALE}
+            </h1>
+          </td>
+          <td align="right" valign="top" width="100" style="text-align: right; vertical-align: top; width: 100px;">
+            <table border="0" cellspacing="0" cellpadding="0" align="right" style="border-collapse: collapse;">
+              <tr>
+                <td bgcolor="#3b82f6" align="center" style="background-color: #3b82f6; color: #ffffff; padding: 6px 14px; border-radius: 14px; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; font-family: Arial, Helvetica, sans-serif;">
+                  CLIENTE
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+
+<!-- Corpo Contenuto 100% Table Based -->
+<table width="100%" border="0" cellpadding="0" cellspacing="0" style="width: 100%; border-collapse: collapse; background-color: #ffffff;">
+  <tr>
+    <td style="padding: 22px 24px; font-family: Arial, Helvetica, sans-serif; color: #1e293b;">
+      
+      <p style="font-size: 13px; color: #334155; margin-top: 0; margin-bottom: 18px; line-height: 1.5; font-family: Arial, Helvetica, sans-serif;">
+        Notifica di inserimento di un nuovo cliente in anagrafica aziendale sulla piattaforma di pianificazione:
+      </p>
+
+      <table width="100%" border="0" cellpadding="0" cellspacing="0" style="margin-bottom: 12px; border-collapse: collapse;">
+        <tr>
+          <td style="font-family: Arial, Helvetica, sans-serif; font-size: 13px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.8px; color: #1e1b4b; border-bottom: 2px solid #3b82f6; padding-bottom: 6px;">
+            Dettagli Anagrafici Cliente
+          </td>
+        </tr>
+      </table>
+
+      <table width="100%" border="0" cellpadding="8" cellspacing="0" style="width: 100%; font-size: 13px; color: #334155; border-collapse: collapse; margin-bottom: 22px; background-color: #ffffff; border: 1px solid #e2e8f0; font-family: Arial, Helvetica, sans-serif;">
+        <tr style="border-bottom: 1px solid #e2e8f0;">
+          <td width="200" bgcolor="#f8fafc" style="font-weight: bold; width: 200px; color: #475569; background-color: #f8fafc; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #e2e8f0;">Codice Progressivo:</td>
+          <td style="font-weight: bold; color: #0f172a; font-size: 14px; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #e2e8f0;">{CODICE_CLIENTE}</td>
+        </tr>
+        <tr style="border-bottom: 1px solid #e2e8f0;">
+          <td width="200" bgcolor="#f8fafc" style="font-weight: bold; color: #475569; background-color: #f8fafc; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #e2e8f0;">Ragione Sociale:</td>
+          <td style="font-weight: bold; color: #1d4ed8; font-size: 14px; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #e2e8f0;">{RAGIONE_SOCIALE}</td>
+        </tr>
+        <tr style="border-bottom: 1px solid #e2e8f0;">
+          <td width="200" bgcolor="#f8fafc" style="font-weight: bold; color: #475569; background-color: #f8fafc; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px; border-bottom: 1px solid #e2e8f0;">Data e Ora Registrazione:</td>
+          <td style="color: #0f172a; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; border-bottom: 1px solid #e2e8f0;">{DATA_CREAZIONE}</td>
+        </tr>
+        <tr>
+          <td width="200" bgcolor="#f8fafc" style="font-weight: bold; color: #475569; background-color: #f8fafc; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif; font-size: 12px;">Registrato Da:</td>
+          <td style="color: #475569; padding: 9px 12px; font-family: Arial, Helvetica, sans-serif;">{CREATO_DA}</td>
+        </tr>
+      </table>
+
+    </td>
+  </tr>
+</table>`,
+    placeholders: [
+      { code: '{CODICE_CLIENTE}', label: 'Codice Cliente', sample: '042' },
+      { code: '{RAGIONE_SOCIALE}', label: 'Ragione Sociale', sample: 'Acque S.p.A.' },
+      { code: '{DATA_CREAZIONE}', label: 'Data e Ora Registrazione', sample: '31/08/2026 ore 11:30' },
+      { code: '{CREATO_DA}', label: 'Operatore Registrazione', sample: 'Bartalucci Emanuele' },
+    ]
+  },
   {
     id: 'commessa_apertura',
     label: 'Notifica Apertura Nuova Commessa',
@@ -574,4 +655,38 @@ export async function saveSociNotificationEmails(emails: string[]): Promise<void
   const docRef = doc(db, 'configurazioni', 'notifiche_festivi_soci');
   await setDoc(docRef, { emails: cleaned, updatedAt: new Date().toISOString() });
 }
+
+export async function sendNuovoClienteNotification(
+  clientData: { codice: string; nome: string },
+  creatorText: string
+): Promise<void> {
+  try {
+    const cod = clientData.codice ? clientData.codice.padStart(4, '0') : '';
+    const nome = clientData.nome || 'Nuovo Cliente';
+    const nowStr = new Date().toLocaleDateString('it-IT') + ' ore ' + new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+
+    const savedTemplates = await loadSavedEmailTemplates();
+    const tmplDef = EMAIL_TEMPLATES_LIST.find(t => t.id === 'cliente_creazione')!;
+    const subjectTemplate = savedTemplates['cliente_creazione']?.subject || tmplDef.defaultSubject;
+    const bodyTemplate = savedTemplates['cliente_creazione']?.body || tmplDef.defaultBody;
+
+    const vars: Record<string, string> = {
+      '{CODICE_CLIENTE}': cod,
+      '{RAGIONE_SOCIALE}': nome,
+      '{DATA_CREAZIONE}': nowStr,
+      '{CREATO_DA}': creatorText || 'Operatore'
+    };
+
+    const subject = substitutePlaceholders(subjectTemplate, vars);
+    const htmlBody = substitutePlaceholders(bodyTemplate, vars);
+
+    const recipients = await getCommesseNotificationEmails();
+    for (const rec of recipients) {
+      await queueMail(rec, subject, htmlBody, undefined, { isSystemNotification: true });
+    }
+  } catch (err) {
+    console.error("Errore invio notifica nuovo cliente:", err);
+  }
+}
+
 

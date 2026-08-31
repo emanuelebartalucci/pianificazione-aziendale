@@ -18,7 +18,8 @@ import {
   getCommesseNotificationEmails,
   saveCommesseNotificationEmails,
   getSociNotificationEmails,
-  saveSociNotificationEmails
+  saveSociNotificationEmails,
+  sendNuovoClienteNotification
 } from '../utils/emailTemplateManager';
 
 
@@ -98,7 +99,7 @@ export const isSoci = (nomeOrEmail?: string | null): boolean => {
 
 export default function Impostazioni() {
   const navigate = useNavigate();
-  const { isDev, dipendenti, coordinatori, refreshData, userEmail } = useAuth();
+  const { isDev, dipendenti, coordinatori, refreshData, userEmail, myAssociatedName } = useAuth();
   
   // Stato per l'Editor & Simulatore E-mail di Sistema
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('commessa_apertura');
@@ -433,6 +434,11 @@ export default function Impostazioni() {
         codice: nextCode,
         nome: newClientNome.trim()
       });
+
+      // Invio notifica e-mail creazione nuovo cliente ai destinatari configurati
+      const creatorText = myAssociatedName ? `${myAssociatedName} (${userEmail})` : (userEmail || 'Operatore');
+      sendNuovoClienteNotification({ codice: nextCode, nome: newClientNome.trim() }, creatorText);
+
       await refreshData();
       await loadImpostazioniLists();
       setNewClientNome('');

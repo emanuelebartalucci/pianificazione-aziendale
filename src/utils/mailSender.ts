@@ -37,8 +37,9 @@ export async function queueMail(
         return;
       }
 
-      // Se l'interruttore della risorsa è disabilitato (false o non impostato), la mail viene sempre bloccata
-      if (dipData.notificheEmail !== true) {
+      // Se non è una notifica di sistema obbligatoria e l'interruttore della risorsa è disabilitato, blocca la mail personale
+      const isSystemNotification = _options?.isSystemNotification === true;
+      if (!isSystemNotification && dipData.notificheEmail !== true) {
         console.log(`[NOTIFICHE EMAIL DISABILITATE] Interruttore disabilitato per la risorsa ${toEmail}. E-mail bloccata e scartata.`);
         return;
       }

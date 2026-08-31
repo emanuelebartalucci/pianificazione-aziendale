@@ -16,7 +16,7 @@ export interface UserNotification {
   destinatarioNome: string;
   titolo: string;
   messaggio: string;
-  tipo: 'ferie_approvate' | 'presenze_approvate' | 'pianificazione_aggiornata' | 'suggerimento_ricevuto' | 'info';
+  tipo: 'ferie_approvate' | 'presenze_approvate' | 'pianificazione_aggiornata' | 'suggerimento_ricevuto' | 'todo_assegnato' | 'todo_completato' | 'info';
   link?: string;
   letta: boolean;
   createdAt: string;
@@ -30,7 +30,7 @@ export async function createUserNotification(data: {
   destinatarioNome: string;
   titolo: string;
   messaggio: string;
-  tipo: 'ferie_approvate' | 'presenze_approvate' | 'pianificazione_aggiornata' | 'suggerimento_ricevuto' | 'info';
+  tipo: 'ferie_approvate' | 'presenze_approvate' | 'pianificazione_aggiornata' | 'suggerimento_ricevuto' | 'todo_assegnato' | 'todo_completato' | 'info';
   link?: string;
 }) {
   if (!data.destinatarioEmail || !data.destinatarioEmail.trim()) return;

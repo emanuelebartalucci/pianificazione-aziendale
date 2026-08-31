@@ -1,4 +1,4 @@
-import { LogOut, Home, KeyRound, X, Shield, RefreshCw, Network, Bell, CheckCircle2, FileText, Calendar, Check, Clock, Phone, Lightbulb } from 'lucide-react';
+import { LogOut, Home, KeyRound, X, Shield, RefreshCw, Network, Bell, CheckCircle2, FileText, Calendar, Check, Clock, Phone, Lightbulb, ListTodo } from 'lucide-react';
 import { signOut, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from 'firebase/auth';
 import { auth, db } from '../services/firebase';
 import { collection, query, where, getDocs } from 'firebase/firestore';
@@ -374,6 +374,10 @@ export default function Navbar() {
         return <Calendar className="w-4 h-4 text-orange-600 shrink-0" />;
       case 'suggerimento_ricevuto':
         return <Lightbulb className="w-4 h-4 text-amber-500 shrink-0" />;
+      case 'todo_assegnato':
+        return <ListTodo className="w-4 h-4 text-indigo-600 shrink-0" />;
+      case 'todo_completato':
+        return <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />;
       default:
         return <Bell className="w-4 h-4 text-indigo-600 shrink-0" />;
     }

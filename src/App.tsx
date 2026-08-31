@@ -45,19 +45,26 @@ function ScrollToTop() {
 }
 
 function PrintVersionFooter() {
-  const [printDate, setPrintDate] = useState('');
+  const [printDate, setPrintDate] = useState(getPrintDateString());
 
   useEffect(() => {
-    const updateDate = () => setPrintDate(getPrintDateString());
-    updateDate();
-    window.addEventListener('beforeprint', updateDate);
-    return () => window.removeEventListener('beforeprint', updateDate);
+    const handleBeforePrint = () => {
+      const nowStr = getPrintDateString();
+      const el = document.getElementById('print-version-footer-text');
+      if (el) {
+        el.textContent = `${APP_VERSION} — Data Stampa: ${nowStr}`;
+      }
+      setPrintDate(nowStr);
+    };
+
+    window.addEventListener('beforeprint', handleBeforePrint);
+    return () => window.removeEventListener('beforeprint', handleBeforePrint);
   }, []);
 
   return (
     <div className="print-footer-watermark hidden print:flex">
       <span>Piattaforma Pianificazione Aziendale</span>
-      <span>{APP_VERSION} — Data Stampa: {printDate || getPrintDateString()}</span>
+      <span id="print-version-footer-text">{APP_VERSION} — Data Stampa: {printDate || getPrintDateString()}</span>
     </div>
   );
 }

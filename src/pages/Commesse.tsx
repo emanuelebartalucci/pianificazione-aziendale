@@ -5,13 +5,14 @@ import { collection, doc, setDoc, updateDoc, addDoc, deleteDoc, getDocs, runTran
 import { Briefcase, ChevronLeft, ChevronRight, ChevronDown, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw, Printer, Plus, UserCheck, MoveVertical, Building2, Send, Info, Mail, User, Folder, FolderOpen, ListTodo, Check, CheckCircle2, Clock, AlertTriangle, ExternalLink } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays } from '../utils/date';
 import { queueMail } from '../utils/mailSender';
+import { createUserNotification } from '../utils/userNotificationService';
 import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
 import ConfirmModal from '../components/ConfirmModal';
 import { PianificazioneModal } from '../components/PianificazioneModal';
 import { ResourceAvailabilityModal } from '../components/ResourceAvailabilityModal';
 import { getPrintDateString, APP_VERSION } from '../config/version';
 import { TIPOLOGIE_COMMESSE, isSoci } from './Impostazioni';
-import { getCommesseNotificationEmails } from '../utils/emailTemplateManager';
+import { getCommesseNotificationEmails, sendNuovoClienteNotification } from '../utils/emailTemplateManager';
 
 
 
@@ -488,6 +489,10 @@ export default function Commesse() {
         setClientSearchText((createdDoc as any).nome);
         setIsClientDropdownOpen(false);
         showToast(`Cliente ${(createdDoc as any).codice} - ${(createdDoc as any).nome} aggiunto ed impostato!`, "success");
+
+        // Invio notifica e-mail creazione nuovo cliente ai destinatari di sistema
+        const creatorText = myAssociatedName ? `${myAssociatedName} (${userEmail})` : (userEmail || 'Operatore');
+        sendNuovoClienteNotification(createdDoc, creatorText);
       }
       setNewClientNome('');
       setIsNewClientModalOpen(false);
@@ -511,12 +516,19 @@ export default function Commesse() {
   const [catalogoSortDir, setCatalogoSortDir] = useState<'asc' | 'desc'>('asc');
   const [showNewCommessaForm, _setShowNewCommessaForm] = useState(true);
 
-  // Gestione parametri URL da notifiche (es. ?search=CO123 o ?commessaId=xyz)
+  // Gestione parametri URL da notifiche (es. ?search=CO123, ?commessaId=xyz o ?todoCommessaId=xyz)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const todoCommessaIdParam = params.get('todoCommessaId');
     const searchParam = params.get('search');
     const commessaIdParam = params.get('commessaId');
-    if (searchParam) {
+
+    if (todoCommessaIdParam) {
+      const matched = commesse.find(c => c.id === todoCommessaIdParam);
+      if (matched) {
+        setSelectedCommessaForPunchList(matched);
+      }
+    } else if (searchParam) {
       setCommessaTextQuery(decodeURIComponent(searchParam));
     } else if (commessaIdParam) {
       const matched = commesse.find(c => c.id === commessaIdParam);
@@ -1034,6 +1046,68 @@ export default function Commesse() {
     if (loadPlanningData) loadPlanningData();
   };
 
+  const notifyTaskAssigned = async (task: PunchListItem, comm: any) => {
+    if (!task.assegnatoA || !task.assegnatoA.trim() || !comm) return;
+    const targetDip = (dipendenti || []).find(d => areNamesEqual(d.nome, task.assegnatoA));
+    if (!targetDip?.email) return;
+
+    const isSelf = (targetDip.email.toLowerCase() === (userEmail || '').toLowerCase()) ||
+                   (!!myAssociatedName && areNamesEqual(targetDip.nome, myAssociatedName));
+    if (isSelf) return; // Non inviare notifica se l'attività viene auto-assegnata
+
+    const creatorName = myAssociatedName || userEmail || 'Un collega';
+    const catLabel = (task.categoria || 'da fare').toUpperCase();
+    const deadlineStr = task.scadenza ? ` (Scadenza: ${task.scadenza.split('-').reverse().join('/')})` : '';
+
+    try {
+      // Notifica personale in-app (Centro Notifiche Navbar)
+      await createUserNotification({
+        destinatarioEmail: targetDip.email,
+        destinatarioNome: targetDip.nome,
+        titolo: `📋 Nuova attività ToDo: ${comm.nome}`,
+        messaggio: `${creatorName} ti ha assegnato l'attività [${catLabel}] "${task.titolo}" nella commessa ${comm.nome}${deadlineStr}.`,
+        tipo: 'todo_assegnato',
+        link: `/commesse?todoCommessaId=${encodeURIComponent(comm.id)}`
+      });
+    } catch (err) {
+      console.error("Errore invio notifica assegnazione ToDo:", err);
+    }
+  };
+
+  const notifyTaskCompleted = async (task: PunchListItem, comm: any) => {
+    if (!task.creatoDa || !task.creatoDa.trim() || !comm) return;
+
+    const creatorDip = (dipendenti || []).find(d => 
+      areNamesEqual(d.nome, task.creatoDa) || 
+      (d.email && d.email.toLowerCase() === task.creatoDa.toLowerCase())
+    );
+    const targetEmail = creatorDip?.email || (task.creatoDa.includes('@') ? task.creatoDa : null);
+    const targetName = creatorDip?.nome || task.creatoDa;
+
+    if (!targetEmail) return;
+
+    const updaterName = myAssociatedName || userEmail || 'Un collega';
+    const isSelf = (targetEmail.toLowerCase() === (userEmail || '').toLowerCase()) ||
+                   (!!myAssociatedName && areNamesEqual(targetName, myAssociatedName));
+    if (isSelf) return; // Non inviare notifica a chi completa un'attività creata da se stesso
+
+    const catLabel = (task.categoria || 'da fare').toUpperCase();
+
+    try {
+      // Notifica personale in-app (Centro Notifiche Navbar)
+      await createUserNotification({
+        destinatarioEmail: targetEmail,
+        destinatarioNome: targetName,
+        titolo: `✅ Attività ToDo completata: ${comm.nome}`,
+        messaggio: `${updaterName} ha completato l'attività [${catLabel}] "${task.titolo}" che avevi pianificato nella commessa ${comm.nome}.`,
+        tipo: 'todo_completato',
+        link: `/commesse?todoCommessaId=${encodeURIComponent(comm.id)}`
+      });
+    } catch (err) {
+      console.error("Errore invio notifica completamento ToDo:", err);
+    }
+  };
+
   const handleAddOrEditPunchTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedCommessaForPunchList) return;
@@ -1051,6 +1125,7 @@ export default function Commesse() {
       const commId = selectedCommessaForPunchList.id;
       const currentList: PunchListItem[] = selectedCommessaForPunchList.punchList || [];
       let updatedList: PunchListItem[] = [];
+      let taskToNotify: PunchListItem | null = null;
 
       if (editingTask) {
         // Controllo permessi modifica
@@ -1059,6 +1134,8 @@ export default function Commesse() {
           setIsSavingTask(false);
           return;
         }
+
+        const isReassigned = editingTask.assegnatoA !== newTaskAssegnatoA.trim();
 
         updatedList = currentList.map(t => {
           if (t.id === editingTask.id) {
@@ -1073,6 +1150,10 @@ export default function Commesse() {
 
             if (newTaskScadenza) updated.scadenza = newTaskScadenza;
             else delete updated.scadenza;
+
+            if (isReassigned) {
+              taskToNotify = updated;
+            }
 
             return updated;
           }
@@ -1093,11 +1174,18 @@ export default function Commesse() {
         if (newTaskDescrizione.trim()) newTask.descrizione = newTaskDescrizione.trim();
         if (newTaskScadenza) newTask.scadenza = newTaskScadenza;
 
+        taskToNotify = newTask;
         updatedList = [newTask, ...currentList];
         showToast(`Nuova voce [${newTask.categoria}] aggiunta alla ToDo List!`, "success");
       }
 
       await handleSavePunchListToFirestore(commId, updatedList);
+
+      // Notifica l'interessato assegnato (se non è la stessa persona)
+      if (taskToNotify) {
+        notifyTaskAssigned(taskToNotify, selectedCommessaForPunchList);
+      }
+
       setNewTaskTitolo('');
       setNewTaskDescrizione('');
       setNewTaskScadenza('');
@@ -1147,6 +1235,8 @@ export default function Commesse() {
 
       if (nextStatus === 'completato') {
         showToast("✓ Voce ToDo completata!", "success");
+        // Notifica chi aveva pianificato l'attività (se non è la stessa persona)
+        notifyTaskCompleted(task, comm);
       } else {
         showToast("Spunta rimossa: voce ToDo riportata a 'Da Fare'.", "info" as any);
       }
