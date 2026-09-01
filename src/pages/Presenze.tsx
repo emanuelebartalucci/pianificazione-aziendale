@@ -1174,186 +1174,234 @@ export default function Presenze() {
                   hasChanges = true;
                 }
 
-                const abs = leaves[dateStr];
-                if (abs && !finalData.hrModified) {
-                  // Aggiorna il giorno in base all'assenza approvata (solo se non hrModified)
-                  let targetOre = (isWeekend || isHoliday) ? 0 : dayContractHours;
-                  let targetFerie = 0;
-                  let targetPermessi = 0;
-                  let targetMalattia = false;
-                  let targetTrasferta = currentDay.trasferta;
-                  let targetLuogoTrasferta = currentDay.luogoTrasferta || '';
-                  let targetItinerarioTrasferta = currentDay.itinerarioTrasferta || '';
-                  let targetKmTrasferta = currentDay.kmTrasferta || 0;
-                  let targetStraordinari = currentDay.straordinari;
-                  let targetNoteGiorno = currentDay.noteGiorno || '';
+                if (!finalData.hrModified) {
+                  const abs = leaves[dateStr];
+                  if (abs) {
+                    // Aggiorna il giorno in base all'assenza approvata (solo se non hrModified)
+                    let targetOre = (isWeekend || isHoliday) ? 0 : dayContractHours;
+                    let targetFerie = 0;
+                    let targetPermessi = 0;
+                    let targetPermessoStudio = 0;
+                    let targetPermessoExL104 = 0;
+                    let targetPermessoDonazione = 0;
+                    let targetPermessoElettorale = 0;
+                    let targetMalattia = false;
+                    let targetTrasferta = currentDay.trasferta;
+                    let targetLuogoTrasferta = currentDay.luogoTrasferta || '';
+                    let targetItinerarioTrasferta = currentDay.itinerarioTrasferta || '';
+                    let targetKmTrasferta = currentDay.kmTrasferta || 0;
+                    let targetStraordinari = currentDay.straordinari;
+                    let targetNoteGiorno = currentDay.noteGiorno || '';
 
-                  if (!isWeekend && !isHoliday) {
-                    if (abs.tipo === 'ferie') {
-                      targetOre = 0;
-                      targetFerie = dayContractHours;
-                    } else if (abs.tipo === 'malattia' || abs.tipo === 'maternita') {
-                      targetOre = 0;
-                      targetMalattia = true;
-                    } else if (abs.tipo === 'mattina' || abs.tipo === 'pomeriggio') {
-                      targetOre = dayContractHours / 2;
-                      targetPermessi = dayContractHours / 2;
-                    } else if (abs.tipo === 'smart') {
-                      targetOre = dayContractHours;
-                    } else if (abs.tipo === 'permesso') {
-                      let hrs = dayContractHours / 2;
-                      if (abs.frazioneTipo === 'giornata') {
-                        hrs = dayContractHours;
-                      } else if (abs.frazioneTipo === 'mattina' || abs.frazioneTipo === 'pomeriggio') {
-                        hrs = dayContractHours / 2;
-                      } else if (abs.frazioneTipo === 'orario' && abs.oraInizio && abs.oraFine) {
-                        const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
-                        const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
-                        const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
-                        hrs = Math.round((diffMs / 3600000) * 100) / 100;
-                        if (abs.pausaPranzo && abs.pausaPranzoOre) {
-                          hrs = Math.max(0, hrs - abs.pausaPranzoOre);
+                    if (!isWeekend && !isHoliday) {
+                      if (abs.tipo === 'ferie') {
+                        targetOre = 0;
+                        targetFerie = dayContractHours;
+                      } else if (abs.tipo === 'malattia' || abs.tipo === 'maternita') {
+                        targetOre = 0;
+                        targetMalattia = true;
+                      } else if (abs.tipo === 'mattina' || abs.tipo === 'pomeriggio') {
+                        targetOre = dayContractHours / 2;
+                        targetPermessi = dayContractHours / 2;
+                      } else if (abs.tipo === 'smart') {
+                        targetOre = dayContractHours;
+                      } else if (abs.tipo === 'studio') {
+                        let hrs = dayContractHours;
+                        if (abs.frazioneTipo === 'mattina' || abs.frazioneTipo === 'pomeriggio') {
+                          hrs = dayContractHours / 2;
+                        } else if (abs.frazioneTipo === 'orario' && abs.oraInizio && abs.oraFine) {
+                          const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
+                          const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
+                          const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
+                          hrs = Math.round((diffMs / 3600000) * 100) / 100;
+                          if (abs.pausaPranzo && abs.pausaPranzoOre) {
+                            hrs = Math.max(0, hrs - abs.pausaPranzoOre);
+                          }
                         }
-                      } else if (abs.oraInizio && abs.oraFine) {
-                        // fallback per permessi legacy senza frazioneTipo
-                        const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
-                        const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
-                        const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
-                        hrs = Math.round((diffMs / 3600000) * 100) / 100;
-                        if (abs.pausaPranzo && abs.pausaPranzoOre) {
-                          hrs = Math.max(0, hrs - abs.pausaPranzoOre);
+                        targetOre = Math.max(0, dayContractHours - hrs);
+                        targetPermessoStudio = hrs;
+                      } else if (abs.tipo === 'ex_l104') {
+                        let hrs = dayContractHours;
+                        if (abs.frazioneTipo === 'mattina' || abs.frazioneTipo === 'pomeriggio') {
+                          hrs = dayContractHours / 2;
+                        } else if (abs.frazioneTipo === 'orario' && abs.oraInizio && abs.oraFine) {
+                          const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
+                          const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
+                          const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
+                          hrs = Math.round((diffMs / 3600000) * 100) / 100;
+                          if (abs.pausaPranzo && abs.pausaPranzoOre) {
+                            hrs = Math.max(0, hrs - abs.pausaPranzoOre);
+                          }
                         }
+                        targetOre = Math.max(0, dayContractHours - hrs);
+                        targetPermessoExL104 = hrs;
+                      } else if (abs.tipo === 'donazione') {
+                        targetOre = 0;
+                        targetPermessoDonazione = dayContractHours;
+                      } else if (abs.tipo === 'elettorale') {
+                        targetOre = 0;
+                        targetPermessoElettorale = dayContractHours;
+                      } else if (abs.tipo === 'permesso' || abs.tipo === 'assenza') {
+                        let hrs = dayContractHours / 2;
+                        if (abs.frazioneTipo === 'giornata') {
+                          hrs = dayContractHours;
+                        } else if (abs.frazioneTipo === 'mattina' || abs.frazioneTipo === 'pomeriggio') {
+                          hrs = dayContractHours / 2;
+                        } else if (abs.frazioneTipo === 'orario' && abs.oraInizio && abs.oraFine) {
+                          const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
+                          const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
+                          const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
+                          hrs = Math.round((diffMs / 3600000) * 100) / 100;
+                          if (abs.pausaPranzo && abs.pausaPranzoOre) {
+                            hrs = Math.max(0, hrs - abs.pausaPranzoOre);
+                          }
+                        } else if (abs.oraInizio && abs.oraFine) {
+                          // fallback per permessi legacy senza frazioneTipo
+                          const [hStart, mStart] = abs.oraInizio.split(':').map(Number);
+                          const [hEnd, mEnd] = abs.oraFine.split(':').map(Number);
+                          const diffMs = new Date(2000, 0, 1, hEnd, mEnd).getTime() - new Date(2000, 0, 1, hStart, mStart).getTime();
+                          hrs = Math.round((diffMs / 3600000) * 100) / 100;
+                          if (abs.pausaPranzo && abs.pausaPranzoOre) {
+                            hrs = Math.max(0, hrs - abs.pausaPranzoOre);
+                          }
+                        }
+                        targetOre = Math.max(0, dayContractHours - hrs);
+                        targetPermessi = hrs;
                       }
-                      targetOre = Math.max(0, dayContractHours - hrs);
-                      targetPermessi = hrs;
                     }
-                  }
 
-                  const isFullDayAbsence = abs.tipo === 'ferie' || abs.tipo === 'malattia' || abs.tipo === 'maternita';
-                  if (isFullDayAbsence) {
-                    targetTrasferta = false;
-                    targetLuogoTrasferta = '';
-                    targetItinerarioTrasferta = '';
-                    targetKmTrasferta = 0;
-                    targetStraordinari = 0;
-                    targetNoteGiorno = '';
-                  }
+                    const isFullDayAbsence = abs.tipo === 'ferie' || abs.tipo === 'malattia' || abs.tipo === 'maternita' || (abs.tipo === 'studio' && targetOre === 0) || (abs.tipo === 'ex_l104' && targetOre === 0) || abs.tipo === 'donazione' || abs.tipo === 'elettorale' || ((abs.tipo === 'permesso' || abs.tipo === 'assenza') && targetOre === 0);
+                    if (isFullDayAbsence) {
+                      targetTrasferta = false;
+                      targetLuogoTrasferta = '';
+                      targetItinerarioTrasferta = '';
+                      targetKmTrasferta = 0;
+                      targetStraordinari = 0;
+                      targetNoteGiorno = '';
+                    }
 
-                  if (
-                    currentDay.ore !== targetOre ||
-                    currentDay.ferie !== targetFerie ||
-                    currentDay.permessi !== targetPermessi ||
-                    currentDay.malattia !== targetMalattia ||
-                    currentDay.trasferta !== targetTrasferta ||
-                    currentDay.luogoTrasferta !== targetLuogoTrasferta ||
-                    currentDay.itinerarioTrasferta !== targetItinerarioTrasferta ||
-                    currentDay.kmTrasferta !== targetKmTrasferta ||
-                    currentDay.straordinari !== targetStraordinari ||
-                    (currentDay.noteGiorno || '') !== targetNoteGiorno
-                  ) {
-                    updatedGiorni[String(day)] = {
-                      ...currentDay,
-                      ore: targetOre,
-                      ferie: targetFerie,
-                      permessi: targetPermessi,
-                      malattia: targetMalattia,
-                      trasferta: targetTrasferta,
-                      luogoTrasferta: targetLuogoTrasferta,
-                      itinerarioTrasferta: targetItinerarioTrasferta,
-                      kmTrasferta: targetKmTrasferta,
-                      straordinari: targetStraordinari,
-                      noteGiorno: targetNoteGiorno
-                    };
-                    hasChanges = true;
-                  }
-                } else {
-                  // Nessuna assenza approvata per questo giorno → ripristina i campi se erano stati impostati automaticamente
-                  const isCleanFerie = 
-                    currentDay.ore === 0 &&
-                    currentDay.ferie > 0 &&
-                    currentDay.straordinari === 0 &&
-                    currentDay.permessi === 0 &&
-                    !currentDay.malattia &&
-                    !currentDay.trasferta;
+                    if (
+                      currentDay.ore !== targetOre ||
+                      currentDay.ferie !== targetFerie ||
+                      currentDay.permessi !== targetPermessi ||
+                      (currentDay.permessoStudio || 0) !== targetPermessoStudio ||
+                      (currentDay.permessoExL104 || 0) !== targetPermessoExL104 ||
+                      (currentDay.permessoDonazione || 0) !== targetPermessoDonazione ||
+                      (currentDay.permessoElettorale || 0) !== targetPermessoElettorale ||
+                      currentDay.malattia !== targetMalattia ||
+                      currentDay.trasferta !== targetTrasferta ||
+                      currentDay.luogoTrasferta !== targetLuogoTrasferta ||
+                      currentDay.itinerarioTrasferta !== targetItinerarioTrasferta ||
+                      currentDay.kmTrasferta !== targetKmTrasferta ||
+                      currentDay.straordinari !== targetStraordinari ||
+                      (currentDay.noteGiorno || '') !== targetNoteGiorno
+                    ) {
+                      updatedGiorni[String(day)] = {
+                        ...currentDay,
+                        ore: targetOre,
+                        ferie: targetFerie,
+                        permessi: targetPermessi,
+                        permessoStudio: targetPermessoStudio,
+                        permessoExL104: targetPermessoExL104,
+                        permessoDonazione: targetPermessoDonazione,
+                        permessoElettorale: targetPermessoElettorale,
+                        malattia: targetMalattia,
+                        trasferta: targetTrasferta,
+                        luogoTrasferta: targetLuogoTrasferta,
+                        itinerarioTrasferta: targetItinerarioTrasferta,
+                        kmTrasferta: targetKmTrasferta,
+                        straordinari: targetStraordinari,
+                        noteGiorno: targetNoteGiorno
+                      };
+                      hasChanges = true;
+                    }
+                  } else {
+                    // Nessuna assenza approvata per questo giorno → ripristina solo se era presente un'assenza precedentemente generata in automatico
+                    const isCleanFerie = 
+                      currentDay.ore === 0 &&
+                      currentDay.ferie > 0 &&
+                      currentDay.straordinari === 0 &&
+                      currentDay.permessi === 0 &&
+                      !currentDay.malattia &&
+                      !currentDay.trasferta;
 
-                  const isCleanMalattia = 
-                    currentDay.ore === 0 &&
-                    currentDay.malattia &&
-                    currentDay.straordinari === 0 &&
-                    currentDay.ferie === 0 &&
-                    currentDay.permessi === 0 &&
-                    !currentDay.trasferta;
+                    const isCleanMalattia = 
+                      currentDay.ore === 0 &&
+                      currentDay.malattia &&
+                      currentDay.straordinari === 0 &&
+                      currentDay.ferie === 0 &&
+                      currentDay.permessi === 0 &&
+                      !currentDay.trasferta;
 
-                  // Tolleranza floating-point: accetta qualsiasi giorno con permessi > 0
-                  // dove ore + permessi ≈ dayContractHours (entro 0.05h di scarto)
-                  const permessiSum = currentDay.permessi + currentDay.ore;
-                  const isCleanPermesso = 
-                    currentDay.permessi > 0 &&
-                    (Math.abs(permessiSum - dayContractHours) < 0.05 || currentDay.ore === 0) &&
-                    currentDay.straordinari === 0 &&
-                    currentDay.ferie === 0 &&
-                    !currentDay.malattia &&
-                    !currentDay.trasferta;
+                    const permessiSum = currentDay.permessi + currentDay.ore;
+                    const isCleanPermesso = 
+                      currentDay.permessi > 0 &&
+                      (Math.abs(permessiSum - dayContractHours) < 0.05 || currentDay.ore === 0) &&
+                      currentDay.straordinari === 0 &&
+                      currentDay.ferie === 0 &&
+                      !currentDay.malattia &&
+                      !currentDay.trasferta;
 
-                  const isCleanStudio = 
-                    currentDay.ore === 0 &&
-                    (currentDay.permessoStudio || 0) > 0 &&
-                    currentDay.straordinari === 0 &&
-                    currentDay.ferie === 0 &&
-                    currentDay.permessi === 0 &&
-                    !currentDay.malattia &&
-                    !currentDay.trasferta;
+                    const isCleanStudio = 
+                      currentDay.ore === 0 &&
+                      (currentDay.permessoStudio || 0) > 0 &&
+                      currentDay.straordinari === 0 &&
+                      currentDay.ferie === 0 &&
+                      currentDay.permessi === 0 &&
+                      !currentDay.malattia &&
+                      !currentDay.trasferta;
 
-                  const isCleanDonazione = 
-                    currentDay.ore === 0 &&
-                    (currentDay.permessoDonazione || 0) > 0 &&
-                    currentDay.straordinari === 0 &&
-                    currentDay.ferie === 0 &&
-                    currentDay.permessi === 0 &&
-                    !currentDay.malattia &&
-                    !currentDay.trasferta;
+                    const isCleanExL104 = 
+                      (currentDay.permessoExL104 || 0) > 0 &&
+                      currentDay.straordinari === 0 &&
+                      currentDay.ferie === 0 &&
+                      currentDay.permessi === 0 &&
+                      !currentDay.malattia &&
+                      !currentDay.trasferta;
 
-                  const isCleanElettorale = 
-                    currentDay.ore === 0 &&
-                    (currentDay.permessoElettorale || 0) > 0 &&
-                    currentDay.straordinari === 0 &&
-                    currentDay.ferie === 0 &&
-                    currentDay.permessi === 0 &&
-                    !currentDay.malattia &&
-                    !currentDay.trasferta;
+                    const isCleanDonazione = 
+                      currentDay.ore === 0 &&
+                      (currentDay.permessoDonazione || 0) > 0 &&
+                      currentDay.straordinari === 0 &&
+                      currentDay.ferie === 0 &&
+                      currentDay.permessi === 0 &&
+                      !currentDay.malattia &&
+                      !currentDay.trasferta;
 
-                  const wasModifiedDueToAbsence = 
-                    isCleanFerie || 
-                    isCleanMalattia || 
-                    isCleanPermesso || 
-                    isCleanStudio || 
-                    isCleanDonazione || 
-                    isCleanElettorale;
+                    const isCleanElettorale = 
+                      currentDay.ore === 0 &&
+                      (currentDay.permessoElettorale || 0) > 0 &&
+                      currentDay.straordinari === 0 &&
+                      currentDay.ferie === 0 &&
+                      currentDay.permessi === 0 &&
+                      !currentDay.malattia &&
+                      !currentDay.trasferta;
 
-                  const isStandardWorkDay = 
-                    currentDay.ferie === 0 &&
-                    currentDay.permessi === 0 &&
-                    !currentDay.malattia &&
-                    (currentDay.permessoStudio || 0) === 0 &&
-                    (currentDay.permessoDonazione || 0) === 0 &&
-                    (currentDay.permessoElettorale || 0) === 0 &&
-                    !currentDay.trasferta &&
-                    currentDay.straordinari === 0;
+                    const wasModifiedDueToAbsence = 
+                      isCleanFerie || 
+                      isCleanMalattia || 
+                      isCleanPermesso || 
+                      isCleanStudio || 
+                      isCleanExL104 || 
+                      isCleanDonazione || 
+                      isCleanElettorale;
 
-                  const expectedWorkHours = (isWeekend || isHoliday) ? 0 : dayContractHours;
+                    const expectedWorkHours = (isWeekend || isHoliday) ? 0 : dayContractHours;
 
-                  if (wasModifiedDueToAbsence || (isStandardWorkDay && currentDay.ore !== expectedWorkHours)) {
-                    updatedGiorni[String(day)] = {
-                      ...currentDay,
-                      ore: expectedWorkHours,
-                      ferie: 0,
-                      permessi: 0,
-                      malattia: false,
-                      permessoStudio: 0,
-                      permessoDonazione: 0,
-                      permessoElettorale: 0
-                    };
-                    hasChanges = true;
+                    if (wasModifiedDueToAbsence) {
+                      updatedGiorni[String(day)] = {
+                        ...currentDay,
+                        ore: expectedWorkHours,
+                        ferie: 0,
+                        permessi: 0,
+                        malattia: false,
+                        permessoStudio: 0,
+                        permessoExL104: 0,
+                        permessoDonazione: 0,
+                        permessoElettorale: 0
+                      };
+                      hasChanges = true;
+                    }
                   }
                 }
               }

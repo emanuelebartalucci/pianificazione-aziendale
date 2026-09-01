@@ -52,6 +52,8 @@ interface RichiestaFerie {
     nuovaDataFine?: string;
     nuovaOraInizio?: string;
     nuovaOraFine?: string;
+    nuovaPausaPranzo?: boolean;
+    nuovaPausaPranzoOre?: number;
     nuovaFrazioneTipo?: 'mattina' | 'pomeriggio' | 'giornata' | 'orario';
     nuovoTipo?: string;
     motivazione?: string;
@@ -312,9 +314,9 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
 
       if (isHR || isAdmin) {
         setHrRichieste(prev => {
-          const existingIds = new Set(prev.map(p => p.id));
-          const newItems = fetched.filter(f => !existingIds.has(f.id));
-          return [...prev, ...newItems];
+          const map = new Map(prev.map(p => [p.id, p]));
+          fetched.forEach(f => map.set(f.id, f));
+          return Array.from(map.values());
         });
       }
 
@@ -322,16 +324,16 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
 
       // Merge delle proprie richieste del mese
       setMyRichieste(prev => {
-        const existingIds = new Set(prev.map(p => p.id));
-        const newItems = fetched.filter(f => (f.dipendenteName || '').trim().toLowerCase() === myNameClean && !existingIds.has(f.id));
-        return [...prev, ...newItems];
+        const map = new Map(prev.map(p => [p.id, p]));
+        fetched.filter(f => (f.dipendenteName || '').trim().toLowerCase() === myNameClean).forEach(f => map.set(f.id, f));
+        return Array.from(map.values());
       });
 
       // Merge delle richieste approvate altrui del mese
       setOthersApprovedRichieste(prev => {
-        const existingIds = new Set(prev.map(p => p.id));
-        const newItems = fetched.filter(f => f.stato === 'Approvato' && (f.dipendenteName || '').trim().toLowerCase() !== myNameClean && !existingIds.has(f.id));
-        return [...prev, ...newItems];
+        const map = new Map(prev.map(p => [p.id, p]));
+        fetched.filter(f => f.stato === 'Approvato' && (f.dipendenteName || '').trim().toLowerCase() !== myNameClean).forEach(f => map.set(f.id, f));
+        return Array.from(map.values());
       });
 
       // Salva il mese scaricato nella cache locale
@@ -361,6 +363,8 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
   const [modOraFine, setModOraFine] = useState('18:00');
   const [modFrazioneTipo, setModFrazioneTipo] = useState<'mattina' | 'pomeriggio' | 'giornata' | 'orario'>('giornata');
   const [modTipo, setModTipo] = useState('ferie');
+  const [modPausaPranzo, setModPausaPranzo] = useState(false);
+  const [modPausaPranzoOre, setModPausaPranzoOre] = useState('1');
   const [modMotivazione, setModMotivazione] = useState('');
   const [modLoading, setModLoading] = useState(false);
 
@@ -392,22 +396,34 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       }
       setChiusureAziendali(listClosures);
 
-      // Carica SOLO il mese corrente al primo avvio per limitare le letture Firestore.
-      // I mesi successivi vengono caricati on-demand da ensureMonthLoaded al cambio mese.
+      // Calcola l'intervallo temporale comprendendo il mese corrente reale, il mese visualizzato a video e tutti i mesi già caricati
       const now = new Date();
       const curYear = now.getFullYear();
       const curMonth = now.getMonth() + 1;
-      const startLimit = `${curYear}-${String(curMonth).padStart(2, '0')}-01`;
-      const lastDay = new Date(curYear, curMonth, 0).getDate();
-      const endLimit = `${curYear}-${String(curMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
       const curMonthKey = `${curYear}-${String(curMonth).padStart(2, '0')}`;
+
+      const allMonthsToLoad = new Set<string>();
+      allMonthsToLoad.add(curMonthKey);
+      if (currentMonth) {
+        allMonthsToLoad.add(`${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}`);
+      }
+      loadedMonths.forEach(m => allMonthsToLoad.add(m));
+
+      const sortedMonths = Array.from(allMonthsToLoad).sort();
+      const firstM = sortedMonths[0];
+      const lastM = sortedMonths[sortedMonths.length - 1];
+
+      const startLimit = `${firstM}-01`;
+      const [lastYStr, lastMStr] = lastM.split('-');
+      const lastDayOfRange = new Date(Number(lastYStr), Number(lastMStr), 0).getDate();
+      const endLimit = `${lastM}-${String(lastDayOfRange).padStart(2, '0')}`;
 
       const fetchAndMapDoc = (docSnap: any): RichiestaFerie | null => {
         const data = docSnap.data();
         const dInizio = data.dataInizio || data.data || '';
         const dFine = data.dataFine || data.data || '';
         const isPending = ['In attesa', 'Richiesta Annullamento', 'Richiesta Modifica'].includes(data.stato);
-        // Se non è una richiesta pendente/da gestire, applica il filtro del range date del mese per il calendario
+        // Se non è una richiesta pendente/da gestire, applica il filtro del range date per i mesi caricati
         if (!isPending && (dInizio > endLimit || dFine < startLimit)) return null;
         return {
           id: docSnap.id,
@@ -435,7 +451,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
           collection(db, 'richieste_ferie'),
           where('stato', 'in', ['In attesa', 'Richiesta Annullamento', 'Richiesta Modifica'])
         );
-        // Query per le richieste del mese corrente (per visualizzazione calendario/storico)
+        // Query per le richieste del range mesi caricati (per visualizzazione calendario/storico)
         const qRange = query(collection(db, 'richieste_ferie'), where('dataFine', '>=', startLimit));
         const qSingle = query(
           collection(db, 'richieste_ferie'),
@@ -482,7 +498,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         });
         setMyRichieste(listMy);
 
-        // Richieste altrui approvate: solo mese corrente (il resto si carica con ensureMonthLoaded)
+        // Richieste altrui approvate: range mesi caricati
         const qOthersRange = query(collection(db, 'richieste_ferie'), where('dataFine', '>=', startLimit));
         const qOthersSingle = query(
           collection(db, 'richieste_ferie'),
@@ -503,8 +519,8 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         setOthersApprovedRichieste(Array.from(mapOthers.values()));
       }
 
-      // Segna il mese corrente come già caricato nella cache
-      setLoadedMonths(prev => new Set([...Array.from(prev), curMonthKey]));
+      // Segna tutti i mesi considerati come già caricati nella cache
+      setLoadedMonths(allMonthsToLoad);
 
       // Carica autorizzazioni weekend approvate per tutti
       const wkSnap = await getDocs(query(
@@ -1793,6 +1809,8 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
     setModOraFine(req.oraFine || '18:00');
     setModFrazioneTipo(req.frazioneTipo || 'giornata');
     setModTipo(req.tipo || 'ferie');
+    setModPausaPranzo(Boolean(req.pausaPranzo));
+    setModPausaPranzoOre(req.pausaPranzoOre ? String(req.pausaPranzoOre) : '1');
     setModMotivazione('');
   };
 
@@ -1805,16 +1823,20 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
     setModLoading(true);
     try {
       const isHROrAdminAction = isHR;
+      const effectiveDataFine = modFrazioneTipo === 'giornata' ? modDataFine : modDataInizio;
 
       if (isHROrAdminAction) {
         if (modTipoAzione === 'annullamento') {
           await deleteDoc(doc(db, 'richieste_ferie', modifyingRequest.id));
+          setHrRichieste(prev => prev.filter(r => r.id !== modifyingRequest.id));
+          setMyRichieste(prev => prev.filter(r => r.id !== modifyingRequest.id));
+          setOthersApprovedRichieste(prev => prev.filter(r => r.id !== modifyingRequest.id));
           showToast("Ferie/Permesso annullato direttamente con successo!", "success");
         } else {
           const payloadUpdate: any = {
             stato: 'Approvato',
             dataInizio: modDataInizio,
-            dataFine: modDataFine,
+            dataFine: effectiveDataFine,
             data: modDataInizio,
             tipo: modTipo,
             frazioneTipo: modFrazioneTipo,
@@ -1823,12 +1845,27 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
           if (modFrazioneTipo === 'orario') {
             payloadUpdate.oraInizio = modOraInizio;
             payloadUpdate.oraFine = modOraFine;
+            payloadUpdate.pausaPranzo = modPausaPranzo;
+            payloadUpdate.pausaPranzoOre = modPausaPranzo ? Number(modPausaPranzoOre) : 0;
+          } else {
+            payloadUpdate.oraInizio = null;
+            payloadUpdate.oraFine = null;
+            payloadUpdate.pausaPranzo = false;
+            payloadUpdate.pausaPranzoOre = 0;
           }
 
           await updateDoc(doc(db, 'richieste_ferie', modifyingRequest.id), payloadUpdate);
 
-          if (modDataInizio && modDataFine && (modTipo === 'ferie' || modTipo === 'malattia' || modTipo === 'maternita')) {
-            await cleanAssignmentsForApprovedFullWeekLeave(modifyingRequest.dipendenteName, modDataInizio, modDataFine);
+          const updatedDirect: RichiestaFerie = {
+            ...modifyingRequest,
+            ...payloadUpdate
+          };
+          setHrRichieste(prev => prev.map(r => r.id === modifyingRequest.id ? updatedDirect : r));
+          setMyRichieste(prev => prev.map(r => r.id === modifyingRequest.id ? updatedDirect : r));
+          setOthersApprovedRichieste(prev => prev.map(r => r.id === modifyingRequest.id ? updatedDirect : r));
+
+          if (modDataInizio && effectiveDataFine && (modTipo === 'ferie' || modTipo === 'malattia' || modTipo === 'maternita')) {
+            await cleanAssignmentsForApprovedFullWeekLeave(modifyingRequest.dipendenteName, modDataInizio, effectiveDataFine);
           }
 
           showToast("Ferie/Permesso modificato direttamente con successo!", "success");
@@ -1842,12 +1879,14 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         };
         if (modTipoAzione === 'modifica') {
           payloadModifica.nuovaDataInizio = modDataInizio;
-          payloadModifica.nuovaDataFine = modDataFine;
+          payloadModifica.nuovaDataFine = effectiveDataFine;
           payloadModifica.nuovoTipo = modTipo;
           payloadModifica.nuovaFrazioneTipo = modFrazioneTipo;
           if (modFrazioneTipo === 'orario') {
             payloadModifica.nuovaOraInizio = modOraInizio;
             payloadModifica.nuovaOraFine = modOraFine;
+            payloadModifica.nuovaPausaPranzo = modPausaPranzo;
+            payloadModifica.nuovaPausaPranzoOre = modPausaPranzo ? Number(modPausaPranzoOre) : 0;
           }
         }
 
@@ -1879,6 +1918,8 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       const newFrazione = mod.nuovaFrazioneTipo || req.frazioneTipo;
       const newOraInizio = mod.nuovaOraInizio || req.oraInizio;
       const newOraFine = mod.nuovaOraFine || req.oraFine;
+      const newPausaPranzo = mod.nuovaPausaPranzo ?? req.pausaPranzo ?? false;
+      const newPausaPranzoOre = mod.nuovaPausaPranzoOre ?? req.pausaPranzoOre ?? 0;
 
       await updateDoc(doc(db, 'richieste_ferie', req.id), {
         stato: 'Approvato',
@@ -1887,8 +1928,10 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         data: newStart,
         tipo: newTipo,
         frazioneTipo: newFrazione,
-        oraInizio: newOraInizio || null,
-        oraFine: newOraFine || null,
+        oraInizio: newFrazione === 'orario' ? (newOraInizio || null) : null,
+        oraFine: newFrazione === 'orario' ? (newOraFine || null) : null,
+        pausaPranzo: newFrazione === 'orario' ? newPausaPranzo : false,
+        pausaPranzoOre: newFrazione === 'orario' ? newPausaPranzoOre : 0,
         richiestaModifica: null
       });
 
@@ -3664,9 +3707,18 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                               <span>{req.richiestaModifica.tipoAzione === 'annullamento' ? 'Richiesta di Annullamento' : 'Richiesta di Modifica'}</span>
                             </div>
                             {req.richiestaModifica.tipoAzione === 'modifica' && (
-                              <div className="font-bold text-amber-900 text-[11px]">
-                                Nuovo Periodo: Dal {formatDate(req.richiestaModifica.nuovaDataInizio || '')} al {formatDate(req.richiestaModifica.nuovaDataFine || '')}
-                                {req.richiestaModifica.nuovaOraInizio && req.richiestaModifica.nuovaOraFine ? ` dalle ${req.richiestaModifica.nuovaOraInizio} alle ${req.richiestaModifica.nuovaOraFine}` : ''}
+                              <div className="font-bold text-amber-900 text-[11px] space-y-0.5">
+                                <div>
+                                  Nuovo Periodo: {req.richiestaModifica.nuovaDataInizio && req.richiestaModifica.nuovaDataFine && req.richiestaModifica.nuovaDataInizio !== req.richiestaModifica.nuovaDataFine
+                                    ? `Dal ${formatDate(req.richiestaModifica.nuovaDataInizio)} al ${formatDate(req.richiestaModifica.nuovaDataFine)}`
+                                    : `Il ${formatDate(req.richiestaModifica.nuovaDataInizio || '')}`}
+                                  {req.richiestaModifica.nuovaOraInizio && req.richiestaModifica.nuovaOraFine ? ` dalle ${req.richiestaModifica.nuovaOraInizio} alle ${req.richiestaModifica.nuovaOraFine}${req.richiestaModifica.nuovaPausaPranzo && req.richiestaModifica.nuovaPausaPranzoOre ? ` (esclusa p. pranzo ${req.richiestaModifica.nuovaPausaPranzoOre.toString().replace('.', ',')}h)` : ''}` : ''}
+                                </div>
+                                {(req.richiestaModifica.nuovoTipo || req.richiestaModifica.nuovaFrazioneTipo) && (
+                                  <div className="text-[10px] text-amber-800 font-semibold">
+                                    Nuova Tipologia: {getTipoLabel(req.richiestaModifica.nuovoTipo || req.tipo, req.richiestaModifica.nuovaFrazioneTipo || req.frazioneTipo, req.dipendenteName)}
+                                  </div>
+                                )}
                               </div>
                             )}
                             {req.richiestaModifica.motivazione && (
@@ -4191,52 +4243,202 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
               </div>
 
               {/* Campi di Modifica se selezionato 'modifica' */}
-              {modTipoAzione === 'modifica' && (
-                <div className="space-y-3.5 bg-slate-50 p-4 rounded-2xl border border-slate-200 animate-in fade-in duration-200">
-                  <div className="grid grid-cols-2 gap-3">
+              {modTipoAzione === 'modifica' && (() => {
+                const isModCollab = modifyingRequest ? (isCollaboratore(modifyingRequest.dipendenteName, dipendenti) || isSoci(modifyingRequest.dipendenteName)) : false;
+                const showFractionSelector = (modTipo === 'permesso' || modTipo === 'assenza' || modTipo === 'smart' || modTipo === 'ex_l104' || modTipo === 'studio' || modTipo === 'donazione' || modTipo === 'elettorale');
+
+                return (
+                  <div className="space-y-4 bg-slate-50 p-4 rounded-2xl border border-slate-200 animate-in fade-in duration-200">
+                    
+                    {/* Date Selector: Single vs Range depending on fraction */}
+                    {modFrazioneTipo !== 'giornata' ? (
+                      <div>
+                        <label className="block text-xs font-bold text-gray-700 mb-1">Nuova Data Assenza / Permesso *</label>
+                        <input 
+                          type="date"
+                          required
+                          value={modDataInizio}
+                          onChange={e => {
+                            setModDataInizio(e.target.value);
+                            setModDataFine(e.target.value);
+                          }}
+                          className="w-full p-2.5 rounded-xl border border-slate-200 text-xs font-bold text-gray-800 bg-white outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-bold text-gray-700 mb-1">Nuova Data Inizio *</label>
+                          <input 
+                            type="date"
+                            required
+                            value={modDataInizio}
+                            onChange={e => {
+                              const newStart = e.target.value;
+                              setModDataInizio(newStart);
+                              if (modDataFine && modDataFine < newStart) {
+                                setModDataFine(newStart);
+                              }
+                            }}
+                            className="w-full p-2.5 rounded-xl border border-slate-200 text-xs font-bold text-gray-800 bg-white outline-none focus:ring-2 focus:ring-indigo-500"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-gray-700 mb-1">Nuova Data Fine *</label>
+                          <input 
+                            type="date"
+                            required
+                            min={modDataInizio || undefined}
+                            value={modDataFine}
+                            onChange={e => setModDataFine(e.target.value)}
+                            className="w-full p-2.5 rounded-xl border border-slate-200 text-xs font-bold text-gray-800 bg-white outline-none focus:ring-2 focus:ring-indigo-500"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Tipo Assenza */}
                     <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Nuova Data Inizio *</label>
-                      <input 
-                        type="date"
-                        value={modDataInizio}
+                      <label className="block text-xs font-bold text-gray-700 mb-1">Tipo Assenza</label>
+                      <select
+                        value={modTipo}
                         onChange={e => {
-                          const newStart = e.target.value;
-                          setModDataInizio(newStart);
-                          if (modDataFine && modDataFine < newStart) {
-                            setModDataFine(newStart);
+                          const newT = e.target.value;
+                          setModTipo(newT);
+                          if (newT === 'ferie' || newT === 'malattia' || newT === 'maternita') {
+                            setModFrazioneTipo('giornata');
+                            setModPausaPranzo(false);
                           }
                         }}
-                        className="w-full p-2.5 rounded-xl border border-slate-200 text-xs font-bold text-gray-800 bg-white outline-none focus:ring-2 focus:ring-indigo-500"
-                      />
+                        className="w-full p-2.5 rounded-xl border border-slate-200 text-xs font-bold text-gray-800 bg-white outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                      >
+                        {isModCollab ? (
+                          <>
+                            <option value="assenza">Assenza</option>
+                            <option value="malattia">Malattia</option>
+                            <option value="maternita">Maternità / Congedo</option>
+                            <option value="smart">Lavora da Casa</option>
+                          </>
+                        ) : (
+                          <>
+                            <option value="ferie">Ferie</option>
+                            <option value="permesso">Permesso</option>
+                            <option value="malattia">Malattia</option>
+                            <option value="maternita">Maternità / Paternità / Congedo</option>
+                            <option value="smart">Lavora da Casa</option>
+                            <option value="studio">Permesso Studio (150 ore)</option>
+                            <option value="ex_l104">Permesso ex L.104</option>
+                            <option value="donazione">Permesso Donazione Sangue</option>
+                            <option value="elettorale">Permesso Elettorale / Seggio</option>
+                          </>
+                        )}
+                      </select>
                     </div>
 
-                    <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-1">Nuova Data Fine *</label>
-                      <input 
-                        type="date"
-                        min={modDataInizio || undefined}
-                        value={modDataFine}
-                        onChange={e => setModDataFine(e.target.value)}
-                        className="w-full p-2.5 rounded-xl border border-slate-200 text-xs font-bold text-gray-800 bg-white outline-none focus:ring-2 focus:ring-indigo-500"
-                      />
-                    </div>
-                  </div>
+                    {/* Frazionamento Tipo se supportato */}
+                    {showFractionSelector && (
+                      <div className="bg-white p-3.5 rounded-xl border border-slate-200 space-y-3">
+                        <label className="block text-[11px] font-black text-gray-800 uppercase tracking-wider">
+                          {modTipo === 'smart' ? 'Frazionamento Lavoro da Casa' : (modTipo === 'assenza' ? 'Frazionamento Assenza' : 'Frazionamento Permesso')}
+                        </label>
+                        <div className="grid grid-cols-2 gap-2">
+                          {[
+                            { value: 'giornata', label: 'Giornata Intera' },
+                            { value: 'mattina', label: 'Solo Mattina (AM)' },
+                            { value: 'pomeriggio', label: 'Solo Pomeriggio (PM)' },
+                            { value: 'orario', label: 'Orario Specifico' }
+                          ].map((item) => (
+                            <button
+                              key={item.value}
+                              type="button"
+                              onClick={() => {
+                                setModFrazioneTipo(item.value as any);
+                                if (item.value !== 'giornata') {
+                                  setModDataFine(modDataInizio);
+                                }
+                              }}
+                              className={`p-2.5 rounded-xl border text-xs font-bold text-center transition-all cursor-pointer ${
+                                modFrazioneTipo === item.value
+                                  ? 'bg-indigo-600 text-white border-transparent shadow-xs'
+                                  : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                              }`}
+                            >
+                              {item.value === modFrazioneTipo && <span className="mr-1">✓</span>}
+                              {item.label}
+                            </button>
+                          ))}
+                        </div>
 
-                  <div>
-                    <label className="block text-xs font-bold text-gray-700 mb-1">Tipo Assenza</label>
-                    <select
-                      value={modTipo}
-                      onChange={e => setModTipo(e.target.value)}
-                      className="w-full p-2.5 rounded-xl border border-slate-200 text-xs font-bold text-gray-800 bg-white outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
-                    >
-                      <option value="ferie">Ferie</option>
-                      <option value="permesso">Permesso</option>
-                      <option value="malattia">Malattia</option>
-                      <option value="smart">Lavora da Casa</option>
-                    </select>
+                        {/* Orari Specifici e Pausa Pranzo */}
+                        {modFrazioneTipo === 'orario' && (
+                          <div className="space-y-3 pt-2 border-t border-slate-200 animate-in slide-in-from-top-2 duration-200">
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">Ora Inizio</label>
+                                <select 
+                                  required 
+                                  value={modOraInizio}
+                                  onChange={e => setModOraInizio(e.target.value)}
+                                  className="w-full p-2.5 rounded-xl border border-slate-200 text-xs font-bold text-gray-800 bg-white outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                                >
+                                  {TIME_OPTIONS.map(opt => (
+                                    <option key={opt} value={opt}>{opt}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">Ora Fine</label>
+                                <select 
+                                  required 
+                                  value={modOraFine}
+                                  onChange={e => setModOraFine(e.target.value)}
+                                  className="w-full p-2.5 rounded-xl border border-slate-200 text-xs font-bold text-gray-800 bg-white outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                                >
+                                  {TIME_OPTIONS.map(opt => (
+                                    <option key={opt} value={opt}>{opt}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+
+                            {modTipo !== 'smart' && (
+                              <>
+                                <div className="flex items-center gap-2.5 bg-slate-50 p-2.5 rounded-xl border border-slate-200/80">
+                                  <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-gray-800 select-none">
+                                    <input 
+                                      type="checkbox" 
+                                      checked={modPausaPranzo}
+                                      onChange={e => setModPausaPranzo(e.target.checked)}
+                                      className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                    />
+                                    <span>Pausa pranzo all'interno della fascia oraria</span>
+                                  </label>
+                                </div>
+
+                                {modPausaPranzo && (
+                                  <div className="animate-in slide-in-from-top-2 duration-200">
+                                    <label className="block text-xs font-bold text-gray-700 mb-1">Durata pausa pranzo da sottrarre</label>
+                                    <select 
+                                      value={modPausaPranzoOre}
+                                      onChange={e => setModPausaPranzoOre(e.target.value)}
+                                      className="w-full p-2.5 rounded-xl border border-slate-200 text-xs font-bold text-gray-800 bg-white outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                                    >
+                                      {PAUSA_PRANZO_OPTIONS.map(opt => (
+                                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               {/* Nota / Motivazione per HR (solo per dipendenti che inviano la richiesta) */}
               {!isHR && (
