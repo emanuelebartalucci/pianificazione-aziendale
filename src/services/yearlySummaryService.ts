@@ -146,10 +146,16 @@ export async function rebuildYearlySummary(
 
       // Calcolo ore basato sul contratto del dipendente
       const dipObj = dipendentiList.find(d => d.nome && d.nome.trim().toLowerCase() === dipNameClean);
-      const dailyContractHours = (dipObj && dipObj.oreSettimanali) ? (Number(dipObj.oreSettimanali) / 5) : 8;
-      const halfDayContractHours = dailyContractHours / 2;
+      let defaultDailyHours = 8;
+      if (dipObj) {
+        if (dipObj.oreContratto !== undefined && dipObj.oreContratto !== null && Number(dipObj.oreContratto) > 0) {
+          defaultDailyHours = Number(dipObj.oreContratto);
+        } else if (dipObj.oreSettimanali) {
+          defaultDailyHours = Number(dipObj.oreSettimanali) / 5;
+        }
+      }
 
-      const dates: { year: number; month: number }[] = [];
+      const dates: { year: number; month: number; dayOfWeek: number }[] = [];
       if (req.dataInizio && req.dataFine) {
         const [sY, sM, sD] = req.dataInizio.split('-').map(Number);
         const [eY, eM, eD] = req.dataFine.split('-').map(Number);
@@ -158,17 +164,19 @@ export async function rebuildYearlySummary(
           const end = new Date(eY, eM - 1, eD);
           while (curr <= end) {
             if (curr.getFullYear() === year) {
-              dates.push({ year, month: curr.getMonth() + 1 });
+              dates.push({ year, month: curr.getMonth() + 1, dayOfWeek: curr.getDay() });
             }
             curr.setDate(curr.getDate() + 1);
           }
         }
       } else if (req.data) {
-        const [sY, sM] = req.data.split('-').map(Number);
-        if (sY === year) dates.push({ year, month: sM });
+        const [sY, sM, sD] = req.data.split('-').map(Number);
+        if (sY === year) {
+          const dObj = new Date(sY, sM - 1, sD || 1);
+          dates.push({ year, month: sM, dayOfWeek: dObj.getDay() });
+        }
       }
 
-      const numDays = dates.length || 1;
       const isPart = req.frazioneTipo === 'mattina' || req.frazioneTipo === 'pomeriggio';
       const isOrario = req.frazioneTipo === 'orario';
 
@@ -179,12 +187,23 @@ export async function rebuildYearlySummary(
         let diff = (h2 + m2 / 60) - (h1 + m1 / 60);
         if (req.pausaPranzo && req.pausaPranzoOre) diff -= req.pausaPranzoOre;
         hours = Math.max(0, diff);
-      } else if (isPart) {
-        hours = numDays * halfDayContractHours;
       } else {
-        hours = numDays * dailyContractHours;
+        // Somma per ciascun giorno tenendo conto dell'orario contrattuale specifico della giornata
+        const weekdayKeys = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
+        for (const dt of dates) {
+          if (dt.dayOfWeek === 0 || dt.dayOfWeek === 6) continue; // weekend escluso
+          let dayH = defaultDailyHours;
+          if (dipObj?.orarioSettimanale) {
+            const k = weekdayKeys[dt.dayOfWeek] as keyof typeof dipObj.orarioSettimanale;
+            if (dipObj.orarioSettimanale[k] !== undefined) {
+              dayH = Number(dipObj.orarioSettimanale[k]);
+            }
+          }
+          hours += isPart ? (dayH / 2) : dayH;
+        }
       }
 
+      const numDays = dates.length || 1;
       const hoursPerDay = numDays > 0 ? hours / numDays : hours;
 
       if (isSmartWorking) {

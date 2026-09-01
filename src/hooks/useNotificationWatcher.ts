@@ -13,6 +13,7 @@ import {
   cleanupExpiredReadNotifications,
   type UserNotification 
 } from '../utils/userNotificationService';
+import { checkAndNotifyOverdueTasks } from '../utils/todoOverdueChecker';
 import { areNamesEqual } from '../contexts/AuthContext';
 
 interface UseNotificationWatcherParams {
@@ -928,6 +929,15 @@ export function useNotificationWatcher({
         });
       }, (err) => console.error("Errore listener notifiche personali:", err));
       unsubscribers.push(unsubPersonal);
+    }
+
+    // 6. CONTROLLO SCADENZE ATTIVITÀ TODO (Notifiche automatiche il giorno successivo alla scadenza alle ore 09:00)
+    if (normalizedEmail) {
+      checkAndNotifyOverdueTasks(dipendentiRef.current || dipendenti);
+      const overdueInterval = setInterval(() => {
+        checkAndNotifyOverdueTasks(dipendentiRef.current || dipendenti);
+      }, 15 * 60 * 1000);
+      unsubscribers.push(() => clearInterval(overdueInterval));
     }
 
     // Dopo il primo ciclo sincrono di attach dei listener, disabilita il flag di caricamento iniziale

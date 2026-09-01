@@ -16,7 +16,7 @@ export interface UserNotification {
   destinatarioNome: string;
   titolo: string;
   messaggio: string;
-  tipo: 'ferie_approvate' | 'presenze_approvate' | 'pianificazione_aggiornata' | 'suggerimento_ricevuto' | 'todo_assegnato' | 'todo_completato' | 'info';
+  tipo: 'ferie_approvate' | 'presenze_approvate' | 'pianificazione_aggiornata' | 'suggerimento_ricevuto' | 'todo_assegnato' | 'todo_completato' | 'todo_scaduto' | 'info';
   link?: string;
   letta: boolean;
   createdAt: string;
@@ -30,18 +30,26 @@ export async function createUserNotification(data: {
   destinatarioNome: string;
   titolo: string;
   messaggio: string;
-  tipo: 'ferie_approvate' | 'presenze_approvate' | 'pianificazione_aggiornata' | 'suggerimento_ricevuto' | 'todo_assegnato' | 'todo_completato' | 'info';
+  tipo: 'ferie_approvate' | 'presenze_approvate' | 'pianificazione_aggiornata' | 'suggerimento_ricevuto' | 'todo_assegnato' | 'todo_completato' | 'todo_scaduto' | 'info';
   link?: string;
 }) {
   if (!data.destinatarioEmail || !data.destinatarioEmail.trim()) return;
   const targetEmail = data.destinatarioEmail.toLowerCase().trim();
   try {
-    // Controllo anti-duplicazione: evita di creare notifiche identiche non lette per lo stesso utente
-    const qDuplicate = query(
-      collection(db, 'notifiche_utenti'),
-      where('destinatarioEmail', '==', targetEmail),
-      where('letta', '==', false)
-    );
+    // Controllo anti-duplicazione:
+    // Per 'todo_scaduto' controlliamo tutte le notifiche (anche se già lette) per non riproporre lo stesso alert
+    // Per gli altri tipi controlliamo solo le non lette
+    const qDuplicate = data.tipo === 'todo_scaduto'
+      ? query(
+          collection(db, 'notifiche_utenti'),
+          where('destinatarioEmail', '==', targetEmail)
+        )
+      : query(
+          collection(db, 'notifiche_utenti'),
+          where('destinatarioEmail', '==', targetEmail),
+          where('letta', '==', false)
+        );
+
     const existingSnap = await getDocs(qDuplicate);
     const isDuplicate = existingSnap.docs.some(docSnap => {
       const d = docSnap.data();
@@ -49,7 +57,7 @@ export async function createUserNotification(data: {
     });
 
     if (isDuplicate) {
-      // Notifica identica già presente e non letta, non duplicare
+      // Notifica identica già presente, non duplicare
       return;
     }
 
