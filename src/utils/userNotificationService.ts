@@ -139,3 +139,41 @@ export async function cleanupExpiredReadNotifications(userEmail: string) {
     console.error("Errore pulizia automatica notifiche lette scadute:", err);
   }
 }
+
+/**
+ * Segna come lette tutte le notifiche non lette che corrispondono a un tipo o contengono un percorso link
+ */
+export async function markNotificationsAsReadByFilter(
+  userEmail: string, 
+  filter: { tipo?: string; linkContains?: string }
+) {
+  if (!userEmail || !userEmail.trim()) return;
+  try {
+    const q = query(
+      collection(db, 'notifiche_utenti'),
+      where('destinatarioEmail', '==', userEmail.toLowerCase().trim()),
+      where('letta', '==', false)
+    );
+    const snap = await getDocs(q);
+    if (snap.empty) return;
+
+    const batch = writeBatch(db);
+    let count = 0;
+    snap.forEach(docSnap => {
+      const data = docSnap.data();
+      let match = true;
+      if (filter.tipo && data.tipo !== filter.tipo) match = false;
+      if (filter.linkContains && !(data.link || '').toLowerCase().includes(filter.linkContains.toLowerCase())) match = false;
+      if (match) {
+        batch.update(docSnap.ref, { letta: true });
+        count++;
+      }
+    });
+
+    if (count > 0) {
+      await batch.commit();
+    }
+  } catch (err) {
+    console.error("Errore marcatura notifiche come lette da filtro:", err);
+  }
+}

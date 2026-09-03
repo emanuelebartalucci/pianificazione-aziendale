@@ -6,7 +6,6 @@ import { Send, MessageSquare, Shield, RefreshCw, HeartPulse } from 'lucide-react
 import { useNavigate } from 'react-router-dom';
 import QuestionnaireModal from '../components/QuestionnaireModal';
 import { isSoci } from './Impostazioni';
-import { createUserNotification } from '../utils/userNotificationService';
 
 export default function Suggerimenti() {
   const navigate = useNavigate();
@@ -121,27 +120,6 @@ export default function Suggerimenti() {
         data: todayStr,
         stato: 'Nuovo'
       });
-
-      // Invia notifica in-app anonima a tutti gli account HR
-      try {
-        const hrSnap = await getDocs(collection(db, 'hr'));
-        const hrDocs = hrSnap.docs;
-        for (const hrDoc of hrDocs) {
-          const hrEmail = (hrDoc.data().email || '').toLowerCase().trim();
-          if (hrEmail) {
-            await createUserNotification({
-              destinatarioEmail: hrEmail,
-              destinatarioNome: 'Ufficio HR',
-              titolo: 'Cassetta delle Idee',
-              messaggio: `È arrivato un nuovo suggerimento anonimo nella Cassetta delle Idee (Categoria: ${categoria}).`,
-              tipo: 'suggerimento_ricevuto',
-              link: '/gestione-hr'
-            });
-          }
-        }
-      } catch (notifErr) {
-        console.error("Errore invio notifica agli HR:", notifErr);
-      }
 
       setCategoria('');
       setTesto('');

@@ -5,7 +5,7 @@ import { collection, doc, setDoc, updateDoc, addDoc, deleteDoc, getDocs, runTran
 import { Briefcase, ChevronLeft, ChevronRight, ChevronDown, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw, Printer, Plus, UserCheck, MoveVertical, Building2, Send, Info, Mail, User, Folder, FolderOpen, ListTodo, Check, CheckCircle2, Clock, AlertTriangle, ExternalLink } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays } from '../utils/date';
 import { queueMail } from '../utils/mailSender';
-import { createUserNotification } from '../utils/userNotificationService';
+import { createUserNotification, markNotificationsAsReadByFilter } from '../utils/userNotificationService';
 import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
 import ConfirmModal from '../components/ConfirmModal';
 import { PianificazioneModal } from '../components/PianificazioneModal';
@@ -746,6 +746,12 @@ export default function Commesse() {
   const [newTaskAssegnatoA, setNewTaskAssegnatoA] = useState('');
   const [isSavingTask, setIsSavingTask] = useState(false);
   const [editingTask, setEditingTask] = useState<PunchListItem | null>(null);
+
+  useEffect(() => {
+    if (selectedCommessaForPunchList?.id && userEmail) {
+      markNotificationsAsReadByFilter(userEmail, { linkContains: `todoCommessaId=${selectedCommessaForPunchList.id}` });
+    }
+  }, [selectedCommessaForPunchList?.id, userEmail]);
 
   // Stati e ref per menu a tendina personalizzati ToDo List (zero flickering)
   const [isCatDropdownOpen, setIsCatDropdownOpen] = useState(false);

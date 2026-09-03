@@ -7,6 +7,7 @@ import ConfirmModal from '../components/ConfirmModal';
 import QuestionnaireModal from '../components/QuestionnaireModal';
 import AnagraficaRisorseSection from '../components/AnagraficaRisorseSection';
 import { DEFAULT_QUESTIONS } from '../utils/defaultQuestionnaire';
+import { markNotificationsAsReadByFilter } from '../utils/userNotificationService';
 
 interface Suggerimento {
   id: string;
@@ -142,7 +143,7 @@ const ClimaTrendChart = ({ responses, days, onDaysChange }: { responses: Rispost
 };
 
 export default function GestioneHR() {
-  const { isHR, isDev } = useAuth();
+  const { isHR, isDev, userEmail } = useAuth();
   const [activeTab, setActiveTab] = useState<'greetings' | 'wellness' | 'surveys' | 'ideas' | 'risorse'>('greetings');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
 
@@ -334,7 +335,11 @@ export default function GestioneHR() {
 
   useEffect(() => {
     loadData();
-  }, [isHR, isDev]);
+    if (userEmail) {
+      markNotificationsAsReadByFilter(userEmail, { linkContains: '/gestione-hr' });
+      markNotificationsAsReadByFilter(userEmail, { tipo: 'suggerimento_ricevuto' });
+    }
+  }, [isHR, isDev, userEmail]);
 
   // Handlers Frasi Benvenuto
   const handleAddGreeting = async (e: React.FormEvent) => {
@@ -543,6 +548,10 @@ export default function GestioneHR() {
     try {
       await setDoc(doc(db, 'suggerimenti', id), { stato: newStato }, { merge: true });
       loadData();
+      if (userEmail) {
+        markNotificationsAsReadByFilter(userEmail, { linkContains: '/gestione-hr' });
+        markNotificationsAsReadByFilter(userEmail, { tipo: 'suggerimento_ricevuto' });
+      }
       showToast(newStato === 'Letto' ? "Suggerimento contrassegnato come Letto!" : "Suggerimento ripristinato come Non Letto!");
     } catch (err) {
       showToast("Errore aggiornamento stato", "error");

@@ -10,6 +10,7 @@ import {
 import { 
   markNotificationAsRead, 
   markAllNotificationsAsRead,
+  markNotificationsAsReadByFilter,
   cleanupExpiredReadNotifications,
   type UserNotification 
 } from '../utils/userNotificationService';
@@ -245,7 +246,7 @@ export function useNotificationWatcher({
         ferie: countsMap.ferieHR + countsMap.personalUnreadFerie,
         presenze: countsMap.presenzeHR + countsMap.weekendHR + countsMap.sollecitiPresenzeUser + countsMap.personalUnreadPresenze,
         pianificazione: countsMap.disponibilitaCoord + countsMap.richiesteDisegnatoriCoord,
-        gestioneHr: countsMap.suggerimentiHR + countsMap.personalUnreadGestioneHr,
+        gestioneHr: countsMap.suggerimentiHR,
         commesse: countsMap.personalUnreadCommesse
       });
 
@@ -422,17 +423,57 @@ export function useNotificationWatcher({
       }, (err) => console.error("Errore listener weekend HR:", err));
       unsubscribers.push(unsubWeekend);
 
-      // Suggerimenti non letti per HR / Gestione HR
+      // Suggerimenti per HR / Gestione HR (Cassetta delle Idee)
+      if (normalizedEmail) {
+        // Pulisci in background eventuali vecchie notifiche duplicate personali
+        markNotificationsAsReadByFilter(normalizedEmail, { tipo: 'suggerimento_ricevuto' });
+      }
+
       const qSuggerimentiHR = collection(db, 'suggerimenti');
       const unsubSug = onSnapshot(qSuggerimentiHR, (snap) => {
         let unreadCount = 0;
+        const items: OperativeNotificationItem[] = [];
         snap.forEach(docSnap => {
-          const st = (docSnap.data().stato || '').trim();
-          if (st !== 'Letto' && st !== 'Archiviato') {
-            unreadCount++;
+          const data = docSnap.data();
+          const st = (data.stato || 'Nuovo').trim();
+          const isPending = st !== 'Letto' && st !== 'Archiviato';
+          if (isPending) unreadCount++;
+
+          const rawDate = data.createdAt || data.data || data.timestamp;
+          const created = normalizeIsoDate(rawDate) || '';
+
+          items.push({
+            id: `suggerimento-${docSnap.id}`,
+            category: 'suggerimenti',
+            titolo: `💡 Suggerimento: ${data.categoria || 'Cassetta Idee'}`,
+            messaggio: data.testo ? (data.testo.length > 120 ? data.testo.substring(0, 120) + '...' : data.testo) : 'Nuovo messaggio anonimo.',
+            link: '/gestione-hr',
+            createdAt: created || new Date(0).toISOString(),
+            badgeLabel: isPending ? (st === 'Nuovo' ? 'Nuovo' : 'Da Leggere') : '✓ Letto',
+            isPending,
+            stato: st
+          });
+        });
+
+        operativeItemsMap.suggerimenti = items;
+        countsMap.suggerimentiHR = unreadCount;
+
+        snap.docChanges().forEach((change) => {
+          if (change.type === 'added') {
+            const docId = change.doc.id;
+            const data = change.doc.data();
+            const st = (data.stato || 'Nuovo').trim();
+            const isPending = st !== 'Letto' && st !== 'Archiviato';
+            if (isPending && !isInitialLoadRef.current && !knownIdsRef.current.has(docId)) {
+              sendDesktopNotification("Cassetta delle Idee: Nuovo Suggerimento", {
+                body: `È arrivato un nuovo suggerimento anonimo (${data.categoria || 'Generale'}).`,
+                tag: `suggerimento-${docId}`
+              });
+            }
+            knownIdsRef.current.add(docId);
           }
         });
-        countsMap.suggerimentiHR = unreadCount;
+
         updateAndNotify();
       }, (err) => console.error("Errore listener suggerimenti HR:", err));
       unsubscribers.push(unsubSug);

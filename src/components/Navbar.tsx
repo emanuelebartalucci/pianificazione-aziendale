@@ -587,14 +587,15 @@ export default function Navbar() {
                                 setIsNotifOpen(false);
                                 navigate(op.link);
                               }}
-                              className="p-3.5 flex items-start gap-3 bg-red-50/30 hover:bg-red-100/60 border-l-4 border-red-500 transition-colors cursor-pointer"
+                              title={`${op.titolo}\n\n${op.messaggio}`}
+                              className="group p-3.5 flex items-start gap-3 bg-red-50/30 hover:bg-red-100/60 border-l-4 border-red-500 transition-all cursor-pointer"
                             >
                               <div className="mt-0.5 p-2 rounded-xl bg-red-100 text-red-600 border border-red-200 shrink-0 shadow-2xs">
                                 <Bell className="w-4 h-4 text-red-600" />
                               </div>
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center justify-between gap-1 mb-0.5">
-                                  <h4 className="text-xs font-black text-red-950 truncate">
+                                  <h4 className="text-xs font-black text-red-950 truncate group-hover:whitespace-normal group-hover:overflow-visible transition-all">
                                     {op.titolo}
                                   </h4>
                                   {op.badgeLabel && (
@@ -603,7 +604,7 @@ export default function Navbar() {
                                     </span>
                                   )}
                                 </div>
-                                <p className="text-[11px] text-red-800/90 line-clamp-2 leading-relaxed">
+                                <p className="text-[11px] text-red-800/90 line-clamp-2 group-hover:line-clamp-none leading-relaxed transition-all break-words">
                                   {op.messaggio}
                                 </p>
                               </div>
@@ -627,14 +628,15 @@ export default function Navbar() {
                                 return (
                                   <div
                                     key={item.id}
-                                    className="p-3.5 flex items-start gap-3 bg-white border-l-4 border-emerald-400 select-text cursor-default"
+                                    title={`${item.titolo}\n\n${item.messaggio}`}
+                                    className="group p-3.5 flex items-start gap-3 bg-white hover:bg-gray-50/90 border-l-4 border-emerald-400 select-text cursor-default transition-all"
                                   >
                                     <div className="mt-0.5 p-2 rounded-xl bg-emerald-50 border border-emerald-100 shrink-0 shadow-2xs">
                                       <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                                     </div>
                                     <div className="flex-1 min-w-0">
                                       <div className="flex items-center justify-between gap-1 mb-0.5">
-                                        <h4 className="text-xs font-bold text-gray-800 truncate">
+                                        <h4 className="text-xs font-bold text-gray-800 truncate group-hover:whitespace-normal group-hover:overflow-visible transition-all">
                                           {item.titolo}
                                         </h4>
                                         <span className="text-[10px] text-gray-400 font-medium shrink-0 flex items-center gap-0.5">
@@ -642,7 +644,7 @@ export default function Navbar() {
                                           {formatRelativeTime(item.createdAt)}
                                         </span>
                                       </div>
-                                      <p className="text-[11px] text-gray-600 line-clamp-2 leading-relaxed">
+                                      <p className="text-[11px] text-gray-600 line-clamp-2 group-hover:line-clamp-none leading-relaxed transition-all break-words">
                                         {item.messaggio}
                                       </p>
                                       {item.badgeLabel && (
@@ -669,19 +671,19 @@ export default function Navbar() {
                                 <div
                                   key={item.id}
                                   onClick={() => handleNotifClick(n)}
-                                  className={`p-3.5 flex items-start gap-3 transition-colors cursor-pointer ${
+                                  className={`group p-3.5 flex items-start gap-3 transition-all cursor-pointer ${
                                     isUnread 
                                       ? 'bg-blue-50/30 border-l-4 border-blue-500 hover:bg-blue-50/60' 
                                       : 'bg-white hover:bg-gray-50'
                                   }`}
-                                  title={n.link ? "Clicca per aprire la sezione" : undefined}
+                                  title={`${n.titolo}\n\n${n.messaggio}${n.link ? '\n(Clicca per aprire la sezione)' : ''}`}
                                 >
                                   <div className="mt-0.5 p-2 rounded-xl bg-gray-50 border border-gray-100 shrink-0 shadow-2xs">
                                     {getNotifIcon(n.tipo)}
                                   </div>
                                   <div className="flex-1 min-w-0">
                                     <div className="flex items-center justify-between gap-1 mb-0.5">
-                                      <h4 className={`text-xs truncate ${isUnread ? 'font-black text-gray-900' : 'font-bold text-gray-700'}`}>
+                                      <h4 className={`text-xs truncate group-hover:whitespace-normal group-hover:overflow-visible transition-all ${isUnread ? 'font-black text-gray-900' : 'font-bold text-gray-700'}`}>
                                         {n.titolo}
                                       </h4>
                                       <span className="text-[10px] text-gray-400 font-medium shrink-0 flex items-center gap-0.5">
@@ -689,7 +691,7 @@ export default function Navbar() {
                                         {formatRelativeTime(n.createdAt)}
                                       </span>
                                     </div>
-                                    <p className="text-[11px] text-gray-600 line-clamp-2 leading-relaxed">
+                                    <p className="text-[11px] text-gray-600 line-clamp-2 group-hover:line-clamp-none leading-relaxed transition-all break-words">
                                       {n.messaggio}
                                     </p>
                                   </div>

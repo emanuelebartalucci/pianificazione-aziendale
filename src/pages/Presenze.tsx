@@ -6,7 +6,7 @@ import { FileText, Printer, Save, Send, CheckCircle, AlertCircle, Edit, Edit3, T
 import { queueMail } from '../utils/mailSender';
 import ConfirmModal from '../components/ConfirmModal';
 import { isItalianHoliday, isWeekend as isWeekendGlobal } from '../utils/date';
-import { createUserNotification } from '../utils/userNotificationService';
+import { createUserNotification, markNotificationsAsReadByFilter } from '../utils/userNotificationService';
 
 export { isItalianHoliday };
 
@@ -376,6 +376,13 @@ export default function Presenze() {
       setViewMode('hr');
     }
   }, [isSocio, viewMode]);
+
+  useEffect(() => {
+    if (userEmail) {
+      markNotificationsAsReadByFilter(userEmail, { tipo: 'presenze_approvate' });
+      markNotificationsAsReadByFilter(userEmail, { linkContains: '/presenze' });
+    }
+  }, [userEmail]);
 
   // State for Employee Mode
   const [rapportino, setRapportino] = useState<RapportinoPresenze | null>(null);

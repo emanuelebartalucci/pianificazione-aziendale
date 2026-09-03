@@ -31,7 +31,7 @@ import {
   ShoppingBag
 } from 'lucide-react';
 import ConfirmModal from '../components/ConfirmModal';
-import { createUserNotification } from '../utils/userNotificationService';
+import { createUserNotification, markNotificationsAsReadByFilter } from '../utils/userNotificationService';
 
 export type SedeAziendale = 'Sede Via Diaz' | 'Sede Via Gramsci' | 'Sede Siena/Rosia';
 
@@ -253,6 +253,12 @@ export default function Forniture() {
       setActiveTab('nuova');
     }
   }, [searchParams, isGestoreForniture]);
+
+  useEffect(() => {
+    if (activeTab === 'mie' && userEmail) {
+      markNotificationsAsReadByFilter(userEmail, { linkContains: '/forniture' });
+    }
+  }, [activeTab, userEmail]);
 
   useEffect(() => {
     // Esegui la pulizia in background delle richieste con più di 60 giorni

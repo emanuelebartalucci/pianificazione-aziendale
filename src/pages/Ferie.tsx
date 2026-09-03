@@ -8,7 +8,7 @@ import { getPrintFooterHtml, getPrintDateString, APP_VERSION } from '../config/v
 import { isCollaboratore, isSoci } from './Impostazioni';
 import ResourceAnalyticsModal from '../components/ResourceAnalyticsModal';
 import { rebuildYearlySummary } from '../services/yearlySummaryService';
-import { createUserNotification } from '../utils/userNotificationService';
+import { createUserNotification, markNotificationsAsReadByFilter } from '../utils/userNotificationService';
 import { queueMail } from '../utils/mailSender';
 import { getSociNotificationEmails } from '../utils/emailTemplateManager';
 
@@ -155,6 +155,13 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       }
     }
   }, [myAssociatedName]);
+
+  useEffect(() => {
+    if (userEmail) {
+      markNotificationsAsReadByFilter(userEmail, { tipo: 'ferie_approvate' });
+      markNotificationsAsReadByFilter(userEmail, { linkContains: '/ferie' });
+    }
+  }, [userEmail]);
 
   const effectiveMyAssociatedName = myAssociatedName || getInitialTargetDipName('');
   const targetDipName = (isHR || isAdmin) ? (dipendenteSelezionato || effectiveMyAssociatedName) : effectiveMyAssociatedName;
