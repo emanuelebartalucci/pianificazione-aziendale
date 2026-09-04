@@ -73,7 +73,7 @@ const areNamesEqual = (name1?: string, name2?: string): boolean => {
   return parts1 === parts2;
 };
 
-export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
+const PianificazioneModalContent: React.FC<PianificazioneModalProps> = ({
   isOpen,
   onClose,
   initialTab = 'commessa',
@@ -233,7 +233,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
       setActiveTab(initialTab);
       setSelectedCommessaId(initialCommessaId);
       setSelectedResourceForTab(initialResourceName);
-      setDraftAssignments(JSON.parse(JSON.stringify(assegnazioni)));
+      setDraftAssignments({ ...assegnazioni });
       setHasChanges(false);
       setAddResourceName('');
       setAddResourcePercentage('100');
@@ -456,46 +456,89 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   };
 
-  const isResourceOnFullWeekLeave = (resName: string, weekId: string): boolean => {
-    if (!resName || !weekId || !approvedLeaves || approvedLeaves.length === 0) return false;
-    const weekOpt = selectableWeekOptions.find(o => o.id === weekId);
-    if (!weekOpt) return false;
+  const fullWeekLeavesSet = useMemo(() => {
+    const set = new Set<string>();
+    if (!approvedLeaves || approvedLeaves.length === 0) return set;
 
-    const monday = new Date(weekOpt.mondayStr);
-    const workDates: string[] = [];
-    for (let i = 0; i < 5; i++) {
-      const d = addDays(monday, i);
-      const dStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-      if (!isItalianHoliday(dStr)) {
-        workDates.push(dStr);
+    const normKey = (name: string, wkId: string) => `${name.toLowerCase().replace(/\s+/g, ' ').trim()}_${wkId}`;
+
+    const weekWorkDaysCache = new Map<string, number>();
+    selectableWeekOptions.forEach(weekOpt => {
+      const monday = new Date(weekOpt.mondayStr);
+      let count = 0;
+      for (let i = 0; i < 5; i++) {
+        const d = addDays(monday, i);
+        const dStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        if (!isItalianHoliday(dStr)) count++;
       }
-    }
+      weekWorkDaysCache.set(weekOpt.id, Math.max(1, count));
+    });
 
-    if (workDates.length === 0) return false;
+    const resourceWeekDaysMap = new Map<string, Set<string>>();
 
-    const resLeaves = approvedLeaves.filter((r: any) => {
-      if (!r.dipendenteName) return false;
-      if (!areNamesEqual(r.dipendenteName, resName)) return false;
-      if (r.stato !== 'Approvato') return false;
+    approvedLeaves.forEach((r: any) => {
+      if (!r.dipendenteName || r.stato !== 'Approvato') return;
       const t = r.tipo || 'ferie';
-      return ['ferie', 'assenza', 'malattia', 'maternita'].includes(t);
+      if (!['ferie', 'assenza', 'malattia', 'maternita'].includes(t)) return;
+      if (r.frazioneTipo && r.frazioneTipo !== 'giornata') return;
+
+      const dStart = r.dataInizio || r.data;
+      const dEnd = r.dataFine || r.data;
+      if (!dStart || !dEnd) return;
+
+      const [sY, sM, sD] = dStart.split('-').map(Number);
+      const [eY, eM, eD] = dEnd.split('-').map(Number);
+      if (isNaN(sY) || isNaN(eY)) return;
+
+      const curr = new Date(sY, sM - 1, sD);
+      const last = new Date(eY, eM - 1, eD);
+
+      const canonicalDip = (dipendenti || []).find(d => areNamesEqual(d.nome, r.dipendenteName));
+      const targetNames = [r.dipendenteName];
+      if (canonicalDip && canonicalDip.nome !== r.dipendenteName) targetNames.push(canonicalDip.nome);
+
+      while (curr <= last) {
+        const dow = curr.getDay();
+        if (dow >= 1 && dow <= 5) {
+          const y = curr.getFullYear();
+          const m = String(curr.getMonth() + 1).padStart(2, '0');
+          const ds = String(curr.getDate()).padStart(2, '0');
+          const dateStr = `${y}-${m}-${ds}`;
+
+          if (!isItalianHoliday(dateStr)) {
+            const wkNum = getWeekNumber(curr);
+            const wkId = `${y}-W${wkNum}`;
+
+            targetNames.forEach(tName => {
+              const k = normKey(tName, wkId);
+              let s = resourceWeekDaysMap.get(k);
+              if (!s) {
+                s = new Set();
+                resourceWeekDaysMap.set(k, s);
+              }
+              s.add(dateStr);
+            });
+          }
+        }
+        curr.setDate(curr.getDate() + 1);
+      }
     });
 
-    if (resLeaves.length === 0) return false;
-
-    let coveredCount = 0;
-    workDates.forEach(dateStr => {
-      const isCovered = resLeaves.some((r: any) => {
-        const dStart = r.dataInizio || r.data;
-        const dEnd = r.dataFine || r.data;
-        if (!dStart || !dEnd) return false;
-        if (r.frazioneTipo && r.frazioneTipo !== 'giornata') return false;
-        return dateStr >= dStart && dateStr <= dEnd;
-      });
-      if (isCovered) coveredCount++;
+    resourceWeekDaysMap.forEach((daysSet, k) => {
+      const wkId = k.split('_')[1];
+      const required = weekWorkDaysCache.get(wkId) || 5;
+      if (daysSet.size >= required) {
+        set.add(k);
+      }
     });
 
-    return coveredCount >= workDates.length;
+    return set;
+  }, [approvedLeaves, selectableWeekOptions, dipendenti]);
+
+  const isResourceOnFullWeekLeave = (resName: string, weekId: string): boolean => {
+    if (!resName || !weekId) return false;
+    const norm = `${resName.toLowerCase().replace(/\s+/g, ' ').trim()}_${weekId}`;
+    return fullWeekLeavesSet.has(norm);
   };
 
   // Risorse Assegnate e Non Assegnate alla Commessa nel periodo (usa la bozza locale draftAssignments)
@@ -2346,4 +2389,9 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
       </div>
     </div>
   );
+};
+
+export const PianificazioneModal: React.FC<PianificazioneModalProps> = (props) => {
+  if (!props.isOpen) return null;
+  return <PianificazioneModalContent {...props} />;
 };

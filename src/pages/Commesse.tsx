@@ -2207,8 +2207,10 @@ export default function Commesse() {
     }
   };
 
+  const hasRunUnifyRef = useRef(false);
   useEffect(() => {
-    if (canManageCatalogo && commesse && commesse.length > 0 && clientiList && clientiList.length > 0) {
+    if (!hasRunUnifyRef.current && canManageCatalogo && commesse && commesse.length > 0 && clientiList && clientiList.length > 0) {
+      hasRunUnifyRef.current = true;
       handleUnifyClientNames();
     }
   }, [canManageCatalogo, commesse, clientiList]);

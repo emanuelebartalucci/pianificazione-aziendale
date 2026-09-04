@@ -1069,11 +1069,27 @@ export default function PianificazionePersonale() {
     return filteredDipendenti.filter(d => !assegnateNames.has(d.nome));
   }, [filteredDipendenti, risorseAssegnateAllaCommessa]);
 
-  const leavesMap = useMemo(() => {
-    const map: Record<string, { giorno: string; tipo: string; frazioneTipo?: string; oraInizio?: string; oraFine?: string; pausaPranzo?: boolean; pausaPranzoOre?: number; dettagli: string }[]> = {};
+  // Calcolo unificato, ultra-performante e pre-indicizzato delle ferie e assenze per risorsa e settimana (O(1) lookups)
+  const resourceWeekLeavesMap = useMemo(() => {
+    const map = new Map<string, { leaves: any[]; isFullLeave: boolean }>();
     if (!approvedLeaves || approvedLeaves.length === 0) return map;
 
     const dayNames = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
+
+    // Cache dei giorni lavorativi effettivi per ogni settimana (calcolo festività fatto UNA sola volta per settimana)
+    const weekWorkDaysCache = new Map<string, number>();
+    (selectableWeekOptions || []).forEach(weekOpt => {
+      const monday = new Date(weekOpt.mondayStr);
+      let count = 0;
+      for (let i = 0; i < 5; i++) {
+        const d = addDays(monday, i);
+        const dStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        if (!isItalianHoliday(dStr)) count++;
+      }
+      weekWorkDaysCache.set(weekOpt.id, Math.max(1, count));
+    });
+
+    const normalizeKey = (name: string, wkId: string): string => `${name.toLowerCase().replace(/\s+/g, ' ').trim()}_${wkId}`;
 
     approvedLeaves.forEach((leave: any) => {
       const resName = leave.dipendenteName;
@@ -1089,7 +1105,6 @@ export default function PianificazionePersonale() {
       const curr = new Date(sY, sM - 1, sD);
       const last = new Date(eY, eM - 1, eD);
 
-      // Associa sia il nome grezzo che il nome canonico per garantire match ovunque
       const canonicalDip = (dipendenti || []).find(d => areNamesEqual(d.nome, resName));
       const targetNames = [resName];
       if (canonicalDip && canonicalDip.nome !== resName) {
@@ -1108,34 +1123,40 @@ export default function PianificazionePersonale() {
             const wkNum = getWeekNumber(curr);
             const wkId = `${y}-W${wkNum}`;
 
-            targetNames.forEach(tName => {
-              const key = `${tName}-${wkId}`;
-              if (!map[key]) map[key] = [];
-
-              const dayName = dayNames[dow - 1];
-              const alreadyExists = map[key].some(l => l.giorno === dayName);
-
-              if (!alreadyExists) {
-                let label = (leave.tipo === 'ferie' || leave.tipo === 'assenza') ? 'Ferie' : leave.tipo === 'malattia' ? 'Malattia' : leave.tipo === 'maternita' ? 'Maternità' : leave.tipo === 'smart' ? 'Smart' : leave.tipo === 'ex_l104' ? 'ex L.104' : leave.tipo === 'studio' ? 'Studio' : (leave.tipo || 'Assenza');
-                if (leave.tipo === 'mattina' || leave.frazioneTipo === 'mattina') label = 'Ass. Matt.';
-                if (leave.tipo === 'pomeriggio' || leave.frazioneTipo === 'pomeriggio') label = 'Ass. Pom.';
-                if (leave.tipo === 'permesso' || leave.tipo === 'ex_l104' || leave.tipo === 'studio' || leave.frazioneTipo === 'orario') {
-                  if (leave.oraInizio && leave.oraFine) {
-                    label = `${leave.tipo === 'ex_l104' ? 'L.104' : (leave.tipo === 'studio' ? 'Studio' : 'Perm.')} (${leave.oraInizio}-${leave.oraFine})`;
-                  }
-                }
-
-                map[key].push({
-                  giorno: dayName,
-                  tipo: leave.tipo,
-                  frazioneTipo: leave.frazioneTipo,
-                  oraInizio: leave.oraInizio,
-                  oraFine: leave.oraFine,
-                  pausaPranzo: leave.pausaPranzo,
-                  pausaPranzoOre: leave.pausaPranzoOre,
-                  dettagli: label
-                });
+            let label = (leave.tipo === 'ferie' || leave.tipo === 'assenza') ? 'Ferie' : leave.tipo === 'malattia' ? 'Malattia' : leave.tipo === 'maternita' ? 'Maternità' : leave.tipo === 'smart' ? 'Smart' : leave.tipo === 'ex_l104' ? 'ex L.104' : leave.tipo === 'studio' ? 'Studio' : (leave.tipo || 'Assenza');
+            if (leave.tipo === 'mattina' || leave.frazioneTipo === 'mattina') label = 'Ass. Matt.';
+            if (leave.tipo === 'pomeriggio' || leave.frazioneTipo === 'pomeriggio') label = 'Ass. Pom.';
+            if (leave.tipo === 'permesso' || leave.tipo === 'ex_l104' || leave.tipo === 'studio' || leave.frazioneTipo === 'orario') {
+              if (leave.oraInizio && leave.oraFine) {
+                label = `${leave.tipo === 'ex_l104' ? 'L.104' : (leave.tipo === 'studio' ? 'Studio' : 'Perm.')} (${leave.oraInizio}-${leave.oraFine})`;
               }
+            }
+
+            const dayName = dayNames[dow - 1];
+            const leaveItem = {
+              giorno: dayName,
+              tipo: leave.tipo,
+              frazioneTipo: leave.frazioneTipo,
+              oraInizio: leave.oraInizio,
+              oraFine: leave.oraFine,
+              pausaPranzo: leave.pausaPranzo,
+              pausaPranzoOre: leave.pausaPranzoOre,
+              dettagli: label
+            };
+
+            targetNames.forEach(tName => {
+              const k1 = normalizeKey(tName, wkId);
+              const k2 = `${tName}-${wkId}`;
+              [k1, k2].forEach(k => {
+                let entry = map.get(k);
+                if (!entry) {
+                  entry = { leaves: [], isFullLeave: false };
+                  map.set(k, entry);
+                }
+                if (!entry.leaves.some(l => l.giorno === dayName)) {
+                  entry.leaves.push(leaveItem);
+                }
+              });
             });
           }
         }
@@ -1143,50 +1164,40 @@ export default function PianificazionePersonale() {
       }
     });
 
+    // Calcolo isFullLeave per ogni risorsa e settimana censita
+    map.forEach((entry, key) => {
+      const wkId = key.includes('_') ? key.split('_')[1] : key.split('-')[1];
+      const requiredDays = weekWorkDaysCache.get(wkId) || 5;
+
+      const fullLeaveDays = entry.leaves.filter(l => 
+        l.tipo === 'ferie' || 
+        l.tipo === 'assenza' ||
+        l.tipo === 'malattia' || 
+        l.tipo === 'maternita' || 
+        l.frazioneTipo === 'giornata' ||
+        (l.tipo !== 'smart' && l.tipo !== 'permesso' && l.tipo !== 'ex_l104' && l.tipo !== 'studio' && l.tipo !== 'mattina' && l.tipo !== 'pomeriggio' && l.frazioneTipo !== 'orario' && l.frazioneTipo !== 'mattina' && l.frazioneTipo !== 'pomeriggio')
+      );
+      const uniqueDays = new Set(fullLeaveDays.map(l => l.giorno));
+      entry.isFullLeave = uniqueDays.size >= requiredDays;
+    });
+
     return map;
-  }, [approvedLeaves, dipendenti]);
+  }, [approvedLeaves, dipendenti, selectableWeekOptions]);
+
+  const EMPTY_LEAVE_DATA = { leaves: [], isFullLeave: false };
 
   const getLeavesForResourceInWeek = (resName: string, wkId: string) => {
-    if (!resName || !wkId) return [];
-    if (leavesMap[`${resName}-${wkId}`]) return leavesMap[`${resName}-${wkId}`];
-    // Fallback con matching resiliente
-    for (const key of Object.keys(leavesMap)) {
-      const match = key.match(/^(.*)-(\d{4}-W\d{1,2})$/);
-      if (match && match[2] === wkId && areNamesEqual(match[1], resName)) {
-        return leavesMap[key];
-      }
-    }
-    return [];
+    if (!resName || !wkId) return EMPTY_LEAVE_DATA.leaves;
+    const normKey = `${resName.toLowerCase().replace(/\s+/g, ' ').trim()}_${wkId}`;
+    const entry = resourceWeekLeavesMap.get(normKey) || resourceWeekLeavesMap.get(`${resName}-${wkId}`);
+    return entry ? entry.leaves : EMPTY_LEAVE_DATA.leaves;
   };
 
   const isFullWeekLeave = (resName: string, wkId: string): boolean => {
-    const leaves = getLeavesForResourceInWeek(resName, wkId);
-    if (!leaves || leaves.length === 0) return false;
-
-    // Calcola i giorni lavorativi della settimana escludendo le festività nazionali
-    const weekOpt = selectableWeekOptions.find(o => o.id === wkId);
-    let workingDaysInWeek = 5;
-    if (weekOpt) {
-      const monday = new Date(weekOpt.mondayStr);
-      let count = 0;
-      for (let i = 0; i < 5; i++) {
-        const d = addDays(monday, i);
-        const dStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-        if (!isItalianHoliday(dStr)) count++;
-      }
-      workingDaysInWeek = Math.max(1, count);
-    }
-
-    const fullLeaveDays = leaves.filter(l => 
-      l.tipo === 'ferie' || 
-      l.tipo === 'assenza' ||
-      l.tipo === 'malattia' || 
-      l.tipo === 'maternita' || 
-      l.frazioneTipo === 'giornata' ||
-      (l.tipo !== 'smart' && l.tipo !== 'permesso' && l.tipo !== 'ex_l104' && l.tipo !== 'studio' && l.tipo !== 'mattina' && l.tipo !== 'pomeriggio' && l.frazioneTipo !== 'orario' && l.frazioneTipo !== 'mattina' && l.frazioneTipo !== 'pomeriggio')
-    );
-    const uniqueDays = new Set(fullLeaveDays.map(l => l.giorno));
-    return uniqueDays.size >= workingDaysInWeek;
+    if (!resName || !wkId) return false;
+    const normKey = `${resName.toLowerCase().replace(/\s+/g, ' ').trim()}_${wkId}`;
+    const entry = resourceWeekLeavesMap.get(normKey) || resourceWeekLeavesMap.get(`${resName}-${wkId}`);
+    return entry ? entry.isFullLeave : false;
   };
 
   const commesseAssegnateAllaRisorsa = useMemo(() => {
@@ -1223,7 +1234,7 @@ export default function PianificazionePersonale() {
       console.error(e);
       return [];
     }
-  }, [assignments, selectedResourceForTab, allocDataInizio, allocDataFine, commesse, leavesMap]);
+  }, [assignments, selectedResourceForTab, allocDataInizio, allocDataFine, commesse, resourceWeekLeavesMap]);
 
   const resourceLeaveInfoForPeriod = useMemo(() => {
     if (!selectedResourceForTab || !allocDataInizio || !allocDataFine) {
@@ -1256,11 +1267,11 @@ export default function PianificazionePersonale() {
       isFullyOnLeave, 
       leaveWeekLabels, 
       hasAnyLeave, 
-      fullLeaveCount,
+      fullLeaveCount, 
       totalWeeks: targetWeekIds.length,
       leaveDaysDetails 
     };
-  }, [selectedResourceForTab, allocDataInizio, allocDataFine, selectableWeekOptions, leavesMap]);
+  }, [selectedResourceForTab, allocDataInizio, allocDataFine, selectableWeekOptions, resourceWeekLeavesMap]);
 
   // Pulizia automatica delle assegnazioni storiche residue per le settimane in cui la risorsa è in ferie piena
   useEffect(() => {
@@ -1283,7 +1294,7 @@ export default function PianificazionePersonale() {
         }
       }
     });
-  }, [selectedResourceForTab, allocDataInizio, allocDataFine, leavesMap, assignments]);
+  }, [selectedResourceForTab, allocDataInizio, allocDataFine, resourceWeekLeavesMap, assignments]);
 
   useEffect(() => {
     setCommesseToRemove([]);

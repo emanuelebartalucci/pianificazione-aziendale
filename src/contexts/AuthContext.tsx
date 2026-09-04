@@ -495,15 +495,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   // così che la simulazione mostri l'esatta esperienza e permessi dell'utente impersonificato.
   const isDev = isDevEmail(userEmail);
   const isSocio = userEmail.includes('aprofeti') || userEmail.includes('mcorbellini') || userEmail.includes('profeti') || userEmail.includes('corbellini');
-  // Ruoli cumulativi: il ruolo Sviluppatore è additivo e non azzera i ruoli operativi legittimamente assegnati
-  const isAdmin = isSocio || DEFAULT_ADMINS.some(e => e.toLowerCase().trim() === userEmail) || dynamicAdmins.some(e => e.toLowerCase().trim() === userEmail);
-  const isHR = dynamicHrs.some(e => e.toLowerCase().trim() === userEmail);
+
+  // isLeadDevActive: attivo solo per il Lead Developer (Emanuele Bartalucci) quando NON sta simulando un altro utente.
+  // In questa modalità ordinaria, i ruoli operativi aziendali (Admin, Gestione Catalogo Commesse, HR, Commerciale, Forniture)
+  // rimangono disattivati per mantenere la vista pulita da collaboratore ordinario con le sole proprie commesse assegnate.
+  // Per testare o utilizzare i privilegi operativi, Emanuele utilizza "Simula Utente" (DevImpersonator).
+  // Per tutti gli altri collaboratori abilitati a Sviluppatore, i ruoli operativi aziendali sono additivi e restano sempre attivi.
+  const isLeadDevActive = isRealDev && !impersonatedEmail;
+
+  const isAdmin = !isLeadDevActive && (isSocio || DEFAULT_ADMINS.some(e => e.toLowerCase().trim() === userEmail) || dynamicAdmins.some(e => e.toLowerCase().trim() === userEmail));
+  const isHR = !isLeadDevActive && dynamicHrs.some(e => e.toLowerCase().trim() === userEmail);
   // isSenior è deprecato: sempre false. Usare myCoordinatedAreas (dalla collezione coordinatori) per i privilegi di area
   const isSenior = false;
-  const isCommerciale = dynamicCommerciali.some(e => e.toLowerCase().trim() === userEmail);
-  const isGestoreCommesse = isAdmin || dynamicGestoriCommesse.some(e => e.toLowerCase().trim() === userEmail);
+  const isCommerciale = !isLeadDevActive && dynamicCommerciali.some(e => e.toLowerCase().trim() === userEmail);
+  const isGestoreCommesse = !isLeadDevActive && (isAdmin || dynamicGestoriCommesse.some(e => e.toLowerCase().trim() === userEmail));
   // Gestori Forniture & Acquisti: visibile SOLO a chi è esplicitamente nominato nel ruolo
-  const isGestoreForniture = dynamicGestoriForniture.some(e => e.toLowerCase().trim() === userEmail);
+  const isGestoreForniture = !isLeadDevActive && dynamicGestoriForniture.some(e => e.toLowerCase().trim() === userEmail);
 
   useEffect(() => {
     if (isRealDev) {
