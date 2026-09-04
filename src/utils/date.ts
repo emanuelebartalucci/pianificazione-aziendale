@@ -18,6 +18,21 @@ export function addDays(date: Date, days: number): Date {
   return res;
 }
 
+export function getDefaultWeekRange(refDate: Date = new Date()): { startStr: string; endStr: string } {
+  const monday = getStartOfWeek(refDate);
+  const sunday = addDays(monday, 6);
+  const mY = monday.getFullYear();
+  const mM = String(monday.getMonth() + 1).padStart(2, '0');
+  const mD = String(monday.getDate()).padStart(2, '0');
+  const sY = sunday.getFullYear();
+  const sM = String(sunday.getMonth() + 1).padStart(2, '0');
+  const sD = String(sunday.getDate()).padStart(2, '0');
+  return {
+    startStr: `${mY}-${mM}-${mD}`,
+    endStr: `${sY}-${sM}-${sD}`
+  };
+}
+
 export function getWeekNumber(d: Date): number {
   const input = new Date(d);
   const date = isNaN(input.getTime()) ? new Date() : new Date(input.getTime());

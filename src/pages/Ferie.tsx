@@ -117,7 +117,7 @@ interface FerieContentProps {
 }
 
 const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: FerieContentProps) => {
-  const { userEmail, isDev, refreshData } = useAuth();
+  const { userEmail, refreshData } = useAuth();
   const [viewMode, setViewMode] = useState<'calendario' | 'tabella'>('calendario');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' | 'info' } | null>(null);
   const [chiusureAziendali, setChiusureAziendali] = useState<Array<{ dataInizio: string; dataFine: string }>>([]);
@@ -610,7 +610,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
     setLoadedYears(new Set<number>());
     loadFerieData();
     loadWeekendData();
-  }, [myAssociatedName, isHR, isAdmin, isDev]);
+  }, [myAssociatedName, isHR, isAdmin]);
 
   useEffect(() => {
     if (dipendenti && dipendenti.length > 0) {
@@ -1027,10 +1027,10 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
   const [mainTab, setMainTab] = useState<'piano' | 'weekend' | 'contatori_risorse'>('piano');
   
   useEffect(() => {
-    if (isDev && mainTab === 'contatori_risorse') {
+    if (!isHR && !isAdmin && !isSoci(myAssociatedName) && mainTab === 'contatori_risorse') {
       setMainTab('piano');
     }
-  }, [isDev, mainTab]);
+  }, [isHR, isAdmin, myAssociatedName, mainTab]);
   
   // States per autorizzazione weekend/chiusure
   const [reqWeekendData, setReqWeekendData] = useState('');
@@ -1105,7 +1105,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
 
   // Aggregazione contatori per tutte le risorse dipendenti per l'anno selezionato (1 sola lettura da sintesi!)
   const allResourcesStats = useMemo(() => {
-    if (isDev || (!isHR && !isAdmin && !isSoci(myAssociatedName))) return [];
+    if (!isHR && !isAdmin && !isSoci(myAssociatedName)) return [];
 
     // Filtra ALL'ORIGINE solo i dipendenti veri e propri (i collaboratori P.IVA e i soci non hanno contatori ferie)
     const onlyDipendenti = dipendenti.filter(dip => {
@@ -2746,7 +2746,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
             <span>Lavoro nei Weekend & Festivi</span>
           </button>
 
-          {!isDev && (isHR || isAdmin || isSoci(myAssociatedName)) && (
+          {(isHR || isAdmin || isSoci(myAssociatedName)) && (
             <>
               <button
                 type="button"
@@ -2983,7 +2983,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
           </div>
         )}
 
-        {mainTab === 'contatori_risorse' && !isDev && (isHR || isAdmin || isSoci(myAssociatedName)) && (
+        {mainTab === 'contatori_risorse' && (isHR || isAdmin || isSoci(myAssociatedName)) && (
           /* VISTA CONTATORI RISORSE (SOCI & HR) */
           <div className="space-y-6 animate-in fade-in duration-200">
             {/* Header KPI Cards */}

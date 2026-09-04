@@ -3,7 +3,7 @@ import { useAuth, isTechnicalUser, type PunchListItem, TODO_CATEGORIE } from '..
 import { db } from '../services/firebase';
 import { collection, doc, setDoc, updateDoc, addDoc, deleteDoc, getDocs, runTransaction } from 'firebase/firestore';
 import { Briefcase, ChevronLeft, ChevronRight, ChevronDown, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw, Printer, Plus, UserCheck, MoveVertical, Building2, Send, Info, Mail, User, Folder, FolderOpen, ListTodo, Check, CheckCircle2, Clock, AlertTriangle, ExternalLink } from 'lucide-react';
-import { getWeekNumber, getStartOfWeek, addDays } from '../utils/date';
+import { getWeekNumber, getStartOfWeek, addDays, getDefaultWeekRange } from '../utils/date';
 import { queueMail } from '../utils/mailSender';
 import { createUserNotification, markNotificationsAsReadByFilter } from '../utils/userNotificationService';
 import ConfirmModal from '../components/ConfirmModal';
@@ -927,6 +927,15 @@ export default function Commesse() {
       }
     });
 
+    // 4b. Abilitati Extra (vecchia gestione multiarea)
+    const extraList = Array.isArray(comm.abilitatiExtra) ? comm.abilitatiExtra : (comm.abilitatiExtra ? [comm.abilitatiExtra] : []);
+    extraList.forEach((extra: string) => {
+      if (extra) {
+        const foundExtra = (dipendenti || []).find(d => areNamesEqual(d.nome, extra));
+        assignedNamesSet.add(foundExtra ? foundExtra.nome : extra);
+      }
+    });
+
     // 5. Risorsa già assegnata al task (per preservare assegnazioni storiche durante l'editing)
     if (currentTaskAssignee) {
       assignedNamesSet.add(currentTaskAssignee);
@@ -948,6 +957,12 @@ export default function Commesse() {
     // 2. Project Manager (PM)
     const pms = Array.isArray(comm.pm) ? comm.pm : (comm.pm ? [comm.pm] : []);
     if (pms.some((p: string) => areNamesEqual(p, myAssociatedName) || (userEmail && p.toLowerCase().includes(userEmail.split('@')[0])))) {
+      return true;
+    }
+
+    // 2b. Abilitati Extra (vecchia gestione multiarea)
+    const extraList: any[] = Array.isArray(comm.abilitatiExtra) ? comm.abilitatiExtra : (comm.abilitatiExtra ? [comm.abilitatiExtra] : []);
+    if (extraList.some((e: string) => areNamesEqual(e, myAssociatedName) || (userEmail && String(e).toLowerCase().includes(userEmail.split('@')[0])))) {
       return true;
     }
 
@@ -1292,8 +1307,8 @@ export default function Commesse() {
   const [isSelfChangeRequest, setIsSelfChangeRequest] = useState(false);
   const [reqAreaTarget, setReqAreaTarget] = useState('Disegnatori');
   const [reqCommessaId, setReqCommessaId] = useState('');
-  const [reqDataInizio, setReqDataInizio] = useState('');
-  const [reqDataFine, setReqDataFine] = useState('');
+  const [reqDataInizio, setReqDataInizio] = useState<string>(() => getDefaultWeekRange().startStr);
+  const [reqDataFine, setReqDataFine] = useState<string>(() => getDefaultWeekRange().endStr);
   const [reqPercentuale, setReqPercentuale] = useState<number>(100);
   const [reqPreferredResource, setReqPreferredResource] = useState('');
   const [reqNota, setReqNota] = useState('');
@@ -1355,14 +1370,13 @@ export default function Commesse() {
 
     if (isStart) {
       setReqDataInizio(monStr);
-      if (reqDataFine && reqDataFine < sunStr) {
+      if (!reqDataFine || reqDataFine < sunStr) {
         setReqDataFine(sunStr);
       }
     } else {
-      if (reqDataInizio && sunStr < reqDataInizio) {
-        setReqDataFine(reqDataInizio);
-      } else {
-        setReqDataFine(sunStr);
+      setReqDataFine(sunStr);
+      if (!reqDataInizio || reqDataInizio > monStr) {
+        setReqDataInizio(monStr);
       }
     }
   };
@@ -1375,16 +1389,64 @@ export default function Commesse() {
     weekId?: string;
   }>({ isOpen: false });
 
+  const isPMOrRespOfCommessa = (cObj: any): boolean => {
+    if (!cObj) return false;
+    const respStr = String(cObj.responsabile || '').toLowerCase().trim();
+    const pmList: any[] = Array.isArray(cObj.pm) ? cObj.pm : (cObj.pm ? [cObj.pm] : []);
+    const extraList: any[] = Array.isArray(cObj.abilitatiExtra) ? cObj.abilitatiExtra : (cObj.abilitatiExtra ? [cObj.abilitatiExtra] : []);
+    const targets = [respStr, ...pmList.map(p => String(p || '').toLowerCase().trim()), ...extraList.map(e => String(e || '').toLowerCase().trim())].filter(Boolean);
+
+    if (targets.length === 0) return false;
+
+    if (myAssociatedName && targets.some(t => areNamesEqual(t, myAssociatedName))) return true;
+
+    if (userEmail) {
+      const emailClean = userEmail.toLowerCase().trim();
+      const username = emailClean.split('@')[0];
+      if (targets.some(t => t.includes(emailClean) || (username.length >= 4 && t.includes(username)))) return true;
+    }
+
+    const commonFirstNames = ['andrea', 'matteo', 'marco', 'gabriele', 'luca', 'francesco', 'alessandro', 'stefano', 'davide', 'lorenzo', 'riccardo', 'filippo', 'giuseppe', 'antonio', 'michele'];
+    const fullName = myAssociatedName || '';
+    if (fullName) {
+      const parts = fullName.split(/\s+/).filter(p => p.length >= 3);
+      for (const part of parts) {
+        const partLower = part.toLowerCase();
+        if (parts.length > 1 && commonFirstNames.includes(partLower)) {
+          continue;
+        }
+        if (targets.some(t => t.includes(partLower))) return true;
+      }
+    }
+
+    return false;
+  };
+
   const handleResourcePillClick = (e: React.MouseEvent, personName: string, personPct: number, commId: string, _commNome: string, wkId: string, _wkLabel: string) => {
     e.stopPropagation();
 
     const dip = dipendenti.find(d => areNamesEqual(d.nome, personName));
     const macroArea = dip?.macroArea || '';
     const isResourceInMyCoordinatedArea = myCoordinatedAreas.some(a => (a || '').toLowerCase().trim() === macroArea.toLowerCase().trim());
-    const isSelfPerson = areNamesEqual(personName, myAssociatedName);
+    const isSelfPerson = (!!myAssociatedName && areNamesEqual(personName, myAssociatedName)) || (!!dip?.email && !!userEmail && dip.email.toLowerCase() === userEmail.toLowerCase());
 
-    // Solo Admin, Soci e il Coordinatore della SPECIFICA area a cui appartiene la risorsa possono modificarla direttamente
+    // Solo Admin, Soci e il Coordinatore della SPECIFICA area a cui appartiene la risorsa possono gestirla direttamente
     const canDirectlyManage = isAdmin || isSoci(myAssociatedName) || isResourceInMyCoordinatedArea;
+
+    // Ruolo PM o Responsabile (o Abilitato Extra) della commessa
+    const commObj = commesse.find(c => c.id === commId);
+    const isPMOrResp = isPMOrRespOfCommessa(commObj);
+
+    // Regola Permessi Pillole:
+    // Possono cliccare sulla pillola solo:
+    // 1. Chi può gestire direttamente (Admin, Socio, Coordinatore della macro-area della risorsa)
+    // 2. Il PM / Responsabile della commessa (può richiedere variazioni per risorse terze impegnate sul proprio progetto)
+    // 3. La risorsa stessa (può cliccare SOLO ED ESCLUSIVAMENTE sulla pillola con il proprio nome)
+    // Se la risorsa non possiede permessi speciali, il clic su pillole di altri colleghi è completamente bloccato.
+    const canClickPill = canDirectlyManage || isPMOrResp || isSelfPerson;
+    if (!canClickPill) {
+      return;
+    }
 
     if (e.button === 1) {
       // Rotellina (Middle Click) -> Nuova Scheda
@@ -1393,6 +1455,8 @@ export default function Commesse() {
       }
       return;
     }
+
+    if (e.button !== 0) return;
 
     if (canDirectlyManage) {
       // Tasto Sinistro (Left Click) -> Modale di Gestione Diretta
@@ -1403,8 +1467,8 @@ export default function Commesse() {
         commessaId: commId,
         weekId: wkId
       });
-    } else {
-      // Risorsa di ALTRA area -> Apre sempre la Modale per Richiedere la Modifica al Coordinatore dell'area di appartenenza
+    } else if (isPMOrResp || isSelfPerson) {
+      // Modale per Richiedere la Modifica al Coordinatore dell'area di appartenenza
       const weekRange = getWeekDateRange(wkId);
       const isSelf = isSelfPerson;
       setIsSelfChangeRequest(isSelf);
@@ -1422,38 +1486,6 @@ export default function Commesse() {
   const handleWeekCellClick = (e: React.MouseEvent, comm: any, wk: any) => {
     if (e.button !== 0) return;
     e.preventDefault();
-
-    const isPMOrRespOfCommessa = (cObj: any): boolean => {
-      if (!cObj) return false;
-      const respStr = String(cObj.responsabile || '').toLowerCase().trim();
-      const pmList: any[] = Array.isArray(cObj.pm) ? cObj.pm : (cObj.pm ? [cObj.pm] : []);
-      const targets = [respStr, ...pmList.map(p => String(p || '').toLowerCase().trim())].filter(Boolean);
-
-      if (targets.length === 0) return false;
-
-      if (myAssociatedName && targets.some(t => areNamesEqual(t, myAssociatedName))) return true;
-
-      if (userEmail) {
-        const emailClean = userEmail.toLowerCase().trim();
-        const username = emailClean.split('@')[0];
-        if (targets.some(t => t.includes(emailClean) || (username.length >= 4 && t.includes(username)))) return true;
-      }
-
-      const commonFirstNames = ['andrea', 'matteo', 'marco', 'gabriele', 'luca', 'francesco', 'alessandro', 'stefano', 'davide', 'lorenzo', 'riccardo', 'filippo', 'giuseppe', 'antonio', 'michele'];
-      const fullName = myAssociatedName || '';
-      if (fullName) {
-        const parts = fullName.split(/\s+/).filter(p => p.length >= 3);
-        for (const part of parts) {
-          const partLower = part.toLowerCase();
-          if (parts.length > 1 && commonFirstNames.includes(partLower)) {
-            continue;
-          }
-          if (targets.some(t => t.includes(partLower))) return true;
-        }
-      }
-
-      return false;
-    };
 
     const canDirectlyManageWeek = isAdmin || isSoci(myAssociatedName) || isPMOrRespOfCommessa(comm);
 
@@ -1485,7 +1517,11 @@ export default function Commesse() {
 
   const handleSubmitRequest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!reqCommessaId || !reqDataInizio || !reqDataFine || !reqPercentuale) {
+    const def = getDefaultWeekRange();
+    const effectiveInizio = reqDataInizio || def.startStr;
+    const effectiveFine = reqDataFine || def.endStr;
+
+    if (!reqCommessaId || !effectiveInizio || !effectiveFine || !reqPercentuale) {
       showToast("Compila tutti i campi richiesti.", "warning");
       return;
     }
@@ -1503,8 +1539,8 @@ export default function Commesse() {
         commessaNome: commName,
         commessaResponsabile: commObj?.responsabile || '',
         commessaPM: commObj?.pm || [],
-        dataInizio: reqDataInizio,
-        dataFine: reqDataFine,
+        dataInizio: effectiveInizio,
+        dataFine: effectiveFine,
         percentuale: Number(reqPercentuale),
         risorsaPreferita: reqPreferredResource || (isSelfChangeRequest ? myAssociatedName : ''),
         nota: reqNota,
@@ -1541,8 +1577,8 @@ export default function Commesse() {
       setIsRequestModalOpen(false);
       setIsSelfChangeRequest(false);
       setReqCommessaId('');
-      setReqDataInizio('');
-      setReqDataFine('');
+      setReqDataInizio(def.startStr);
+      setReqDataFine(def.endStr);
       setReqPercentuale(100);
       setReqPreferredResource('');
       setReqNota('');
@@ -1671,7 +1707,8 @@ export default function Commesse() {
     if (!cObj) return false;
     const respStr = String(cObj.responsabile || '').toLowerCase().trim();
     const pmList: any[] = Array.isArray(cObj.pm) ? cObj.pm : (cObj.pm ? [cObj.pm] : []);
-    const targets = [respStr, ...pmList.map(p => String(p || '').toLowerCase().trim())].filter(Boolean);
+    const extraList: any[] = Array.isArray(cObj.abilitatiExtra) ? cObj.abilitatiExtra : (cObj.abilitatiExtra ? [cObj.abilitatiExtra] : []);
+    const targets = [respStr, ...pmList.map(p => String(p || '').toLowerCase().trim()), ...extraList.map(e => String(e || '').toLowerCase().trim())].filter(Boolean);
 
     if (targets.length === 0) return false;
 
@@ -3282,7 +3319,14 @@ export default function Commesse() {
           {canAccessAltreCommesseTab && (
             <button
               type="button"
-              onClick={() => setActiveTab('altre-commesse')}
+              onClick={() => {
+                setActiveTab('altre-commesse');
+                if (!reqDataInizio || !reqDataFine) {
+                  const def = getDefaultWeekRange();
+                  if (!reqDataInizio) setReqDataInizio(def.startStr);
+                  if (!reqDataFine) setReqDataFine(def.endStr);
+                }
+              }}
               className={`px-5 py-3 font-bold text-sm rounded-t-2xl transition-all cursor-pointer ${
                 activeTab === 'altre-commesse'
                   ? 'bg-amber-600 text-white shadow-md shadow-amber-200/50'
@@ -3860,34 +3904,44 @@ export default function Commesse() {
                                        : '0h (0%)';
 
                                      const displayHoursText = isAllWeekOnLeave ? `0h (Ferie)` : `${person.pct}% (${hours}h)`;
+                                     const isSelf = (!!myAssociatedName && areNamesEqual(person.name, myAssociatedName)) || (!!dip?.email && !!userEmail && dip.email.toLowerCase() === userEmail.toLowerCase());
+                                     const macroArea = dip?.macroArea || '';
+                                     const isResourceInMyCoordinatedArea = myCoordinatedAreas.some(a => (a || '').toLowerCase().trim() === macroArea.toLowerCase().trim());
+                                     const canDirectlyManagePill = isAdmin || isSoci(myAssociatedName) || isResourceInMyCoordinatedArea;
+                                     const isPMPill = isPMOrRespOfCommessa(comm);
+                                     const canClickThisPill = canDirectlyManagePill || isPMPill || isSelf;
+
+                                     const tooltipAction = canClickThisPill
+                                       ? (canDirectlyManagePill ? 'Clicca per gestire' : 'Clicca per richiedere modifica')
+                                       : '';
+
                                      const tooltipText = [
                                        `👤 ${person.name}`,
                                        `• Ore assegnate alla commessa: ${hours}h (${person.pct}%)`,
                                        `• Ore libere residue (settimana): ${freeHoursInWeek}h (${freePctInWeek}%)`,
                                        `• Ferie / Assenze: ${leavesFormatted}`,
-                                       ``,
-                                       `Clicca per gestire`
+                                       ...(tooltipAction ? ['', tooltipAction] : [])
                                      ].join('\n');
-
-                                     const isSelf = (!!myAssociatedName && areNamesEqual(person.name, myAssociatedName)) || (!!dip?.email && !!userEmail && dip.email.toLowerCase() === userEmail.toLowerCase());
 
                                      if (isUltraNarrow) {
                                        return (
                                          <div 
                                            key={pIdx} 
-                                           onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
-                                           onAuxClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
-                                           onClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
-                                           className={`text-[8.5px] font-black text-center py-0.5 px-0.5 rounded border flex items-center justify-center shadow-2xs select-none cursor-pointer hover:ring-2 hover:ring-indigo-400 transition-all ${
+                                           onMouseDown={(e) => { if (e.button === 1 && canClickThisPill) e.preventDefault(); }}
+                                           onAuxClick={(e) => { if (canClickThisPill) handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label); }}
+                                           onClick={(e) => { if (canClickThisPill) handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label); }}
+                                           className={`text-[8.5px] font-black text-center py-0.5 px-0.5 rounded border flex items-center justify-center shadow-2xs select-none transition-all ${
+                                             canClickThisPill ? 'cursor-pointer hover:ring-2 hover:ring-indigo-400' : 'cursor-default'
+                                           } ${
                                              isSelf
                                                ? isAllWeekOnLeave
                                                  ? 'bg-amber-500 text-white border-amber-600 ring-2 ring-amber-300 shadow-xs'
                                                  : 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white border-indigo-700 ring-2 ring-indigo-400 shadow-xs hover:brightness-110'
                                                : isAllWeekOnLeave
-                                                 ? 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100'
+                                                 ? 'bg-amber-50 text-amber-900 border-amber-200'
                                                  : hasLeaves 
                                                    ? 'bg-rose-50 text-rose-800 border-rose-200 ring-1 ring-rose-300' 
-                                                   : 'bg-indigo-50 text-indigo-900 border-indigo-150 hover:bg-indigo-100'
+                                                   : 'bg-indigo-50 text-indigo-900 border-indigo-150'
                                            }`}
                                            title={tooltipText}
                                          >
@@ -3901,19 +3955,21 @@ export default function Commesse() {
                                        return (
                                          <div 
                                            key={pIdx} 
-                                           onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
-                                           onAuxClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
-                                           onClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
-                                           className={`text-[9px] font-bold py-0.5 px-1 rounded border flex items-center justify-between gap-0.5 shadow-2xs truncate select-none w-full cursor-pointer hover:ring-2 hover:ring-indigo-400 transition-all ${
+                                           onMouseDown={(e) => { if (e.button === 1 && canClickThisPill) e.preventDefault(); }}
+                                           onAuxClick={(e) => { if (canClickThisPill) handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label); }}
+                                           onClick={(e) => { if (canClickThisPill) handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label); }}
+                                           className={`text-[9px] font-bold py-0.5 px-1 rounded border flex items-center justify-between gap-0.5 shadow-2xs truncate select-none w-full transition-all ${
+                                             canClickThisPill ? 'cursor-pointer hover:ring-2 hover:ring-indigo-400' : 'cursor-default'
+                                           } ${
                                              isSelf
                                                ? isAllWeekOnLeave
                                                  ? 'bg-amber-500 text-white border-amber-600 ring-2 ring-amber-300 shadow-xs font-black'
                                                  : 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white border-indigo-700 ring-2 ring-indigo-400/80 shadow-xs font-black hover:brightness-110'
                                                : isAllWeekOnLeave
-                                                 ? 'bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100'
+                                                 ? 'bg-amber-50 text-amber-900 border-amber-200'
                                                  : hasLeaves 
                                                    ? 'bg-rose-50 text-rose-800 border-rose-200' 
-                                                   : 'bg-indigo-50 text-indigo-900 border-indigo-150 hover:bg-indigo-100'
+                                                   : 'bg-indigo-50 text-indigo-900 border-indigo-150'
                                            }`}
                                            title={tooltipText}
                                          >
@@ -3927,17 +3983,19 @@ export default function Commesse() {
                                      return (
                                        <div 
                                          key={pIdx} 
-                                         onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
-                                         onAuxClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
-                                         onClick={(e) => handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label)}
-                                         className={`text-[10px] p-1 px-1.5 rounded-lg border flex items-center justify-between gap-1 shadow-2xs w-full select-none cursor-pointer transition-all hover:scale-[1.02] ${
+                                         onMouseDown={(e) => { if (e.button === 1 && canClickThisPill) e.preventDefault(); }}
+                                         onAuxClick={(e) => { if (canClickThisPill) handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label); }}
+                                         onClick={(e) => { if (canClickThisPill) handleResourcePillClick(e, person.name, person.pct, comm.id, comm.nome, wk.id, wk.label); }}
+                                         className={`text-[10px] p-1 px-1.5 rounded-lg border flex items-center justify-between gap-1 shadow-2xs w-full select-none transition-all ${
+                                           canClickThisPill ? 'cursor-pointer hover:scale-[1.02]' : 'cursor-default'
+                                         } ${
                                            isSelf
                                              ? isAllWeekOnLeave
                                                ? 'bg-amber-500 text-white border-amber-600 ring-2 ring-amber-300 shadow-xs'
                                                : 'bg-gradient-to-r from-indigo-600 via-indigo-700 to-blue-700 text-white border-indigo-700 ring-2 ring-indigo-400/70 shadow-xs font-bold hover:brightness-110'
                                              : isAllWeekOnLeave
-                                               ? 'bg-amber-50/90 text-amber-950 border-amber-200 hover:bg-amber-100'
-                                               : 'bg-indigo-50/80 text-indigo-950 border-indigo-100/60 hover:bg-indigo-100'
+                                               ? 'bg-amber-50/90 text-amber-950 border-amber-200'
+                                               : 'bg-indigo-50/80 text-indigo-950 border-indigo-100/60'
                                          }`}
                                          title={tooltipText}
                                        >
@@ -5707,6 +5765,11 @@ export default function Commesse() {
                                     const targetDefaultArea = myCoordinatedAreas.length > 0 ? myCoordinatedAreas[0] : (myDipObj?.macroArea || 'Disegnatori');
                                     setReqAreaTarget(targetDefaultArea);
                                     setReqPreferredResource(myAssociatedName || myDipObj?.nome || '');
+                                    if (!reqDataInizio || !reqDataFine) {
+                                      const def = getDefaultWeekRange();
+                                      if (!reqDataInizio) setReqDataInizio(def.startStr);
+                                      if (!reqDataFine) setReqDataFine(def.endStr);
+                                    }
                                     setIsAltreCommessaDropdownOpen(false);
                                   }}
                                   className={`p-3.5 cursor-pointer transition flex items-center justify-between gap-3 text-xs rounded-lg ${
@@ -5822,9 +5885,12 @@ export default function Commesse() {
                   <div className="space-y-4 flex flex-col justify-between">
                     {/* SELEZIONE DA CALENDARIO DATE CON EVIDENZA SETTIMANA */}
                     {(() => {
-                      const startOpt = selectableWeekOptions.find(o => o.mondayStr === reqDataInizio) || selectableWeekOptions[0];
-                      const endOpt = selectableWeekOptions.find(o => o.sundayStr === reqDataFine) || startOpt;
-                      const targetWeekIds = (reqDataInizio && reqDataFine) ? getWeeksSpannedByDates(reqDataInizio, reqDataFine) : [];
+                      const defRange = getDefaultWeekRange();
+                      const effectiveStartStr = reqDataInizio || defRange.startStr;
+                      const effectiveEndStr = reqDataFine || defRange.endStr;
+                      const startOpt = selectableWeekOptions.find(o => o.mondayStr === effectiveStartStr) || selectableWeekOptions.find(o => o.mondayStr === defRange.startStr) || selectableWeekOptions[0];
+                      const endOpt = selectableWeekOptions.find(o => o.sundayStr === effectiveEndStr) || startOpt;
+                      const targetWeekIds = getWeeksSpannedByDates(effectiveStartStr, effectiveEndStr);
 
                       return (
                         <div className="bg-white/90 p-4 rounded-2xl border border-indigo-100 shadow-xs space-y-3">
@@ -5835,7 +5901,7 @@ export default function Commesse() {
                               </label>
                               <input
                                 type="date"
-                                value={reqDataInizio || startOpt?.mondayStr || ''}
+                                value={effectiveStartStr}
                                 onChange={e => handleReqDateInputChange(e.target.value, true)}
                                 className="w-full p-2.5 border border-indigo-200 bg-indigo-50/30 rounded-xl text-xs font-black text-indigo-950 outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs cursor-pointer"
                               />
@@ -5856,8 +5922,8 @@ export default function Commesse() {
                               </label>
                               <input
                                 type="date"
-                                min={reqDataInizio || undefined}
-                                value={reqDataFine || endOpt?.sundayStr || ''}
+                                min={effectiveStartStr}
+                                value={effectiveEndStr}
                                 onChange={e => handleReqDateInputChange(e.target.value, false)}
                                 className="w-full p-2.5 border border-indigo-200 bg-indigo-50/30 rounded-xl text-xs font-black text-indigo-950 outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs cursor-pointer"
                               />
@@ -5883,7 +5949,7 @@ export default function Commesse() {
                                 </span>
                               </div>
                               <span className="text-[11px] text-indigo-600/80 font-semibold">
-                                (da Lun {formatDate(reqDataInizio || startOpt.mondayStr)} a Dom {formatDate(reqDataFine || endOpt.sundayStr)})
+                                (da Lun {formatDate(effectiveStartStr)} a Dom {formatDate(effectiveEndStr)})
                               </span>
                             </div>
                           )}
@@ -6072,9 +6138,12 @@ export default function Commesse() {
                   <div className="space-y-4 flex flex-col justify-between">
                     {/* SELEZIONE DA CALENDARIO DATE CON EVIDENZA SETTIMANA */}
                     {(() => {
-                      const startOpt = selectableWeekOptions.find(o => o.mondayStr === reqDataInizio) || selectableWeekOptions[0];
-                      const endOpt = selectableWeekOptions.find(o => o.sundayStr === reqDataFine) || startOpt;
-                      const targetWeekIds = (reqDataInizio && reqDataFine) ? getWeeksSpannedByDates(reqDataInizio, reqDataFine) : [];
+                      const defRange = getDefaultWeekRange();
+                      const effectiveStartStr = reqDataInizio || defRange.startStr;
+                      const effectiveEndStr = reqDataFine || defRange.endStr;
+                      const startOpt = selectableWeekOptions.find(o => o.mondayStr === effectiveStartStr) || selectableWeekOptions.find(o => o.mondayStr === defRange.startStr) || selectableWeekOptions[0];
+                      const endOpt = selectableWeekOptions.find(o => o.sundayStr === effectiveEndStr) || startOpt;
+                      const targetWeekIds = getWeeksSpannedByDates(effectiveStartStr, effectiveEndStr);
 
                       return (
                         <div className="bg-white/90 p-4 rounded-2xl border border-indigo-100 shadow-xs space-y-3">
@@ -6085,7 +6154,7 @@ export default function Commesse() {
                               </label>
                               <input
                                 type="date"
-                                value={reqDataInizio || startOpt?.mondayStr || ''}
+                                value={effectiveStartStr}
                                 onChange={e => handleReqDateInputChange(e.target.value, true)}
                                 className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
                               />
@@ -6106,8 +6175,8 @@ export default function Commesse() {
                               </label>
                               <input
                                 type="date"
-                                min={reqDataInizio || undefined}
-                                value={reqDataFine || endOpt?.sundayStr || ''}
+                                min={effectiveStartStr}
+                                value={effectiveEndStr}
                                 onChange={e => handleReqDateInputChange(e.target.value, false)}
                                 className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
                               />
@@ -6133,7 +6202,7 @@ export default function Commesse() {
                                 </span>
                               </div>
                               <span className="text-[11px] text-indigo-600/80 font-semibold">
-                                (da Lun {formatDate(reqDataInizio || startOpt.mondayStr)} a Dom {formatDate(reqDataFine || endOpt.sundayStr)})
+                                (da Lun {formatDate(effectiveStartStr)} a Dom {formatDate(effectiveEndStr)})
                               </span>
                             </div>
                           )}

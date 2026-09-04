@@ -106,6 +106,7 @@ export interface Commessa {
   giornateJuniorProject?: number;
   apertaDa?: string;
   progetti?: any[];
+  abilitatiExtra?: string[];
 }
 
 export interface Coordinatore {
@@ -346,6 +347,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         stato: doc.data().stato || 'Aperta',
         percorsoRete: doc.data().percorsoRete || '',
         punchList: doc.data().punchList || [],
+        abilitatiExtra: Array.isArray(doc.data().abilitatiExtra) ? doc.data().abilitatiExtra : (doc.data().abilitatiExtra ? [doc.data().abilitatiExtra] : []),
         giornateSeniorProject: doc.data().giornateSeniorProject,
         giornateProject: doc.data().giornateProject,
         giornateJuniorProject: doc.data().giornateJuniorProject,
@@ -403,6 +405,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         stato: doc.data().stato || 'Aperta',
         percorsoRete: doc.data().percorsoRete || '',
         punchList: doc.data().punchList || [],
+        abilitatiExtra: Array.isArray(doc.data().abilitatiExtra) ? doc.data().abilitatiExtra : (doc.data().abilitatiExtra ? [doc.data().abilitatiExtra] : []),
         giornateSeniorProject: doc.data().giornateSeniorProject,
         giornateProject: doc.data().giornateProject,
         giornateJuniorProject: doc.data().giornateJuniorProject,
@@ -492,15 +495,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   // così che la simulazione mostri l'esatta esperienza e permessi dell'utente impersonificato.
   const isDev = isDevEmail(userEmail);
   const isSocio = userEmail.includes('aprofeti') || userEmail.includes('mcorbellini') || userEmail.includes('profeti') || userEmail.includes('corbellini');
-  // Se l'utente attivo è Sviluppatore (isDev = true), isAdmin e gli altri ruoli sono FALSE (per testarli usa "Simula Utente")
-  const isAdmin = !isDev && (isSocio || DEFAULT_ADMINS.some(e => e.toLowerCase().trim() === userEmail) || dynamicAdmins.some(e => e.toLowerCase().trim() === userEmail));
-  const isHR = !isDev && dynamicHrs.some(e => e.toLowerCase().trim() === userEmail);
+  // Ruoli cumulativi: il ruolo Sviluppatore è additivo e non azzera i ruoli operativi legittimamente assegnati
+  const isAdmin = isSocio || DEFAULT_ADMINS.some(e => e.toLowerCase().trim() === userEmail) || dynamicAdmins.some(e => e.toLowerCase().trim() === userEmail);
+  const isHR = dynamicHrs.some(e => e.toLowerCase().trim() === userEmail);
   // isSenior è deprecato: sempre false. Usare myCoordinatedAreas (dalla collezione coordinatori) per i privilegi di area
   const isSenior = false;
-  const isCommerciale = !isDev && dynamicCommerciali.some(e => e.toLowerCase().trim() === userEmail);
-  const isGestoreCommesse = !isDev && (isAdmin || dynamicGestoriCommesse.some(e => e.toLowerCase().trim() === userEmail));
+  const isCommerciale = dynamicCommerciali.some(e => e.toLowerCase().trim() === userEmail);
+  const isGestoreCommesse = isAdmin || dynamicGestoriCommesse.some(e => e.toLowerCase().trim() === userEmail);
   // Gestori Forniture & Acquisti: visibile SOLO a chi è esplicitamente nominato nel ruolo
-  const isGestoreForniture = !isDev && dynamicGestoriForniture.some(e => e.toLowerCase().trim() === userEmail);
+  const isGestoreForniture = dynamicGestoriForniture.some(e => e.toLowerCase().trim() === userEmail);
 
   useEffect(() => {
     if (isRealDev) {

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { doc, writeBatch, collection, addDoc } from 'firebase/firestore';
-import { getStartOfWeek, addDays, getWeekNumber } from '../utils/date';
+import { getStartOfWeek, addDays, getWeekNumber, isItalianHoliday } from '../utils/date';
 import { addPendingNotification } from '../utils/pendingNotifications';
 import { isSoci } from '../pages/Impostazioni';
 import { createUserNotification } from '../utils/userNotificationService';
@@ -88,7 +88,6 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     dipendenti = [], 
     coordinatori = [],
     isAdmin = false,
-    isDev = false,
     isGestoreCommesse = false,
     userEmail = '', 
     myAssociatedName = '', 
@@ -328,7 +327,8 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
 
     const respNames = extractAllNames(comm.responsabile);
     const pmNames = extractAllNames(comm.pm);
-    const targets = [...respNames, ...pmNames].filter(Boolean);
+    const extraNames = extractAllNames(comm.abilitatiExtra);
+    const targets = [...respNames, ...pmNames, ...extraNames].filter(Boolean);
 
     if (targets.length === 0) return false;
 
@@ -465,12 +465,17 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     const workDates: string[] = [];
     for (let i = 0; i < 5; i++) {
       const d = addDays(monday, i);
-      workDates.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`);
+      const dStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      if (!isItalianHoliday(dStr)) {
+        workDates.push(dStr);
+      }
     }
+
+    if (workDates.length === 0) return false;
 
     const resLeaves = approvedLeaves.filter((r: any) => {
       if (!r.dipendenteName) return false;
-      if (r.dipendenteName.trim().toLowerCase() !== resName.trim().toLowerCase()) return false;
+      if (!areNamesEqual(r.dipendenteName, resName)) return false;
       if (r.stato !== 'Approvato') return false;
       const t = r.tipo || 'ferie';
       return ['ferie', 'assenza', 'malattia', 'maternita'].includes(t);
@@ -490,7 +495,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
       if (isCovered) coveredCount++;
     });
 
-    return coveredCount >= 5;
+    return coveredCount >= workDates.length;
   };
 
   // Risorse Assegnate e Non Assegnate alla Commessa nel periodo (usa la bozza locale draftAssignments)
@@ -541,6 +546,10 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     const commMap: Record<string, { id: string; nome: string; colore: string; percentuali: Record<string, number> }> = {};
 
     targetWeekIds.forEach(wkId => {
+      // Se la risorsa è in ferie piena in questa settimana, non lavora ad alcuna commessa
+      if (isResourceOnFullWeekLeave(selectedResourceForTab, wkId)) {
+        return;
+      }
       const key = `${selectedResourceForTab}-${wkId}`;
       const list = draftAssignments[key] || [];
       list.forEach((a: any) => {
@@ -557,7 +566,36 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
     });
 
     return Object.values(commMap);
-  }, [selectedResourceForTab, allocDataInizio, allocDataFine, draftAssignments]);
+  }, [selectedResourceForTab, allocDataInizio, allocDataFine, draftAssignments, approvedLeaves]);
+
+  const resourceLeaveInfoForPeriod = useMemo(() => {
+    if (!selectedResourceForTab || !allocDataInizio || !allocDataFine) {
+      return { isFullyOnLeave: false, leaveWeekLabels: [], hasAnyLeave: false, totalWeeks: 0 };
+    }
+    const targetWeekIds = getWeeksSpannedByDates(allocDataInizio, allocDataFine);
+    const leaveWeekLabels: string[] = [];
+    let fullLeaveCount = 0;
+
+    targetWeekIds.forEach(wkId => {
+      if (isResourceOnFullWeekLeave(selectedResourceForTab, wkId)) {
+        fullLeaveCount++;
+        const opt = selectableWeekOptions.find(o => o.id === wkId);
+        const label = opt ? opt.label : `Sett. ${wkId.split('-W')[1]}`;
+        leaveWeekLabels.push(label);
+      }
+    });
+
+    const isFullyOnLeave = targetWeekIds.length > 0 && fullLeaveCount === targetWeekIds.length;
+    const hasAnyLeave = fullLeaveCount > 0;
+
+    return { 
+      isFullyOnLeave, 
+      leaveWeekLabels, 
+      hasAnyLeave, 
+      fullLeaveCount,
+      totalWeeks: targetWeekIds.length
+    };
+  }, [selectedResourceForTab, allocDataInizio, allocDataFine, selectableWeekOptions, approvedLeaves]);
 
   // ===========================================================
   // UTILITY: Calcola i sotto-periodi consecutivi per una risorsa
@@ -739,17 +777,42 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
 
     const targetWeekIds = getWeeksSpannedByDates(allocDataInizio, allocDataFine);
     
-    for (const wkId of targetWeekIds) {
+    const leaveWeeks: string[] = [];
+    const validWeekIds: string[] = [];
+
+    targetWeekIds.forEach(wkId => {
       if (isResourceOnFullWeekLeave(resName, wkId)) {
-        showToast(`Impossibile assegnare commessa: ${resName} è assente per l'intera settimana (${wkId}).`, 'warning');
-        return;
+        leaveWeeks.push(wkId);
+      } else {
+        validWeekIds.push(wkId);
       }
+    });
+
+    if (validWeekIds.length === 0) {
+      showToast(`Impossibile assegnare la commessa: ${resName} è in ferie/assente per l'intero periodo selezionato.`, 'warning');
+      return;
+    }
+
+    if (leaveWeeks.length > 0) {
+      const wLabels = leaveWeeks.map(w => {
+        const opt = selectableWeekOptions.find(o => o.id === w);
+        return opt ? opt.label : `Sett. ${w.split('-W')[1] || w}`;
+      });
+      showToast(`Attenzione: ${resName} è in ferie nelle seguenti settimane: ${wLabels.join(', ')}. L'assegnazione è stata applicata solo alle restanti settimane.`, 'warning');
     }
 
     const baseDays = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
     const newDraft = { ...draftAssignments };
 
-    for (const wkId of targetWeekIds) {
+    // Rimuovi eventuali vecchie assegnazioni residue per le settimane in cui la risorsa è in ferie piena
+    for (const wkId of leaveWeeks) {
+      const docId = `${resName}-${wkId}`;
+      if (newDraft[docId]) {
+        delete newDraft[docId];
+      }
+    }
+
+    for (const wkId of validWeekIds) {
       const docId = `${resName}-${wkId}`;
       const coveredDays = getCoveredDaysInWeek(wkId, allocDataInizio, allocDataFine);
       if (coveredDays === 0) continue;
@@ -1169,7 +1232,7 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                 <span>Sostituzione Risorsa</span>
               </button>
 
-              {(myCoordinatedAreas.length > 0 && !isDev && !isSoci(myAssociatedName)) && (
+              {(myCoordinatedAreas.length > 0 && !isSoci(myAssociatedName)) && (
                 <button
                   type="button"
                   onClick={() => setActiveTab('altre-commesse')}
@@ -1695,6 +1758,37 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                 </div>
               </div>
 
+              {/* BANNER INFORMATIVO FERIE SELEZIONE */}
+              {resourceLeaveInfoForPeriod.hasAnyLeave && (
+                <div className={`p-3.5 rounded-xl border flex items-start gap-3 ${
+                  resourceLeaveInfoForPeriod.isFullyOnLeave 
+                    ? 'bg-red-50 border-red-200 text-red-900' 
+                    : 'bg-amber-50 border-amber-200 text-amber-900'
+                }`}>
+                  <span className="text-lg shrink-0">⚠️</span>
+                  <div className="flex-1 text-xs">
+                    <div className="font-black text-sm">
+                      {resourceLeaveInfoForPeriod.isFullyOnLeave
+                        ? `Risorsa in Ferie/Assente per l'intero periodo selezionato`
+                        : `Risorsa in Ferie/Assente in alcune settimane del periodo`}
+                    </div>
+                    <div className="mt-0.5 opacity-90 leading-relaxed">
+                      {resourceLeaveInfoForPeriod.isFullyOnLeave ? (
+                        <span>
+                          {selectedResourceForTab} è in ferie approvate ({resourceLeaveInfoForPeriod.leaveWeekLabels.join(', ')}). 
+                          Non è possibile pianificare o assegnare commesse per questo periodo.
+                        </span>
+                      ) : (
+                        <span>
+                          {selectedResourceForTab} è in ferie nelle seguenti settimane: <strong>{resourceLeaveInfoForPeriod.leaveWeekLabels.join(', ')}</strong>. 
+                          In caso di assegnazione, le settimane di ferie verranno escluse automaticamente.
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* CARD UNIFICATA COMMESSE ASSEGNATE ALLA RISORSA */}
               <div className="bg-white/90 p-5 rounded-2xl border border-indigo-100 shadow-xs flex flex-col gap-4">
                 
@@ -1828,15 +1922,19 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
 
                   <button
                     type="button"
-                    disabled={!addCommessaId}
+                    disabled={!addCommessaId || resourceLeaveInfoForPeriod.isFullyOnLeave}
                     onClick={() => {
                       handleLocalAssignResourceToCommessa(selectedResourceForTab, addCommessaId, parseInt(addCommessaPercentage));
                       setAddCommessaId('');
                     }}
-                    className="h-[38px] flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs px-4 rounded-lg transition shadow-xs active:scale-95 disabled:opacity-50 cursor-pointer shrink-0"
+                    className={`h-[38px] flex items-center justify-center gap-1.5 font-extrabold text-xs px-4 rounded-lg transition shadow-xs active:scale-95 disabled:opacity-50 cursor-pointer shrink-0 ${
+                      resourceLeaveInfoForPeriod.isFullyOnLeave
+                        ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
+                        : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                    }`}
                   >
                     <Plus className="w-4 h-4" />
-                    <span>Aggiungi Commessa</span>
+                    <span>{resourceLeaveInfoForPeriod.isFullyOnLeave ? 'Risorsa in Ferie' : 'Aggiungi Commessa'}</span>
                   </button>
                 </div>
 
@@ -1852,7 +1950,9 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                   <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
                     {commesseAssegnateAllaRisorsa.length === 0 ? (
                       <p className="text-xs text-gray-400 italic p-4 text-center border border-dashed border-gray-200 rounded-xl">
-                        Nessuna commessa assegnata a {selectedResourceForTab} per la settimana selezionata.
+                        {resourceLeaveInfoForPeriod.isFullyOnLeave
+                          ? `Nessuna commessa attiva: ${selectedResourceForTab} è in ferie per l'intero periodo selezionato.`
+                          : `Nessuna commessa assegnata a ${selectedResourceForTab} per la settimana selezionata.`}
                       </p>
                     ) : (
                       commesseAssegnateAllaRisorsa.map(c => {

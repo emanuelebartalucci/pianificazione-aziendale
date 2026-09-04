@@ -101,8 +101,16 @@ export const isSoci = (nomeOrEmail?: string | null): boolean => {
 
 export default function Impostazioni() {
   const navigate = useNavigate();
-  const { isDev, dipendenti, coordinatori, refreshData, userEmail, myAssociatedName } = useAuth();
+  const { isDev, dipendenti, coordinatori, commesse, refreshData, userEmail, myAssociatedName } = useAuth();
   
+  // Stato per Eccezioni Commesse Multiarea - Vecchia Gestione (Solo Sviluppatore)
+  const [selectedCommessaForExtra, setSelectedCommessaForExtra] = useState('');
+  const [selectedDipForExtra, setSelectedDipForExtra] = useState('');
+  const [commessaSearchExtra, setCommessaSearchExtra] = useState('');
+  const [dipSearchExtra, setDipSearchExtra] = useState('');
+  const [filterActiveExtra, setFilterActiveExtra] = useState('');
+  const [savingExtraCommessa, setSavingExtraCommessa] = useState(false);
+
   // Stato per l'Editor & Simulatore E-mail di Sistema
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('commessa_apertura');
   const [customTemplates, setCustomTemplates] = useState<Record<string, { subject: string; body: string }>>({});
@@ -286,6 +294,89 @@ export default function Impostazioni() {
   useEffect(() => {
     loadImpostazioniLists();
   }, [isDev]);
+
+  // Filtri ricerca per Eccezioni Commesse Multiarea (Solo Sviluppatore)
+  const filteredCommesseForExtra = useMemo(() => {
+    const openCommesse = commesse
+      .filter(c => (!c.stato || c.stato !== 'Chiusa'))
+      .sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
+
+    if (!commessaSearchExtra.trim()) return openCommesse;
+
+    const q = commessaSearchExtra.toLowerCase().trim();
+    return openCommesse.filter(c => {
+      const nome = (c.nome || '').toLowerCase();
+      const codice = (c.codiceCommessa || '').toLowerCase();
+      const resp = (c.responsabile || '').toLowerCase();
+      const pm = Array.isArray(c.pm) ? c.pm.join(' ').toLowerCase() : (c.pm || '').toLowerCase();
+      const cliente = (c.cliente || '').toLowerCase();
+      return nome.includes(q) || codice.includes(q) || resp.includes(q) || pm.includes(q) || cliente.includes(q);
+    });
+  }, [commesse, commessaSearchExtra]);
+
+  const filteredDipendentiForExtra = useMemo(() => {
+    const activeDip = dipendenti
+      .filter(d => (!d.dataCessazione || d.dataCessazione >= new Date().toISOString().slice(0, 10)) && !isTechnicalUser(d))
+      .sort((a, b) => a.nome.localeCompare(b.nome));
+
+    if (!dipSearchExtra.trim()) return activeDip;
+
+    const q = dipSearchExtra.toLowerCase().trim();
+    return activeDip.filter(d => {
+      const nome = (d.nome || '').toLowerCase();
+      const area = (d.macroArea || '').toLowerCase();
+      const email = (d.email || '').toLowerCase();
+      return nome.includes(q) || area.includes(q) || email.includes(q);
+    });
+  }, [dipendenti, dipSearchExtra]);
+
+  // Handlers Eccezioni Commesse Multiarea - Vecchia Gestione (Solo Sviluppatore)
+  const handleAddExtraAbilitato = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedCommessaForExtra || !selectedDipForExtra) {
+      showToast("Seleziona sia la commessa che la risorsa da abilitare.", "warning");
+      return;
+    }
+    setSavingExtraCommessa(true);
+    try {
+      const targetComm = commesse.find(c => c.id === selectedCommessaForExtra);
+      const currentList: string[] = Array.isArray(targetComm?.abilitatiExtra) ? targetComm.abilitatiExtra : [];
+      if (currentList.includes(selectedDipForExtra)) {
+        showToast("Questa risorsa è già abilitata per questa commessa.", "warning");
+        setSavingExtraCommessa(false);
+        return;
+      }
+      const updatedList = [...currentList, selectedDipForExtra];
+      await updateDoc(doc(db, 'catalogo_commesse', selectedCommessaForExtra), {
+        abilitatiExtra: updatedList
+      });
+      await refreshData();
+      showToast(`Abilitazione assegnata a ${selectedDipForExtra} con successo!`, "success");
+      setSelectedDipForExtra('');
+      setDipSearchExtra('');
+    } catch (err) {
+      console.error("Errore aggiunta abilitazione extra:", err);
+      showToast("Errore durante l'assegnazione dell'abilitazione.", "error");
+    } finally {
+      setSavingExtraCommessa(false);
+    }
+  };
+
+  const handleRemoveExtraAbilitato = async (commessaId: string, dipName: string) => {
+    try {
+      const targetComm = commesse.find(c => c.id === commessaId);
+      const currentList: string[] = Array.isArray(targetComm?.abilitatiExtra) ? targetComm.abilitatiExtra : [];
+      const updatedList = currentList.filter(n => n !== dipName);
+      await updateDoc(doc(db, 'catalogo_commesse', commessaId), {
+        abilitatiExtra: updatedList
+      });
+      await refreshData();
+      showToast(`Abilitazione di ${dipName} revocata con successo.`, "success");
+    } catch (err) {
+      console.error("Errore rimozione abilitazione extra:", err);
+      showToast("Errore durante la rimozione dell'abilitazione.", "error");
+    }
+  };
 
   // Handlers
   const handleAddAdmin = async (e: React.FormEvent) => {
@@ -1508,6 +1599,324 @@ export default function Impostazioni() {
         {/* TAB 5: SISTEMA */}
         {activeTab === 'sistema' && isDev && (
           <div className="space-y-8 w-full">
+            {/* Eccezioni Commesse Multiarea — Vecchia Gestione (Solo Sviluppatore) */}
+            <section className="bg-gradient-to-br from-amber-50/90 via-orange-50/60 to-slate-50 p-6 sm:p-8 rounded-3xl border border-amber-200/90 shadow-sm space-y-6">
+              <div className="border-b border-amber-200/80 pb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <h3 className="text-xl font-black text-amber-950 flex items-center gap-2.5">
+                    <Briefcase className="w-6 h-6 text-amber-600" />
+                    <span>Eccezioni Commesse Multiarea — Vecchia Gestione</span>
+                  </h3>
+                  <p className="text-xs text-amber-800/90 mt-1 leading-relaxed max-w-3xl">
+                    Abilita un referente o PM secondario a pianificare e gestire una commessa storica per le persone della propria area, senza alterare il Responsabile e il PM ufficiali del progetto (funzione transitoria per commesse uniche a gestione mista).
+                  </p>
+                </div>
+                <span className="text-[10px] font-black uppercase px-3 py-1 bg-amber-200/80 text-amber-950 rounded-xl self-start sm:self-center border border-amber-300 shadow-2xs">
+                  Transitorio Dev
+                </span>
+              </div>
+
+              {/* Form di Assegnazione Abilitazione */}
+              <form onSubmit={handleAddExtraAbilitato} className="bg-white/80 backdrop-blur-sm p-4 sm:p-5 rounded-2xl border border-amber-200/80 shadow-xs space-y-3">
+                <div className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                  <Plus className="w-4 h-4 text-amber-600" />
+                  <span>Nuova Abilitazione Straordinaria</span>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+                  {/* Selettore Commessa */}
+                  <div className="md:col-span-5 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-[11px] font-bold text-slate-700">
+                        1. Commessa Aperta *
+                      </label>
+                      {commessaSearchExtra && (
+                        <span className="text-[10px] font-extrabold text-amber-900 bg-amber-200/80 px-2 py-0.5 rounded-full">
+                          {filteredCommesseForExtra.length} trovate
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Campo di ricerca in alto alla lista delle commesse */}
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        placeholder="Cerca per codice, nome, PM o Resp..."
+                        value={commessaSearchExtra}
+                        onChange={e => setCommessaSearchExtra(e.target.value)}
+                        className="w-full pl-8 pr-7 py-2 bg-white border border-amber-200/90 rounded-xl text-xs font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-amber-500 shadow-2xs"
+                      />
+                      {commessaSearchExtra && (
+                        <button
+                          type="button"
+                          onClick={() => setCommessaSearchExtra('')}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
+                          title="Cancella ricerca commessa"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    <select
+                      required
+                      value={selectedCommessaForExtra}
+                      onChange={e => setSelectedCommessaForExtra(e.target.value)}
+                      className="w-full p-2.5 bg-white border border-amber-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-amber-500 shadow-xs cursor-pointer"
+                    >
+                      <option value="">
+                        {filteredCommesseForExtra.length === 0 
+                          ? '-- Nessuna commessa corrispondente --' 
+                          : `-- Seleziona commessa (${filteredCommesseForExtra.length}) --`}
+                      </option>
+                      {/* Preserva opzione selezionata se temporaneamente fuori dai risultati di ricerca */}
+                      {(() => {
+                        const selectedCommObj = commesse.find(c => c.id === selectedCommessaForExtra);
+                        if (selectedCommObj && !filteredCommesseForExtra.some(c => c.id === selectedCommessaForExtra)) {
+                          return (
+                            <option key={selectedCommObj.id} value={selectedCommObj.id}>
+                              ✓ {selectedCommObj.codiceCommessa ? `[${selectedCommObj.codiceCommessa}] ` : ''}{selectedCommObj.nome} (Selezionata)
+                            </option>
+                          );
+                        }
+                        return null;
+                      })()}
+                      {filteredCommesseForExtra.map(c => {
+                        const respText = c.responsabile ? ` | Resp: ${c.responsabile}` : '';
+                        const pmText = c.pm ? ` | PM: ${Array.isArray(c.pm) ? c.pm.join(', ') : c.pm}` : '';
+                        const extraCount = Array.isArray(c.abilitatiExtra) && c.abilitatiExtra.length > 0 ? ` [${c.abilitatiExtra.length} extra]` : '';
+                        return (
+                          <option key={c.id} value={c.id}>
+                            {c.codiceCommessa ? `[${c.codiceCommessa}] ` : ''}{c.nome}{respText}{pmText}{extraCount}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+
+                  {/* Selettore Risorsa da Abilitare */}
+                  <div className="md:col-span-5 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-[11px] font-bold text-slate-700">
+                        2. Risorsa / Referente d'Area *
+                      </label>
+                      {dipSearchExtra && (
+                        <span className="text-[10px] font-extrabold text-amber-900 bg-amber-200/80 px-2 py-0.5 rounded-full">
+                          {filteredDipendentiForExtra.length} trovate
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Campo di ricerca in alto alla lista delle risorse */}
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        placeholder="Cerca risorsa per nome o macroarea..."
+                        value={dipSearchExtra}
+                        onChange={e => setDipSearchExtra(e.target.value)}
+                        className="w-full pl-8 pr-7 py-2 bg-white border border-amber-200/90 rounded-xl text-xs font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-amber-500 shadow-2xs"
+                      />
+                      {dipSearchExtra && (
+                        <button
+                          type="button"
+                          onClick={() => setDipSearchExtra('')}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
+                          title="Cancella ricerca risorsa"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    <select
+                      required
+                      value={selectedDipForExtra}
+                      onChange={e => setSelectedDipForExtra(e.target.value)}
+                      className="w-full p-2.5 bg-white border border-amber-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-amber-500 shadow-xs cursor-pointer"
+                    >
+                      <option value="">
+                        {filteredDipendentiForExtra.length === 0
+                          ? '-- Nessuna risorsa corrispondente --'
+                          : `-- Seleziona risorsa (${filteredDipendentiForExtra.length}) --`}
+                      </option>
+                      {/* Preserva risorsa selezionata se temporaneamente fuori dai risultati di ricerca */}
+                      {(() => {
+                        if (selectedDipForExtra && !filteredDipendentiForExtra.some(d => d.nome === selectedDipForExtra)) {
+                          return (
+                            <option key={selectedDipForExtra} value={selectedDipForExtra}>
+                              ✓ {selectedDipForExtra} (Selezionata)
+                            </option>
+                          );
+                        }
+                        return null;
+                      })()}
+                      {filteredDipendentiForExtra.map(d => (
+                        <option key={d.id} value={d.nome}>
+                          {d.nome} {d.macroArea ? `(${d.macroArea})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Pulsante Submit */}
+                  <div className="md:col-span-2">
+                    <button
+                      type="submit"
+                      disabled={savingExtraCommessa}
+                      className="w-full py-2.5 px-4 bg-amber-600 hover:bg-amber-700 active:scale-95 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl transition shadow-sm flex items-center justify-center gap-1.5 cursor-pointer h-[42px]"
+                    >
+                      <span>{savingExtraCommessa ? 'Salvataggio...' : 'Abilita Gestione'}</span>
+                    </button>
+                  </div>
+                </div>
+              </form>
+
+              {/* Elenco Commesse con Abilitazioni Attive */}
+              <div className="space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <span className="text-xs font-black uppercase text-amber-950 tracking-wider">
+                    Commesse con Abilitazioni Straordinarie Attive
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {commesse.filter(c => Array.isArray(c.abilitatiExtra) && c.abilitatiExtra.length > 0).length > 2 && (
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          placeholder="Filtra eccezioni..."
+                          value={filterActiveExtra}
+                          onChange={e => setFilterActiveExtra(e.target.value)}
+                          className="pl-8 pr-6 py-1 bg-white border border-amber-200 rounded-xl text-xs font-semibold text-slate-700 outline-none focus:ring-1 focus:ring-amber-500 shadow-2xs"
+                        />
+                        {filterActiveExtra && (
+                          <button
+                            type="button"
+                            onClick={() => setFilterActiveExtra('')}
+                            className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                            title="Azzera filtro"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    <span className="text-xs font-bold text-amber-800 bg-amber-200/60 px-2.5 py-0.5 rounded-full shrink-0">
+                      {commesse.filter(c => Array.isArray(c.abilitatiExtra) && c.abilitatiExtra.length > 0).length} commesse
+                    </span>
+                  </div>
+                </div>
+
+                {(() => {
+                  let commesseConExtra = commesse.filter(c => Array.isArray(c.abilitatiExtra) && c.abilitatiExtra.length > 0);
+                  if (filterActiveExtra.trim()) {
+                    const q = filterActiveExtra.toLowerCase().trim();
+                    commesseConExtra = commesseConExtra.filter(c => {
+                      const nome = (c.nome || '').toLowerCase();
+                      const cod = (c.codiceCommessa || '').toLowerCase();
+                      const extraNames = (c.abilitatiExtra || []).join(' ').toLowerCase();
+                      return nome.includes(q) || cod.includes(q) || extraNames.includes(q);
+                    });
+                  }
+
+                  if (commesseConExtra.length === 0) {
+                    return (
+                      <div className="p-6 bg-white/70 rounded-2xl border border-amber-200/60 text-center space-y-1">
+                        <p className="text-xs font-bold text-amber-900">
+                          Nessuna eccezione attiva.
+                        </p>
+                        <p className="text-[11px] text-slate-500 font-medium">
+                          Tutte le commesse seguono attualmente la gestione standard con un solo Responsabile e un solo PM.
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="grid grid-cols-1 gap-3">
+                      {commesseConExtra.map(comm => {
+                        const isClosed = comm.stato === 'Chiusa';
+                        const extraList: string[] = comm.abilitatiExtra || [];
+
+                        return (
+                          <div
+                            key={comm.id}
+                            className={`p-4 bg-white rounded-2xl border transition shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3 ${
+                              isClosed ? 'border-gray-200 opacity-60 bg-gray-50/50' : 'border-amber-200/90 hover:border-amber-300'
+                            }`}
+                          >
+                            <div className="space-y-1.5 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                {comm.codiceCommessa && (
+                                  <span className="px-2 py-0.5 bg-slate-100 text-slate-700 rounded-lg text-[10px] font-black border border-slate-200">
+                                    {comm.codiceCommessa}
+                                  </span>
+                                )}
+                                <span className="font-extrabold text-sm text-slate-900 truncate">
+                                  {comm.nome}
+                                </span>
+                                {isClosed ? (
+                                  <span className="px-2 py-0.5 bg-gray-200 text-gray-700 rounded-md text-[9px] font-black uppercase">
+                                    Chiusa
+                                  </span>
+                                ) : (
+                                  <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-md text-[9px] font-black uppercase border border-emerald-200">
+                                    Aperta
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Ruoli Ufficiali */}
+                              <div className="flex items-center gap-3 text-[11px] text-slate-600 font-semibold flex-wrap">
+                                <span>
+                                  👔 Resp. Ufficiale: <strong className="text-slate-800">{comm.responsabile || 'Non assegnato'}</strong>
+                                </span>
+                                {comm.pm && (
+                                  <span>
+                                    🎯 PM Ufficiale: <strong className="text-slate-800">{Array.isArray(comm.pm) ? comm.pm.join(', ') : comm.pm}</strong>
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Pillole Referenti Extra Abilitati */}
+                            <div className="flex items-center gap-2 flex-wrap md:justify-end shrink-0">
+                              <span className="text-[10px] font-black uppercase text-amber-900 md:hidden">
+                                Abilitati Extra:
+                              </span>
+                              {extraList.map(extraName => {
+                                const dipObj = dipendenti.find(d => areNamesEqual(d.nome, extraName));
+                                const areaTag = dipObj?.macroArea ? ` (${dipObj.macroArea})` : '';
+
+                                return (
+                                  <div
+                                    key={extraName}
+                                    className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-100 border border-amber-300 text-amber-950 rounded-xl text-xs font-extrabold shadow-2xs"
+                                    title={`Abilitato a pianificare le risorse della propria area (${dipObj?.macroArea || 'area'}) per questa commessa`}
+                                  >
+                                    <span>👤 {extraName}{areaTag}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRemoveExtraAbilitato(comm.id, extraName)}
+                                      className="text-amber-700 hover:text-red-700 p-0.5 rounded-full hover:bg-amber-200 transition cursor-pointer"
+                                      title={`Revoca abilitazione a ${extraName}`}
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+            </section>
+
             {/* Configurazione Email Risorse */}
             <section className="bg-gradient-to-br from-slate-50 to-zinc-100 p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col justify-between gap-4">
               <div>

@@ -3,8 +3,8 @@ import { createPortal } from 'react-dom';
 import { useAuth, isTechnicalUser, type Dipendente } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, doc, writeBatch, addDoc, updateDoc, deleteDoc, query, where, getDocs, onSnapshot } from 'firebase/firestore';
-import { Users, ChevronLeft, ChevronRight, ChevronDown, Save, Download, ZoomIn, ZoomOut, Trash2, Plus, RefreshCw, CalendarDays, FileText, X, UserCheck, MoveVertical, Clock, Pencil, ExternalLink, Calendar } from 'lucide-react';
-import { getWeekNumber, getStartOfWeek, addDays, isItalianHoliday } from '../utils/date';
+import { Users, ChevronLeft, ChevronRight, ChevronDown, Save, Download, ZoomIn, ZoomOut, Trash2, Plus, RefreshCw, CalendarDays, FileText, X, UserCheck, MoveVertical, Clock, Pencil, ExternalLink, Calendar, AlertTriangle } from 'lucide-react';
+import { getWeekNumber, getStartOfWeek, addDays, isItalianHoliday, getDefaultWeekRange } from '../utils/date';
 
 import ConfirmModal from '../components/ConfirmModal';
 import { PianificazioneModal } from '../components/PianificazioneModal';
@@ -152,8 +152,6 @@ const formatShortDate = (d: Date | null, includeYear: boolean = false): string =
 export default function PianificazionePersonale() {
   const { 
     isAdmin = false, 
-    isDev = false,
-    impersonatedEmail = null,
     dipendenti = [], 
     commesse = [], 
     coordinatori = [], 
@@ -169,7 +167,6 @@ export default function PianificazionePersonale() {
 
   // Aree coordinate dall'utente loggato (fonte autorevole: collezione coordinatori)
   const myCoordinatedAreas = useMemo((): string[] => {
-    if (isDev && !impersonatedEmail) return [];
     const areas = new Set<string>();
     const uClean = (userEmail || '').toLowerCase().trim();
     const nClean = (myAssociatedName || '').toLowerCase().trim();
@@ -240,7 +237,6 @@ export default function PianificazionePersonale() {
 
   const canUserManageRequest = (r: any): boolean => {
     if (!r || r.stato !== 'in_attesa') return false;
-    if (isDev && !impersonatedEmail) return false;
 
     // 1. Il richiedente NON può MAI approvare o rifiutare le proprie richieste
     if (isSelfRequester(r)) return false;
@@ -966,17 +962,20 @@ export default function PianificazionePersonale() {
   const isPMOrResponsabile = useMemo(() => {
     return commesse.some(c => {
       const pmArray = Array.isArray(c.pm) ? c.pm : (c.pm ? [c.pm] : []);
+      const extraArray: string[] = Array.isArray(c.abilitatiExtra) ? c.abilitatiExtra : (c.abilitatiExtra ? [c.abilitatiExtra] : []);
       const isPM = pmArray.some(name => areNamesEqual(name, myAssociatedName));
-      return isPM || areNamesEqual(c.responsabile, myAssociatedName);
+      const isExtra = extraArray.some((name: string) => areNamesEqual(name, myAssociatedName) || (userEmail && String(name).toLowerCase().includes(userEmail.split('@')[0])));
+      return isPM || isExtra || areNamesEqual(c.responsabile, myAssociatedName);
     });
-  }, [commesse, myAssociatedName]);
+  }, [commesse, myAssociatedName, userEmail]);
 
   const isUserPmOrResp = (comm: any): boolean => {
     if (!comm) return false;
 
     const respStr = String(comm.responsabile || '').trim();
     const pmList: any[] = Array.isArray(comm.pm) ? comm.pm : (comm.pm ? [comm.pm] : []);
-    const targets = [respStr, ...pmList.map(p => String(p || '').trim())].filter(Boolean);
+    const extraList: any[] = Array.isArray(comm.abilitatiExtra) ? comm.abilitatiExtra : (comm.abilitatiExtra ? [comm.abilitatiExtra] : []);
+    const targets = [respStr, ...pmList.map(p => String(p || '').trim()), ...extraList.map(e => String(e || '').trim())].filter(Boolean);
 
     if (targets.length === 0) return false;
 
@@ -1070,6 +1069,126 @@ export default function PianificazionePersonale() {
     return filteredDipendenti.filter(d => !assegnateNames.has(d.nome));
   }, [filteredDipendenti, risorseAssegnateAllaCommessa]);
 
+  const leavesMap = useMemo(() => {
+    const map: Record<string, { giorno: string; tipo: string; frazioneTipo?: string; oraInizio?: string; oraFine?: string; pausaPranzo?: boolean; pausaPranzoOre?: number; dettagli: string }[]> = {};
+    if (!approvedLeaves || approvedLeaves.length === 0) return map;
+
+    const dayNames = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
+
+    approvedLeaves.forEach((leave: any) => {
+      const resName = leave.dipendenteName;
+      if (!resName) return;
+      const start = leave.dataInizio || leave.data;
+      const end = leave.dataFine || leave.data;
+      if (!start || !end) return;
+
+      const [sY, sM, sD] = start.split('-').map(Number);
+      const [eY, eM, eD] = end.split('-').map(Number);
+      if (isNaN(sY) || isNaN(eY)) return;
+
+      const curr = new Date(sY, sM - 1, sD);
+      const last = new Date(eY, eM - 1, eD);
+
+      // Associa sia il nome grezzo che il nome canonico per garantire match ovunque
+      const canonicalDip = (dipendenti || []).find(d => areNamesEqual(d.nome, resName));
+      const targetNames = [resName];
+      if (canonicalDip && canonicalDip.nome !== resName) {
+        targetNames.push(canonicalDip.nome);
+      }
+
+      while (curr <= last) {
+        const dow = curr.getDay();
+        if (dow >= 1 && dow <= 5) {
+          const y = curr.getFullYear();
+          const m = String(curr.getMonth() + 1).padStart(2, '0');
+          const ds = String(curr.getDate()).padStart(2, '0');
+          const dateStr = `${y}-${m}-${ds}`;
+
+          if (!isItalianHoliday(dateStr)) {
+            const wkNum = getWeekNumber(curr);
+            const wkId = `${y}-W${wkNum}`;
+
+            targetNames.forEach(tName => {
+              const key = `${tName}-${wkId}`;
+              if (!map[key]) map[key] = [];
+
+              const dayName = dayNames[dow - 1];
+              const alreadyExists = map[key].some(l => l.giorno === dayName);
+
+              if (!alreadyExists) {
+                let label = (leave.tipo === 'ferie' || leave.tipo === 'assenza') ? 'Ferie' : leave.tipo === 'malattia' ? 'Malattia' : leave.tipo === 'maternita' ? 'Maternità' : leave.tipo === 'smart' ? 'Smart' : leave.tipo === 'ex_l104' ? 'ex L.104' : leave.tipo === 'studio' ? 'Studio' : (leave.tipo || 'Assenza');
+                if (leave.tipo === 'mattina' || leave.frazioneTipo === 'mattina') label = 'Ass. Matt.';
+                if (leave.tipo === 'pomeriggio' || leave.frazioneTipo === 'pomeriggio') label = 'Ass. Pom.';
+                if (leave.tipo === 'permesso' || leave.tipo === 'ex_l104' || leave.tipo === 'studio' || leave.frazioneTipo === 'orario') {
+                  if (leave.oraInizio && leave.oraFine) {
+                    label = `${leave.tipo === 'ex_l104' ? 'L.104' : (leave.tipo === 'studio' ? 'Studio' : 'Perm.')} (${leave.oraInizio}-${leave.oraFine})`;
+                  }
+                }
+
+                map[key].push({
+                  giorno: dayName,
+                  tipo: leave.tipo,
+                  frazioneTipo: leave.frazioneTipo,
+                  oraInizio: leave.oraInizio,
+                  oraFine: leave.oraFine,
+                  pausaPranzo: leave.pausaPranzo,
+                  pausaPranzoOre: leave.pausaPranzoOre,
+                  dettagli: label
+                });
+              }
+            });
+          }
+        }
+        curr.setDate(curr.getDate() + 1);
+      }
+    });
+
+    return map;
+  }, [approvedLeaves, dipendenti]);
+
+  const getLeavesForResourceInWeek = (resName: string, wkId: string) => {
+    if (!resName || !wkId) return [];
+    if (leavesMap[`${resName}-${wkId}`]) return leavesMap[`${resName}-${wkId}`];
+    // Fallback con matching resiliente
+    for (const key of Object.keys(leavesMap)) {
+      const match = key.match(/^(.*)-(\d{4}-W\d{1,2})$/);
+      if (match && match[2] === wkId && areNamesEqual(match[1], resName)) {
+        return leavesMap[key];
+      }
+    }
+    return [];
+  };
+
+  const isFullWeekLeave = (resName: string, wkId: string): boolean => {
+    const leaves = getLeavesForResourceInWeek(resName, wkId);
+    if (!leaves || leaves.length === 0) return false;
+
+    // Calcola i giorni lavorativi della settimana escludendo le festività nazionali
+    const weekOpt = selectableWeekOptions.find(o => o.id === wkId);
+    let workingDaysInWeek = 5;
+    if (weekOpt) {
+      const monday = new Date(weekOpt.mondayStr);
+      let count = 0;
+      for (let i = 0; i < 5; i++) {
+        const d = addDays(monday, i);
+        const dStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        if (!isItalianHoliday(dStr)) count++;
+      }
+      workingDaysInWeek = Math.max(1, count);
+    }
+
+    const fullLeaveDays = leaves.filter(l => 
+      l.tipo === 'ferie' || 
+      l.tipo === 'assenza' ||
+      l.tipo === 'malattia' || 
+      l.tipo === 'maternita' || 
+      l.frazioneTipo === 'giornata' ||
+      (l.tipo !== 'smart' && l.tipo !== 'permesso' && l.tipo !== 'ex_l104' && l.tipo !== 'studio' && l.tipo !== 'mattina' && l.tipo !== 'pomeriggio' && l.frazioneTipo !== 'orario' && l.frazioneTipo !== 'mattina' && l.frazioneTipo !== 'pomeriggio')
+    );
+    const uniqueDays = new Set(fullLeaveDays.map(l => l.giorno));
+    return uniqueDays.size >= workingDaysInWeek;
+  };
+
   const commesseAssegnateAllaRisorsa = useMemo(() => {
     if (!selectedResourceForTab || !allocDataInizio || !allocDataFine) return [];
     try {
@@ -1077,6 +1196,10 @@ export default function PianificazionePersonale() {
       const map: Record<string, { id: string; nome: string; percentuali: Record<string, number>; colore: string }> = {};
       
       targetWeekIds.forEach(wkId => {
+        // Se la risorsa è in ferie per l'intera settimana, in quella settimana non lavora ad alcuna commessa
+        if (isFullWeekLeave(selectedResourceForTab, wkId)) {
+          return;
+        }
         const key = `${selectedResourceForTab}-${wkId}`;
         const list = assignments[key] || [];
         list.forEach(a => {
@@ -1100,7 +1223,67 @@ export default function PianificazionePersonale() {
       console.error(e);
       return [];
     }
-  }, [assignments, selectedResourceForTab, allocDataInizio, allocDataFine, commesse]);
+  }, [assignments, selectedResourceForTab, allocDataInizio, allocDataFine, commesse, leavesMap]);
+
+  const resourceLeaveInfoForPeriod = useMemo(() => {
+    if (!selectedResourceForTab || !allocDataInizio || !allocDataFine) {
+      return { isFullyOnLeave: false, leaveWeekLabels: [], hasAnyLeave: false, leaveDaysDetails: [], totalWeeks: 0 };
+    }
+    const targetWeekIds = getWeeksSpannedByDates(allocDataInizio, allocDataFine);
+    const leaveWeekLabels: string[] = [];
+    const leaveDaysDetails: string[] = [];
+    let fullLeaveCount = 0;
+
+    targetWeekIds.forEach(wkId => {
+      const isFull = isFullWeekLeave(selectedResourceForTab, wkId);
+      const weekLeaves = getLeavesForResourceInWeek(selectedResourceForTab, wkId);
+      const opt = selectableWeekOptions.find(o => o.id === wkId);
+      const label = opt ? opt.label : `Sett. ${wkId.split('-W')[1]}`;
+
+      if (isFull) {
+        fullLeaveCount++;
+        leaveWeekLabels.push(label);
+      } else if (weekLeaves.length > 0) {
+        const days = weekLeaves.map(l => `${l.giorno} (${l.dettagli || l.tipo})`).join(', ');
+        leaveDaysDetails.push(`${label}: ${days}`);
+      }
+    });
+
+    const isFullyOnLeave = targetWeekIds.length > 0 && fullLeaveCount === targetWeekIds.length;
+    const hasAnyLeave = fullLeaveCount > 0 || leaveDaysDetails.length > 0;
+
+    return { 
+      isFullyOnLeave, 
+      leaveWeekLabels, 
+      hasAnyLeave, 
+      fullLeaveCount,
+      totalWeeks: targetWeekIds.length,
+      leaveDaysDetails 
+    };
+  }, [selectedResourceForTab, allocDataInizio, allocDataFine, selectableWeekOptions, leavesMap]);
+
+  // Pulizia automatica delle assegnazioni storiche residue per le settimane in cui la risorsa è in ferie piena
+  useEffect(() => {
+    if (!selectedResourceForTab || !allocDataInizio || !allocDataFine) return;
+    const targetWeekIds = getWeeksSpannedByDates(allocDataInizio, allocDataFine);
+    targetWeekIds.forEach(wkId => {
+      if (isFullWeekLeave(selectedResourceForTab, wkId)) {
+        const docId = `${selectedResourceForTab}-${wkId}`;
+        if (assignments[docId] && assignments[docId].length > 0) {
+          import('../services/firebase').then(({ db }) => {
+            import('firebase/firestore').then(({ doc, deleteDoc }) => {
+              deleteDoc(doc(db, 'assegnazioni', docId)).catch(() => {});
+            });
+          });
+          setAssignments(prev => {
+            const next = { ...prev };
+            delete next[docId];
+            return next;
+          });
+        }
+      }
+    });
+  }, [selectedResourceForTab, allocDataInizio, allocDataFine, leavesMap, assignments]);
 
   useEffect(() => {
     setCommesseToRemove([]);
@@ -1139,8 +1322,8 @@ export default function PianificazionePersonale() {
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [reqAreaTarget, setReqAreaTarget] = useState<MacroArea>('Disegnatori');
   const [reqCommessaId, setReqCommessaId] = useState('');
-  const [reqDataInizio, setReqDataInizio] = useState('');
-  const [reqDataFine, setReqDataFine] = useState('');
+  const [reqDataInizio, setReqDataInizio] = useState<string>(() => getDefaultWeekRange().startStr);
+  const [reqDataFine, setReqDataFine] = useState<string>(() => getDefaultWeekRange().endStr);
   const [reqPercentuale, setReqPercentuale] = useState(100);
   const [reqPreferredResource, setReqPreferredResource] = useState('');
   const [reqNota, setReqNota] = useState('');
@@ -1155,10 +1338,6 @@ export default function PianificazionePersonale() {
   const [isConfirmManageOpen, setIsConfirmManageOpen] = useState(false);
 
   const fetchSegnalazioni = async () => {
-    if (isDev && !impersonatedEmail) {
-      setSegnalazioniDisponibilita([]);
-      return;
-    }
     try {
       const qDisp = query(collection(db, 'segnalazioni_disponibilita'), where('stato', '==', 'in_attesa'));
       const snap = await getDocs(qDisp);
@@ -1173,12 +1352,8 @@ export default function PianificazionePersonale() {
   };
 
   useEffect(() => {
-    if (isDev && !impersonatedEmail) {
-      setSegnalazioniDisponibilita([]);
-      return;
-    }
     fetchSegnalazioni();
-  }, [isDev, impersonatedEmail]);
+  }, [userEmail, myCoordinatedAreas.length]);
 
   const handlePianificaRisorsaDaSegnalazione = (nomeRisorsa: string) => {
     if (!nomeRisorsa) return;
@@ -1243,14 +1418,13 @@ export default function PianificazionePersonale() {
 
     if (isStart) {
       setReqDataInizio(monStr);
-      if (reqDataFine && reqDataFine < sunStr) {
+      if (!reqDataFine || reqDataFine < sunStr) {
         setReqDataFine(sunStr);
       }
     } else {
-      if (reqDataInizio && sunStr < reqDataInizio) {
-        setReqDataFine(reqDataInizio);
-      } else {
-        setReqDataFine(sunStr);
+      setReqDataFine(sunStr);
+      if (!reqDataInizio || reqDataInizio > monStr) {
+        setReqDataInizio(monStr);
       }
     }
   };
@@ -1265,7 +1439,11 @@ export default function PianificazionePersonale() {
 
   const handleSubmitRequest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!reqCommessaId || !reqDataInizio || !reqDataFine || !reqPercentuale) {
+    const def = getDefaultWeekRange();
+    const effectiveInizio = reqDataInizio || def.startStr;
+    const effectiveFine = reqDataFine || def.endStr;
+
+    if (!reqCommessaId || !effectiveInizio || !effectiveFine || !reqPercentuale) {
       showToast("Compila tutti i campi richiesti.", "warning");
       return;
     }
@@ -1281,8 +1459,8 @@ export default function PianificazionePersonale() {
         commessaName: commName,
         commessaResponsabile: commResp,
         commessaPM: commPM,
-        dataInizio: reqDataInizio,
-        dataFine: reqDataFine,
+        dataInizio: effectiveInizio,
+        dataFine: effectiveFine,
         percentuale: Number(reqPercentuale),
         risorsaPreferita: reqPreferredResource || '',
         nota: reqNota,
@@ -1298,8 +1476,8 @@ export default function PianificazionePersonale() {
       showToast(`Richiesta inviata con successo!`, "success");
       setIsRequestModalOpen(false);
       setReqCommessaId('');
-      setReqDataInizio('');
-      setReqDataFine('');
+      setReqDataInizio(def.startStr);
+      setReqDataFine(def.endStr);
       setReqPercentuale(100);
       setReqPreferredResource('');
       setReqNota('');
@@ -1509,92 +1687,6 @@ export default function PianificazionePersonale() {
         }
       }
     });
-  };
-
-  const leavesMap = useMemo(() => {
-    const map: Record<string, { giorno: string; tipo: string; frazioneTipo?: string; oraInizio?: string; oraFine?: string; pausaPranzo?: boolean; pausaPranzoOre?: number; dettagli: string }[]> = {};
-    if (!approvedLeaves || approvedLeaves.length === 0) return map;
-
-    const dayNames = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
-
-    approvedLeaves.forEach((leave: any) => {
-      const resName = leave.dipendenteName;
-      if (!resName) return;
-      const start = leave.dataInizio || leave.data;
-      const end = leave.dataFine || leave.data;
-      if (!start || !end) return;
-
-      const [sY, sM, sD] = start.split('-').map(Number);
-      const [eY, eM, eD] = end.split('-').map(Number);
-      if (isNaN(sY) || isNaN(eY)) return;
-
-      const curr = new Date(sY, sM - 1, sD);
-      const last = new Date(eY, eM - 1, eD);
-
-      while (curr <= last) {
-        const dow = curr.getDay();
-        if (dow >= 1 && dow <= 5) {
-          const y = curr.getFullYear();
-          const m = String(curr.getMonth() + 1).padStart(2, '0');
-          const ds = String(curr.getDate()).padStart(2, '0');
-          const dateStr = `${y}-${m}-${ds}`;
-
-          if (!isItalianHoliday(dateStr)) {
-            const wkNum = getWeekNumber(curr);
-            const wkId = `${y}-W${wkNum}`;
-            const key = `${resName}-${wkId}`;
-            if (!map[key]) map[key] = [];
-
-            const dayName = dayNames[dow - 1];
-            const alreadyExists = map[key].some(l => l.giorno === dayName);
-
-            if (!alreadyExists) {
-              let label = (leave.tipo === 'ferie' || leave.tipo === 'assenza') ? 'Ferie' : leave.tipo === 'malattia' ? 'Malattia' : leave.tipo === 'maternita' ? 'Maternità' : leave.tipo === 'smart' ? 'Smart' : leave.tipo === 'ex_l104' ? 'ex L.104' : leave.tipo === 'studio' ? 'Studio' : (leave.tipo || 'Assenza');
-              if (leave.tipo === 'mattina' || leave.frazioneTipo === 'mattina') label = 'Ass. Matt.';
-              if (leave.tipo === 'pomeriggio' || leave.frazioneTipo === 'pomeriggio') label = 'Ass. Pom.';
-              if (leave.tipo === 'permesso' || leave.tipo === 'ex_l104' || leave.tipo === 'studio' || leave.frazioneTipo === 'orario') {
-                if (leave.oraInizio && leave.oraFine) {
-                  label = `${leave.tipo === 'ex_l104' ? 'L.104' : (leave.tipo === 'studio' ? 'Studio' : 'Perm.')} (${leave.oraInizio}-${leave.oraFine})`;
-                }
-              }
-
-              map[key].push({
-                giorno: dayName,
-                tipo: leave.tipo,
-                frazioneTipo: leave.frazioneTipo,
-                oraInizio: leave.oraInizio,
-                oraFine: leave.oraFine,
-                pausaPranzo: leave.pausaPranzo,
-                pausaPranzoOre: leave.pausaPranzoOre,
-                dettagli: label
-              });
-            }
-          }
-        }
-        curr.setDate(curr.getDate() + 1);
-      }
-    });
-
-    return map;
-  }, [approvedLeaves]);
-
-  const getLeavesForResourceInWeek = (resName: string, wkId: string) => {
-    if (!resName || !wkId) return [];
-    return leavesMap[`${resName}-${wkId}`] || [];
-  };
-
-  const isFullWeekLeave = (resName: string, wkId: string) => {
-    const leaves = getLeavesForResourceInWeek(resName, wkId);
-    const fullLeaveDays = leaves.filter(l => 
-      l.tipo === 'ferie' || 
-      l.tipo === 'assenza' ||
-      l.tipo === 'malattia' || 
-      l.tipo === 'maternita' || 
-      l.frazioneTipo === 'giornata' ||
-      (l.tipo !== 'smart' && l.tipo !== 'permesso' && l.tipo !== 'ex_l104' && l.tipo !== 'studio' && l.tipo !== 'mattina' && l.tipo !== 'pomeriggio' && l.frazioneTipo !== 'orario' && l.frazioneTipo !== 'mattina' && l.frazioneTipo !== 'pomeriggio')
-    );
-    const uniqueDays = new Set(fullLeaveDays.map(l => l.giorno));
-    return uniqueDays.size >= 5;
   };
 
   const getDayContractHoursForDip = (dip: any, dayName: string, defaultHours: number = 8): number => {
@@ -1873,10 +1965,26 @@ export default function PianificazionePersonale() {
     try {
       const targetWeekIds = getWeeksSpannedByDates(allocDataInizio, allocDataFine);
 
-      // Avviso pop-up ferie rimosso come richiesto dall'utente
+      const allWeeksOnLeave = targetWeekIds.length > 0 && targetWeekIds.every(wkId => isFullWeekLeave(resName, wkId));
+      if (allWeeksOnLeave) {
+        showToast(`Impossibile assegnare commesse: ${resName} è in ferie per l'intero periodo selezionato.`, "warning");
+        return;
+      }
+
+      const skippedLeaveWeeks: string[] = [];
 
       for (const wkId of targetWeekIds) {
         const docId = `${resName}-${wkId}`;
+
+        // Se la risorsa è in ferie piena per questa settimana, salta l'assegnazione e rimuovi eventuali vecchi residui
+        if (isFullWeekLeave(resName, wkId)) {
+          skippedLeaveWeeks.push(wkId.split('-W')[1] || wkId);
+          if (updatedAssignments[docId]) {
+            delete updatedAssignments[docId];
+          }
+          continue;
+        }
+
         const baseDays = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven'];
         const allowedDays: string[] = [];
 
@@ -1932,7 +2040,11 @@ export default function PianificazionePersonale() {
       setAssignments(updatedAssignments);
       setDraftNotifications(newNotifications);
       setIsDirty(true);
-      showToast("Assegnazione registrata in bozza!", "success");
+      if (skippedLeaveWeeks.length > 0) {
+        showToast(`Assegnazione salvata escludendo le settimane di ferie (Sett. ${skippedLeaveWeeks.join(', ')}).`, "warning");
+      } else {
+        showToast("Assegnazione registrata in bozza!", "success");
+      }
     } catch (err) {
       console.error(err);
       showToast("Si è verificato un errore durante il salvataggio locale.", "error");
@@ -3883,6 +3995,46 @@ export default function PianificazionePersonale() {
                 <div className="w-full mt-1">
                   {renderWeekPeriodSelector()}
                 </div>
+
+                {/* Banner Informativo Ferie / Assenze Risorsa */}
+                {selectedResourceForTab && allocDataInizio && allocDataFine && resourceLeaveInfoForPeriod.hasAnyLeave && (
+                  <div className={`p-4 rounded-2xl border flex items-start gap-3 shadow-xs transition-all ${
+                    resourceLeaveInfoForPeriod.isFullyOnLeave
+                      ? 'bg-rose-50/90 border-rose-200 text-rose-950'
+                      : 'bg-amber-50/90 border-amber-200 text-amber-950'
+                  }`}>
+                    <div className={`p-2 rounded-xl shrink-0 ${
+                      resourceLeaveInfoForPeriod.isFullyOnLeave ? 'bg-rose-100 text-rose-600' : 'bg-amber-100 text-amber-700'
+                    }`}>
+                      <AlertTriangle className="w-5 h-5" />
+                    </div>
+                    <div className="flex-1 text-xs">
+                      <div className="font-extrabold text-sm mb-1">
+                        {resourceLeaveInfoForPeriod.isFullyOnLeave
+                          ? `⚠️ Risorsa in Ferie / Assente per l'intero periodo selezionato`
+                          : `⚠️ Attenzione: Presenza di Ferie / Assenze nel periodo selezionato`}
+                      </div>
+                      {resourceLeaveInfoForPeriod.isFullyOnLeave ? (
+                        <p className="font-semibold leading-relaxed">
+                          <strong>{selectedResourceForTab}</strong> risulta in <strong>ferie/assenza approvata</strong> per tutte le settimane selezionate ({resourceLeaveInfoForPeriod.leaveWeekLabels.join(', ')}). In questo periodo la risorsa non è disponibile e l'assegnazione di nuove commesse è bloccata.
+                        </p>
+                      ) : (
+                        <div className="space-y-1 font-semibold leading-relaxed">
+                          {resourceLeaveInfoForPeriod.leaveWeekLabels.length > 0 && (
+                            <p>
+                              <strong>{selectedResourceForTab}</strong> è in ferie piena nelle settimane: <strong className="text-amber-900">{resourceLeaveInfoForPeriod.leaveWeekLabels.join(', ')}</strong> (in tali settimane non verranno assegnate commesse).
+                            </p>
+                          )}
+                          {resourceLeaveInfoForPeriod.leaveDaysDetails.length > 0 && (
+                            <p>
+                              Giornate parziali di assenza/permesso: {resourceLeaveInfoForPeriod.leaveDaysDetails.join(' | ')}.
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Riga 2: Griglia a 2 colonne ampie (Assegna Commessa & Lista Commesse Assegnate) */}
@@ -3989,16 +4141,21 @@ export default function PianificazionePersonale() {
 
                     <button
                       type="button"
-                      disabled={savingAllocations || !addCommessaId}
+                      disabled={savingAllocations || !addCommessaId || resourceLeaveInfoForPeriod.isFullyOnLeave}
                       onClick={async () => {
+                        if (resourceLeaveInfoForPeriod.isFullyOnLeave) {
+                          showToast(`Impossibile assegnare commesse: ${selectedResourceForTab} è in ferie per l'intero periodo selezionato.`, "warning");
+                          return;
+                        }
                         await executeAssignResourceToCommessa(selectedResourceForTab, addCommessaId, parseInt(addPercentage));
                         setAddCommessaId('');
                         setAddCommessaSearchText('');
                       }}
-                      className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black py-3 rounded-xl transition shadow-md active:scale-95 disabled:opacity-50 cursor-pointer mt-6"
+                      className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black py-3 rounded-xl transition shadow-md active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer mt-6"
+                      title={resourceLeaveInfoForPeriod.isFullyOnLeave ? "Risorsa in ferie per l'intero periodo selezionato" : ""}
                     >
                       <Plus className="w-4 h-4" />
-                      <span>Conferma ed Esegui Assegnazione</span>
+                      <span>{resourceLeaveInfoForPeriod.isFullyOnLeave ? 'Risorsa in Ferie (Assegnazione Bloccata)' : 'Conferma ed Esegui Assegnazione'}</span>
                     </button>
                   </div>
 
@@ -4009,7 +4166,16 @@ export default function PianificazionePersonale() {
                     </h4>
                     <div className="overflow-y-auto flex-1 space-y-2.5 pr-1 scrollbar-thin">
                       {commesseAssegnateAllaRisorsa.length === 0 ? (
-                        <p className="text-xs text-gray-400 italic p-6 text-center">Nessuna commessa assegnata a {selectedResourceForTab} nel periodo selezionato.</p>
+                        <div className="p-6 text-center">
+                          {resourceLeaveInfoForPeriod.isFullyOnLeave ? (
+                            <div className="p-4 bg-amber-50/90 border border-amber-200 rounded-xl text-amber-900 text-xs font-bold inline-flex items-center gap-2">
+                              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                              <span>Nessuna commessa attiva: {selectedResourceForTab} è in ferie per l'intero periodo selezionato.</span>
+                            </div>
+                          ) : (
+                            <p className="text-xs text-gray-400 italic">Nessuna commessa assegnata a {selectedResourceForTab} nel periodo selezionato.</p>
+                          )}
+                        </div>
                       ) : (() => {
                         const allWeekIds = getWeeksSpannedByDates(allocDataInizio, allocDataFine);
                         return commesseAssegnateAllaRisorsa.map(c => {
@@ -4672,9 +4838,12 @@ export default function PianificazionePersonale() {
                 <div className="space-y-4 flex flex-col justify-between">
                   {/* SELEZIONE DA CALENDARIO DATE CON EVIDENZA SETTIMANA */}
                   {(() => {
-                    const startOpt = selectableWeekOptions.find(o => o.mondayStr === reqDataInizio) || selectableWeekOptions[0];
-                    const endOpt = selectableWeekOptions.find(o => o.sundayStr === reqDataFine) || startOpt;
-                    const targetWeekIds = (reqDataInizio && reqDataFine) ? getWeeksSpannedByDates(reqDataInizio, reqDataFine) : [];
+                    const defRange = getDefaultWeekRange();
+                    const effectiveStartStr = reqDataInizio || defRange.startStr;
+                    const effectiveEndStr = reqDataFine || defRange.endStr;
+                    const startOpt = selectableWeekOptions.find(o => o.mondayStr === effectiveStartStr) || selectableWeekOptions.find(o => o.mondayStr === defRange.startStr) || selectableWeekOptions[0];
+                    const endOpt = selectableWeekOptions.find(o => o.sundayStr === effectiveEndStr) || startOpt;
+                    const targetWeekIds = getWeeksSpannedByDates(effectiveStartStr, effectiveEndStr);
 
                     return (
                       <div className="bg-white/90 p-4 rounded-2xl border border-indigo-100 shadow-xs space-y-3">
@@ -4685,7 +4854,7 @@ export default function PianificazionePersonale() {
                             </label>
                             <input
                               type="date"
-                              value={reqDataInizio || startOpt?.mondayStr || ''}
+                              value={effectiveStartStr}
                               onChange={e => handleReqModalDateChange(e.target.value, true)}
                               className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
                             />
@@ -4706,8 +4875,8 @@ export default function PianificazionePersonale() {
                             </label>
                             <input
                               type="date"
-                              min={reqDataInizio || undefined}
-                              value={reqDataFine || endOpt?.sundayStr || ''}
+                              min={effectiveStartStr}
+                              value={effectiveEndStr}
                               onChange={e => handleReqModalDateChange(e.target.value, false)}
                               className={`w-full p-2.5 border-none bg-slate-50 focus:bg-white rounded-xl text-xs font-bold text-gray-750 outline-none focus:ring-2 ${mc.ring} shadow-inner cursor-pointer`}
                             />
@@ -4733,7 +4902,7 @@ export default function PianificazionePersonale() {
                               </span>
                             </div>
                             <span className="text-[11px] text-indigo-600/80 font-semibold">
-                              (da Lun {formatShortDate(new Date(reqDataInizio || startOpt.mondayStr))} a Dom {formatShortDate(new Date(reqDataFine || endOpt.sundayStr))})
+                              (da Lun {formatShortDate(new Date(effectiveStartStr))} a Dom {formatShortDate(new Date(effectiveEndStr))})
                             </span>
                           </div>
                         )}
@@ -5100,9 +5269,12 @@ export default function PianificazionePersonale() {
                 {/* SELEZIONE DA CALENDARIO DATE CON EVIDENZA SETTIMANA */}
                 <div className="sm:col-span-2">
                   {(() => {
-                    const startOpt = selectableWeekOptions.find(o => o.mondayStr === reqDataInizio) || selectableWeekOptions[0];
-                    const endOpt = selectableWeekOptions.find(o => o.sundayStr === reqDataFine) || startOpt;
-                    const targetWeekIds = (reqDataInizio && reqDataFine) ? getWeeksSpannedByDates(reqDataInizio, reqDataFine) : [];
+                    const defRange = getDefaultWeekRange();
+                    const effectiveStartStr = reqDataInizio || defRange.startStr;
+                    const effectiveEndStr = reqDataFine || defRange.endStr;
+                    const startOpt = selectableWeekOptions.find(o => o.mondayStr === effectiveStartStr) || selectableWeekOptions.find(o => o.mondayStr === defRange.startStr) || selectableWeekOptions[0];
+                    const endOpt = selectableWeekOptions.find(o => o.sundayStr === effectiveEndStr) || startOpt;
+                    const targetWeekIds = getWeeksSpannedByDates(effectiveStartStr, effectiveEndStr);
 
                     return (
                       <div className="bg-slate-50/90 p-4 rounded-2xl border border-slate-200 shadow-xs space-y-3">
@@ -5113,7 +5285,7 @@ export default function PianificazionePersonale() {
                             </label>
                             <input
                               type="date"
-                              value={reqDataInizio || startOpt?.mondayStr || ''}
+                              value={effectiveStartStr}
                               onChange={e => handleReqModalDateChange(e.target.value, true)}
                               className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
                             />
@@ -5134,8 +5306,8 @@ export default function PianificazionePersonale() {
                             </label>
                             <input
                               type="date"
-                              min={reqDataInizio || undefined}
-                              value={reqDataFine || endOpt?.sundayStr || ''}
+                              min={effectiveStartStr}
+                              value={effectiveEndStr}
                               onChange={e => handleReqModalDateChange(e.target.value, false)}
                               className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
                             />
@@ -5161,7 +5333,7 @@ export default function PianificazionePersonale() {
                               </span>
                             </div>
                             <span className="text-[11px] text-slate-500 font-semibold">
-                              (da Lun {formatShortDate(new Date(reqDataInizio || startOpt.mondayStr))} a Dom {formatShortDate(new Date(reqDataFine || endOpt.sundayStr))})
+                              (da Lun {formatShortDate(new Date(effectiveStartStr))} a Dom {formatShortDate(new Date(effectiveEndStr))})
                             </span>
                           </div>
                         )}
