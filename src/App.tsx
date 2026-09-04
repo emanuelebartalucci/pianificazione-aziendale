@@ -133,7 +133,7 @@ function ProtectedRoute({ children, condition }: { children: React.ReactNode; co
 }
 
 function App() {
-  const { user, loading, isAccountCessato, isDev, isHR } = useAuth();
+  const { user, loading, isAccountCessato, isDev, isHR, isRealDev } = useAuth();
 
   useEffect(() => {
     const handleWheel = (e: WheelEvent) => {
@@ -177,7 +177,7 @@ function App() {
               <div className="no-print print:hidden">
                 <Navbar />
               </div>
-              <DevImpersonator />
+              {isRealDev && <DevImpersonator />}
               <main className="max-w-[1400px] mx-auto px-4 py-8 print:p-0 print:m-0 print:max-w-none print:w-full print:block">
                 <ErrorBoundary>
                   <Suspense fallback={<PageLoader />}>
@@ -197,7 +197,7 @@ function App() {
                       <Route path="/prenotazioni" element={<Prenotazioni />} />
                       <Route path="/organigramma" element={<Organigramma />} />
                       <Route path="/gestione-hr" element={
-                        <ProtectedRoute condition={isHR || isDev}>
+                        <ProtectedRoute condition={isHR}>
                           <GestioneHR />
                         </ProtectedRoute>
                       } />

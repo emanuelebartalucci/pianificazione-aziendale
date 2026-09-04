@@ -143,7 +143,7 @@ const ClimaTrendChart = ({ responses, days, onDaysChange }: { responses: Rispost
 };
 
 export default function GestioneHR() {
-  const { isHR, isDev, userEmail } = useAuth();
+  const { isHR, userEmail } = useAuth();
   const [activeTab, setActiveTab] = useState<'greetings' | 'wellness' | 'surveys' | 'ideas' | 'risorse'>('greetings');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'warning' | 'error' } | null>(null);
 
@@ -214,7 +214,7 @@ export default function GestioneHR() {
 
   // Caricamento Dati Generali HR
   const loadData = async () => {
-    if (!isHR && !isDev) return;
+    if (!isHR) return;
 
     // 1. Frasi di Benvenuto
     try {
@@ -339,7 +339,7 @@ export default function GestioneHR() {
       markNotificationsAsReadByFilter(userEmail, { linkContains: '/gestione-hr' });
       markNotificationsAsReadByFilter(userEmail, { tipo: 'suggerimento_ricevuto' });
     }
-  }, [isHR, isDev, userEmail]);
+  }, [isHR, userEmail]);
 
   // Handlers Frasi Benvenuto
   const handleAddGreeting = async (e: React.FormEvent) => {
@@ -612,11 +612,11 @@ export default function GestioneHR() {
     );
   };
 
-  if (!isHR && !isDev) {
+  if (!isHR) {
     return (
       <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] p-8 border border-white/50 text-center">
         <h3 className="text-xl font-bold text-red-600">Accesso Riservato</h3>
-        <p className="text-sm text-gray-600 mt-2">Questa sezione è riservata esclusivamente al personale HR ed agli sviluppatori.</p>
+        <p className="text-sm text-gray-600 mt-2">Questa sezione è riservata esclusivamente al personale dell'Ufficio HR.</p>
       </div>
     );
   }

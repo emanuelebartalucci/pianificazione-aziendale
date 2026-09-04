@@ -853,8 +853,8 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Gestione HR (Riservato ad HR e Sviluppatore - Non Admin semplici) */}
-            {(isHR || isDev) && (
+            {/* Gestione HR (Riservato ad HR) */}
+            {isHR && (
               <div 
                 onClick={(e) => handleNav(e, '/gestione-hr')} 
                 onAuxClick={(e) => handleNav(e, '/gestione-hr')} 

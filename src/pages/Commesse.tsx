@@ -6,7 +6,6 @@ import { Briefcase, ChevronLeft, ChevronRight, ChevronDown, Calendar, Download, 
 import { getWeekNumber, getStartOfWeek, addDays } from '../utils/date';
 import { queueMail } from '../utils/mailSender';
 import { createUserNotification, markNotificationsAsReadByFilter } from '../utils/userNotificationService';
-import { TIPOLOGIA_COLORS } from '../utils/commesseIniziali';
 import ConfirmModal from '../components/ConfirmModal';
 import { PianificazioneModal } from '../components/PianificazioneModal';
 import { ResourceAvailabilityModal } from '../components/ResourceAvailabilityModal';
@@ -16,18 +15,6 @@ import { getCommesseNotificationEmails, sendNuovoClienteNotification } from '../
 
 
 
-const hexToRgba = (hex: string, alpha: number): string => {
-  if (!hex) return `rgba(100, 116, 139, ${alpha})`;
-  let cleanHex = hex.replace('#', '');
-  if (cleanHex.length === 3) {
-    cleanHex = cleanHex.split('').map(char => char + char).join('');
-  }
-  const num = parseInt(cleanHex, 16);
-  const r = (num >> 16) & 255;
-  const g = (num >> 8) & 255;
-  const b = num & 255;
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-};
 
 export const getDayContractHoursForDip = (dip: any, dayName: string, defaultHours: number = 8): number => {
   if (dip?.tipo === 'collaboratore') return 8;
@@ -254,7 +241,6 @@ const getWeeksSpannedByDates = (startDateStr: string, endDateStr: string): strin
 export default function Commesse() {
   const { 
     isAdmin = false, 
-    isDev = false,
     isGestoreCommesse = false,
     myAssociatedName = '', 
     userEmail = '',
@@ -952,7 +938,7 @@ export default function Commesse() {
   // Verifica se l'utente ha ruolo di coordinatore, responsabile, PM o direzione sulla commessa
   const isManagerOfCommessa = (comm?: any): boolean => {
     if (!comm) return false;
-    if (isAdmin || isSoci(myAssociatedName) || isDev || isGestoreCommesse) return true;
+    if (isAdmin || isSoci(myAssociatedName) || isGestoreCommesse) return true;
 
     // 1. Responsabile di Commessa
     if (comm.responsabile && (areNamesEqual(comm.responsabile, myAssociatedName) || (userEmail && comm.responsabile.toLowerCase().includes(userEmail.split('@')[0])))) {
@@ -1373,9 +1359,10 @@ export default function Commesse() {
         setReqDataFine(sunStr);
       }
     } else {
-      setReqDataFine(sunStr);
-      if (reqDataInizio && reqDataInizio > monStr) {
-        setReqDataInizio(monStr);
+      if (reqDataInizio && sunStr < reqDataInizio) {
+        setReqDataFine(reqDataInizio);
+      } else {
+        setReqDataFine(sunStr);
       }
     }
   };
@@ -2288,7 +2275,7 @@ export default function Commesse() {
 
     const cod = editingCommessa.codiceCommessa || (editingCommessa.nome ? editingCommessa.nome.split(' - ')[0] : '');
     const newNome = cod ? `${cod} - ${editTitolo.trim()}` : editTitolo.trim();
-    const calculatedColor = TIPOLOGIA_COLORS[editTipologia] || editingCommessa.colore || '#64748b';
+    const calculatedColor = editingCommessa.colore || '#64748b';
 
     const finalProgetti: CommessaProgetto[] = editProgettiDescrizioni
       .filter(desc => desc && desc.trim().length > 0)
@@ -2916,7 +2903,7 @@ export default function Commesse() {
       return;
     }
 
-    const calculatedColor = TIPOLOGIA_COLORS[newCommessaTipologia] || '#64748b';
+    const calculatedColor = '#64748b';
     const dataAperturaIso = new Date().toISOString();
 
     // Costruzione dell'array dei progetti associando le descrizioni alle impostazioni comuni della commessa
@@ -3592,14 +3579,14 @@ export default function Commesse() {
             >
               <table 
                 className="w-full text-left border-separate border-spacing-0 text-xs"
-                style={{ minWidth: `${264 + activeWeeks.length * parseInt(weekColumnMinWidth)}px` }}
+                style={{ minWidth: `${240 + activeWeeks.length * parseInt(weekColumnMinWidth)}px` }}
               >
                 <thead className="sticky top-0 z-30 bg-white shadow-sm border-b-2 border-gray-200">
                   {/* Month Group Header Row */}
                   <tr className="bg-gray-50 border-b text-[11px] font-black text-gray-500 text-center uppercase tracking-wider" style={{ height: '40px', minHeight: '40px', maxHeight: '40px' }}>
                     <th 
                       className="p-0 text-center sticky left-0 top-0 z-35 bg-gray-50 shadow-[1px_0_0_0_#e5e7eb] font-black truncate whitespace-nowrap"
-                      style={{ width: '264px', minWidth: '264px', maxWidth: '264px', height: '40px', minHeight: '40px', maxHeight: '40px', lineHeight: '40px' }}
+                      style={{ width: '240px', minWidth: '240px', maxWidth: '240px', height: '40px', minHeight: '40px', maxHeight: '40px', lineHeight: '40px' }}
                     >
                       Mesi
                     </th>
@@ -3613,7 +3600,7 @@ export default function Commesse() {
                   <tr className="h-12">
                     <th 
                       className="p-4 font-extrabold text-gray-900 sticky left-0 z-35 bg-white shadow-[1px_0_0_0_#e5e7eb] h-12 truncate"
-                      style={{ width: '264px', minWidth: '264px', maxWidth: '264px', top: '39px' }}
+                      style={{ width: '240px', minWidth: '240px', maxWidth: '240px', top: '39px' }}
                     >
                       Commesse e Clienti
                     </th>
@@ -3658,12 +3645,10 @@ export default function Commesse() {
                       return (
                         <tr key={comm.id} className="hover:bg-blue-50/20 transition-colors bg-white">
                           <td 
-                            className="p-3 font-bold text-gray-800 bg-white sticky left-0 z-10 shadow-[1px_0_0_0_#f3f4f6] border-b align-middle text-left"
-                            style={{ width: '264px', minWidth: '264px', maxWidth: '264px' }}
+                            className="p-2.5 font-bold text-gray-800 bg-white sticky left-0 z-10 shadow-[1px_0_0_0_#f3f4f6] border-b align-middle text-left"
+                            style={{ width: '240px', minWidth: '240px', maxWidth: '240px' }}
                           >
-                            <div className="flex items-stretch gap-2.5">
-                              <span className="w-3 h-3 rounded-full shadow-inner shrink-0 mt-1" style={{backgroundColor: (comm.tipologia && TIPOLOGIA_COLORS[comm.tipologia]) || comm.colore || '#64748b'}}></span>
-                              
+                            <div className="flex items-stretch gap-2">
                               <div className="min-w-0 flex-1 text-left flex flex-col justify-between">
                                 <div className="whitespace-normal break-words font-extrabold text-xs text-gray-800 leading-tight" title={comm.nome}>{comm.nome}</div>
                                 
@@ -3773,8 +3758,7 @@ export default function Commesse() {
                             const commRange = commesseDateRangeMap.get(comm.id);
                             const wkRange = weeksRangeMap.get(wk.id);
                             const isWithinRange = !!(commRange && wkRange && wkRange.wkStartMs <= commRange.endMs && wkRange.wkEndMs >= commRange.startMs);
-                            const commColor = (comm.tipologia && TIPOLOGIA_COLORS[comm.tipologia]) || comm.colore || '#3b82f6';
-                            const cellBg = isWithinRange ? hexToRgba(commColor, 0.08) : undefined;
+                            const cellBg = isWithinRange ? '#f1f5f9' : undefined;
                             
                             const prioKey = `${comm.id}_${wk.id}`;
                             const weekPriority = prioritaCommesse[prioKey] || 'Standard';
@@ -4164,7 +4148,6 @@ export default function Commesse() {
                 <div className={`${isDuplicateCommessaCode ? 'bg-rose-100 border-rose-300 text-rose-900' : 'bg-emerald-100/60 border-emerald-200 text-emerald-900'} p-3 rounded-xl border text-center text-xs font-bold flex flex-col sm:flex-row items-center justify-center gap-2 transition-colors duration-200`}>
                   <span>Codice Commessa Generato:</span>
                   <span className={`flex items-center gap-2 text-sm font-black tracking-wider bg-white px-2.5 py-1 rounded shadow-sm ${isDuplicateCommessaCode ? 'text-rose-700 border border-rose-200 shadow-inner' : 'text-emerald-700'}`}>
-                    <span className="w-2.5 h-2.5 rounded-full shrink-0 animate-pulse" style={{backgroundColor: isDuplicateCommessaCode ? '#f43f5e' : (TIPOLOGIA_COLORS[newCommessaTipologia] || '#64748b')}}></span>
                     {selectedClient ? generatedCodiceCommessa : 'Seleziona un cliente'}
                   </span>
                   {isDuplicateCommessaCode && (
@@ -4895,15 +4878,11 @@ export default function Commesse() {
                     filteredAndSortedCatalogoCommesse.map(c => {
                       const computedTipologia = getParsedField(c, 'tipologia');
                       const computedAnno = getParsedField(c, 'anno');
-                      const computedColor = TIPOLOGIA_COLORS[computedTipologia] || c.colore || '#64748b';
 
                       return (
                         <tr key={c.id} className="hover:bg-emerald-50/50 transition-colors">
                           <td className="p-2.5 font-bold whitespace-nowrap">
-                            <div className="flex items-center gap-1.5">
-                              <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow-inner" style={{backgroundColor: computedColor}}></span>
-                              {(c as any).codiceCommessa || (c.nome ? c.nome.split(' - ')[0] : 'Commessa')}
-                            </div>
+                            {(c as any).codiceCommessa || (c.nome ? c.nome.split(' - ')[0] : 'Commessa')}
                           </td>
                           <td className="p-2.5">{computedAnno}</td>
                           <td className="p-2.5">{computedTipologia}</td>

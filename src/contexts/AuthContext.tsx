@@ -483,7 +483,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     if (clean.includes('ebartalucci') || clean.includes('bartalucci')) return true;
     return dynamicDevs.some(d => d && typeof d === 'string' && d.trim().toLowerCase() === clean);
   };
-  const isRealDev = realEmail.includes('ebartalucci@ingegno06.it') || realEmail.includes('synerg') || isDevEmail(realEmail);
+  // isRealDev: riservato ESCLUSIVAMENTE a Emanuele Bartalucci (Lead Developer)
+  // Consente l'abilitazione e l'uso dello strumento di simulazione utente (DevImpersonator)
+  const isRealDev = realEmail.includes('bartalucci') || realEmail.includes('synerg');
   const userEmail = (impersonatedEmail || realEmail).toLowerCase().trim();
 
   // Quando si impersonifica un utente, isDev valuta SOLO l'email simulata (userEmail),

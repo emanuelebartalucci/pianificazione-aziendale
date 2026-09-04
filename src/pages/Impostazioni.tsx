@@ -19,6 +19,8 @@ import {
   saveCommesseNotificationEmails,
   getSociNotificationEmails,
   saveSociNotificationEmails,
+  getSicurezzaCantieriFestiviEmails,
+  saveSicurezzaCantieriFestiviEmails,
   sendNuovoClienteNotification
 } from '../utils/emailTemplateManager';
 
@@ -121,12 +123,17 @@ export default function Impostazioni() {
     getSociNotificationEmails(dipendenti).then(emails => {
       setSociNotifyEmails(emails);
     });
+    getSicurezzaCantieriFestiviEmails().then(emails => {
+      setSicurezzaCantieriNotifyEmails(emails);
+    });
   }, [dipendenti]);
 
   const [commesseNotifyEmails, setCommesseNotifyEmails] = useState<string[]>(['synergieflow@ingegno06.it']);
   const [newCommessaNotifyEmailInput, setNewCommessaNotifyEmailInput] = useState('');
   const [sociNotifyEmails, setSociNotifyEmails] = useState<string[]>([]);
   const [newSociNotifyEmailInput, setNewSociNotifyEmailInput] = useState('');
+  const [sicurezzaCantieriNotifyEmails, setSicurezzaCantieriNotifyEmails] = useState<string[]>([]);
+  const [newSicurezzaCantieriEmailInput, setNewSicurezzaCantieriEmailInput] = useState('');
 
   const currentTmplDef = useMemo(() => {
     return EMAIL_TEMPLATES_LIST.find(t => t.id === selectedTemplateId) || EMAIL_TEMPLATES_LIST[0];
@@ -1767,6 +1774,112 @@ export default function Impostazioni() {
                             setSociNotifyEmails(updatedList);
                             try {
                               await saveSociNotificationEmails(updatedList);
+                              showToast(`Indirizzo ${email} rimosso con successo!`, "success");
+                            } catch (err) {
+                              console.error("Errore rimozione email:", err);
+                              showToast("Errore durante la rimozione dell'indirizzo.", "error");
+                            }
+                          }}
+                          className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-2 rounded-xl transition cursor-pointer shrink-0"
+                          title="Rimuovi questo indirizzo"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </section>
+
+            {/* Destinatari Notifiche Weekend e Festivi - Area Sicurezza Cantieri (Siena / Rosia) */}
+            <section className="bg-gradient-to-br from-amber-50/80 to-slate-100 p-6 sm:p-8 rounded-3xl border border-amber-200 shadow-sm space-y-6">
+              <div className="border-b border-amber-200/60 pb-4">
+                <h3 className="text-xl font-bold text-amber-950 flex items-center gap-2">
+                  <Shield className="w-6 h-6 text-amber-600" /> Destinatari Notifiche Weekend e Festivi — Area Sicurezza Cantieri (Siena / Rosia)
+                </h3>
+                <p className="text-xs text-amber-800/80 mt-1">
+                  Questi indirizzi (es. Coordinatori e referenti di sede di Siena / Rosia) riceveranno la notifica e-mail di approvazione solo ed esclusivamente quando la risorsa richiedente appartiene alla macro area <strong>Sicurezza Cantieri</strong>. I Soci continueranno a ricevere tutte le notifiche.
+                </p>
+              </div>
+
+              {/* Form per aggiungere un nuovo indirizzo */}
+              <form 
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  const targetEmail = newSicurezzaCantieriEmailInput.toLowerCase().trim();
+                  if (!targetEmail) {
+                    showToast("Inserisci un indirizzo e-mail valido.", "warning");
+                    return;
+                  }
+                  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(targetEmail)) {
+                    showToast("Il formato dell'indirizzo e-mail non è valido.", "warning");
+                    return;
+                  }
+                  if (sicurezzaCantieriNotifyEmails.includes(targetEmail)) {
+                    showToast("Questo indirizzo e-mail è già presente nell'elenco.", "warning");
+                    return;
+                  }
+
+                  const updatedList = Array.from(new Set([...sicurezzaCantieriNotifyEmails, targetEmail]));
+                  setSicurezzaCantieriNotifyEmails(updatedList);
+                  setNewSicurezzaCantieriEmailInput('');
+
+                  try {
+                    await saveSicurezzaCantieriFestiviEmails(updatedList);
+                    showToast(`Indirizzo ${targetEmail} aggiunto e salvato con successo!`, "success");
+                  } catch (err) {
+                    console.error("Errore salvataggio automatico email:", err);
+                    showToast("Errore durante il salvataggio automatico dell'indirizzo.", "error");
+                  }
+                }}
+                className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center"
+              >
+                <input
+                  type="email"
+                  placeholder="Es. coordinatore.siena@ingegno06.it"
+                  value={newSicurezzaCantieriEmailInput}
+                  onChange={e => setNewSicurezzaCantieriEmailInput(e.target.value)}
+                  className="flex-1 px-4 py-2.5 bg-white border border-amber-200 rounded-xl text-xs font-bold text-slate-800 placeholder-slate-400 outline-none focus:ring-2 focus:ring-amber-500 shadow-sm"
+                />
+                <button
+                  type="submit"
+                  className="bg-amber-600 hover:bg-amber-700 text-white font-bold px-4 py-2.5 rounded-xl transition text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" /> Aggiungi Destinatario
+                </button>
+              </form>
+
+              {/* Elenco indirizzi censiti */}
+              <div className="bg-white rounded-2xl border border-amber-200/80 shadow-xs overflow-hidden divide-y divide-amber-100/80">
+                {sicurezzaCantieriNotifyEmails.length === 0 ? (
+                  <div className="p-4 text-xs text-slate-400 italic font-medium text-center">
+                    Nessun indirizzo e-mail configurato per le notifiche festivi Sicurezza Cantieri.
+                  </div>
+                ) : (
+                  sicurezzaCantieriNotifyEmails.map((email, idx) => {
+                    const cleanEmail = email.toLowerCase().trim();
+                    const dipObj = dipendenti.find(d => (d.email || '').toLowerCase().trim() === cleanEmail);
+                    const labelName = dipObj ? dipObj.nome : cleanEmail;
+
+                    return (
+                      <div key={idx} className="p-3 sm:p-3.5 flex justify-between items-center text-xs hover:bg-amber-50/40 transition-colors">
+                        <div className="flex items-center gap-3 min-w-0 pr-2">
+                          <div className="p-2 rounded-xl shrink-0 bg-amber-100 text-amber-700">
+                            <Mail className="w-4 h-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="font-extrabold text-slate-900 text-xs sm:text-sm truncate" title={labelName}>{labelName}</div>
+                            <div className="text-[11px] text-slate-500 font-semibold truncate" title={email}>{email}</div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const updatedList = sicurezzaCantieriNotifyEmails.filter((_, i) => i !== idx);
+                            setSicurezzaCantieriNotifyEmails(updatedList);
+                            try {
+                              await saveSicurezzaCantieriFestiviEmails(updatedList);
                               showToast(`Indirizzo ${email} rimosso con successo!`, "success");
                             } catch (err) {
                               console.error("Errore rimozione email:", err);

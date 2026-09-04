@@ -2104,9 +2104,10 @@ export const PianificazioneModal: React.FC<PianificazioneModalProps> = ({
                           const startIdx = selectableWeekOptions.findIndex(o => o.id === currentStartId);
                           const endIdx = selectableWeekOptions.findIndex(o => o.id === matchedOpt.id);
                           if (endIdx < startIdx) {
-                            setAltreReqStartWeekId(matchedOpt.id);
+                            setAltreReqEndWeekId(currentStartId);
+                          } else {
+                            setAltreReqEndWeekId(matchedOpt.id);
                           }
-                          setAltreReqEndWeekId(matchedOpt.id);
                         }
                       }
                     };

@@ -9,7 +9,7 @@ import { isSoci } from './Impostazioni';
 
 export default function Suggerimenti() {
   const navigate = useNavigate();
-  const { isHR, isDev, myAssociatedName, user } = useAuth();
+  const { isHR, myAssociatedName, user } = useAuth();
   
   // Categorie Suggerimenti
   const [categories, setCategories] = useState<{ id: string; nome: string }[]>([]);
@@ -152,8 +152,8 @@ export default function Suggerimenti() {
           </button>
         </div>
 
-        {/* Link Diretto a Gestione HR per HR e Sviluppatore */}
-        {(isHR || isDev) && (
+        {/* Link Diretto a Gestione HR per HR */}
+        {isHR && (
           <button
             onClick={() => navigate('/gestione-hr')}
             className="px-5 py-3 bg-purple-700 hover:bg-purple-800 text-white font-extrabold text-xs rounded-2xl transition flex items-center gap-2 shadow-md cursor-pointer active:scale-95 shrink-0"

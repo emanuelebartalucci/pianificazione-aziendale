@@ -413,9 +413,10 @@ export default function PianificazionePersonale() {
         const startIdx = selectableWeekOptions.findIndex(o => o.id === selectedStartWeekId);
         const endIdx = selectableWeekOptions.findIndex(o => o.id === matchedOpt.id);
         if (endIdx < startIdx) {
-          setSelectedStartWeekId(matchedOpt.id);
+          setSelectedEndWeekId(selectedStartWeekId);
+        } else {
+          setSelectedEndWeekId(matchedOpt.id);
         }
-        setSelectedEndWeekId(matchedOpt.id);
       }
     }
   };
@@ -886,6 +887,7 @@ export default function PianificazionePersonale() {
             </label>
             <input
               type="date"
+              min={allocDataInizio || undefined}
               value={allocDataFine}
               onChange={e => handleDateInputChange(e.target.value, false)}
               className="w-full p-2.5 border border-indigo-200 bg-indigo-50/30 rounded-xl text-xs font-black text-indigo-950 outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs cursor-pointer"
@@ -1245,9 +1247,10 @@ export default function PianificazionePersonale() {
         setReqDataFine(sunStr);
       }
     } else {
-      setReqDataFine(sunStr);
-      if (reqDataInizio && reqDataInizio > monStr) {
-        setReqDataInizio(monStr);
+      if (reqDataInizio && sunStr < reqDataInizio) {
+        setReqDataFine(reqDataInizio);
+      } else {
+        setReqDataFine(sunStr);
       }
     }
   };
@@ -4036,7 +4039,6 @@ export default function PianificazionePersonale() {
                               >
                                 <div className="flex items-center gap-2 truncate min-w-0 pr-2">
                                   <span className={`text-indigo-500 text-[10px] shrink-0 transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
-                                  <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm" style={{ backgroundColor: c.colore }}></span>
                                   <span className="font-bold text-xs text-gray-850 truncate">{c.nome}</span>
                                   {displayPct && (
                                     <span className="text-[10px] font-black text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded-full shrink-0">

@@ -656,6 +656,24 @@ export async function saveSociNotificationEmails(emails: string[]): Promise<void
   await setDoc(docRef, { emails: cleaned, updatedAt: new Date().toISOString() });
 }
 
+export async function getSicurezzaCantieriFestiviEmails(): Promise<string[]> {
+  try {
+    const docSnap = await getDoc(doc(db, 'configurazioni', 'notifiche_festivi_sicurezza_cantieri'));
+    if (docSnap.exists() && Array.isArray(docSnap.data().emails)) {
+      return docSnap.data().emails.map((e: string) => e.toLowerCase().trim()).filter(Boolean);
+    }
+  } catch (err) {
+    console.error("Errore lettura destinatari notifiche festivi sicurezza cantieri:", err);
+  }
+  return [];
+}
+
+export async function saveSicurezzaCantieriFestiviEmails(emails: string[]): Promise<void> {
+  const cleaned = Array.from(new Set(emails.map(e => e.toLowerCase().trim()).filter(Boolean)));
+  const docRef = doc(db, 'configurazioni', 'notifiche_festivi_sicurezza_cantieri');
+  await setDoc(docRef, { emails: cleaned, updatedAt: new Date().toISOString() });
+}
+
 export async function sendNuovoClienteNotification(
   clientData: { codice: string; nome: string },
   creatorText: string

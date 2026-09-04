@@ -8,6 +8,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { isSoci, isCollaboratore } from '../pages/Impostazioni';
 import { useNotifications } from '../contexts/NotificationContext';
 import type { UserNotification } from '../utils/userNotificationService';
+import { getSicurezzaCantieriFestiviEmails } from '../utils/emailTemplateManager';
 import NumeriInterniModal from './NumeriInterniModal';
 
 interface UpcomingHolidayWork {
@@ -17,6 +18,16 @@ interface UpcomingHolidayWork {
   data: string;
   motivo: string;
 }
+
+const areNamesEqual = (n1?: string | null, n2?: string | null): boolean => {
+  if (!n1 || !n2) return false;
+  const clean1 = n1.toLowerCase().trim().replace(/\s+/g, ' ');
+  const clean2 = n2.toLowerCase().trim().replace(/\s+/g, ' ');
+  if (clean1 === clean2) return true;
+  const p1 = clean1.split(' ').sort().join(' ');
+  const p2 = clean2.split(' ').sort().join(' ');
+  return p1 === p2;
+};
 
 const formatRelativeTime = (isoString?: string): string => {
   if (!isoString) return '';
@@ -79,7 +90,7 @@ export default function Navbar() {
     }
   };
 
-  const { user, isAdmin, isHR, isDev, myAssociatedName, userEmail, dipendenti } = useAuth();
+  const { user, isAdmin, isHR, isDev, myAssociatedName, userEmail, dipendenti, coordinatori } = useAuth();
   const { 
     totalPendingCount, 
     operativePendingCount,
@@ -261,14 +272,31 @@ export default function Navbar() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Stato per Presenze Festivi nei prossimi 7 giorni (Solo Soci / Admin)
+  // Stato per Presenze Festivi nei prossimi 7 giorni (Soci / Admin e Coordinatori Sicurezza Cantieri)
   const [upcomingHolidayWorkList, setUpcomingHolidayWorkList] = useState<UpcomingHolidayWork[]>([]);
   const [isHolidayModalOpen, setIsHolidayModalOpen] = useState(false);
+  const [sicurezzaFestiviEmails, setSicurezzaFestiviEmails] = useState<string[]>([]);
+
+  useEffect(() => {
+    getSicurezzaCantieriFestiviEmails().then(emails => setSicurezzaFestiviEmails(emails));
+  }, []);
+
+  const isSocio = isSoci(myAssociatedName);
+  const isSicurezzaCantieriRecipient = useMemo(() => {
+    const cleanEmail = (userEmail || '').toLowerCase().trim();
+    if (!cleanEmail) return false;
+    const isCoord = (coordinatori || []).some(
+      c => (c.area || '').trim() === 'Sicurezza Cantieri' && (c.email || '').toLowerCase().trim() === cleanEmail
+    );
+    return isCoord || sicurezzaFestiviEmails.includes(cleanEmail);
+  }, [userEmail, coordinatori, sicurezzaFestiviEmails]);
+
+  const canSeeHolidayWork = isSocio || isAdmin || isSicurezzaCantieriRecipient;
 
   useEffect(() => {
     if (!user) return;
     const fetchUpcomingHolidays = async () => {
-      if (isSoci(myAssociatedName) || isAdmin) {
+      if (canSeeHolidayWork) {
         try {
           const todayObj = new Date();
           const todayIso = `${todayObj.getFullYear()}-${String(todayObj.getMonth() + 1).padStart(2, '0')}-${String(todayObj.getDate()).padStart(2, '0')}`;
@@ -286,10 +314,25 @@ export default function Navbar() {
             const data = docSnap.data();
             const reqDate = data.data || '';
             if (reqDate && reqDate >= todayIso && reqDate <= next7DaysIso) {
+              const reqDipName = data.dipendenteName || '';
+              const reqDipEmail = data.dipendenteEmail || '';
+
+              // Se l'utente non è Socio né Admin, ma è referente di Sicurezza Cantieri,
+              // mostriamo SOLO le risorse della macro area Sicurezza Cantieri
+              if (!isSocio && !isAdmin) {
+                const dip = (dipendenti || []).find(d => 
+                  areNamesEqual(d.nome, reqDipName) || 
+                  (d.email && reqDipEmail && d.email.toLowerCase() === reqDipEmail.toLowerCase())
+                );
+                if ((dip?.macroArea || '').trim() !== 'Sicurezza Cantieri') {
+                  return; // Ignora le risorse delle altre aree (Ponte a Egola)
+                }
+              }
+
               list.push({
                 id: docSnap.id,
-                dipendenteName: data.dipendenteName || '',
-                dipendenteEmail: data.dipendenteEmail || '',
+                dipendenteName: reqDipName,
+                dipendenteEmail: reqDipEmail,
                 data: reqDate,
                 motivo: data.motivo || 'Autorizzazione straordinario / festivo'
               });
@@ -305,7 +348,7 @@ export default function Navbar() {
       }
     };
     fetchUpcomingHolidays();
-  }, [user, myAssociatedName, isAdmin]);
+  }, [user, myAssociatedName, isAdmin, canSeeHolidayWork, isSocio, dipendenti]);
 
   const handleLogout = async () => {
     try {
@@ -749,8 +792,8 @@ export default function Navbar() {
             </button>
           )}
 
-          {/* BADGE PRESENZE FESTIVI (PROSSIMI 7 GIORNI) PER SOCI E ADMIN */}
-          {(isSoci(myAssociatedName) || isAdmin) && upcomingHolidayWorkList.length > 0 && (
+          {/* BADGE PRESENZE FESTIVI (PROSSIMI 7 GIORNI) PER SOCI, ADMIN E COORDINATORI SICUREZZA CANTIERI */}
+          {canSeeHolidayWork && upcomingHolidayWorkList.length > 0 && (
             <button
               type="button"
               onClick={() => setIsHolidayModalOpen(true)}
@@ -823,7 +866,9 @@ export default function Navbar() {
 
             <div className="p-5 space-y-3">
               <p className="text-xs text-gray-600 font-semibold">
-                Elenco delle risorse autorizzate ad accedere in ditta nei giorni festivi o di weekend durante la settimana in corso:
+                {!isSocio && !isAdmin
+                  ? "Elenco delle risorse dell'Area Sicurezza Cantieri (Siena / Rosia) autorizzate nei giorni festivi o di weekend durante i prossimi 7 giorni:"
+                  : "Elenco delle risorse autorizzate ad accedere in ditta nei giorni festivi o di weekend durante i prossimi 7 giorni:"}
               </p>
 
               <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">

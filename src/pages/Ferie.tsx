@@ -10,7 +10,7 @@ import ResourceAnalyticsModal from '../components/ResourceAnalyticsModal';
 import { rebuildYearlySummary } from '../services/yearlySummaryService';
 import { createUserNotification, markNotificationsAsReadByFilter } from '../utils/userNotificationService';
 import { queueMail } from '../utils/mailSender';
-import { getSociNotificationEmails } from '../utils/emailTemplateManager';
+import { getSociNotificationEmails, getSicurezzaCantieriFestiviEmails } from '../utils/emailTemplateManager';
 
 const areNamesEqual = (n1?: string | null, n2?: string | null): boolean => {
   if (!n1 || !n2) return false;
@@ -677,6 +677,9 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
     approvedByName: string
   ) => {
     try {
+      const dip = (dipendenti || []).find(d => areNamesEqual(d.nome, dipendenteNome));
+      const isSicurezzaCantieri = (dip?.macroArea || '').trim() === 'Sicurezza Cantieri';
+
       const formattedData = formatDate(dataFestivo) || dataFestivo;
       const nowStr = new Date().toLocaleDateString('it-IT', {
         day: '2-digit',
@@ -685,7 +688,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         hour: '2-digit',
         minute: '2-digit'
       });
-      const subject = `[Lavoro Festivo Approvato] ${dipendenteNome} - ${formattedData}`;
+      const subject = `[Lavoro Festivo Approvato] ${dipendenteNome} - ${formattedData}`;
       const htmlBody = `
           <!-- Header Dark Navy Email-Safe con Fallback Outlook -->
           <table width="100%" border="0" cellpadding="0" cellspacing="0" bgcolor="#0f172a" style="width: 100%; background-color: #0f172a; border-collapse: collapse;">
@@ -761,7 +764,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                 <table width="100%" border="0" cellpadding="0" cellspacing="0" style="border-collapse: collapse;">
                   <tr>
                     <td style="padding: 12px 14px; background-color: #eef2ff; border: 1px solid #c7d2fe; font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #3730a3;">
-                      Questa comunicazione è trasmessa automaticamente a tutti i Soci in conformità alle direttive aziendali per il monitoraggio delle presenze nei giorni non lavorativi.
+                      Questa comunicazione è trasmessa automaticamente ai Soci${isSicurezzaCantieri ? ' e ai Coordinatori dell\'Area Sicurezza Cantieri (Siena / Rosia)' : ''} in conformità alle direttive aziendali per il monitoraggio delle presenze nei giorni non lavorativi.
                     </td>
                   </tr>
                 </table>
@@ -771,7 +774,14 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         `;
 
       const sociEmails = await getSociNotificationEmails(dipendenti);
-      for (const email of sociEmails) {
+      let recipientEmails = [...sociEmails];
+
+      if (isSicurezzaCantieri) {
+        const sicurezzaCantieriEmails = await getSicurezzaCantieriFestiviEmails();
+        recipientEmails = Array.from(new Set([...recipientEmails, ...sicurezzaCantieriEmails]));
+      }
+
+      for (const email of recipientEmails) {
         await queueMail(email, subject, htmlBody, undefined, { isSystemNotification: true });
       }
     } catch (err) {
