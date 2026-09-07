@@ -39,12 +39,15 @@ export const isSoci = (nomeOrEmail?: string | null): boolean => {
 
 export const areNamesEqual = (n1?: string | null, n2?: string | null): boolean => {
   if (!n1 || !n2) return false;
+  if (n1 === n2) return true;
   const clean1 = n1.toLowerCase().trim().replace(/\s+/g, ' ');
   const clean2 = n2.toLowerCase().trim().replace(/\s+/g, ' ');
   if (clean1 === clean2) return true;
-  const parts1 = clean1.split(' ').sort().join(' ');
-  const parts2 = clean2.split(' ').sort().join(' ');
-  return parts1 === parts2;
+  if (clean1.length !== clean2.length) return false;
+  const parts1 = clean1.split(' ');
+  const parts2 = clean2.split(' ');
+  if (parts1.length !== parts2.length || parts1.length <= 1) return false;
+  return parts1.sort().join(' ') === parts2.sort().join(' ');
 };
 
 export const TODO_CATEGORIE = [

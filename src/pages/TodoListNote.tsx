@@ -40,7 +40,8 @@ import {
   isTaskAssignee,
   isTaskCreator,
   isUserInvolvedInCommessa,
-  canUserManageTask
+  canUserManageTask,
+  getAssignedCommessaIdsForUser
 } from '../services/todoService';
 
 const MESI = [
@@ -202,6 +203,8 @@ export default function TodoListNote() {
 
   // Commesse abilitate per l'utente (coinvolto come Resp, PM, assegnato/pianificato o con ToDo)
   const availableCommesse = useMemo(() => {
+    // Precalcola in O(M) il Set delle commesse assegnate all'utente in griglia una sola volta
+    const precomputedAssignedIds = getAssignedCommessaIdsForUser(myAssociatedName, assegnazioni);
     // ID commesse presenti nei ToDo attualmente caricati e visibili per l'utente
     const commesseIdsInTodos = new Set(todos.map(t => t.commessaId).filter(Boolean));
 
@@ -210,7 +213,7 @@ export default function TodoListNote() {
       if (commesseIdsInTodos.has(c.id)) return true;
       // Escludi le commesse chiuse e verifica se l'utente è abilitato/coinvolto
       if (c.stato === 'Chiusa') return false;
-      return isUserInvolvedInCommessa(c, myAssociatedName, userEmail, assegnazioni);
+      return isUserInvolvedInCommessa(c, myAssociatedName, userEmail, assegnazioni, precomputedAssignedIds);
     });
   }, [commesse, todos, myAssociatedName, userEmail, assegnazioni]);
 

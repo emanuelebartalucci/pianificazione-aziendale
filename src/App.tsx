@@ -3,9 +3,12 @@ import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'r
 import { useAuth } from './contexts/AuthContext';
 import { APP_VERSION, getPrintDateString } from './config/version';
 
-// Lazy-loaded Pages (Code-Splitting per caricamento iniziale ultra-veloce)
+// Pagine principali precaricate direttamente per navigazione istantanea a zero latenza
+import Dashboard from './pages/Dashboard';
+import TodoListNote from './pages/TodoListNote';
+
+// Lazy-loaded Pages (Code-Splitting per le sezioni secondarie)
 const Login = lazy(() => import('./pages/Login'));
-const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Commesse = lazy(() => import('./pages/Commesse'));
 const Ferie = lazy(() => import('./pages/Ferie'));
 const Impostazioni = lazy(() => import('./pages/Impostazioni'));
@@ -16,7 +19,6 @@ const Prenotazioni = lazy(() => import('./pages/Prenotazioni'));
 const Organigramma = lazy(() => import('./pages/Organigramma'));
 const GestioneHR = lazy(() => import('./pages/GestioneHR'));
 const Forniture = lazy(() => import('./pages/Forniture'));
-const TodoListNote = lazy(() => import('./pages/TodoListNote'));
 
 import { auth } from './services/firebase';
 import { NotificationProvider } from './contexts/NotificationContext';

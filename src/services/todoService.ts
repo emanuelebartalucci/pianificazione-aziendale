@@ -157,6 +157,30 @@ export function isTaskCreator(
 }
 
 /**
+ * Precalcola il Set degli ID commessa su cui l'utente ha ore pianificate in griglia
+ */
+export function getAssignedCommessaIdsForUser(
+  myAssociatedName?: string | null,
+  assegnazioni?: Record<string, any[]>
+): Set<string> {
+  const set = new Set<string>();
+  if (!assegnazioni || !myAssociatedName) return set;
+  const cleanName = myAssociatedName.trim();
+  for (const [key, list] of Object.entries(assegnazioni)) {
+    if (!Array.isArray(list) || list.length === 0) continue;
+    const dipName = key.split('-')[0];
+    if (areNamesEqual(dipName, cleanName)) {
+      for (const a of list) {
+        if (a && a.commessaId && Number(a.percentuale) > 0) {
+          set.add(a.commessaId);
+        }
+      }
+    }
+  }
+  return set;
+}
+
+/**
  * Verifica se l'utente è coinvolto su una commessa:
  * - Responsabile della commessa
  * - Project Manager (PM)
@@ -169,7 +193,8 @@ export function isUserInvolvedInCommessa(
   comm: any,
   myAssociatedName?: string | null,
   userEmail?: string | null,
-  assegnazioni?: Record<string, any[]>
+  assegnazioni?: Record<string, any[]>,
+  precomputedAssignedIds?: Set<string>
 ): boolean {
   if (!comm) return false;
   const cleanName = (myAssociatedName || '').trim();
@@ -202,8 +227,12 @@ export function isUserInvolvedInCommessa(
     }
   }
 
-  // 5. Pianificato nella griglia assegnazioni settimanali
-  if (assegnazioni && cleanName) {
+  // 5. Pianificato nella griglia assegnazioni settimanali (O(1) se precalcolato)
+  if (precomputedAssignedIds) {
+    if (precomputedAssignedIds.has(comm.id)) {
+      return true;
+    }
+  } else if (assegnazioni && cleanName) {
     for (const [key, list] of Object.entries(assegnazioni)) {
       if (!Array.isArray(list)) continue;
       const dipName = key.split('-')[0];
@@ -216,7 +245,7 @@ export function isUserInvolvedInCommessa(
   }
 
   // 6. Assegnatario o creatore di almeno un ToDo dentro la punchList di questa commessa
-  if (Array.isArray(comm.punchList) && (cleanName || cleanEmail)) {
+  if (Array.isArray(comm.punchList) && comm.punchList.length > 0 && (cleanName || cleanEmail)) {
     if (comm.punchList.some((p: any) => {
       const isAss = isTaskAssignee(p, cleanName);
       const isCre = isTaskCreator(p, cleanName, cleanEmail);
@@ -274,13 +303,23 @@ export function canUserManageTask(
 // ==========================================
 // CACHE IN-MEMORY RAPIDA (ZERO-DELAY)
 // ==========================================
+interface UnifiedTodosCache {
+  userEmail: string;
+  myAssociatedName: string;
+  commesseCount: number;
+  todos: UnifiedTodoItem[];
+  timestamp: number;
+}
+
 let cachedGenericTodosRaw: Array<{ id: string; data: any }> | null = null;
 let lastGenericTodosFetch = 0;
+let unifiedTodosCache: UnifiedTodosCache | null = null;
 const GENERIC_TODOS_CACHE_TTL = 60 * 1000; // 60 secondi di validità cache
 
 export function invalidateGenericTodosCache() {
   cachedGenericTodosRaw = null;
   lastGenericTodosFetch = 0;
+  unifiedTodosCache = null;
 }
 
 /**
@@ -295,51 +334,59 @@ export function buildUnifiedTodosFromData(
 ): UnifiedTodoItem[] {
   const unified: UnifiedTodoItem[] = [];
 
+  // Precalcola in O(M) il Set delle commesse assegnate all'utente in griglia una sola volta
+  const precomputedAssignedIds = getAssignedCommessaIdsForUser(myAssociatedName, assegnazioni);
+
   // 1. Estrai i ToDo dalle sole commesse abilitate per l'utente
   commesseList.forEach(c => {
-    const userInvolved = isUserInvolvedInCommessa(c, myAssociatedName, userEmail, assegnazioni);
     const pList = c.punchList;
-    if (Array.isArray(pList)) {
-      pList.forEach(p => {
-        if (!p || !p.titolo) return;
-
-        const isAss = isTaskAssignee(p, myAssociatedName);
-        const isCre = isTaskCreator(p, myAssociatedName, userEmail);
-
-        if (!userInvolved && !isAss && !isCre) {
-          return;
-        }
-
-        const statoClean = (p.stato === 'completato' || p.stato === 'eseguito') ? 'completato' : 'da_fare';
-        
-        let assegnatiList: string[] = [];
-        if (Array.isArray(p.assegnatiA) && p.assegnatiA.length > 0) {
-          assegnatiList = p.assegnatiA.map((a: any) => String(a).trim()).filter(Boolean);
-        } else if (p.assegnatoA && typeof p.assegnatoA === 'string') {
-          assegnatiList = p.assegnatoA.split(',').map((s: string) => s.trim()).filter(Boolean);
-        }
-
-        unified.push({
-          id: p.id || `task_${Math.random()}`,
-          tipo: 'commessa',
-          commessaId: c.id,
-          commessaNome: c.nome || 'Commessa',
-          commessaCodice: c.codiceCommessa || '',
-          titolo: p.titolo,
-          descrizione: p.descrizione,
-          categoria: p.categoria || 'da fare',
-          scadenza: p.scadenza,
-          assegnatiA: assegnatiList,
-          assegnatoA: assegnatiList.length > 0 ? assegnatiList.join(', ') : (p.assegnatoA || 'Non assegnato'),
-          creatoDa: p.creatoDa || 'Utente',
-          creatoDaEmail: p.creatoDaEmail,
-          creatoIl: p.creatoIl || new Date().toISOString(),
-          stato: statoClean,
-          completatoDa: p.completatoDa,
-          completatoIl: p.completatoIl
-        });
-      });
+    // OTTIMIZZAZIONE CRITICA: Se la commessa non ha attività in punchList, salta immediatamente!
+    // Evita centinaia di controlli pesanti sulle oltre 500 commesse storiche prive di ToDo.
+    if (!Array.isArray(pList) || pList.length === 0) {
+      return;
     }
+
+    const userInvolved = isUserInvolvedInCommessa(c, myAssociatedName, userEmail, assegnazioni, precomputedAssignedIds);
+
+    pList.forEach(p => {
+      if (!p || !p.titolo) return;
+
+      const isAss = isTaskAssignee(p, myAssociatedName);
+      const isCre = isTaskCreator(p, myAssociatedName, userEmail);
+
+      if (!userInvolved && !isAss && !isCre) {
+        return;
+      }
+
+      const statoClean = (p.stato === 'completato' || p.stato === 'eseguito') ? 'completato' : 'da_fare';
+      
+      let assegnatiList: string[] = [];
+      if (Array.isArray(p.assegnatiA) && p.assegnatiA.length > 0) {
+        assegnatiList = p.assegnatiA.map((a: any) => String(a).trim()).filter(Boolean);
+      } else if (p.assegnatoA && typeof p.assegnatoA === 'string') {
+        assegnatiList = p.assegnatoA.split(',').map((s: string) => s.trim()).filter(Boolean);
+      }
+
+      unified.push({
+        id: p.id || `task_${Math.random()}`,
+        tipo: 'commessa',
+        commessaId: c.id,
+        commessaNome: c.nome || 'Commessa',
+        commessaCodice: c.codiceCommessa || '',
+        titolo: p.titolo,
+        descrizione: p.descrizione,
+        categoria: p.categoria || 'da fare',
+        scadenza: p.scadenza,
+        assegnatiA: assegnatiList,
+        assegnatoA: assegnatiList.length > 0 ? assegnatiList.join(', ') : (p.assegnatoA || 'Non assegnato'),
+        creatoDa: p.creatoDa || 'Utente',
+        creatoDaEmail: p.creatoDaEmail,
+        creatoIl: p.creatoIl || new Date().toISOString(),
+        stato: statoClean,
+        completatoDa: p.completatoDa,
+        completatoIl: p.completatoIl
+      });
+    });
   });
 
   // 2. Estrai i ToDo Generici
@@ -406,21 +453,46 @@ export function getCachedUnifiedTodos(options: {
   commesseList?: any[];
   assegnazioni?: Record<string, any[]>;
 }): UnifiedTodoItem[] | null {
-  if (!cachedGenericTodosRaw || !options.userEmail) return null;
-  return buildUnifiedTodosFromData(
+  if (!options.userEmail) return null;
+  const cleanEmail = options.userEmail.toLowerCase().trim();
+  const cleanName = (options.myAssociatedName || '').trim();
+
+  // 1. Ritorno immediato se l'array finale è già memorizzato
+  if (
+    unifiedTodosCache &&
+    unifiedTodosCache.userEmail === cleanEmail &&
+    unifiedTodosCache.myAssociatedName === cleanName
+  ) {
+    return unifiedTodosCache.todos;
+  }
+
+  // 2. Se non abbiamo l'array finale ma abbiamo i documenti raw in memoria, costruisci e memorizza
+  if (!cachedGenericTodosRaw) return null;
+
+  const result = buildUnifiedTodosFromData(
     options.commesseList || [],
     cachedGenericTodosRaw,
     options.myAssociatedName,
     options.userEmail,
     options.assegnazioni
   );
+
+  unifiedTodosCache = {
+    userEmail: cleanEmail,
+    myAssociatedName: cleanName,
+    commesseCount: (options.commesseList || []).length,
+    todos: result,
+    timestamp: Date.now()
+  };
+
+  return result;
 }
 
 /**
  * Recupera tutti i ToDo unificati visibili per l'utente attivo:
  * - Per le commesse: solo quelle su cui l'utente è coinvolto (o se il task è assegnato/creato dall'utente).
  * - Per i compiti generici: solo quelli assegnati all'utente o da lui creati.
- * (Sfrutta la cache in-memory con TTL 60s per abbattere la latenza di rete a zero).
+ * (Sfrutta la cache in-memory con TTL 60s per abbattere la latenza di rete e computazionale a zero).
  */
 export async function fetchUnifiedTodos(options: {
   userEmail: string;
@@ -432,8 +504,21 @@ export async function fetchUnifiedTodos(options: {
   forceRefresh?: boolean;
 }): Promise<UnifiedTodoItem[]> {
   const { userEmail, myAssociatedName, commesseList, assegnazioni, forceRefresh } = options;
-
+  const cleanEmail = (userEmail || '').toLowerCase().trim();
+  const cleanName = (myAssociatedName || '').trim();
   const now = Date.now();
+
+  // Ritorno istantaneo dalla cache senza alcuna lettura Firestore né cicli pesanti
+  if (
+    !forceRefresh &&
+    unifiedTodosCache &&
+    unifiedTodosCache.userEmail === cleanEmail &&
+    unifiedTodosCache.myAssociatedName === cleanName &&
+    (now - unifiedTodosCache.timestamp < GENERIC_TODOS_CACHE_TTL)
+  ) {
+    return unifiedTodosCache.todos;
+  }
+
   let rawDocs = cachedGenericTodosRaw;
   if (!rawDocs || forceRefresh || (now - lastGenericTodosFetch > GENERIC_TODOS_CACHE_TTL)) {
     try {
@@ -447,13 +532,23 @@ export async function fetchUnifiedTodos(options: {
     }
   }
 
-  return buildUnifiedTodosFromData(
+  const result = buildUnifiedTodosFromData(
     commesseList || [],
-    rawDocs,
+    rawDocs || [],
     myAssociatedName,
     userEmail,
     assegnazioni
   );
+
+  unifiedTodosCache = {
+    userEmail: cleanEmail,
+    myAssociatedName: cleanName,
+    commesseCount: (commesseList || []).length,
+    todos: result,
+    timestamp: now
+  };
+
+  return result;
 }
 
 /**
@@ -551,6 +646,7 @@ export async function saveUnifiedTodo(
     }
 
     await updateDoc(commDocRef, { punchList: updatedList });
+    invalidateGenericTodosCache();
 
     // Invia notifica se assegnato ad altri colleghi
     await sendTaskAssignedNotification(finalItem, commData.nome, dipendentiList, currentUser);
@@ -668,6 +764,7 @@ export async function toggleUnifiedTodoStatus(
     });
 
     await updateDoc(commDocRef, { punchList: updatedList });
+    invalidateGenericTodosCache();
 
     if (nextStatus === 'completato') {
       await sendTaskCompletedNotification(task, commData.nome, dipendentiList, updater);
@@ -718,6 +815,7 @@ export async function deleteUnifiedTodo(
     const list: any[] = Array.isArray(commData.punchList) ? commData.punchList : [];
     const filtered = list.filter(i => i.id !== task.id);
     await updateDoc(commDocRef, { punchList: filtered });
+    invalidateGenericTodosCache();
   } else {
     await deleteDoc(doc(db, 'todos_generici', task.id));
     invalidateGenericTodosCache();

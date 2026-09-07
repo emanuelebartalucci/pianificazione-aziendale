@@ -38,6 +38,7 @@ export async function checkAndNotifyOverdueTasks(dipendentiList: any[] = []) {
         if (window.sessionStorage.getItem(checkKey)) {
           return;
         }
+        window.sessionStorage.setItem(checkKey, 'true');
       }
     } catch {}
 

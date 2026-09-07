@@ -8,7 +8,7 @@ import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { 
   fetchUnifiedTodos, 
-  fetchPersonalNotes,
+  getCachedUnifiedTodos,
   toggleUnifiedTodoStatus, 
   getCategoryBadgeProps, 
   isTaskAssignee,
@@ -21,6 +21,14 @@ import QuestionnaireModal from '../components/QuestionnaireModal';
 import { isSoci, isCollaboratore } from './Impostazioni';
 import { getWeekNumber } from '../utils/date';
 import { useNotifications } from '../contexts/NotificationContext';
+
+// Cache a memoria breve per dati accessori Dashboard (azzeramento totale attese di rete al rientro da altre sezioni)
+let cachedDashboardGreetings: string[] | null = null;
+let lastDashboardDataFetch = 0;
+let cachedAnnouncements: Announcement[] | null = null;
+let cachedActiveSurvey: any = null;
+let cachedHasCompletedSurvey = true;
+let cachedMaternityLeaves: any[] = [];
 
 interface Announcement {
   id: string;
@@ -86,9 +94,24 @@ export default function Dashboard() {
     }, 4500);
   };
 
-  // Stati per il Widget ToDo in Dashboard
-  const [dashboardTodos, setDashboardTodos] = useState<UnifiedTodoItem[]>([]);
-  const [loadingTodos, setLoadingTodos] = useState(true);
+  // Stati per il Widget ToDo in Dashboard (inizializzato da cache sincrona per render immediato a 0ms)
+  const [dashboardTodos, setDashboardTodos] = useState<UnifiedTodoItem[]>(() => {
+    return getCachedUnifiedTodos({
+      userEmail,
+      myAssociatedName: myAssociatedName || undefined,
+      commesseList: commesse,
+      assegnazioni
+    }) || [];
+  });
+  const [loadingTodos, setLoadingTodos] = useState<boolean>(() => {
+    const cached = getCachedUnifiedTodos({
+      userEmail,
+      myAssociatedName: myAssociatedName || undefined,
+      commesseList: commesse,
+      assegnazioni
+    });
+    return !cached;
+  });
   const [completingTaskId, setCompletingTaskId] = useState<string | null>(null);
   const initialTodosLoadedRef = useRef(false);
   const commesseRef = useRef(commesse);
@@ -109,9 +132,7 @@ export default function Dashboard() {
     } catch (err) {
       console.error("Errore caricamento todos widget dashboard:", err);
     } finally {
-      if (showSpinner) {
-        setLoadingTodos(false);
-      }
+      setLoadingTodos(false);
     }
   }, [userEmail, myAssociatedName, isAdmin, assegnazioni]);
 
@@ -119,22 +140,17 @@ export default function Dashboard() {
     if (!user) return;
     if (!initialTodosLoadedRef.current) {
       initialTodosLoadedRef.current = true;
-      loadTodos(true);
+      const cached = getCachedUnifiedTodos({
+        userEmail,
+        myAssociatedName: myAssociatedName || undefined,
+        commesseList: commesse,
+        assegnazioni
+      });
+      loadTodos(!cached);
     } else {
       loadTodos(false);
     }
   }, [user?.uid, userEmail, myAssociatedName, isAdmin, commesse.length, loadTodos]);
-
-  // Precaricamento in background per eliminare qualsiasi rallentamento all'apertura del widget ToDo
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      import('./TodoListNote');
-      if (userEmail) {
-        fetchPersonalNotes(userEmail);
-      }
-    }, 1500);
-    return () => clearTimeout(timer);
-  }, [userEmail]);
 
   const handleQuickCompleteTodo = async (task: UnifiedTodoItem, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -291,7 +307,16 @@ export default function Dashboard() {
 
 
 
-  const loadDashboardData = async () => {
+  const loadDashboardData = async (forceRefresh = false) => {
+    const now = Date.now();
+    if (!forceRefresh && cachedAnnouncements && (now - lastDashboardDataFetch < 60000)) {
+      setAnnouncements(cachedAnnouncements);
+      setActiveQuestionnaire(cachedActiveSurvey);
+      setHasCompletedSurvey(cachedHasCompletedSurvey);
+      setMyMaternityLeaves(cachedMaternityLeaves);
+      return;
+    }
+
     try {
       // 1. Questionario
       let activeSurvey: any = null;
@@ -311,6 +336,7 @@ export default function Dashboard() {
       }
 
       // 2. Questionario completato
+      let completedSurvey = true;
       if (activeSurvey && user?.uid) {
         const qComp = query(
           collection(db, 'questionari_completati'),
@@ -318,7 +344,8 @@ export default function Dashboard() {
           where('questionnaireId', '==', activeSurvey.id)
         );
         const compSnap = await getDocs(qComp);
-        setHasCompletedSurvey(!compSnap.empty);
+        completedSurvey = !compSnap.empty;
+        setHasCompletedSurvey(completedSurvey);
       } else {
         setHasCompletedSurvey(true);
       }
@@ -340,6 +367,7 @@ export default function Dashboard() {
       setAnnouncements(listNotices);
 
       // 4. Maternità approvate
+      let listMat: any[] = [];
       if (myAssociatedName) {
         const qMaternity = query(
           collection(db, 'richieste_ferie'),
@@ -348,7 +376,6 @@ export default function Dashboard() {
           where('stato', '==', 'Approvato')
         );
         const maternitySnap = await getDocs(qMaternity);
-        const listMat: any[] = [];
         maternitySnap.forEach(docSnap => {
           const data = docSnap.data();
           listMat.push({
@@ -361,6 +388,12 @@ export default function Dashboard() {
       } else {
         setMyMaternityLeaves([]);
       }
+
+      cachedAnnouncements = listNotices;
+      cachedActiveSurvey = activeSurvey;
+      cachedHasCompletedSurvey = completedSurvey;
+      cachedMaternityLeaves = listMat;
+      lastDashboardDataFetch = now;
     } catch (err) {
       console.error("Errore caricamento dati Dashboard:", err);
     }
@@ -370,7 +403,7 @@ export default function Dashboard() {
     loadDashboardData();
 
     const handleRefresh = () => {
-      loadDashboardData();
+      loadDashboardData(true);
       loadTodos(false);
     };
     window.addEventListener('app-refresh-dashboard', handleRefresh);
@@ -677,6 +710,12 @@ export default function Dashboard() {
       "Grazie per il tuo prezioso contributo quotidiano."
     ];
 
+    if (cachedDashboardGreetings && cachedDashboardGreetings.length > 0) {
+      const randomIndex = Math.floor(Math.random() * cachedDashboardGreetings.length);
+      setWelcomePhrase(cachedDashboardGreetings[randomIndex]);
+      return;
+    }
+
     getDocs(collection(db, 'dashboard_greetings')).then((snap) => {
       const list: string[] = [];
       snap.forEach(docSnap => {
@@ -684,6 +723,7 @@ export default function Dashboard() {
         if (t) list.push(t);
       });
       const finalPhrases = list.length > 0 ? list : defaultPhrases;
+      cachedDashboardGreetings = finalPhrases;
       const randomIndex = Math.floor(Math.random() * finalPhrases.length);
       setWelcomePhrase(finalPhrases[randomIndex]);
     }).catch(err => {
@@ -766,14 +806,6 @@ export default function Dashboard() {
         {/* COLONNA DESTRA: Widget ToDo List & Scadenze (3 colonne su lg, allineato alle card sottostanti) */}
         <div 
           onClick={(e) => handleNav(e, '/todo')}
-          onMouseEnter={() => {
-            import('./TodoListNote');
-            if (userEmail) fetchPersonalNotes(userEmail);
-          }}
-          onTouchStart={() => {
-            import('./TodoListNote');
-            if (userEmail) fetchPersonalNotes(userEmail);
-          }}
           className="lg:col-span-3 bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-sm p-5 sm:p-6 border border-white/50 hover:shadow-md transition-all flex flex-col justify-between cursor-pointer group relative overflow-hidden"
         >
           {/* Top Bar Widget */}
