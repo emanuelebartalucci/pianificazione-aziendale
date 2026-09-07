@@ -1595,6 +1595,13 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         return;
       }
     }
+    if (targetDipObj && targetDipObj.dataAssunzione) {
+      const invalidDate = datesToCheck.find(dStr => dStr < targetDipObj.dataAssunzione!);
+      if (invalidDate) {
+        showToast(`Impossibile inserire la richiesta: la risorsa non è ancora in servizio prima del ${formatDate(targetDipObj.dataAssunzione)}.`, "warning");
+        return;
+      }
+    }
 
     setLoading(true);
     try {
@@ -2089,8 +2096,9 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
     const numDays = new Date(year, month + 1, 0).getDate();
 
     const firstDayOfMonthStr = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+    const lastDayOfMonthStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(numDays).padStart(2, '0')}`;
     const sortedDipendenti = dipendenti
-      .filter(d => (!d.dataCessazione || d.dataCessazione >= firstDayOfMonthStr) && !isTechnicalUser(d))
+      .filter(d => (!d.dataCessazione || d.dataCessazione >= firstDayOfMonthStr) && (!d.dataAssunzione || d.dataAssunzione <= lastDayOfMonthStr) && !isTechnicalUser(d))
       .sort((a, b) => a.nome.trim().localeCompare(b.nome.trim()));
 
     const statusMap: Record<string, Record<number, RichiestaFerie>> = {};
@@ -2149,6 +2157,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         const isUnlocked = approvedWeekends[`${dip.nome}_${dateStr}`];
         const isSpecialDay = (isWknd || isHoliday) && !isUnlocked;
         const isCessato = dip.dataCessazione && dateStr > dip.dataCessazione;
+        const isNonAncoraAssunto = dip.dataAssunzione && dateStr < dip.dataAssunzione;
 
         const reqObj = statusMap[dipKey]?.[day];
         const tipo = reqObj?.tipo;
@@ -2156,10 +2165,10 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         let cellText = '';
         let textColor = '#000000';
 
-        if (isCessato) {
-          cellBg = '#4b5563';
-          cellText = 'X';
-          textColor = '#ffffff';
+        if (isCessato || isNonAncoraAssunto) {
+          cellBg = '#f3f4f6';
+          cellText = '—';
+          textColor = '#9ca3af';
         } else if (isSpecialDay) {
           cellBg = '#f3f4f6';
         } else if (tipo) {
@@ -2470,8 +2479,8 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                 <span>LAVORA DA CASA</span>
               </div>
               <div class="legend-item">
-                <div class="color-block" style="background-color: #4b5563 !important; color: #ffffff !important;">X</div>
-                <span>CESSATO / INATTIVO</span>
+                <div class="color-block" style="background-color: #f3f4f6 !important; color: #9ca3af !important; border: 1px solid #d1d5db !important; font-weight: bold;">—</div>
+                <span>NON IN FORZA (NON ANCORA IN SERVIZIO / CESSATO)</span>
               </div>
             </div>
           </div>
@@ -3905,7 +3914,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                 <span className="w-3 h-3 rounded-full bg-emerald-500 shadow-sm"></span> Lavoro da Casa
               </div>
               <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
-                <span className="w-3.5 h-3.5 rounded-full bg-gray-600 shadow-sm flex items-center justify-center text-[9px] font-black text-white">X</span> Cessato / Inattivo
+                <span className="w-3.5 h-3.5 rounded bg-gray-100 border border-gray-300 shadow-xs flex items-center justify-center text-[9px] font-bold text-gray-400">—</span> Non in servizio / Cessato
               </div>
               <div className="flex items-center gap-2 text-xs font-bold text-gray-700 border-l border-gray-300 pl-3">
                 <span className="px-1.5 py-0.5 rounded bg-yellow-50 border border-amber-300 border-dashed text-[10px] text-amber-900 font-extrabold flex items-center gap-1">
@@ -3956,8 +3965,9 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                 <tbody className="divide-y divide-gray-100 font-medium text-gray-900 text-xs">
                   {(() => {
                     const firstDayOfMonthStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-01`;
+                    const lastDayOfMonthStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
                     const sortedDipendenti = dipendenti
-                      .filter(d => (!d.dataCessazione || d.dataCessazione >= firstDayOfMonthStr) && !isTechnicalUser(d))
+                      .filter(d => (!d.dataCessazione || d.dataCessazione >= firstDayOfMonthStr) && (!d.dataAssunzione || d.dataAssunzione <= lastDayOfMonthStr) && !isTechnicalUser(d))
                       .sort((a, b) => a.nome.trim().localeCompare(b.nome.trim()));
                     return sortedDipendenti.map(dip => {
                       return (
@@ -3990,12 +4000,18 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                             let titleStr = `${dip.nome} - ${day}/${currentMonth.getMonth() + 1}`;
 
                             const isCessato = dip.dataCessazione && dateStr > dip.dataCessazione;
+                            const isNonAncoraAssunto = dip.dataAssunzione && dateStr < dip.dataAssunzione;
 
                             if (isCessato) {
-                              cellBg = 'text-white text-center font-bold bg-gray-500';
-                              cellStyle = { background: 'linear-gradient(135deg, #4b5563 0%, #374151 100%)' };
-                              cellText = 'X';
+                              cellBg = 'text-gray-400 text-center font-normal bg-gray-100/90';
+                              cellStyle = { background: 'linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%)', color: '#9ca3af' };
+                              cellText = '—';
                               titleStr += '\nRisorsa cessata / inattiva';
+                            } else if (isNonAncoraAssunto) {
+                              cellBg = 'text-gray-400 text-center font-normal bg-gray-100/90';
+                              cellStyle = { background: 'linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%)', color: '#9ca3af' };
+                              cellText = '—';
+                              titleStr += '\nRisorsa non ancora in servizio';
                             } else if (isSpecialDay) {
                               cellBg = 'text-gray-400';
                               cellStyle = { background: 'linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%)' };
@@ -4138,7 +4154,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                               }
                             }
 
-                            const isClickable = !!req && isHR && !isSpecialDay && !isCessato;
+                            const isClickable = !!req && isHR && !isSpecialDay && !isCessato && !isNonAncoraAssunto;
 
                             return (
                               <td 
@@ -4181,7 +4197,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                 <span className="w-6 h-4 rounded border border-emerald-600 bg-emerald-500"></span> Lavoro da casa
               </div>
               <div className="flex items-center gap-2 text-xs font-bold text-gray-700">
-                <span className="w-6 h-4 rounded border border-gray-700 bg-gray-600 flex items-center justify-center text-[10px] font-black text-white">X</span> Cessato / Inattivo
+                <span className="w-6 h-4 rounded border border-gray-300 bg-gray-100 flex items-center justify-center text-[10px] font-bold text-gray-400">—</span> Non in servizio / Cessato
               </div>
             </div>
           </>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth, isTechnicalUser, areNamesEqual } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, doc, setDoc, getDocs, query, where, updateDoc, getDoc, deleteDoc, deleteField } from 'firebase/firestore';
@@ -10,33 +10,8 @@ import { createUserNotification, markNotificationsAsReadByFilter } from '../util
 
 export { isItalianHoliday };
 
-const COLLABORATORI = [
-  'Atanasio Daniele',
-  'Biagioni Matteo',
-  'Cappelli Marco',
-  'Mancini Marco',
-  'Marchetti Davide',
-  'Menichetti Giulia',
-  'Menichetti Lorenzo',
-  'Panchetti Paolo',
-  'Puliti Alessio',
-  'Rossi Niccolò',
-  'Russo Marco',
-  'Signorini Leonardo',
-  'Stefanelli Luca',
-  'Votino Federica'
-];
-
-export function isCollaboratore(nome?: string | null, dipendentiList?: any[]): boolean {
-  if (!nome) return false;
-  const clean = nome.trim().toLowerCase();
-  if (dipendentiList && Array.isArray(dipendentiList)) {
-    const found = dipendentiList.find(d => d.nome.trim().toLowerCase() === clean);
-    if (found?.tipo === 'collaboratore') return true;
-    if (found?.tipo === 'dipendente') return false;
-  }
-  return COLLABORATORI.some(c => c.toLowerCase() === clean);
-}
+import { COLLABORATORI, isCollaboratore } from '../utils/collaboratoriUtils';
+export { COLLABORATORI, isCollaboratore };
 
 export function isInChiusuraAziendale(_dateStr: string): boolean {
   return false;
@@ -185,6 +160,71 @@ export function calculateTotaleSpeseVarie(rimborsoData?: any): number {
   return list.reduce((acc, item) => acc + (Number(item.importo) || 0), 0);
 }
 
+export function sanitizeGiorniForNotWorkingPeriod(
+  giorni: { [giorno: string]: GiornoPresenza },
+  month: number,
+  year: number,
+  profile?: { dataAssunzione?: string; dataCessazione?: string } | null
+): { sanitized: { [giorno: string]: GiornoPresenza }; hasChanges: boolean } {
+  if (!profile || (!profile.dataAssunzione && !profile.dataCessazione) || !giorni) {
+    return { sanitized: giorni, hasChanges: false };
+  }
+  let hasChanges = false;
+  const sanitized = { ...giorni };
+  const numDays = new Date(year, month, 0).getDate();
+
+  for (let d = 1; d <= numDays; d++) {
+    const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const isCessato = profile.dataCessazione && dateStr > profile.dataCessazione;
+    const isNonAncoraAssunto = profile.dataAssunzione && dateStr < profile.dataAssunzione;
+
+    if (isCessato || isNonAncoraAssunto) {
+      const g = sanitized[String(d)];
+      if (
+        g &&
+        (g.ore !== 0 ||
+          g.oreContratto !== 0 ||
+          g.straordinari !== 0 ||
+          g.ferie !== 0 ||
+          g.permessi !== 0 ||
+          g.malattia ||
+          g.trasferta ||
+          g.rimborsoKm ||
+          (g.kmTrasferta || 0) !== 0 ||
+          (g.permessoStudio || 0) !== 0 ||
+          (g.permessoExL104 || 0) !== 0 ||
+          (g.permessoDonazione || 0) !== 0 ||
+          (g.permessoElettorale || 0) !== 0)
+      ) {
+        sanitized[String(d)] = {
+          ...g,
+          ore: 0,
+          oreContratto: 0,
+          straordinari: 0,
+          ferie: 0,
+          permessi: 0,
+          malattia: false,
+          trasferta: false,
+          rimborsoKm: false,
+          kmTrasferta: 0,
+          luogoTrasferta: '',
+          itinerarioTrasferta: '',
+          marcaAutomezzo: '',
+          modelloAutomezzo: '',
+          permessoStudio: 0,
+          permessoExL104: 0,
+          permessoDonazione: 0,
+          permessoElettorale: 0,
+          noteGiorno: ''
+        };
+        hasChanges = true;
+      }
+    }
+  }
+
+  return { sanitized, hasChanges };
+}
+
 export function calculateDynamicGiornate(
   giorni: { [giorno: string]: GiornoPresenza },
   month: number,
@@ -202,8 +242,12 @@ export function calculateDynamicGiornate(
     const isHoliday = isItalianHoliday(dateStr);
 
     if (!isWk && !isHoliday) {
-      workingDays++;
       const g = giorni[String(d)];
+      if (g && g.oreContratto === 0) {
+        // Giorno non in forza (non ancora assunto o cessato)
+        continue;
+      }
+      workingDays++;
       if (g) {
         const contractHours = g.oreContratto || defaultContractHours || 8;
         const absenceHours =
@@ -246,11 +290,11 @@ export function recalculateCollabData(
   const bollo = (collabData.bollo !== undefined && collabData.bollo !== null) ? Number(collabData.bollo) : 0;
   
   const compensoTotaleSoggetto = compensoMensile + premio;
-  const totaleCompenso = compensoTotaleSoggetto + (collabData.spese || 0) + rimborsoKm + bollo;
+  const totaleCompenso = compensoTotaleSoggetto + (collabData.spese || 0) + rimborsoKm;
   const inps = (compensoTotaleSoggetto + rimborsoKm) * ((collabData.inpsRate || 0) / 100);
   const iva = (compensoTotaleSoggetto + rimborsoKm + inps) * ((collabData.ivaRate || 0) / 100);
   const ra = (compensoTotaleSoggetto + rimborsoKm) * ((collabData.raRate || 0) / 100);
-  const totaleDovuto = totaleCompenso + inps + iva - ra;
+  const totaleDovuto = totaleCompenso + inps + iva - ra + bollo;
 
   return {
     ...collabData,
@@ -328,10 +372,10 @@ export default function Presenze() {
 
   // queueEmailNotification rimossa a favore di queueMail centralizzata
   
-  // Helper per calcolo data iniziale di default (nei primi 15 giorni del mese apre il mese precedente da compilare/fatturare)
+  // Helper per calcolo data iniziale di default (nei primi 10 giorni del mese apre il mese precedente da compilare/fatturare)
   const getDefaultInitialDate = () => {
     const now = new Date();
-    if (now.getDate() <= 15) {
+    if (now.getDate() <= 10) {
       let prevM = now.getMonth(); // Gen (0) -> Dic (12) anno prec
       let prevY = now.getFullYear();
       if (prevM === 0) {
@@ -419,6 +463,36 @@ export default function Presenze() {
   const [selectedDipFilter, setSelectedDipFilter] = useState('');
   const [printTargetSheet, setPrintTargetSheet] = useState<RapportinoPresenze | null>(null);
 
+  // Textarea auto-resize refs and effects
+  const noteDipendenteTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const reviewNoteTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const reviewCertificatiTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const reviewComunicazioniHRTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const dipCertificatiTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const dipComunicazioniHRTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const adjust = (el: HTMLTextAreaElement | null, minH: number) => {
+      if (!el) return;
+      el.style.height = 'auto';
+      el.style.height = `${Math.max(el.scrollHeight, minH)}px`;
+    };
+    adjust(noteDipendenteTextareaRef.current, 76);
+    adjust(dipCertificatiTextareaRef.current, 48);
+    adjust(dipComunicazioniHRTextareaRef.current, 48);
+  }, [rapportino?.noteDipendente, rapportino?.comunicazioniHR, rapportino?.id]);
+
+  useEffect(() => {
+    const adjust = (el: HTMLTextAreaElement | null, minH: number) => {
+      if (!el) return;
+      el.style.height = 'auto';
+      el.style.height = `${Math.max(el.scrollHeight, minH)}px`;
+    };
+    adjust(reviewNoteTextareaRef.current, 60);
+    adjust(reviewCertificatiTextareaRef.current, 44);
+    adjust(reviewComunicazioniHRTextareaRef.current, 44);
+  }, [reviewingRapportino?.noteDipendente, reviewingRapportino?.comunicazioniHR, reviewingRapportino?.id]);
+
   // Stati per autorizzazione weekend/chiusure
   const [approvedWeekends, setApprovedWeekends] = useState<Record<string, boolean>>({});
   const [approvedLeaves, setApprovedLeaves] = useState<Record<string, { tipo: string; frazioneTipo?: string; oraInizio?: string; oraFine?: string; pausaPranzo?: boolean; pausaPranzoOre?: number }>>({});
@@ -502,10 +576,11 @@ export default function Presenze() {
     const currentEmpName = reviewingRapportino ? reviewingRapportino.dipendenteNome : myAssociatedName;
     const profile = currentEmpName ? dipendenti.find(d => d.nome.trim().toLowerCase() === currentEmpName.trim().toLowerCase()) : null;
     const isCessato = profile?.dataCessazione && dateStr > profile.dataCessazione;
-    if (isCessato) {
+    const isNonAncoraAssunto = profile?.dataAssunzione && dateStr < profile.dataAssunzione;
+    if (isCessato || isNonAncoraAssunto) {
       return {
-        className: "text-white text-center font-bold bg-gray-500",
-        style: { background: 'linear-gradient(135deg, #4b5563 0%, #374151 100%)' }
+        className: "text-gray-400 text-center font-normal bg-gray-100/90",
+        style: { background: 'linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%)', color: '#9ca3af' }
       };
     }
 
@@ -534,7 +609,9 @@ export default function Presenze() {
     const currentEmpName = reviewingRapportino ? reviewingRapportino.dipendenteNome : myAssociatedName;
     const profile = currentEmpName ? dipendenti.find(d => d.nome.trim().toLowerCase() === currentEmpName.trim().toLowerCase()) : null;
     const isCessato = profile?.dataCessazione && dateStr > profile.dataCessazione;
-    if (isCessato) return true;
+    const isNonAncoraAssunto = profile?.dataAssunzione && dateStr < profile.dataAssunzione;
+    const isHRMode = viewMode === 'hr' || !!reviewingRapportino;
+    if (!isHRMode && (isCessato || isNonAncoraAssunto)) return true;
 
     const isWk = isWeekend(dayNum);
     const isHoliday = isItalianHoliday(dateStr);
@@ -561,7 +638,9 @@ export default function Presenze() {
     const currentEmpName = reviewingRapportino ? reviewingRapportino.dipendenteNome : myAssociatedName;
     const profile = currentEmpName ? dipendenti.find(d => d.nome.trim().toLowerCase() === currentEmpName.trim().toLowerCase()) : null;
     const isCessato = profile?.dataCessazione && dateStr > profile.dataCessazione;
-    if (isCessato) return true;
+    const isNonAncoraAssunto = profile?.dataAssunzione && dateStr < profile.dataAssunzione;
+    const isHRMode = viewMode === 'hr' || !!reviewingRapportino;
+    if (!isHRMode && (isCessato || isNonAncoraAssunto)) return true;
 
     const currentRapportino = reviewingRapportino || rapportino;
     const isUnlockedForUser = currentRapportino?.stato === 'Richiede Modifica' || !!reviewingRapportino;
@@ -664,9 +743,11 @@ export default function Presenze() {
         const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
         const isHoliday = isItalianHoliday(dateStr);
         const isCessato = profile?.dataCessazione && dateStr > profile.dataCessazione;
+        const isNonAncoraAssunto = profile?.dataAssunzione && dateStr < profile.dataAssunzione;
+        const isNotWorkingPeriod = isCessato || isNonAncoraAssunto;
 
         let dayContractHours = 0;
-        if (!isCessato && !isWknd && !isHoliday) {
+        if (!isNotWorkingPeriod && !isWknd && !isHoliday) {
           if (profile?.orarioSettimanale) {
             const weekdayKeys = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
             const key = weekdayKeys[dayOfWeek];
@@ -688,7 +769,7 @@ export default function Presenze() {
         let permessoElettorale = 0;
 
         // Apply approved absences (only on working days)
-        if (!isCessato && approvedAbsences[dateStr] && !isWknd && !isHoliday && !isInChiusuraAziendaleLocal(dateStr)) {
+        if (!isNotWorkingPeriod && approvedAbsences[dateStr] && !isWknd && !isHoliday && !isInChiusuraAziendaleLocal(dateStr)) {
           const abs = approvedAbsences[dateStr];
           if (abs.tipo === 'ferie') {
             ore = 0;
@@ -817,7 +898,7 @@ export default function Presenze() {
             ra: 0,
             totaleDovuto: 0,
             importoFissoMensile: profile?.importoFissoMensile ?? 0,
-            bollo: (profile as any)?.bollo ?? 0
+            bollo: (profile as any)?.bollo ? Number((profile as any).bollo) : 2
           },
           profile?.oreContratto ?? 8
         );
@@ -878,15 +959,33 @@ export default function Presenze() {
         
         const processDoc = (docSnap: any) => {
           const docData = { id: docSnap.id, ...docSnap.data() } as RapportinoPresenze;
+          const targetProfile = dipendenti.find(d => d.nome.trim().toLowerCase() === docData.dipendenteNome.trim().toLowerCase());
+          
+          let hasDocChanged = false;
+          if (docData.giorni) {
+            const { sanitized, hasChanges } = sanitizeGiorniForNotWorkingPeriod(
+              docData.giorni,
+              docData.mese,
+              docData.anno,
+              targetProfile
+            );
+            if (hasChanges) {
+              docData.giorni = sanitized;
+              hasDocChanged = true;
+            }
+          }
+
           const isCollab = isCollaboratore(docData.dipendenteNome, dipendenti);
           if (isCollab && docData.collaboratoreData) {
-            const targetProfile = dipendenti.find(d => d.nome.trim().toLowerCase() === docData.dipendenteNome.trim().toLowerCase());
             if (targetProfile) {
               const updatedData = { ...docData.collaboratoreData };
               if (targetProfile.importoFissoMensile !== undefined && (docData.stato === 'Bozza' || docData.stato === 'Richiede Modifica')) {
                 if (updatedData.importoFissoMensile !== targetProfile.importoFissoMensile) {
                   updatedData.importoFissoMensile = targetProfile.importoFissoMensile;
                 }
+              }
+              if (docData.stato !== 'Approvato' && (updatedData.bollo === undefined || updatedData.bollo === null || updatedData.bollo === 0)) {
+                updatedData.bollo = 2;
               }
               docData.collaboratoreData = recalculateCollabData(
                 docData.giorni,
@@ -897,6 +996,17 @@ export default function Presenze() {
               );
             }
           }
+
+          if (hasDocChanged && docData.id) {
+            const updatePayload: any = { giorni: docData.giorni };
+            if (docData.collaboratoreData) {
+              updatePayload.collaboratoreData = docData.collaboratoreData;
+            }
+            updateDoc(doc(db, 'presenze', docData.id), updatePayload).catch(err => {
+              console.error("Errore auto-bonifica giorni non in servizio su Firestore:", err);
+            });
+          }
+
           dataMap[docSnap.id] = docData;
         };
 
@@ -1054,7 +1164,7 @@ export default function Presenze() {
                 iva: 0,
                 ra: 0,
                 totaleDovuto: 0,
-                bollo: (profile as any)?.bollo ?? 0
+                bollo: (profile as any)?.bollo ? Number((profile as any).bollo) : 2
               },
               profile?.oreContratto ?? 8
             );
@@ -1078,6 +1188,9 @@ export default function Presenze() {
                 if (updatedData.importoFissoMensile !== profile.importoFissoMensile) {
                   updatedData.importoFissoMensile = profile.importoFissoMensile;
                 }
+              }
+              if (data.stato !== 'Approvato' && (updatedData.bollo === undefined || updatedData.bollo === null || updatedData.bollo === 0)) {
+                updatedData.bollo = 2;
               }
               data.collaboratoreData = recalculateCollabData(
                 data.giorni,
@@ -1105,6 +1218,19 @@ export default function Presenze() {
           }
 
           let finalData = { ...data, id: docSnap.id } as RapportinoPresenze;
+          if (targetEmpName && finalData.giorni) {
+            const targetProf = dipendenti.find(d => d.nome.trim().toLowerCase() === targetEmpName.trim().toLowerCase());
+            const { sanitized, hasChanges: nonWorkingChanges } = sanitizeGiorniForNotWorkingPeriod(
+              finalData.giorni,
+              selectedMonth,
+              selectedYear,
+              targetProf
+            );
+            if (nonWorkingChanges) {
+              finalData.giorni = sanitized;
+              updateDoc(doc(db, 'presenze', finalData.id), { giorni: sanitized }).catch(() => {});
+            }
+          }
           if ((finalData.stato === 'Bozza' || finalData.stato === 'Richiede Modifica') && targetEmpName) {
             try {
               const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === targetEmpName.trim().toLowerCase());
@@ -1122,8 +1248,9 @@ export default function Presenze() {
                 if (!currentDay) continue;
 
                 const isCessato = profile?.dataCessazione && dateStr > profile.dataCessazione;
+                const isNonAncoraAssunto = profile?.dataAssunzione && dateStr < profile.dataAssunzione;
 
-                if (isCessato) {
+                if (isCessato || isNonAncoraAssunto) {
                   if (
                     currentDay.oreContratto !== 0 ||
                     currentDay.ore !== 0 ||
@@ -2205,19 +2332,22 @@ export default function Presenze() {
       setReviewingRapportino(null);
       setIsFeedbackModalOpen(false);
       setHrFeedbackNote('');
-      showToast("Richiesta di modifica inviata al dipendente.");
+      const isCollabTarget = isCollaboratore(updated.dipendenteNome, dipendenti) || !!updated.collaboratoreData;
+      showToast(isCollabTarget ? "Richiesta di modifica inviata al collaboratore." : "Richiesta di modifica inviata al dipendente.");
       loadPresenzeData();
 
-      // Invia notifica al dipendente (se non è se stesso)
+      // Invia notifica al dipendente/collaboratore (se non è se stesso)
       const isSelfTarget = (updated.dipendenteEmail?.toLowerCase() === userEmail?.toLowerCase()) || (myAssociatedName && updated.dipendenteNome === myAssociatedName);
       if (updated.dipendenteEmail && !isSelfTarget) {
         const meseNome = MESI[selectedMonth - 1];
         await queueMail(
           updated.dipendenteEmail,
-          `[Pianificazione] Correzione richiesta per il tuo Rapportino Presenze - ${meseNome} ${selectedYear}`,
+          isCollabTarget 
+            ? `[Pianificazione] Correzione richiesta per la tua Bozza Fattura - ${meseNome} ${selectedYear}`
+            : `[Pianificazione] Correzione richiesta per il tuo Rapportino Presenze - ${meseNome} ${selectedYear}`,
           `
             <p>Ciao <strong>${updated.dipendenteNome}</strong>,</p>
-            <p>L'amministrazione ha esaminato il tuo rapportino presenze per il mese di <strong>${meseNome} ${selectedYear}</strong> e ha richiesto alcune <strong>correzioni</strong>.</p>
+            <p>L'amministrazione ha esaminato ${isCollabTarget ? 'la tua bozza di fattura' : 'il tuo rapportino presenze'} per il mese di <strong>${meseNome} ${selectedYear}</strong> e ha richiesto alcune <strong>correzioni</strong>.</p>
             <p><strong>Nota dell'HR:</strong></p>
             <blockquote style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 10px 15px; margin: 10px 0; font-style: italic;">
               "${hrFeedbackNote}"
@@ -2229,8 +2359,8 @@ export default function Presenze() {
         await createUserNotification({
           destinatarioEmail: updated.dipendenteEmail,
           destinatarioNome: updated.dipendenteNome,
-          titolo: '⚠️ Modifica Presenze Richiesta',
-          messaggio: `L'HR richiede verifiche o correzioni per il foglio presenze di ${meseNome} ${selectedYear}.`,
+          titolo: isCollabTarget ? '⚠️ Modifica Bozza Fattura Richiesta' : '⚠️ Modifica Presenze Richiesta',
+          messaggio: `L'HR richiede verifiche o correzioni per ${isCollabTarget ? 'la bozza di fattura' : 'il foglio presenze'} di ${meseNome} ${selectedYear}.`,
           tipo: 'presenze_approvate',
           link: '/presenze'
         });
@@ -2440,6 +2570,7 @@ export default function Presenze() {
         "Cassa INPS (€)",
         "IVA (€)",
         "Ritenuta d'Acconto (€)",
+        "Imposta di Bollo (€)",
         "Totale Dovuto (€)"
       ] : [
         "Dipendente",
@@ -2469,7 +2600,9 @@ export default function Presenze() {
 
       const activeList = filteredDipendenti.filter(dip => {
         const firstDayOfMonthStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-01`;
+        const lastDayOfMonthStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
         if (dip.dataCessazione && dip.dataCessazione < firstDayOfMonthStr) return false;
+        if (dip.dataAssunzione && dip.dataAssunzione > lastDayOfMonthStr) return false;
         const isCollab = isCollaboratore(dip.nome, dipendenti);
         return isCollabExport ? isCollab : !isCollab;
       });
@@ -2504,6 +2637,7 @@ export default function Presenze() {
           cData ? cData.inps.toFixed(2) : "0.00",
           cData ? cData.iva.toFixed(2) : "0.00",
           cData ? cData.ra.toFixed(2) : "0.00",
+          cData ? (cData.bollo || 0).toFixed(2) : "0.00",
           cData ? cData.totaleDovuto.toFixed(2) : "0.00"
         ] : [
           dip.nome,
@@ -2583,6 +2717,7 @@ export default function Presenze() {
         "Cassa INPS (€)",
         "IVA (€)",
         "Ritenuta d'Acconto (€)",
+        "Imposta di Bollo (€)",
         "Totale Dovuto (€)"
       ] : [
         "Dipendente",
@@ -2620,13 +2755,17 @@ export default function Presenze() {
       activeList.forEach(dip => {
         for (let m = 1; m <= 12; m++) {
           const firstDayOfMStr = `${selectedYear}-${String(m).padStart(2, '0')}-01`;
+          const currentDaysInMonth = new Date(selectedYear, m, 0).getDate();
+          const lastDayOfMStr = `${selectedYear}-${String(m).padStart(2, '0')}-${String(currentDaysInMonth).padStart(2, '0')}`;
           if (dip.dataCessazione && dip.dataCessazione < firstDayOfMStr) {
+            continue;
+          }
+          if (dip.dataAssunzione && dip.dataAssunzione > lastDayOfMStr) {
             continue;
           }
           const docId = `${dip.nome}-${selectedYear}-${String(m).padStart(2, '0')}`;
           const sheet = annualRapportini[docId];
           const status = sheet ? sheet.stato : 'Non Iniziato';
-          const currentDaysInMonth = new Date(selectedYear, m, 0).getDate();
           const totals = sheet 
             ? calculateTotals(sheet.giorni, currentDaysInMonth)
             : { oreOrd: 0, oreStra: 0, oreFerie: 0, orePerm: 0, ggMalattia: 0, ggTrasferta: 0, ggIntere: 0, ggMezze: 0 };
@@ -2653,6 +2792,7 @@ export default function Presenze() {
             cData ? cData.inps.toFixed(2) : "0.00",
             cData ? cData.iva.toFixed(2) : "0.00",
             cData ? cData.ra.toFixed(2) : "0.00",
+            cData ? (cData.bollo || 0).toFixed(2) : "0.00",
             cData ? cData.totaleDovuto.toFixed(2) : "0.00"
           ] : [
             dip.nome,
@@ -2735,6 +2875,7 @@ export default function Presenze() {
         [`Cassa INPS (${cData.inpsRate}%) (€)`, cData.inps.toFixed(2)],
         [`IVA (${cData.ivaRate}%) (€)`, cData.iva.toFixed(2)],
         [`Ritenuta d'Acconto (${cData.raRate}%) (€)`, cData.ra.toFixed(2)],
+        ["Imposta di Bollo (€)", (cData.bollo || 0).toFixed(2)],
         ["Totale Dovuto (€)", cData.totaleDovuto.toFixed(2)]
       ];
 
@@ -2852,6 +2993,7 @@ export default function Presenze() {
         "Giornate Lavorate",
         "Tariffa Giornaliera (€)",
         "Compenso Mensile (€)",
+        "Premio (€)",
         "Spese (€)",
         "Km Percorsi",
         "Tariffa Km (€/km)",
@@ -2860,6 +3002,7 @@ export default function Presenze() {
         "Cassa INPS (€)",
         "IVA (€)",
         "Ritenuta d'Acconto (€)",
+        "Imposta di Bollo (€)",
         "Totale Dovuto (€)"
       ] : [
         "Dipendente",
@@ -2908,6 +3051,7 @@ export default function Presenze() {
           cData ? cData.giornate.toString() : "0",
           cData ? cData.dailyRate.toString() : "0",
           cData ? cData.compensoMensile.toFixed(2) : "0.00",
+          cData ? (cData.premio || 0).toFixed(2) : "0.00",
           cData ? cData.spese.toFixed(2) : "0.00",
           cData ? cData.km.toString() : "0",
           cData ? cData.kmRate.toString() : "0.3",
@@ -2916,6 +3060,7 @@ export default function Presenze() {
           cData ? cData.inps.toFixed(2) : "0.00",
           cData ? cData.iva.toFixed(2) : "0.00",
           cData ? cData.ra.toFixed(2) : "0.00",
+          cData ? (cData.bollo || 0).toFixed(2) : "0.00",
           cData ? cData.totaleDovuto.toFixed(2) : "0.00"
         ] : [
           dipName,
@@ -3003,7 +3148,9 @@ export default function Presenze() {
       const filtered = dipendenti.filter(dip => {
         if (isTechnicalUser(dip)) return false;
         const firstDayOfMonthStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-01`;
+        const lastDayOfMonthStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
         if (dip.dataCessazione && dip.dataCessazione < firstDayOfMonthStr) return false;
+        if (dip.dataAssunzione && dip.dataAssunzione > lastDayOfMonthStr) return false;
         const isCollab = isCollaboratore(dip.nome, dipendenti);
         const matchesTab = hrTab === 'collaboratori' ? isCollab : !isCollab;
         return matchesTab;
@@ -3088,26 +3235,30 @@ export default function Presenze() {
   const pendingDipCount = useMemo(() => {
     return filteredDipendenti.filter(dip => {
       const firstDayOfMonthStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-01`;
+      const lastDayOfMonthStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
       if (dip.dataCessazione && dip.dataCessazione < firstDayOfMonthStr) return false;
+      if (dip.dataAssunzione && dip.dataAssunzione > lastDayOfMonthStr) return false;
       const isCollab = isCollaboratore(dip.nome, dipendenti);
       if (isCollab) return false;
       const docId = `${dip.nome}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
       const sheet = allRapportini[docId];
       return sheet?.stato === 'Inviato';
     }).length;
-  }, [filteredDipendenti, allRapportini, selectedYear, selectedMonth]);
+  }, [filteredDipendenti, allRapportini, selectedYear, selectedMonth, daysInMonth]);
 
   const pendingCollabCount = useMemo(() => {
     return filteredDipendenti.filter(dip => {
       const firstDayOfMonthStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-01`;
+      const lastDayOfMonthStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
       if (dip.dataCessazione && dip.dataCessazione < firstDayOfMonthStr) return false;
+      if (dip.dataAssunzione && dip.dataAssunzione > lastDayOfMonthStr) return false;
       const isCollab = isCollaboratore(dip.nome, dipendenti);
       if (!isCollab) return false;
       const docId = `${dip.nome}-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
       const sheet = allRapportini[docId];
       return sheet?.stato === 'Inviato';
     }).length;
-  }, [filteredDipendenti, allRapportini, selectedYear, selectedMonth]);
+  }, [filteredDipendenti, allRapportini, selectedYear, selectedMonth, daysInMonth]);
 
   // Riepilogo mesi con pratiche in attesa di approvazione (per banner smart HR / Soci)
   const pendingMonthsSummary = useMemo(() => {
@@ -3344,7 +3495,7 @@ export default function Presenze() {
                 className="p-2.5 border-none bg-gray-100 rounded-xl font-bold text-gray-700 text-sm outline-none focus:ring-2 focus:ring-indigo-400 max-w-[200px]"
               >
                 <option value="">Tutti i dipendenti</option>
-                {filteredDipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-01`) && !isTechnicalUser(d)).map(d => (
+                {filteredDipendenti.filter(d => (!d.dataCessazione || d.dataCessazione >= `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-01`) && (!d.dataAssunzione || d.dataAssunzione <= `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`) && !isTechnicalUser(d)).map(d => (
                   <option key={d.id} value={d.nome}>{d.nome}</option>
                 ))}
               </select>
@@ -3453,7 +3604,9 @@ export default function Presenze() {
                   {filteredDipendenti
                     .filter(dip => {
                       const firstDayOfMonthStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-01`;
+                      const lastDayOfMonthStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
                       if (dip.dataCessazione && dip.dataCessazione < firstDayOfMonthStr) return false;
+                      if (dip.dataAssunzione && dip.dataAssunzione > lastDayOfMonthStr) return false;
 
                       const isCollab = isCollaboratore(dip.nome, dipendenti);
                       const matchesTab = hrTab === 'collaboratori' ? isCollab : !isCollab;
@@ -3515,7 +3668,16 @@ export default function Presenze() {
                               <div className="flex items-center justify-center gap-2">
                                 <button 
                                   onClick={() => {
-                                    setReviewingRapportino(JSON.parse(JSON.stringify(sheet))); // clone object
+                                    const prof = dipendenti.find(d => d.nome.trim().toLowerCase() === sheet.dipendenteNome.trim().toLowerCase());
+                                    const cloned = JSON.parse(JSON.stringify(sheet));
+                                    if (cloned.giorni) {
+                                      const { sanitized, hasChanges } = sanitizeGiorniForNotWorkingPeriod(cloned.giorni, cloned.mese, cloned.anno, prof);
+                                      if (hasChanges) {
+                                        cloned.giorni = sanitized;
+                                        updateDoc(doc(db, 'presenze', sheet.id), { giorni: sanitized }).catch(() => {});
+                                      }
+                                    }
+                                    setReviewingRapportino(cloned);
                                   }}
                                   className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md transition active:scale-95 cursor-pointer"
                                 >
@@ -3935,9 +4097,9 @@ export default function Presenze() {
 
                              {/* PREMIO */}
                              <tr className="hover:bg-amber-50/20">
-                               <td className="p-3 border-r border-gray-200 font-semibold text-emerald-900">
+                               <td className="p-3 border-r border-gray-200 font-semibold">
                                  Premio
-                                 <span className="ml-1 text-[9px] text-emerald-600 font-normal block sm:inline">(eventuale bonus / una tantum)</span>
+                                 <span className="ml-1 text-[9px] text-gray-400 font-normal block sm:inline">(eventuale bonus / una tantum)</span>
                                </td>
                                <td className="p-3 border-r border-gray-200 text-center">
                                  <div className="flex items-center justify-center w-full">
@@ -3949,14 +4111,14 @@ export default function Presenze() {
                                        disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
                                        value={rapportino.collaboratoreData.premio ? rapportino.collaboratoreData.premio : ''}
                                        onChange={e => handleCollabFieldChange('premio', e.target.value === '' ? 0 : Number(e.target.value))}
-                                       style={{ border: '1.5px solid #10b981', width: '65px' }}
-                                       className="p-1 text-xs text-right bg-emerald-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-emerald-300"
+                                       style={{ border: '1.5px solid #cbd5e1', width: '65px' }}
+                                       className="p-1 text-xs text-right bg-amber-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
                                      />
-                                     <span className="text-xs font-bold text-emerald-900 w-10 text-left">€</span>
+                                     <span className="text-xs text-gray-600 font-medium w-10 text-left">€</span>
                                    </div>
                                  </div>
                                </td>
-                               <td className="p-3 text-right font-bold text-emerald-900">
+                               <td className="p-3 text-right font-bold text-gray-900">
                                  {formatMoney(rapportino.collaboratoreData.premio || 0)} €
                                </td>
                              </tr>
@@ -4030,29 +4192,6 @@ export default function Presenze() {
                               <td className="p-3 border-r border-gray-200 text-center text-gray-400">-</td>
                               <td className="p-3 text-right font-bold text-gray-900">{formatMoney(rapportino.collaboratoreData.rimborsoKm)} €</td>
                             </tr>
-
-                             {/* IMPOSTA DI BOLLO */}
-                             <tr className="hover:bg-amber-50/20">
-                               <td className="p-3 border-r border-gray-200 font-semibold">Imposta di Bollo</td>
-                               <td className="p-3 border-r border-gray-200 text-center">
-                                 <div className="flex items-center justify-center w-full">
-                                   <div className="flex items-center gap-1.5 w-32 justify-start">
-                                     <input 
-                                       type="number"
-                                       step="any"
-                                       min="0"
-                                       disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
-                                       value={rapportino.collaboratoreData.bollo !== undefined && rapportino.collaboratoreData.bollo !== null ? rapportino.collaboratoreData.bollo : ''}
-                                       onChange={e => handleCollabFieldChange('bollo', e.target.value === '' ? 0 : Number(e.target.value))}
-                                       style={{ border: '1.5px solid #cbd5e1', width: '65px' }}
-                                       className="p-1 text-xs text-right bg-amber-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
-                                     />
-                                     <span className="text-xs text-gray-600 font-medium w-10 text-left">€</span>
-                                   </div>
-                                 </div>
-                               </td>
-                               <td className="p-3 text-right font-bold text-gray-900">{formatMoney(rapportino.collaboratoreData.bollo || 0)} €</td>
-                             </tr>
 
                             {/* TOTAL COMPENSO */}
                             <tr className="bg-amber-100/70 text-sm font-extrabold border-y-2 border-amber-300">
@@ -4139,6 +4278,32 @@ export default function Presenze() {
                               <td className="p-3 text-right font-bold text-red-600">- {formatMoney(rapportino.collaboratoreData.ra)} €</td>
                             </tr>
 
+                            {/* IMPOSTA DI BOLLO (ESCLUSA DA IMPONIBILE - SOMMATA NEL TOTALE NETTO A PAGARE) */}
+                            <tr className="hover:bg-amber-50/20 bg-amber-50/10">
+                              <td className="p-3 border-r border-gray-200 font-semibold">
+                                Imposta di Bollo
+                                <span className="ml-1 text-[9px] text-gray-400 font-normal block sm:inline">(esente/fuori campo - art. 15 DPR 633/72)</span>
+                              </td>
+                              <td className="p-3 border-r border-gray-200 text-center">
+                                <div className="flex items-center justify-center w-full">
+                                  <div className="flex items-center gap-1.5 w-32 justify-start">
+                                    <input 
+                                      type="number"
+                                      step="any"
+                                      min="0"
+                                      disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
+                                      value={rapportino.collaboratoreData.bollo !== undefined && rapportino.collaboratoreData.bollo !== null ? rapportino.collaboratoreData.bollo : ''}
+                                      onChange={e => handleCollabFieldChange('bollo', e.target.value === '' ? 0 : Number(e.target.value))}
+                                      style={{ border: '1.5px solid #cbd5e1', width: '65px' }}
+                                      className="p-1 text-xs text-right bg-amber-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
+                                    />
+                                    <span className="text-xs text-gray-600 font-medium w-10 text-left">€</span>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="p-3 text-right font-bold text-gray-900">{formatMoney(rapportino.collaboratoreData.bollo || 0)} €</td>
+                            </tr>
+
                             {/* TOTAL NETTO */}
                             <tr className="bg-amber-500 text-white font-black text-base border-t-2 border-amber-600">
                               <td className="p-3.5 border-r border-amber-600 uppercase tracking-wide">TOTALE NETTO A PAGARE</td>
@@ -4158,12 +4323,19 @@ export default function Presenze() {
                         Note e Dettagli Aggiuntivi
                       </label>
                       <textarea
+                        ref={noteDipendenteTextareaRef}
                         rows={3}
                         placeholder="Inserisci qui eventuali note o commenti per la fattura..."
                         disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
                         value={rapportino.noteDipendente || ''}
-                        onChange={e => setRapportino({ ...rapportino, noteDipendente: e.target.value })}
-                        className="w-full mt-2 p-3 text-xs border rounded-xl bg-white outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 font-medium"
+                        onChange={e => {
+                          setRapportino({ ...rapportino, noteDipendente: e.target.value });
+                          if (noteDipendenteTextareaRef.current) {
+                            noteDipendenteTextareaRef.current.style.height = 'auto';
+                            noteDipendenteTextareaRef.current.style.height = `${Math.max(noteDipendenteTextareaRef.current.scrollHeight, 76)}px`;
+                          }
+                        }}
+                        className="w-full mt-2 p-3 text-xs border rounded-xl bg-white outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 font-medium resize-none overflow-hidden"
                       />
                     </div>
                   </div>
@@ -4912,12 +5084,17 @@ export default function Presenze() {
                         * N.B. Inserire qui eventuali numeri di protocollo dei certificati medici (malattia, maternità) o note ufficiali sulle presenze da includere nel foglio ore stampato.
                       </p>
                       <textarea
-                        rows={2}
+                        ref={dipCertificatiTextareaRef}
                         placeholder="Es. Certificato di malattia N° PUC 123456789 dal 12 al 15..."
                         disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
                         value={rapportino.noteDipendente || ''}
-                        onChange={e => setRapportino({ ...rapportino, noteDipendente: e.target.value })}
-                        className="w-full mt-2 p-3 text-xs border border-gray-300 rounded-xl bg-white outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 font-medium"
+                        onChange={e => {
+                          setRapportino({ ...rapportino, noteDipendente: e.target.value });
+                          e.target.style.height = 'auto';
+                          e.target.style.height = `${Math.max(e.target.scrollHeight, 48)}px`;
+                        }}
+                        style={{ minHeight: '48px' }}
+                        className="w-full mt-2 p-3 text-xs border border-gray-300 rounded-xl bg-white outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 font-medium resize-none overflow-hidden"
                       />
                     </div>
 
@@ -4934,12 +5111,17 @@ export default function Presenze() {
                         * N.B. Spazio riservato a comunicazioni interne per l'amministrazione (es. "Ho fatto ore in più, per favore scalatele dai permessi presi nel mese"). Non apparirà nel PDF stampato.
                       </p>
                       <textarea
-                        rows={2}
+                        ref={dipComunicazioniHRTextareaRef}
                         placeholder="Inserisci qui eventuali comunicazioni o richieste di aggiustamento per l'HR..."
                         disabled={rapportino.stato === 'Inviato' || rapportino.stato === 'Approvato'}
                         value={rapportino.comunicazioniHR || ''}
-                        onChange={e => setRapportino({ ...rapportino, comunicazioniHR: e.target.value })}
-                        className="w-full mt-2 p-3 text-xs border border-indigo-200 rounded-xl bg-indigo-50/30 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-medium"
+                        onChange={e => {
+                          setRapportino({ ...rapportino, comunicazioniHR: e.target.value });
+                          e.target.style.height = 'auto';
+                          e.target.style.height = `${Math.max(e.target.scrollHeight, 48)}px`;
+                        }}
+                        style={{ minHeight: '48px' }}
+                        className="w-full mt-2 p-3 text-xs border border-indigo-200 rounded-xl bg-indigo-50/30 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-medium resize-none overflow-hidden"
                       />
                     </div>
                   </div>
@@ -5099,11 +5281,18 @@ export default function Presenze() {
                       <span className="text-[9px] font-extrabold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">Bozza Fattura</span>
                     </div>
                     <textarea
+                      ref={reviewNoteTextareaRef}
                       rows={2}
                       value={reviewingRapportino.noteDipendente || reviewingRapportino.comunicazioniHR || ''}
-                      onChange={e => setReviewingRapportino({ ...reviewingRapportino, noteDipendente: e.target.value, comunicazioniHR: e.target.value })}
+                      onChange={e => {
+                        setReviewingRapportino({ ...reviewingRapportino, noteDipendente: e.target.value, comunicazioniHR: e.target.value });
+                        if (reviewNoteTextareaRef.current) {
+                          reviewNoteTextareaRef.current.style.height = 'auto';
+                          reviewNoteTextareaRef.current.style.height = `${Math.max(reviewNoteTextareaRef.current.scrollHeight, 60)}px`;
+                        }
+                      }}
                       placeholder="Note o comunicazioni inserite dal collaboratore per la fattura..."
-                      className="w-full text-xs font-medium text-gray-800 bg-white p-2 border border-amber-200 rounded-lg outline-none focus:ring-1 focus:ring-amber-500"
+                      className="w-full text-xs font-medium text-gray-800 bg-white p-2 border border-amber-200 rounded-lg outline-none focus:ring-1 focus:ring-amber-500 resize-none overflow-hidden"
                     />
                   </div>
                 ) : (
@@ -5119,11 +5308,16 @@ export default function Presenze() {
                         <span className="text-[9px] font-extrabold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">Incluso in PDF</span>
                       </div>
                       <textarea
-                        rows={2}
+                        ref={reviewCertificatiTextareaRef}
                         value={reviewingRapportino.noteDipendente || ''}
-                        onChange={e => setReviewingRapportino({ ...reviewingRapportino, noteDipendente: e.target.value })}
+                        onChange={e => {
+                          setReviewingRapportino({ ...reviewingRapportino, noteDipendente: e.target.value });
+                          e.target.style.height = 'auto';
+                          e.target.style.height = `${Math.max(e.target.scrollHeight, 44)}px`;
+                        }}
                         placeholder="Certificati medici, protocolli o note ufficiali..."
-                        className="w-full text-xs font-medium text-gray-800 bg-white p-2 border border-emerald-200 rounded-lg outline-none focus:ring-1 focus:ring-emerald-500"
+                        style={{ minHeight: '44px' }}
+                        className="w-full text-xs font-medium text-gray-800 bg-white p-2 border border-emerald-200 rounded-lg outline-none focus:ring-1 focus:ring-emerald-500 resize-none overflow-hidden"
                       />
                     </div>
 
@@ -5137,11 +5331,16 @@ export default function Presenze() {
                         <span className="text-[9px] font-bold bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">Escluso da PDF</span>
                       </div>
                       <textarea
-                        rows={2}
+                        ref={reviewComunicazioniHRTextareaRef}
                         value={reviewingRapportino.comunicazioniHR || ''}
-                        onChange={e => setReviewingRapportino({ ...reviewingRapportino, comunicazioniHR: e.target.value })}
+                        onChange={e => {
+                          setReviewingRapportino({ ...reviewingRapportino, comunicazioniHR: e.target.value });
+                          e.target.style.height = 'auto';
+                          e.target.style.height = `${Math.max(e.target.scrollHeight, 44)}px`;
+                        }}
                         placeholder="Messaggi interni dal dipendente all'HR..."
-                        className="w-full text-xs font-medium text-gray-800 bg-white p-2 border border-indigo-200 rounded-lg outline-none focus:ring-1 focus:ring-indigo-500"
+                        style={{ minHeight: '44px' }}
+                        className="w-full text-xs font-medium text-gray-800 bg-white p-2 border border-indigo-200 rounded-lg outline-none focus:ring-1 focus:ring-indigo-500 resize-none overflow-hidden"
                       />
                     </div>
                   </>
@@ -5286,9 +5485,9 @@ export default function Presenze() {
 
                         {/* PREMIO */}
                         <tr className="hover:bg-amber-50/20">
-                          <td className="p-2.5 border-r border-gray-200 font-semibold text-emerald-900">
+                          <td className="p-2.5 border-r border-gray-200 font-semibold">
                             Premio
-                            <span className="ml-1 text-[9px] text-emerald-600 font-normal block sm:inline">(eventuale bonus / una tantum)</span>
+                            <span className="ml-1 text-[9px] text-gray-400 font-normal block sm:inline">(eventuale bonus / una tantum)</span>
                           </td>
                           <td className="p-2.5 border-r border-gray-200 text-center">
                             <div className="flex items-center justify-center w-full">
@@ -5300,14 +5499,14 @@ export default function Presenze() {
                                   disabled={reviewingRapportino.stato === 'Approvato'}
                                   value={reviewingRapportino.collaboratoreData.premio ? reviewingRapportino.collaboratoreData.premio : ''}
                                   onChange={e => handleReviewCollabFieldChange('premio', e.target.value === '' ? 0 : Number(e.target.value))}
-                                  style={{ border: '1.5px solid #10b981', width: '65px' }}
-                                  className="p-1 text-xs text-right bg-emerald-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-emerald-300"
+                                  style={{ border: '1.5px solid #cbd5e1', width: '65px' }}
+                                  className="p-1 text-xs text-right bg-amber-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
                                 />
-                                <span className="text-xs font-bold text-emerald-900 w-10 text-left">€</span>
+                                <span className="text-xs text-gray-600 font-medium w-10 text-left">€</span>
                               </div>
                             </div>
                           </td>
-                          <td className="p-2.5 text-right font-bold text-emerald-900">
+                          <td className="p-2.5 text-right font-bold text-gray-900">
                             {formatMoney(reviewingRapportino.collaboratoreData.premio || 0)} €
                           </td>
                         </tr>
@@ -5381,29 +5580,6 @@ export default function Presenze() {
                           <td className="p-2.5 border-r border-gray-200 text-center text-gray-400">-</td>
                           <td className="p-2.5 text-right font-bold text-gray-900">{formatMoney(reviewingRapportino.collaboratoreData.rimborsoKm)} €</td>
                         </tr>
-
-                         {/* IMPOSTA DI BOLLO */}
-                         <tr className="hover:bg-amber-50/20">
-                           <td className="p-2.5 border-r border-gray-200 font-semibold">Imposta di Bollo</td>
-                           <td className="p-2.5 border-r border-gray-200 text-center">
-                             <div className="flex items-center justify-center w-full">
-                               <div className="flex items-center gap-1.5 w-32 justify-start">
-                                 <input 
-                                   type="number"
-                                   step="any"
-                                   min="0"
-                                   disabled={reviewingRapportino.stato === 'Approvato'}
-                                   value={reviewingRapportino.collaboratoreData.bollo !== undefined && reviewingRapportino.collaboratoreData.bollo !== null ? reviewingRapportino.collaboratoreData.bollo : ''}
-                                   onChange={e => handleReviewCollabFieldChange('bollo', e.target.value === '' ? 0 : Number(e.target.value))}
-                                   style={{ border: '1.5px solid #cbd5e1', width: '65px' }}
-                                   className="p-1 text-xs text-right bg-amber-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
-                                 />
-                                 <span className="text-xs text-gray-600 font-medium w-10 text-left">€</span>
-                               </div>
-                             </div>
-                           </td>
-                           <td className="p-2.5 text-right font-bold text-gray-900">{formatMoney(reviewingRapportino.collaboratoreData.bollo || 0)} €</td>
-                         </tr>
 
                         {/* TOTAL COMPENSO */}
                         <tr className="bg-amber-100/70 text-xs font-extrabold border-y-2 border-amber-300">
@@ -5488,6 +5664,32 @@ export default function Presenze() {
                             </div>
                           </td>
                           <td className="p-2.5 text-right font-bold text-red-600">- {formatMoney(reviewingRapportino.collaboratoreData.ra)} €</td>
+                        </tr>
+
+                        {/* IMPOSTA DI BOLLO (ESCLUSA DA IMPONIBILE - SOMMATA NEL TOTALE NETTO A PAGARE) */}
+                        <tr className="hover:bg-amber-50/20 bg-amber-50/10">
+                          <td className="p-2.5 border-r border-gray-200 font-semibold">
+                            Imposta di Bollo
+                            <span className="ml-1 text-[9px] text-gray-400 font-normal block sm:inline">(esente/fuori campo - art. 15 DPR 633/72)</span>
+                          </td>
+                          <td className="p-2.5 border-r border-gray-200 text-center">
+                            <div className="flex items-center justify-center w-full">
+                              <div className="flex items-center gap-1.5 w-32 justify-start">
+                                <input 
+                                  type="number"
+                                  step="any"
+                                  min="0"
+                                  disabled={reviewingRapportino.stato === 'Approvato'}
+                                  value={reviewingRapportino.collaboratoreData.bollo !== undefined && reviewingRapportino.collaboratoreData.bollo !== null ? reviewingRapportino.collaboratoreData.bollo : ''}
+                                  onChange={e => handleReviewCollabFieldChange('bollo', e.target.value === '' ? 0 : Number(e.target.value))}
+                                  style={{ border: '1.5px solid #cbd5e1', width: '65px' }}
+                                  className="p-1 text-xs text-right bg-amber-50/80 font-bold text-gray-900 rounded outline-none focus:bg-white focus:ring-2 focus:ring-amber-300"
+                                />
+                                <span className="text-xs text-gray-600 font-medium w-10 text-left">€</span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-2.5 text-right font-bold text-gray-900">{formatMoney(reviewingRapportino.collaboratoreData.bollo || 0)} €</td>
                         </tr>
 
                         {/* TOTAL DUE */}
@@ -6933,6 +7135,19 @@ export default function Presenze() {
                             </tr>
                           )}
                           
+                          {sheetToPrint.collaboratoreData?.premio && Number(sheetToPrint.collaboratoreData.premio) > 0 ? (
+                            <tr className="hover:bg-gray-50/20 bg-white">
+                              <td className="p-2.5 border-r border-gray-300 text-left">
+                                <span className="font-bold text-gray-900 block">Premio</span>
+                                <span className="text-[8px] text-gray-400 block mt-0.5">Premio concordato / indennità una tantum</span>
+                              </td>
+                              <td className="p-2.5 border-r border-gray-300 text-right font-mono text-gray-500">-</td>
+                              <td className="p-2.5 text-right font-bold text-gray-900">
+                                {formatMoney(sheetToPrint.collaboratoreData.premio)} €
+                              </td>
+                            </tr>
+                          ) : null}
+                          
                           {sheetToPrint.collaboratoreData?.spese && sheetToPrint.collaboratoreData.spese > 0 ? (
                             <tr className="hover:bg-gray-50/20 bg-white">
                               <td className="p-2.5 border-r border-gray-300 text-left">
@@ -6959,23 +7174,6 @@ export default function Presenze() {
                               </td>
                               <td className="p-2.5 text-right font-bold text-gray-900">
                                 {formatMoney(sheetToPrint.collaboratoreData.rimborsoKm ?? 0)} €
-                              </td>
-                            </tr>
-                          ) : null}
-
-                          {sheetToPrint.collaboratoreData?.bollo && sheetToPrint.collaboratoreData.bollo > 0 ? (
-                            <tr className="hover:bg-gray-50/20 bg-white">
-                              <td className="p-2.5 border-r border-gray-300 text-left">
-                                <span className="font-bold text-gray-900 block">Imposta di Bollo</span>
-                                <span className="text-[8px] text-gray-400 block mt-0.5">
-                                  Imposta di bollo su documento
-                                </span>
-                              </td>
-                              <td className="p-2.5 border-r border-gray-300 text-right font-mono text-gray-500">
-                                {formatMoney(sheetToPrint.collaboratoreData.bollo)} €
-                              </td>
-                              <td className="p-2.5 text-right font-bold text-gray-900">
-                                {formatMoney(sheetToPrint.collaboratoreData.bollo)} €
                               </td>
                             </tr>
                           ) : null}
@@ -7036,6 +7234,21 @@ export default function Presenze() {
                               </td>
                               <td className="p-2.5 text-right font-bold text-red-600 font-extrabold">
                                 - {formatMoney(sheetToPrint.collaboratoreData.ra ?? 0)} €
+                              </td>
+                            </tr>
+                          ) : null}
+
+                          {sheetToPrint.collaboratoreData?.bollo && sheetToPrint.collaboratoreData.bollo > 0 ? (
+                            <tr className="hover:bg-gray-50/20 bg-white">
+                              <td className="p-2.5 border-r border-gray-300 text-left">
+                                <span className="font-bold text-gray-900 block">Imposta di Bollo</span>
+                                <span className="text-[8px] text-gray-400 block mt-0.5">
+                                  Imposta di bollo assolta sull'originale (art. 15 DPR 633/72)
+                                </span>
+                              </td>
+                              <td className="p-2.5 border-r border-gray-300 text-right font-mono text-gray-500">-</td>
+                              <td className="p-2.5 text-right font-bold text-gray-900">
+                                {formatMoney(sheetToPrint.collaboratoreData.bollo)} €
                               </td>
                             </tr>
                           ) : null}

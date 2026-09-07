@@ -16,6 +16,7 @@ import {
 } from '../utils/userNotificationService';
 import { checkAndNotifyOverdueTasks } from '../utils/todoOverdueChecker';
 import { areNamesEqual } from '../contexts/AuthContext';
+import { isCollaboratore } from '../utils/collaboratoriUtils';
 
 interface UseNotificationWatcherParams {
   userEmail: string | null;
@@ -337,11 +338,25 @@ export function useNotificationWatcher({
           const statoLabel = isPending
             ? (data.stato === 'Richiesta Sblocco' ? 'Richiesta Sblocco' : 'Inviato')
             : (data.stato === 'Approvato' ? '✓ Approvato' : data.stato);
+          const isCollab = !!data.collaboratoreData || isCollaboratore(dipName, dipendenti);
+
+          let titolo = `⏱️ Foglio Presenze: ${dipName}`;
+          let messaggio = `${data.stato === 'Richiesta Sblocco' ? 'Richiesta sblocco' : 'Presenze'} mese ${data.mese}/${data.anno} di ${dipName}`;
+
+          if (isCollab) {
+            titolo = data.stato === 'Richiesta Sblocco'
+              ? `🔓 Richiesta Sblocco Fattura: ${dipName}`
+              : `📄 Bozza Fattura: ${dipName}`;
+            messaggio = data.stato === 'Richiesta Sblocco'
+              ? `Richiesta sblocco bozza fattura mese ${data.mese}/${data.anno} di ${dipName}`
+              : `Bozza fattura mese ${data.mese}/${data.anno} di ${dipName}`;
+          }
+
           items.push({
             id: `presenze-${docSnap.id}`,
             category: 'presenze',
-            titolo: `⏱️ Foglio Presenze: ${dipName}`,
-            messaggio: `${data.stato === 'Richiesta Sblocco' ? 'Richiesta sblocco' : 'Presenze'} mese ${data.mese}/${data.anno} di ${dipName}`,
+            titolo,
+            messaggio,
             link: '/presenze',
             createdAt: created || new Date(0).toISOString(),
             badgeLabel: statoLabel,
@@ -358,8 +373,11 @@ export function useNotificationWatcher({
             const data = change.doc.data();
             if ((data.stato === 'Inviato' || data.stato === 'Richiesta Sblocco') && !isInitialLoadRef.current && !knownIdsRef.current.has(docId)) {
               const dipName = data.dipendenteNome || data.dipendenteName || data.nome || 'Una risorsa';
-              sendDesktopNotification("Pianificazione Aziendale: Foglio Ore Inviato", {
-                body: `${dipName} ha inviato il foglio presenze del mese per approvazione.`,
+              const isCollab = !!data.collaboratoreData || isCollaboratore(dipName, dipendenti);
+              sendDesktopNotification(isCollab ? "Pianificazione Aziendale: Bozza Fattura Inviata" : "Pianificazione Aziendale: Foglio Ore Inviato", {
+                body: isCollab
+                  ? `${dipName} ha inviato la bozza fattura del mese per approvazione.`
+                  : `${dipName} ha inviato il foglio presenze del mese per approvazione.`,
                 tag: `presenze-${docId}`
               });
             }
@@ -819,11 +837,12 @@ export function useNotificationWatcher({
           const data = docSnap.data();
           const rawDate = data.updatedAt || data.timestamp || data.createdAt;
           const created = normalizeIsoDate(rawDate) || '';
+          const isCollab = !!data.collaboratoreData || (myAssociatedName ? isCollaboratore(myAssociatedName, dipendenti) : false);
           items.push({
             id: `sollecito-${docSnap.id}`,
             category: 'sollecito_presenze',
-            titolo: `⚠️ Revisione Presenze Richiesta`,
-            messaggio: `L'HR ha richiesto modifiche sul tuo foglio ore (${data.mese}/${data.anno})`,
+            titolo: isCollab ? `⚠️ Revisione Bozza Fattura Richiesta` : `⚠️ Revisione Presenze Richiesta`,
+            messaggio: `L'HR ha richiesto modifiche ${isCollab ? 'sulla tua bozza fattura' : 'sul tuo foglio ore'} (${data.mese}/${data.anno})`,
             link: '/presenze',
             createdAt: created || new Date(0).toISOString(),
             badgeLabel: 'Da Modificare',
@@ -838,8 +857,9 @@ export function useNotificationWatcher({
             const docId = change.doc.id;
             const data = change.doc.data();
             if (!isInitialLoadRef.current && !knownIdsRef.current.has(docId)) {
-              sendDesktopNotification("Pianificazione Aziendale: Modifica Richiesta Presenze", {
-                body: `L'HR richiede verifiche/correzioni sul tuo foglio presenze (${data.mese}/${data.anno}).`,
+              const isCollab = !!data.collaboratoreData || (myAssociatedName ? isCollaboratore(myAssociatedName, dipendenti) : false);
+              sendDesktopNotification(isCollab ? "Pianificazione Aziendale: Modifica Richiesta Fattura" : "Pianificazione Aziendale: Modifica Richiesta Presenze", {
+                body: `L'HR richiede verifiche/correzioni ${isCollab ? 'sulla tua bozza fattura' : 'sul tuo foglio presenze'} (${data.mese}/${data.anno}).`,
                 tag: `pres-corr-${docId}`
               });
             }

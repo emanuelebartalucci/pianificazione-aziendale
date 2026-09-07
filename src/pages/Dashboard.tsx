@@ -145,19 +145,37 @@ export default function Dashboard() {
     }
   }, [noticeType, closureYear, closurePeriods]);
 
-  // Controllo per la comparsa randomica del questionario sul clima (esclusi i soci)
+  // Controllo per la comparsa del questionario sul clima (esclusi i soci)
+  // Estrazione al 10% calcolata unicamente al primo accesso giornaliero (in media ~2-3 volte al mese)
+  // Il questionario è obbligatorio e non skippabile se la risorsa viene estratta
   useEffect(() => {
     if (isSoci(myAssociatedName)) {
       return; // Non mostrare mai ai soci proprietari
     }
 
-    const lastAnswered = localStorage.getItem('clima_answered_date');
     const todayStr = new Date().toDateString();
+    const lastAnswered = localStorage.getItem('clima_answered_date');
+    if (lastAnswered === todayStr) {
+      return; // Ha già risposto oggi
+    }
+
+    const lastCheckDate = localStorage.getItem('clima_last_check_date');
     
-    if (lastAnswered !== todayStr) {
-      // 5% di probabilità di mostrare il pop-up all'accesso (in media ~1 volta al mese per risorsa)
-      const show = Math.random() < 0.05;
-      if (show) {
+    // Se è il primo accesso della giornata, esegue l'estrazione randomica con probabilità 10%
+    if (lastCheckDate !== todayStr) {
+      localStorage.setItem('clima_last_check_date', todayStr);
+      const isSelected = Math.random() < 0.10; // 10% di probabilità al primo accesso giornaliero
+      if (isSelected) {
+        localStorage.setItem('clima_selected_for_today', 'true');
+        setIsClimaModalOpen(true);
+      } else {
+        localStorage.removeItem('clima_selected_for_today');
+      }
+    } else {
+      // Per la giornata odierna l'estrazione è già avvenuta:
+      // se era stato estratto e non ha ancora completato, rimane obbligatorio
+      const selectedForToday = localStorage.getItem('clima_selected_for_today') === 'true';
+      if (selectedForToday) {
         setIsClimaModalOpen(true);
       }
     }
