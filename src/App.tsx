@@ -16,6 +16,7 @@ const Prenotazioni = lazy(() => import('./pages/Prenotazioni'));
 const Organigramma = lazy(() => import('./pages/Organigramma'));
 const GestioneHR = lazy(() => import('./pages/GestioneHR'));
 const Forniture = lazy(() => import('./pages/Forniture'));
+const TodoListNote = lazy(() => import('./pages/TodoListNote'));
 
 import { auth } from './services/firebase';
 import { NotificationProvider } from './contexts/NotificationContext';
@@ -196,6 +197,7 @@ function App() {
                       <Route path="/pianificazione-personale" element={<PianificazionePersonale />} />
                       <Route path="/prenotazioni" element={<Prenotazioni />} />
                       <Route path="/organigramma" element={<Organigramma />} />
+                      <Route path="/todo" element={<TodoListNote />} />
                       <Route path="/gestione-hr" element={
                         <ProtectedRoute condition={isHR}>
                           <GestioneHR />

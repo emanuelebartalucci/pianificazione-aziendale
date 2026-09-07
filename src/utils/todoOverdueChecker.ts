@@ -29,79 +29,162 @@ export async function checkAndNotifyOverdueTasks(dipendentiList: any[] = []) {
     const now = new Date();
     const currentHour = now.getHours();
     const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const period = currentHour >= 9 ? 'after9' : 'before9';
+    const checkKey = `overdue_check_performed_${todayStr}_${period}`;
+
+    // Evita scansioni pesanti del database se il controllo è già stato effettuato per questa fascia oraria
+    try {
+      if (typeof window !== 'undefined' && window.sessionStorage) {
+        if (window.sessionStorage.getItem(checkKey)) {
+          return;
+        }
+      }
+    } catch {}
 
     const yesterday = new Date(now);
     yesterday.setDate(yesterday.getDate() - 1);
     const yesterdayStr = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
 
-    const commesseSnap = await getDocs(collection(db, 'commesse'));
-    if (commesseSnap.empty) return;
+    // 1. Controlla catalogo_commesse (o commesse)
+    let commesseSnap = await getDocs(collection(db, 'catalogo_commesse'));
+    if (commesseSnap.empty) {
+      commesseSnap = await getDocs(collection(db, 'commesse'));
+    }
 
-    for (const commDoc of commesseSnap.docs) {
-      const comm = { id: commDoc.id, ...commDoc.data() } as any;
-      const punchList = comm.punchList;
-      if (!punchList || !Array.isArray(punchList) || punchList.length === 0) continue;
+    if (!commesseSnap.empty) {
+      for (const commDoc of commesseSnap.docs) {
+        const comm = { id: commDoc.id, ...commDoc.data() } as any;
+        const punchList = comm.punchList;
+        if (!punchList || !Array.isArray(punchList) || punchList.length === 0) continue;
 
-      for (const task of punchList) {
+        for (const task of punchList) {
+          if (!task.scadenza) continue;
+          if (task.stato === 'completato' || task.stato === 'eseguito' || task.done || task.categoria === 'completato' || task.categoria === 'approvato') continue;
+
+          // Verifica condizione di scadenza
+          const scadenzaStr = task.scadenza;
+          if (scadenzaStr >= todayStr) {
+            continue;
+          }
+
+          if (scadenzaStr === yesterdayStr && currentHour < 9) {
+            continue;
+          }
+
+          const formattedScadenza = scadenzaStr.split('-').reverse().join('/');
+          const catLabel = (task.categoria || 'da fare').toUpperCase();
+          const taskTitle = task.titolo || 'Attività';
+          const commName = comm.nome || 'Commessa';
+          const taskLink = `/todo?commessaId=${encodeURIComponent(comm.id)}`;
+
+          const assignees: string[] = Array.isArray(task.assegnatiA) && task.assegnatiA.length > 0
+            ? task.assegnatiA.map((a: any) => String(a).trim()).filter(Boolean)
+            : (task.assegnatoA ? String(task.assegnatoA).split(',').map((s: string) => s.trim()).filter(Boolean) : []);
+
+          // 1. Destinatari: Tutte le risorse assegnate
+          for (const assignee of assignees) {
+            const assigneeDip = dipendentiList.find(d => areNamesEqual(d.nome, assignee));
+            if (assigneeDip?.email) {
+              await createUserNotification({
+                destinatarioEmail: assigneeDip.email,
+                destinatarioNome: assigneeDip.nome,
+                titolo: `⚠️ Attività ToDo scaduta: ${commName}`,
+                messaggio: `L'attività [${catLabel}] "${taskTitle}" nella commessa ${commName} è scaduta il ${formattedScadenza} e risulta ancora da completare.`,
+                tipo: 'todo_scaduto',
+                link: taskLink
+              });
+            }
+          }
+
+          // 2. Destinatario: Chi ha creato il compito
+          const creatorName = (task.creatoDa && task.creatoDa.trim()) ? task.creatoDa.trim() : null;
+          if (creatorName && !assignees.some((a: string) => areNamesEqual(creatorName, a))) {
+            const creatorDip = dipendentiList.find(d => 
+              areNamesEqual(d.nome, creatorName) || 
+              (d.email && d.email.toLowerCase() === creatorName.toLowerCase())
+            );
+            const creatorEmail = creatorDip?.email || (creatorName.includes('@') ? creatorName : null);
+            const creatorDisplayName = creatorDip?.nome || creatorName;
+
+            if (creatorEmail) {
+              await createUserNotification({
+                destinatarioEmail: creatorEmail,
+                destinatarioNome: creatorDisplayName,
+                titolo: `⚠️ Attività ToDo scaduta: ${commName}`,
+                messaggio: `L'attività [${catLabel}] "${taskTitle}" assegnata a ${assignees.join(', ') || 'Collaboratori'} nella commessa ${commName} è scaduta il ${formattedScadenza} e risulta ancora da completare.`,
+                tipo: 'todo_scaduto',
+                link: taskLink
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // 2. Controlla todos_generici
+    try {
+      const genericSnap = await getDocs(collection(db, 'todos_generici'));
+      for (const tDoc of genericSnap.docs) {
+        const task = { id: tDoc.id, ...tDoc.data() } as any;
         if (!task.scadenza) continue;
-        if (task.done || task.categoria === 'completato' || task.categoria === 'approvato') continue;
+        if (task.stato === 'completato' || task.stato === 'eseguito') continue;
 
-        // Verifica condizione di scadenza
         const scadenzaStr = task.scadenza;
         if (scadenzaStr >= todayStr) {
-          // La scadenza è oggi o futura: non ancora scaduta
           continue;
         }
 
         if (scadenzaStr === yesterdayStr && currentHour < 9) {
-          // Scaduto ieri, ma non sono ancora le ore 09:00 del giorno successivo
           continue;
         }
 
         const formattedScadenza = scadenzaStr.split('-').reverse().join('/');
         const catLabel = (task.categoria || 'da fare').toUpperCase();
-        const taskTitle = task.titolo || 'Attività';
-        const commName = comm.nome || 'Commessa';
-        const commLink = `/commesse?todoCommessaId=${encodeURIComponent(comm.id)}`;
+        const taskTitle = task.titolo || 'Attività Generica';
+        const taskLink = '/todo';
 
-        // 1. Destinatario: Risorsa assegnata
-        if (task.assegnatoA && task.assegnatoA.trim()) {
-          const assigneeDip = dipendentiList.find(d => areNamesEqual(d.nome, task.assegnatoA));
+        const assignees: string[] = Array.isArray(task.assegnatiA) && task.assegnatiA.length > 0
+          ? task.assegnatiA.map((a: any) => String(a).trim()).filter(Boolean)
+          : (task.assegnatoA ? String(task.assegnatoA).split(',').map((s: string) => s.trim()).filter(Boolean) : []);
+
+        // Destinatari: Tutte le risorse assegnate
+        for (const assignee of assignees) {
+          const assigneeDip = dipendentiList.find(d => areNamesEqual(d.nome, assignee));
           if (assigneeDip?.email) {
             await createUserNotification({
               destinatarioEmail: assigneeDip.email,
               destinatarioNome: assigneeDip.nome,
-              titolo: `⚠️ Attività ToDo scaduta: ${commName}`,
-              messaggio: `L'attività [${catLabel}] "${taskTitle}" nella commessa ${commName} è scaduta il ${formattedScadenza} e risulta ancora da completare.`,
+              titolo: `⚠️ Attività Generica scaduta`,
+              messaggio: `L'attività generica [${catLabel}] "${taskTitle}" a te assegnata è scaduta il ${formattedScadenza} ed è ancora da completare.`,
               tipo: 'todo_scaduto',
-              link: commLink
+              link: taskLink
             });
           }
         }
 
-        // 2. Destinatario: Chi ha creato il compito (SOLO ed esclusivamente se indicato in task.creatoDa)
-        const creatorName = (task.creatoDa && task.creatoDa.trim()) ? task.creatoDa.trim() : null;
-        if (creatorName && !areNamesEqual(creatorName, task.assegnatoA)) {
-          const creatorDip = dipendentiList.find(d => 
-            areNamesEqual(d.nome, creatorName) || 
-            (d.email && d.email.toLowerCase() === creatorName.toLowerCase())
-          );
-          const creatorEmail = creatorDip?.email || (creatorName.includes('@') ? creatorName : null);
-          const creatorDisplayName = creatorDip?.nome || creatorName;
-
-          if (creatorEmail) {
-            await createUserNotification({
-              destinatarioEmail: creatorEmail,
-              destinatarioNome: creatorDisplayName,
-              titolo: `⚠️ Attività ToDo scaduta: ${commName}`,
-              messaggio: `L'attività [${catLabel}] "${taskTitle}" assegnata a ${task.assegnatoA || 'Collaboratore'} nella commessa ${commName} è scaduta il ${formattedScadenza} e risulta ancora da completare.`,
-              tipo: 'todo_scaduto',
-              link: commLink
-            });
-          }
+        // Destinatario: Creatore
+        const creatorEmail = task.creatoDaEmail || (task.creatoDa?.includes('@') ? task.creatoDa : null);
+        const creatorName = task.creatoDa || 'Creatore';
+        if (creatorEmail && !assignees.some((a: string) => areNamesEqual(a, creatorName))) {
+          await createUserNotification({
+            destinatarioEmail: creatorEmail,
+            destinatarioNome: creatorName,
+            titolo: `⚠️ Attività Generica scaduta`,
+            messaggio: `L'attività generica [${catLabel}] "${taskTitle}" assegnata a ${assignees.join(', ') || 'Collaboratori'} è scaduta il ${formattedScadenza} ed è ancora da completare.`,
+            tipo: 'todo_scaduto',
+            link: taskLink
+          });
         }
       }
+    } catch (e) {
+      console.error("Errore controllo todos_generici scaduti:", e);
     }
+
+    try {
+      if (typeof window !== 'undefined' && window.sessionStorage) {
+        window.sessionStorage.setItem(checkKey, 'true');
+      }
+    } catch {}
   } catch (err) {
     console.error("Errore controllo attività ToDo scadute:", err);
   }

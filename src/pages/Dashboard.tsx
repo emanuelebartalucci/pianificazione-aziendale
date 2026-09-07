@@ -1,8 +1,19 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Briefcase, Calendar, Settings, FileText, MessageSquare, Plus, Trash2, Megaphone, X, Users, CalendarDays, Edit, AlertCircle, ChevronRight, HeartPulse, Package } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { 
+  Briefcase, Calendar, Settings, FileText, MessageSquare, Plus, Trash2, Megaphone, X, Users, CalendarDays, Edit, AlertCircle, ChevronRight, HeartPulse, Package,
+  ListTodo, CheckCircle2, Clock, AlertTriangle, Check
+} from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
+import { 
+  fetchUnifiedTodos, 
+  fetchPersonalNotes,
+  toggleUnifiedTodoStatus, 
+  getCategoryBadgeProps, 
+  isTaskAssignee,
+  type UnifiedTodoItem 
+} from '../services/todoService';
 import { collection, addDoc, doc, deleteDoc, query, orderBy, where, getDoc, getDocs, updateDoc } from 'firebase/firestore';
 import ConfirmModal from '../components/ConfirmModal';
 import ClimaModal from '../components/ClimaModal';
@@ -39,7 +50,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     loadPlanningData?.();
-  }, [loadPlanningData]);
+  }, []);
 
   // States per le comunicazioni
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
@@ -74,6 +85,103 @@ export default function Dashboard() {
       setToast(null);
     }, 4500);
   };
+
+  // Stati per il Widget ToDo in Dashboard
+  const [dashboardTodos, setDashboardTodos] = useState<UnifiedTodoItem[]>([]);
+  const [loadingTodos, setLoadingTodos] = useState(true);
+  const [completingTaskId, setCompletingTaskId] = useState<string | null>(null);
+  const initialTodosLoadedRef = useRef(false);
+  const commesseRef = useRef(commesse);
+  commesseRef.current = commesse;
+
+  const loadTodos = useCallback(async (showSpinner = false) => {
+    try {
+      if (showSpinner) setLoadingTodos(true);
+      const items = await fetchUnifiedTodos({
+        userEmail: userEmail || '',
+        myAssociatedName: myAssociatedName || undefined,
+        commesseList: commesseRef.current || [],
+        assegnazioni,
+        isAdmin,
+        isSoci: isSoci(myAssociatedName)
+      });
+      setDashboardTodos(items);
+    } catch (err) {
+      console.error("Errore caricamento todos widget dashboard:", err);
+    } finally {
+      if (showSpinner) {
+        setLoadingTodos(false);
+      }
+    }
+  }, [userEmail, myAssociatedName, isAdmin, assegnazioni]);
+
+  useEffect(() => {
+    if (!user) return;
+    if (!initialTodosLoadedRef.current) {
+      initialTodosLoadedRef.current = true;
+      loadTodos(true);
+    } else {
+      loadTodos(false);
+    }
+  }, [user?.uid, userEmail, myAssociatedName, isAdmin, commesse.length, loadTodos]);
+
+  // Precaricamento in background per eliminare qualsiasi rallentamento all'apertura del widget ToDo
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      import('./TodoListNote');
+      if (userEmail) {
+        fetchPersonalNotes(userEmail);
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [userEmail]);
+
+  const handleQuickCompleteTodo = async (task: UnifiedTodoItem, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (completingTaskId) return;
+    try {
+      setCompletingTaskId(task.id);
+      // Optimistic UI update:
+      setDashboardTodos(prev => prev.map(t => t.id === task.id ? { ...t, stato: 'completato' } : t));
+      await toggleUnifiedTodoStatus(
+        task, 
+        'completato', 
+        { name: myAssociatedName || 'Utente', email: userEmail || '' }, 
+        dipendenti
+      );
+      showToast("Attività completata con successo! 🎉", "success");
+    } catch (err: any) {
+      console.error("Errore completamento task:", err);
+      showToast(err?.message || "Errore durante il completamento dell'attività.", "error");
+      loadTodos();
+    } finally {
+      setCompletingTaskId(null);
+    }
+  };
+
+  const todayIso = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }, []);
+
+  const myDashboardPendingTasks = useMemo(() => {
+    return dashboardTodos.filter(t => {
+      if (t.stato !== 'da_fare') return false;
+      return isTaskAssignee(t, myAssociatedName);
+    });
+  }, [dashboardTodos, myAssociatedName]);
+
+  const overdueCount = useMemo(() => {
+    return myDashboardPendingTasks.filter(t => t.scadenza && t.scadenza < todayIso).length;
+  }, [myDashboardPendingTasks, todayIso]);
+
+  const todayTasksCount = useMemo(() => {
+    return myDashboardPendingTasks.filter(t => t.scadenza && t.scadenza === todayIso).length;
+  }, [myDashboardPendingTasks, todayIso]);
+
+  const visibleDashboardTasks = useMemo(() => {
+    return myDashboardPendingTasks.slice(0, 3);
+  }, [myDashboardPendingTasks]);
 
   // Stato per la modale di conferma
   const [confirmConfig, setConfirmConfig] = useState<{
@@ -245,6 +353,7 @@ export default function Dashboard() {
 
     const handleRefresh = () => {
       loadDashboardData();
+      loadTodos(false);
     };
     window.addEventListener('app-refresh-dashboard', handleRefresh);
     return () => {
@@ -609,17 +718,189 @@ export default function Dashboard() {
   return (
     <div className="max-w-7xl mx-auto px-4 mt-8 flex flex-col gap-6">
       
-      {/* Intestazione di benvenuto */}
-      <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-sm p-6 sm:p-8 border border-white/50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div className="flex items-center gap-4">
-          <h1 className="text-2xl font-extrabold text-indigo-600 tracking-tight">
-            Ciao {welcomeName}! {welcomePhrase}
-          </h1>
+      {/* Fascia superiore a due colonne: Benvenuto (allineato ai primi 2 pulsanti) + Widget ToDo & Scadenze (allargato sul restante spazio) */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 items-stretch">
+        
+        {/* COLONNA SINISTRA: Benvenuto & Saluto (2 colonne su lg, allineato ai 2 pulsanti sotto) */}
+        <div className="lg:col-span-2 bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-sm p-6 sm:p-7 border border-white/50 flex flex-col justify-between gap-5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-xs sm:text-sm font-extrabold text-indigo-600 bg-indigo-50/80 border border-indigo-100/80 px-3.5 py-1.5 rounded-2xl shadow-2xs flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-indigo-500 shrink-0" />
+              <span>{currentDateString}</span>
+            </div>
+            {isSoci(myAssociatedName) && (
+              <span className="text-[11px] font-black uppercase tracking-wider text-purple-700 bg-purple-50 border border-purple-200 px-2.5 py-1 rounded-full">
+                Socio / Direzione
+              </span>
+            )}
+          </div>
+
+          <div className="space-y-2.5 my-auto py-1">
+            <h1 className="text-3xl sm:text-4xl lg:text-[2.35rem] font-black text-gray-900 tracking-tight leading-tight">
+              Ciao <span className="text-indigo-600">{welcomeName}</span>! 👋
+            </h1>
+            <p className="text-sm sm:text-base font-medium text-gray-600 leading-relaxed max-w-lg">
+              {welcomePhrase}
+            </p>
+          </div>
         </div>
-        <div className="text-xs sm:text-sm font-extrabold text-indigo-500/80 bg-indigo-50/50 border border-indigo-100/50 px-4 py-2 rounded-2xl shadow-inner shrink-0 self-start md:self-auto flex items-center gap-2">
-          <Calendar className="w-4 h-4 text-indigo-500" />
-          <span>{currentDateString}</span>
+
+        {/* COLONNA DESTRA: Widget ToDo List & Scadenze (3 colonne su lg, allineato alle card sottostanti) */}
+        <div 
+          onClick={(e) => handleNav(e, '/todo')}
+          onMouseEnter={() => {
+            import('./TodoListNote');
+            if (userEmail) fetchPersonalNotes(userEmail);
+          }}
+          onTouchStart={() => {
+            import('./TodoListNote');
+            if (userEmail) fetchPersonalNotes(userEmail);
+          }}
+          className="lg:col-span-3 bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-sm p-5 sm:p-6 border border-white/50 hover:shadow-md transition-all flex flex-col justify-between cursor-pointer group relative overflow-hidden"
+        >
+          {/* Top Bar Widget */}
+          <div className="flex items-center justify-between gap-3 pb-3 border-b border-gray-100">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-blue-600 text-white flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform">
+                <ListTodo className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-sm sm:text-base font-extrabold text-gray-900 tracking-tight flex items-center gap-2">
+                  <span>ToDo List & Note</span>
+                </h2>
+                <p className="text-[11px] text-gray-600 font-medium">Attività assegnate e compiti in sospeso</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {overdueCount > 0 ? (
+                <span className="inline-flex items-center gap-1 bg-rose-50 text-rose-700 border border-rose-200 text-xs font-black px-2.5 py-1 rounded-full animate-pulse shadow-2xs">
+                  <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                  <span>{overdueCount} {overdueCount === 1 ? 'scaduto' : 'scaduti'}</span>
+                </span>
+              ) : todayTasksCount > 0 ? (
+                <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-800 border border-amber-300 text-xs font-black px-2.5 py-1 rounded-full shadow-2xs">
+                  <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                  <span>{todayTasksCount} per oggi</span>
+                </span>
+              ) : myDashboardPendingTasks.length > 0 ? (
+                <span className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-black px-2.5 py-1 rounded-full shadow-2xs">
+                  <span>{myDashboardPendingTasks.length} da fare</span>
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-black px-2.5 py-1 rounded-full shadow-2xs">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span>In pari</span>
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Body Widget: Lista o Stato Vuoto */}
+          <div className="py-3 flex-1 flex flex-col justify-center">
+            {loadingTodos ? (
+              <div className="flex items-center justify-center py-6 text-xs text-gray-400 gap-2">
+                <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                <span>Caricamento attività...</span>
+              </div>
+            ) : myDashboardPendingTasks.length === 0 ? (
+              <div className="py-3 px-4 rounded-2xl bg-emerald-50/50 border border-emerald-100 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+                    <CheckCircle2 className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold text-emerald-900">Ottimo lavoro, tutto completato! 🎉</h3>
+                    <p className="text-[11px] text-emerald-700 font-medium">Nessuna attività in sospeso a tuo nome.</p>
+                  </div>
+                </div>
+                <span className="text-[11px] font-extrabold text-emerald-800 bg-white/80 hover:bg-white border border-emerald-200 px-3 py-1.5 rounded-xl transition shadow-2xs shrink-0">
+                  + Nuovo ToDo / Nota
+                </span>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {visibleDashboardTasks.map(task => {
+                  const catProps = getCategoryBadgeProps(task.categoria);
+                  const isOverdue = task.scadenza && task.scadenza < todayIso;
+                  const isToday = task.scadenza && task.scadenza === todayIso;
+                  const formattedDate = task.scadenza ? task.scadenza.split('-').reverse().join('/') : '';
+
+                  return (
+                    <div 
+                      key={task.id}
+                      className="group/item flex items-center justify-between gap-2.5 p-2 px-3 rounded-xl bg-gray-50/70 hover:bg-indigo-50/40 border border-gray-200/70 hover:border-indigo-200 transition-all text-left"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                        {/* Spunta rapida */}
+                        <button
+                          type="button"
+                          onClick={(e) => handleQuickCompleteTodo(task, e)}
+                          disabled={completingTaskId === task.id}
+                          className="w-5 h-5 rounded-full border-2 border-gray-300 hover:border-emerald-500 hover:bg-emerald-50 text-emerald-600 flex items-center justify-center transition cursor-pointer shrink-0 shadow-2xs group/btn"
+                          title="Clicca per completare subito questo compito"
+                        >
+                          {completingTaskId === task.id ? (
+                            <div className="w-2.5 h-2.5 border border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            <Check className="w-3 h-3 opacity-0 group-hover/btn:opacity-100 text-emerald-600 transition-opacity" />
+                          )}
+                        </button>
+
+                        {/* Badge categoria */}
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black border shrink-0 ${catProps.bg} ${catProps.text} ${catProps.border}`}>
+                          <span>{catProps.icon}</span>
+                          <span className="uppercase hidden sm:inline">{catProps.label}</span>
+                        </span>
+
+                        {/* Titolo */}
+                        <span className="text-xs font-bold text-gray-800 truncate" title={task.titolo}>
+                          {task.titolo}
+                        </span>
+
+                        {/* Contesto (Commessa o Generico) */}
+                        {task.tipo === 'commessa' && task.commessaNome && (
+                          <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 border border-blue-100 px-1.5 py-0.2 rounded truncate max-w-[120px] hidden md:inline" title={task.commessaNome}>
+                            {task.commessaCodice ? `${task.commessaCodice} ` : ''}{task.commessaNome}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Scadenza */}
+                      <div className="shrink-0">
+                        {isOverdue ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-black text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-md">
+                            <AlertTriangle className="w-3 h-3 text-rose-600 shrink-0" />
+                            <span>{formattedDate}</span>
+                          </span>
+                        ) : isToday ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-black text-amber-800 bg-amber-50 border border-amber-300 px-2 py-0.5 rounded-md">
+                            <Clock className="w-3 h-3 text-amber-600 shrink-0" />
+                            <span>Oggi</span>
+                          </span>
+                        ) : formattedDate ? (
+                          <span className="text-[10px] font-medium text-gray-500 bg-white border border-gray-200 px-2 py-0.5 rounded-md">
+                            {formattedDate}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Footer Widget */}
+          <div className="pt-2.5 border-t border-gray-100 flex items-center justify-between text-[11px] text-gray-500 font-medium">
+            <span>
+              {myDashboardPendingTasks.length > 3 
+                ? `+ altri ${myDashboardPendingTasks.length - 3} compiti in sospeso` 
+                : `${myDashboardPendingTasks.length} attività totali`}
+            </span>
+          </div>
         </div>
+
       </div>
 
       {/* Banner Commesse ad Alta Priorità (visibile solo alle risorse interessate) */}
@@ -661,10 +942,10 @@ export default function Dashboard() {
       )}
 
       {/* Griglia a due colonne: Operational links a sinistra, News a destra */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
         
-        {/* COLONNA SINISTRA: SEZIONI OPERATIVE (2/3 di larghezza) */}
-        <div className="lg:col-span-7 space-y-6">
+        {/* COLONNA SINISTRA: SEZIONI OPERATIVE (3 colonne su 5, perfettamente allineate con la griglia superiore) */}
+        <div className="lg:col-span-3 space-y-6">
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-6">
             
             {/* Pianificazione Commesse */}
@@ -903,8 +1184,8 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* COLONNA DESTRA: BACHECA NEWS (5/12 di larghezza) */}
-        <div className="lg:col-span-5">
+        {/* COLONNA DESTRA: BACHECA NEWS (2 colonne su 5) */}
+        <div className="lg:col-span-2">
           <div className="bg-white/80 backdrop-blur-xl rounded-[2rem] shadow-lg border border-white/50 p-6 flex flex-col h-full">
             <div className="flex justify-between items-center pb-4 border-b border-gray-100 mb-4">
               <h3 className="text-xl font-black text-gray-900 flex items-center gap-2">

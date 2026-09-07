@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useRef, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useRef, useCallback, type ReactNode } from 'react';
 import { type User, onAuthStateChanged } from 'firebase/auth';
 import { collection, getDocs, query, where, onSnapshot, documentId } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
@@ -75,7 +75,8 @@ export interface PunchListItem {
   titolo: string;
   descrizione?: string;
   scadenza?: string; // YYYY-MM-DD
-  assegnatoA: string; // Nome dipendente incaricato (obbligatorio)
+  assegnatiA?: string[]; // Nomi dipendenti assegnatari multipli
+  assegnatoA: string; // Nome dipendente incaricato (retrocompatibile)
   stato: 'da_fare' | 'completato' | 'eseguito' | 'da_rivedere';
   creatoDa: string;
   creatoIl: string; // ISO date
@@ -194,6 +195,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [prioritaCommesse, setPrioritaCommesse] = useState<Record<string, 'Alta' | 'Standard' | 'Bassa'>>({});
   const [isPlanningLoaded, setIsPlanningLoaded] = useState(false);
   const isPlanningLoadingRef = useRef(false);
+  const isPlanningLoadedRef = useRef(false);
 
   const fetchAuthData = async () => {
     try {
@@ -320,8 +322,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   // Caricamento On-Demand (Lazy Loading) e Centralizzato per la Pianificazione
-  const loadPlanningData = async () => {
-    if (isPlanningLoadingRef.current) return;
+  const loadPlanningData = useCallback(async () => {
+    if (isPlanningLoadingRef.current || isPlanningLoadedRef.current) return;
     isPlanningLoadingRef.current = true;
     try {
       // Scarica tutte le commesse dal catalogo, clienti, priorità e tutte le assegnazioni del team
@@ -376,13 +378,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       });
       setAssegnazioni(ass);
 
+      isPlanningLoadedRef.current = true;
       setIsPlanningLoaded(true);
     } catch (err) {
       console.error("Errore caricamento dati pianificazione on-demand:", err);
     } finally {
       isPlanningLoadingRef.current = false;
     }
-  };
+  }, []);
 
   const loadAllCommesse = async () => {
     try {

@@ -70,11 +70,18 @@ async function generateDocs() {
     }));
   }
 
+  let docSubtitle = "Pianificazione e Gestione Aziendale — Versione 1.0.15 (Settembre 2026)";
+  for (const l of lines) {
+    if (l.startsWith('subtitle:')) {
+      docSubtitle = l.replace('subtitle:', '').replace(/['"]/g, '').trim();
+    }
+  }
+
   children.push(makeHeading("Manuale Operativo e Guida Web App", HeadingLevel.TITLE, { after: 150 }));
   children.push(new Paragraph({
     children: [
       new TextRun({
-        text: "Pianificazione e Gestione Aziendale — Versione 1.0.14 (Agosto 2026)",
+        text: docSubtitle,
         bold: true,
         italic: true,
         language: IT_LANG
@@ -160,8 +167,18 @@ async function generateDocs() {
   });
 
   const guideBuffer = await Packer.toBuffer(docGuide);
-  fs.writeFileSync(docxGuidePath, guideBuffer);
-  console.log('Guida Web App.docx generata con successo!');
+  try {
+    fs.writeFileSync(docxGuidePath, guideBuffer);
+    console.log('Guida Web App.docx generata con successo!');
+  } catch (err) {
+    if (err.code === 'EBUSY') {
+      const fallbackPath = path.join(process.cwd(), 'File Utili', 'Guida Web App_aggiornata.docx');
+      fs.writeFileSync(fallbackPath, guideBuffer);
+      console.warn('ATTENZIONE: Guida Web App.docx è attualmente aperta in un\'altra applicazione (Word). Salvata copia aggiornata come Guida Web App_aggiornata.docx');
+    } else {
+      throw err;
+    }
+  }
 
   // Genera Changelog completo da Changelog_Pianificazione_Aziendale.md
   const changelogMdPath = path.join(process.cwd(), 'File Utili', 'Changelog_Pianificazione_Aziendale.md');
@@ -221,8 +238,18 @@ async function generateDocs() {
   });
 
   const changelogBuffer = await Packer.toBuffer(docChangelog);
-  fs.writeFileSync(docxChangelogPath, changelogBuffer);
-  console.log('Changelog_Pianificazione_Aziendale.docx generato con successo!');
+  try {
+    fs.writeFileSync(docxChangelogPath, changelogBuffer);
+    console.log('Changelog_Pianificazione_Aziendale.docx generato con successo!');
+  } catch (err) {
+    if (err.code === 'EBUSY') {
+      const fallbackPath = path.join(process.cwd(), 'File Utili', 'Changelog_Pianificazione_Aziendale_aggiornato.docx');
+      fs.writeFileSync(fallbackPath, changelogBuffer);
+      console.warn('ATTENZIONE: Changelog_Pianificazione_Aziendale.docx è attualmente aperto in un\'altra applicazione (Word). Salvata copia aggiornata come Changelog_Pianificazione_Aziendale_aggiornato.docx');
+    } else {
+      throw err;
+    }
+  }
 }
 
 generateDocs().catch(console.error);

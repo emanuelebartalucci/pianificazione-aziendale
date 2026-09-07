@@ -1,8 +1,9 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth, isTechnicalUser, type PunchListItem, TODO_CATEGORIE } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, doc, setDoc, updateDoc, addDoc, deleteDoc, getDocs, runTransaction } from 'firebase/firestore';
-import { Briefcase, ChevronLeft, ChevronRight, ChevronDown, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw, Printer, Plus, UserCheck, MoveVertical, Building2, Send, Info, Mail, User, Folder, FolderOpen, ListTodo, Check, CheckCircle2, Clock, AlertTriangle, ExternalLink } from 'lucide-react';
+import { Briefcase, ChevronLeft, ChevronRight, ChevronDown, Calendar, Download, Pencil, X, ZoomIn, ZoomOut, Trash2, RefreshCw, Printer, Plus, UserCheck, MoveVertical, Building2, Send, Info, Mail, User, Folder, FolderOpen, ListTodo, Check } from 'lucide-react';
 import { getWeekNumber, getStartOfWeek, addDays, getDefaultWeekRange } from '../utils/date';
 import { queueMail } from '../utils/mailSender';
 import { createUserNotification, markNotificationsAsReadByFilter } from '../utils/userNotificationService';
@@ -258,6 +259,17 @@ export default function Commesse() {
     refreshData,
     refreshDataIfStale
   } = useAuth();
+
+  const navigate = useNavigate();
+
+  const handleNav = (e: React.MouseEvent, path: string) => {
+    if (e.button === 1 || e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      window.open(path, '_blank', 'noopener,noreferrer');
+    } else if (e.button === 0) {
+      navigate(path);
+    }
+  };
 
   const myDip = useMemo(() => dipendenti.find(d => areNamesEqual(d.nome, myAssociatedName) || (d.email && userEmail && d.email.toLowerCase() === userEmail.toLowerCase())), [dipendenti, myAssociatedName, userEmail]);
 
@@ -758,128 +770,6 @@ export default function Commesse() {
     return () => document.removeEventListener('mousedown', handleClickOutsideDropdowns);
   }, []);
 
-  // Gestione Modale "I Miei ToDo nelle Commesse" (Attività Da Fare assegnate all'utente attivo)
-  const [isMyTasksModalOpen, setIsMyTasksModalOpen] = useState(false);
-
-  interface MyCommessaTaskGroup {
-    commessa: any;
-    tasks: PunchListItem[];
-  }
-
-  // Estrazione di tutte le attività "Da Fare" assegnate all'utente attivo, divise per commessa e ordinate per scadenza
-  const myAssignedPendingTasks = useMemo((): MyCommessaTaskGroup[] => {
-    if (!myAssociatedName && !userEmail) return [];
-    const myNameClean = (myAssociatedName || '').trim();
-    const myMailClean = (userEmail || '').trim().toLowerCase();
-
-    const groups: MyCommessaTaskGroup[] = [];
-
-    (commesse || []).forEach(comm => {
-      const punchList: PunchListItem[] = comm.punchList || [];
-      const myTasks = punchList.filter(t => {
-        // Solo compiti non completati ("da_fare")
-        if (t.stato !== 'da_fare') return false;
-        const ass = (t.assegnatoA || '').trim();
-        if (!ass) return false;
-        return areNamesEqual(ass, myNameClean) || (myMailClean && ass.toLowerCase().includes(myMailClean.split('@')[0]));
-      });
-
-      if (myTasks.length > 0) {
-        // Ordina i compiti della commessa per data di scadenza:
-        // 1. Quelli con data di scadenza (i più imminenti/scaduti per primi)
-        // 2. Quelli senza data di scadenza in fondo (per data di creazione decrescente)
-        const sortedTasks = [...myTasks].sort((a, b) => {
-          if (a.scadenza && b.scadenza) {
-            return a.scadenza.localeCompare(b.scadenza);
-          }
-          if (a.scadenza && !b.scadenza) return -1;
-          if (!a.scadenza && b.scadenza) return 1;
-          return (b.creatoIl || '').localeCompare(a.creatoIl || '');
-        });
-
-        groups.push({
-          commessa: comm,
-          tasks: sortedTasks
-        });
-      }
-    });
-
-    // Ordina i gruppi di commesse: quelle con la scadenza più imminente per prime
-    return groups.sort((gA, gB) => {
-      const minScadA = gA.tasks.find(t => t.scadenza)?.scadenza || '9999-99-99';
-      const minScadB = gB.tasks.find(t => t.scadenza)?.scadenza || '9999-99-99';
-      if (minScadA !== minScadB) {
-        return minScadA.localeCompare(minScadB);
-      }
-      return (gA.commessa.nome || '').localeCompare(gB.commessa.nome || '');
-    });
-  }, [commesse, myAssociatedName, userEmail]);
-
-  const totalMyPendingTasksCount = useMemo(() => {
-    return myAssignedPendingTasks.reduce((acc, g) => acc + g.tasks.length, 0);
-  }, [myAssignedPendingTasks]);
-
-  const handleOpenCommessaToDoFromMyTasks = (comm: any) => {
-    setIsMyTasksModalOpen(false);
-    setSelectedCommessaForPunchList(comm);
-    setPunchListFilter('all');
-    setNewTaskTitolo('');
-    setNewTaskDescrizione('');
-    setNewTaskScadenza('');
-    setNewTaskAssegnatoA('');
-    setNewTaskCategoria(TODO_CATEGORIE[0] || 'aggiornare');
-    setEditingTask(null);
-    setIsPunchListModalOpen(true);
-  };
-
-  const getScadenzaStatus = (scadenzaStr?: string) => {
-    if (!scadenzaStr) return null;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const target = new Date(scadenzaStr);
-    target.setHours(0, 0, 0, 0);
-
-    const diffTime = target.getTime() - today.getTime();
-    const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
-
-    const parts = scadenzaStr.split('-');
-    const formattedDate = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : scadenzaStr;
-
-    if (diffDays < 0) {
-      return {
-        label: `Scaduto il ${formattedDate}`,
-        subLabel: `${Math.abs(diffDays)} gg fa`,
-        isOverdue: true,
-        badgeClass: 'bg-rose-50 text-rose-700 border-rose-200 font-bold',
-        cardBorderClass: 'border-rose-300 bg-rose-50/20'
-      };
-    } else if (diffDays === 0) {
-      return {
-        label: `Scade Oggi (${formattedDate})`,
-        subLabel: 'Oggi',
-        isToday: true,
-        badgeClass: 'bg-amber-50 text-amber-800 border-amber-300 font-black',
-        cardBorderClass: 'border-amber-300 bg-amber-50/20'
-      };
-    } else if (diffDays === 1) {
-      return {
-        label: `Scade Domani (${formattedDate})`,
-        subLabel: 'Domani',
-        isNear: true,
-        badgeClass: 'bg-orange-50 text-orange-700 border-orange-200 font-bold',
-        cardBorderClass: 'border-orange-200'
-      };
-    } else {
-      return {
-        label: `Entro il ${formattedDate}`,
-        subLabel: `tra ${diffDays} gg`,
-        isFuture: true,
-        badgeClass: 'bg-blue-50 text-blue-700 border-blue-200 font-medium',
-        cardBorderClass: 'border-gray-200'
-      };
-    }
-  };
-
   // Helper per estrarre ESCLUSIVAMENTE le risorse pianificate sulla commessa + Resp e PM
   const getEligibleAssigneesForCommessa = (comm: any, currentTaskAssignee?: string): string[] => {
     if (!comm) return [];
@@ -1024,6 +914,7 @@ export default function Commesse() {
         creatoIl: item.creatoIl || new Date().toISOString()
       };
       if (item.descrizione && item.descrizione.trim()) cleanItem.descrizione = item.descrizione.trim();
+      if (Array.isArray(item.assegnatiA)) cleanItem.assegnatiA = item.assegnatiA;
       if (item.scadenza) cleanItem.scadenza = item.scadenza;
       if (item.completatoDa) cleanItem.completatoDa = item.completatoDa;
       if (item.completatoIl) cleanItem.completatoIl = item.completatoIl;
@@ -3593,21 +3484,12 @@ export default function Commesse() {
                   
                   <button 
                     type="button"
-                    onClick={() => setIsMyTasksModalOpen(true)} 
+                    onClick={(e) => handleNav(e, '/todo')} 
                     className="flex items-center gap-2 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white px-3.5 py-2 rounded-xl text-xs font-bold transition shadow-md active:scale-95 cursor-pointer relative"
-                    title="Riepilogo delle tue attività ToDo assegnate su tutte le commesse"
+                    title="Apri la sezione centralizzata ToDo List & Note"
                   >
                     <ListTodo className="w-4 h-4 text-indigo-200" />
-                    <span>I Miei ToDo</span>
-                    {totalMyPendingTasksCount > 0 ? (
-                      <span className="bg-rose-500 text-white text-[10px] font-black px-1.5 py-0.2 rounded-full shadow-xs border border-white/40">
-                        {totalMyPendingTasksCount}
-                      </span>
-                    ) : (
-                      <span className="bg-emerald-500 text-white text-[10px] font-black px-1.5 py-0.2 rounded-full shadow-xs border border-white/40">
-                        0
-                      </span>
-                    )}
+                    <span>ToDo List & Note</span>
                   </button>
 
                   <button onClick={handleExportToExcel} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition shadow-md active:scale-95 cursor-pointer">
@@ -6967,221 +6849,6 @@ export default function Commesse() {
           </div>
         );
       })()}
-
-      {/* MODALE "I MIEI TODO NELLE COMMESSE" */}
-      {isMyTasksModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/70 z-[9999] flex items-center justify-center p-3 sm:p-4">
-          <div className="bg-white rounded-3xl shadow-2xl max-w-5xl w-full border border-gray-150 flex flex-col max-h-[92vh] overflow-hidden">
-            
-            {/* Header Modale */}
-            <div className="p-5 sm:p-6 pb-4 border-b border-gray-150 bg-gradient-to-r from-slate-900 via-indigo-950 to-blue-900 text-white rounded-t-3xl flex justify-between items-start shrink-0">
-              <div className="space-y-1 min-w-0 flex-1 pr-3">
-                <div className="flex items-center gap-2">
-                  <span className="p-2 bg-indigo-500/20 text-indigo-300 rounded-xl border border-indigo-500/30">
-                    <ListTodo className="w-5 h-5" />
-                  </span>
-                  <div>
-                    <h3 className="text-lg font-black text-white tracking-tight flex items-center gap-2">
-                      I Miei ToDo nelle Commesse
-                    </h3>
-                    <p className="text-xs text-indigo-200/90 font-medium">
-                      Attività assegnate a <span className="font-bold text-white underline decoration-indigo-400">{myAssociatedName || 'te'}</span> &bull; Raggruppate per commessa e ordinate per scadenza
-                    </p>
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="text-right hidden sm:block">
-                  <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black border ${
-                    totalMyPendingTasksCount > 0 
-                      ? 'bg-rose-500/20 text-rose-300 border-rose-500/30' 
-                      : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-                  }`}>
-                    {totalMyPendingTasksCount > 0 ? (
-                      <>
-                        <span className="w-2 h-2 rounded-full bg-rose-400 animate-pulse" />
-                        {totalMyPendingTasksCount} {totalMyPendingTasksCount === 1 ? 'attività da completare' : 'attività da completare'}
-                      </>
-                    ) : (
-                      <>
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                        Nessuna attività in sospeso
-                      </>
-                    )}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsMyTasksModalOpen(false)}
-                  className="p-2 text-indigo-200 hover:text-white hover:bg-white/10 rounded-xl transition cursor-pointer"
-                  title="Chiudi"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-
-            {/* Corpo Modale Scrollabile */}
-            <div className="p-4 sm:p-6 overflow-y-auto space-y-6 flex-1 bg-slate-50/50 [scrollbar-gutter:stable]">
-              {totalMyPendingTasksCount === 0 ? (
-                <div className="bg-white rounded-2xl p-10 text-center border border-gray-200 shadow-sm max-w-lg mx-auto my-6 space-y-4">
-                  <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto border border-emerald-100 shadow-inner">
-                    <CheckCircle2 className="w-8 h-8 text-emerald-600" />
-                  </div>
-                  <div className="space-y-1">
-                    <h4 className="text-base font-black text-gray-800">Tutto completato! 🎉</h4>
-                    <p className="text-xs text-gray-500 leading-relaxed">
-                      Non hai attività "Da Fare" assegnate a tuo nome nelle commesse attualmente aperte. Sei perfettamente in pari con i tuoi compiti.
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                myAssignedPendingTasks.map(group => {
-                  const comm = group.commessa;
-                  const respStr = comm.responsabile || '-';
-                  const pmStr = Array.isArray(comm.pm) ? comm.pm.join(', ') : (comm.pm || '-');
-
-                  return (
-                    <div key={comm.id} className="bg-white rounded-2xl border border-gray-200/90 shadow-sm overflow-hidden transition hover:shadow-md">
-                      {/* Intestazione Gruppo Commessa */}
-                      <div className="px-5 py-3.5 bg-gradient-to-r from-gray-50 to-indigo-50/30 border-b border-gray-200 flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <span 
-                            className="w-3.5 h-3.5 rounded-full shrink-0 shadow-xs border border-white"
-                            style={{ backgroundColor: comm.colore || '#3b82f6' }}
-                          />
-                          <div>
-                            <h4 className="text-sm font-black text-gray-900 tracking-tight flex items-center gap-1.5 truncate">
-                              <span>{comm.codiceCommessa ? `${comm.codiceCommessa} - ` : ''}{comm.nome}</span>
-                            </h4>
-                            <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-gray-500 mt-0.5">
-                              {comm.cliente && (
-                                <span className="font-semibold text-gray-700">🏢 {comm.cliente}</span>
-                              )}
-                              <span>👤 Resp: <strong className="text-gray-700">{respStr}</strong></span>
-                              {pmStr !== '-' && <span>PM: <strong className="text-gray-700">{pmStr}</strong></span>}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className="text-[11px] font-black px-2.5 py-1 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-lg">
-                            {group.tasks.length} {group.tasks.length === 1 ? 'compito' : 'compiti'}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => handleOpenCommessaToDoFromMyTasks(comm)}
-                            className="flex items-center gap-1 text-[11px] font-bold text-gray-700 hover:text-indigo-600 bg-white hover:bg-gray-100 border border-gray-200 px-2.5 py-1 rounded-lg transition cursor-pointer shadow-2xs"
-                            title="Apri la ToDo List completa di questa commessa"
-                          >
-                            <span>Apri ToDo</span>
-                            <ExternalLink className="w-3 h-3" />
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Lista dei Task per questa Commessa */}
-                      <div className="p-4 space-y-2.5">
-                        {group.tasks.map(task => {
-                          const catConf = (task.categoria && CATEGORIA_CONFIG[task.categoria]) ? CATEGORIA_CONFIG[task.categoria] : {
-                            label: task.categoria || 'Generale',
-                            icon: '📋',
-                            bg: 'bg-gray-50',
-                            text: 'text-gray-700',
-                            border: 'border-gray-200'
-                          };
-                          const scadStatus = getScadenzaStatus(task.scadenza);
-
-                          return (
-                            <div 
-                              key={task.id}
-                              className={`p-3.5 sm:p-4 rounded-2xl border transition-all flex items-start gap-3.5 bg-white hover:bg-indigo-50/20 shadow-2xs ${scadStatus?.cardBorderClass || 'border-gray-200'}`}
-                            >
-                              {/* Spunta rapida */}
-                              <button
-                                type="button"
-                                onClick={() => handleChangeTaskStatus(task, 'completato', comm)}
-                                className="mt-0.5 w-6 h-6 rounded-full border-2 border-gray-300 hover:border-emerald-500 hover:bg-emerald-50 text-emerald-600 flex items-center justify-center transition cursor-pointer shrink-0 shadow-2xs group"
-                                title="Clicca per contrassegnare come Completato"
-                              >
-                                <Check className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 text-emerald-600 transition-opacity" />
-                              </button>
-
-                              {/* Dettaglio Task */}
-                              <div className="flex-1 min-w-0 space-y-1">
-                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                  <div className="flex flex-wrap items-center gap-1.5">
-                                    {/* Badge Categoria */}
-                                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black border ${catConf.bg} ${catConf.text} ${catConf.border}`}>
-                                      <span>{catConf.icon}</span>
-                                      <span className="uppercase">{catConf.label}</span>
-                                    </span>
-
-                                    {/* Titolo Attività */}
-                                    <span className="text-xs font-bold text-gray-900">
-                                      {task.titolo}
-                                    </span>
-                                  </div>
-
-                                  {/* Badge Scadenza */}
-                                  {scadStatus ? (
-                                    <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md border shrink-0 ${scadStatus.badgeClass}`}>
-                                      {scadStatus.isOverdue ? (
-                                        <AlertTriangle className="w-3 h-3 text-rose-600 shrink-0" />
-                                      ) : (
-                                        <Clock className="w-3 h-3 shrink-0" />
-                                      )}
-                                      <span>{scadStatus.label}</span>
-                                    </span>
-                                  ) : (
-                                    <span className="text-[10px] text-gray-400 font-medium shrink-0">
-                                      Nessuna scadenza
-                                    </span>
-                                  )}
-                                </div>
-
-                                {/* Descrizione/Note aggiuntive se presenti */}
-                                {task.descrizione && (
-                                  <p className="text-[11px] text-gray-600 bg-gray-50/80 p-2 rounded-lg border border-gray-100 whitespace-pre-wrap leading-relaxed">
-                                    {task.descrizione}
-                                  </p>
-                                )}
-
-                                {/* Info creazione */}
-                                <div className="text-[10px] text-gray-400 flex items-center gap-2 pt-0.5">
-                                  <span>Assegnato a: <strong className="text-gray-600">{task.assegnatoA}</strong></span>
-                                  {task.creatoDa && (
-                                    <span>&bull; Creato da <span className="text-gray-500 font-medium">{task.creatoDa}</span></span>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-            {/* Footer Modale */}
-            <div className="p-4 px-6 border-t border-gray-150 bg-gray-50 flex items-center justify-between text-xs text-gray-500 rounded-b-3xl shrink-0">
-              <span className="font-medium hidden sm:inline">
-                💡 Clicca sul cerchietto di un'attività per completarla subito, oppure su <strong>Apri ToDo</strong> per accedere alla checklist completa della commessa.
-              </span>
-              <button
-                type="button"
-                onClick={() => setIsMyTasksModalOpen(false)}
-                className="px-5 py-2 bg-gray-800 hover:bg-gray-900 text-white font-bold rounded-xl transition cursor-pointer text-xs ml-auto"
-              >
-                Chiudi
-              </button>
-            </div>
-
-          </div>
-        </div>
-      )}
 
       <ConfirmModal
         isOpen={confirmConfig.isOpen}

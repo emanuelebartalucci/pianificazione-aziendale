@@ -2852,10 +2852,12 @@ export default function Presenze() {
         "Giornate Lavorate",
         "Tariffa Giornaliera (€)",
         "Compenso Mensile (€)",
+        "Premio (€)",
         "Spese (€)",
         "Km Percorsi",
         "Tariffa Km (€/km)",
         "Rimborso Km (€)",
+        "Bollo (€)",
         "Totale Compenso (€)",
         "Cassa INPS (€)",
         "IVA (€)",
@@ -2908,10 +2910,12 @@ export default function Presenze() {
           cData ? cData.giornate.toString() : "0",
           cData ? cData.dailyRate.toString() : "0",
           cData ? cData.compensoMensile.toFixed(2) : "0.00",
+          cData ? (cData.premio || 0).toFixed(2) : "0.00",
           cData ? cData.spese.toFixed(2) : "0.00",
           cData ? cData.km.toString() : "0",
           cData ? cData.kmRate.toString() : "0.3",
           cData ? cData.rimborsoKm.toFixed(2) : "0.00",
+          cData ? (cData.bollo || 0).toFixed(2) : "0.00",
           cData ? cData.totaleCompenso.toFixed(2) : "0.00",
           cData ? cData.inps.toFixed(2) : "0.00",
           cData ? cData.iva.toFixed(2) : "0.00",
@@ -6933,6 +6937,19 @@ export default function Presenze() {
                             </tr>
                           )}
                           
+                          {sheetToPrint.collaboratoreData?.premio && Number(sheetToPrint.collaboratoreData.premio) > 0 ? (
+                            <tr className="hover:bg-gray-50/20 bg-white">
+                              <td className="p-2.5 border-r border-gray-300 text-left">
+                                <span className="font-bold text-gray-900 block">Premio</span>
+                                <span className="text-[8px] text-gray-500 block mt-0.5">Eventuale bonus / compenso straordinario una tantum</span>
+                              </td>
+                              <td className="p-2.5 border-r border-gray-300 text-right font-mono text-gray-500">-</td>
+                              <td className="p-2.5 text-right font-bold text-gray-900">
+                                {formatMoney(Number(sheetToPrint.collaboratoreData.premio))} €
+                              </td>
+                            </tr>
+                          ) : null}
+
                           {sheetToPrint.collaboratoreData?.spese && sheetToPrint.collaboratoreData.spese > 0 ? (
                             <tr className="hover:bg-gray-50/20 bg-white">
                               <td className="p-2.5 border-r border-gray-300 text-left">
@@ -6971,9 +6988,7 @@ export default function Presenze() {
                                   Imposta di bollo su documento
                                 </span>
                               </td>
-                              <td className="p-2.5 border-r border-gray-300 text-right font-mono text-gray-500">
-                                {formatMoney(sheetToPrint.collaboratoreData.bollo)} €
-                              </td>
+                              <td className="p-2.5 border-r border-gray-300 text-right font-mono text-gray-500">-</td>
                               <td className="p-2.5 text-right font-bold text-gray-900">
                                 {formatMoney(sheetToPrint.collaboratoreData.bollo)} €
                               </td>
