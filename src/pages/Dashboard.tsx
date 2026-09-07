@@ -822,19 +822,14 @@ export default function Dashboard() {
                 <span>Caricamento attività...</span>
               </div>
             ) : myDashboardPendingTasks.length === 0 ? (
-              <div className="py-3 px-4 rounded-2xl bg-emerald-50/50 border border-emerald-100 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
-                    <CheckCircle2 className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h3 className="text-xs font-bold text-emerald-900">Ottimo lavoro, tutto completato! 🎉</h3>
-                    <p className="text-[11px] text-emerald-700 font-medium">Nessuna attività in sospeso a tuo nome.</p>
-                  </div>
+              <div className="py-3 px-4 rounded-2xl bg-emerald-50/50 border border-emerald-100 flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+                  <CheckCircle2 className="w-4 h-4" />
                 </div>
-                <span className="text-[11px] font-extrabold text-emerald-800 bg-white/80 hover:bg-white border border-emerald-200 px-3 py-1.5 rounded-xl transition shadow-2xs shrink-0">
-                  + Nuovo ToDo / Nota
-                </span>
+                <div>
+                  <h3 className="text-xs font-bold text-emerald-900">Ottimo lavoro, tutto completato! 🎉</h3>
+                  <p className="text-[11px] text-emerald-700 font-medium">Nessuna attività in sospeso a tuo nome.</p>
+                </div>
               </div>
             ) : (
               <div className="space-y-2">
