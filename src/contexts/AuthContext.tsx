@@ -18,6 +18,7 @@ export interface Dipendente {
   importoFissoMensile?: number;
   macroArea?: 'Disegnatori' | 'Ingegneria' | 'Sicurezza Cantieri' | 'Consulenza Sicurezza' | 'Amministrazione';
   dataCessazione?: string;
+  dataAssunzione?: string;
   dataNascita?: string;
   orarioSettimanale?: { lun: number; mar: number; mer: number; gio: number; ven: number };
   notificheEmail?: boolean;
@@ -271,6 +272,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           oreContratto: doc.data().oreContratto,
           macroArea: doc.data().macroArea,
           dataCessazione: doc.data().dataCessazione || '',
+          dataAssunzione: doc.data().dataAssunzione || '',
           dataNascita: doc.data().dataNascita || '',
           orarioSettimanale: doc.data().orarioSettimanale || undefined,
           notificheEmail: doc.data().notificheEmail === true,

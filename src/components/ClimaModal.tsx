@@ -44,6 +44,7 @@ export default function ClimaModal({ isOpen, onClose, isPreview = false }: Clima
       });
 
       localStorage.setItem('clima_answered_date', today.toDateString());
+      localStorage.removeItem('clima_selected_for_today');
       setShowSuccess(true);
       setError(null);
       setTimeout(() => {

@@ -49,11 +49,13 @@ export default function AnagraficaRisorseSection() {
   const [newDipEmail, setNewDipEmail] = useState('');
   const [newDipMacroArea, setNewDipMacroArea] = useState('');
   const [newDipDataNascita, setNewDipDataNascita] = useState('');
+  const [newDipDataAssunzione, setNewDipDataAssunzione] = useState('');
 
   const [newCollabNome, setNewCollabNome] = useState('');
   const [newCollabEmail, setNewCollabEmail] = useState('');
   const [newCollabMacroArea, setNewCollabMacroArea] = useState('');
   const [newCollabDataNascita, setNewCollabDataNascita] = useState('');
+  const [newCollabDataAssunzione, setNewCollabDataAssunzione] = useState('');
 
   // Search states
   const [searchDipendentiQuery, setSearchDipendentiQuery] = useState('');
@@ -67,6 +69,7 @@ export default function AnagraficaRisorseSection() {
   const [editTipo, setEditTipo] = useState<'dipendente' | 'collaboratore'>('dipendente');
   const [editMacroArea, setEditMacroArea] = useState('');
   const [editDataCessazione, setEditDataCessazione] = useState('');
+  const [editDataAssunzione, setEditDataAssunzione] = useState('');
   const [editDataNascita, setEditDataNascita] = useState('');
   const [editDailyRate, setEditDailyRate] = useState('');
   const [editInpsRate, setEditInpsRate] = useState('');
@@ -84,6 +87,7 @@ export default function AnagraficaRisorseSection() {
     setEditTipo(isCollaboratore(dip.nome, dip.tipo) ? 'collaboratore' : 'dipendente');
     setEditMacroArea(dip.macroArea || '');
     setEditDataCessazione(dip.dataCessazione || '');
+    setEditDataAssunzione(dip.dataAssunzione || '');
     setEditDataNascita(dip.dataNascita || '');
     setEditDailyRate(dip.dailyRate !== undefined && dip.dailyRate !== null ? dip.dailyRate.toString() : '');
     setEditInpsRate(dip.inpsRate !== undefined && dip.inpsRate !== null ? dip.inpsRate.toString() : '');
@@ -129,6 +133,7 @@ export default function AnagraficaRisorseSection() {
         tipo: isSocio ? 'dipendente' : editTipo,
         macroArea: isSocio ? null : (editMacroArea || null),
         dataCessazione: isSocio ? null : (editDataCessazione || null),
+        dataAssunzione: editDataAssunzione || null,
         dataNascita: editDataNascita || null,
         orarioSettimanale: (isSocio || editTipo === 'collaboratore') ? null : cleanOrario,
         oreContratto: (isSocio || editTipo === 'collaboratore') ? null : avgDaily,
@@ -171,13 +176,15 @@ export default function AnagraficaRisorseSection() {
         email: newDipEmail.toLowerCase().trim(),
         tipo: 'dipendente',
         macroArea: newDipMacroArea || null,
-        dataNascita: newDipDataNascita || null
+        dataNascita: newDipDataNascita || null,
+        dataAssunzione: newDipDataAssunzione || null
       });
       await refreshData();
       setNewDipNome('');
       setNewDipEmail('');
       setNewDipMacroArea('');
       setNewDipDataNascita('');
+      setNewDipDataAssunzione('');
       showToast("Dipendente aggiunto con successo!", "success");
     }
   };
@@ -190,13 +197,15 @@ export default function AnagraficaRisorseSection() {
         email: newCollabEmail.toLowerCase().trim(),
         tipo: 'collaboratore',
         macroArea: newCollabMacroArea || null,
-        dataNascita: newCollabDataNascita || null
+        dataNascita: newCollabDataNascita || null,
+        dataAssunzione: newCollabDataAssunzione || null
       });
       await refreshData();
       setNewCollabNome('');
       setNewCollabEmail('');
       setNewCollabMacroArea('');
       setNewCollabDataNascita('');
+      setNewCollabDataAssunzione('');
       showToast("Collaboratore aggiunto con successo!", "success");
     }
   };
@@ -624,16 +633,25 @@ export default function AnagraficaRisorseSection() {
           <p className="text-sm text-indigo-700/80 mb-4">Solo i dipendenti in questa lista possono registrarsi all'app.</p>
           
           {/* Form aggiunta dipendente */}
-          <form onSubmit={handleAddDipendente} className="flex flex-col gap-3 mb-5">
-            <input required type="text" placeholder="Cognome e Nome" value={newDipNome} onChange={e => setNewDipNome(e.target.value)} className="w-full p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition shadow-inner font-bold text-gray-700 text-xs" />
-            <input required type="email" placeholder="Email Aziendale" value={newDipEmail} onChange={e => setNewDipEmail(e.target.value)} className="w-full p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition shadow-inner font-bold text-gray-700 text-xs" />
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-end">
+          <form onSubmit={handleAddDipendente} className="flex flex-col gap-2.5 mb-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div>
+                <label className="block text-[10px] font-bold text-indigo-900/70 mb-1 ml-1">Cognome e Nome *</label>
+                <input required type="text" value={newDipNome} onChange={e => setNewDipNome(e.target.value)} className="w-full p-2.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition shadow-inner font-bold text-gray-700 text-xs" />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-indigo-900/70 mb-1 ml-1">Email Aziendale *</label>
+                <input required type="email" value={newDipEmail} onChange={e => setNewDipEmail(e.target.value)} className="w-full p-2.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition shadow-inner font-bold text-gray-700 text-xs" />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <div>
                 <label className="block text-[10px] font-bold text-indigo-900/70 mb-1 ml-1">Macro Area</label>
                 <select 
                   value={newDipMacroArea} 
                   onChange={e => setNewDipMacroArea(e.target.value)} 
-                  className="w-full p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition shadow-inner font-bold text-gray-700 text-xs"
+                  className="w-full p-2.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition shadow-inner font-bold text-gray-700 text-xs"
                 >
                   <option value="">-- Seleziona Macro Area --</option>
                   <option value="Disegnatori">Disegnatori</option>
@@ -644,19 +662,35 @@ export default function AnagraficaRisorseSection() {
                 </select>
               </div>
               <div>
-                <label className="block text-[10px] font-bold text-indigo-900/70 mb-1 ml-1">Data di Nascita</label>
-                <div className="flex gap-2">
-                  <input 
-                    type="date" 
-                    title="Data di Nascita" 
-                    value={newDipDataNascita} 
-                    onChange={e => setNewDipDataNascita(e.target.value)} 
-                    className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition shadow-inner font-bold text-gray-700 text-xs cursor-pointer" 
-                  />
-                  <button type="submit" className="bg-indigo-600 text-white px-4 rounded-xl hover:bg-indigo-700 transition font-bold shadow-md active:scale-95 flex items-center gap-1 shrink-0 cursor-pointer">
-                    <Plus className="w-4 h-4"/> Aggiungi
-                  </button>
-                </div>
+                <label className="block text-[10px] font-bold text-indigo-900/70 mb-1 ml-1">Data Nascita (Opz.)</label>
+                <input 
+                  type="date" 
+                  title="Data di Nascita" 
+                  value={newDipDataNascita} 
+                  onChange={e => setNewDipDataNascita(e.target.value)} 
+                  className="w-full p-2.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition shadow-inner font-bold text-gray-700 text-xs cursor-pointer" 
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-end">
+              <div>
+                <label className="block text-[10px] font-bold text-indigo-900/70 mb-1 ml-1">Data Assunzione (Opz.)</label>
+                <input 
+                  type="date" 
+                  title="Data di Assunzione" 
+                  value={newDipDataAssunzione} 
+                  onChange={e => setNewDipDataAssunzione(e.target.value)} 
+                  className="w-full p-2.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition shadow-inner font-bold text-gray-700 text-xs cursor-pointer" 
+                />
+              </div>
+              <div>
+                <button 
+                  type="submit" 
+                  className="w-full p-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition font-bold shadow-md active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer text-xs"
+                >
+                  <Plus className="w-4 h-4"/> Aggiungi Dipendente
+                </button>
               </div>
             </div>
           </form>
@@ -688,11 +722,18 @@ export default function AnagraficaRisorseSection() {
                 <div className="flex-1 min-w-0">
                   <div className="font-bold text-indigo-900 truncate">{d.nome}</div>
                   <div className="text-xs text-indigo-600/70 truncate">{d.email || 'Nessuna email'}</div>
-                  {d.dataNascita && (
-                    <div className="text-[10.5px] font-bold text-gray-500 mt-0.5">
-                      🎂 Nascita: {d.dataNascita.split('-').reverse().join('/')}
-                    </div>
-                  )}
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
+                    {d.dataNascita && (
+                      <span className="text-[10.5px] font-bold text-gray-500">
+                        🎂 Nascita: {d.dataNascita.split('-').reverse().join('/')}
+                      </span>
+                    )}
+                    {d.dataAssunzione && (
+                      <span className="text-[10.5px] font-bold text-indigo-600">
+                        💼 Assunto il: {d.dataAssunzione.split('-').reverse().join('/')}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <button 
@@ -764,16 +805,25 @@ export default function AnagraficaRisorseSection() {
           <p className="text-sm text-amber-700/80 mb-4">Solo i collaboratori in questa lista possono registrarsi all'app.</p>
           
           {/* Form aggiunta collaboratore */}
-          <form onSubmit={handleAddCollaboratore} className="flex flex-col gap-3 mb-5">
-            <input required type="text" placeholder="Cognome e Nome" value={newCollabNome} onChange={e => setNewCollabNome(e.target.value)} className="w-full p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-amber-400 transition shadow-inner font-bold text-gray-700 text-xs" />
-            <input required type="email" placeholder="Email Aziendale" value={newCollabEmail} onChange={e => setNewCollabEmail(e.target.value)} className="w-full p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-amber-400 transition shadow-inner font-bold text-gray-700 text-xs" />
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-end">
+          <form onSubmit={handleAddCollaboratore} className="flex flex-col gap-2.5 mb-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div>
+                <label className="block text-[10px] font-bold text-amber-900/70 mb-1 ml-1">Cognome e Nome *</label>
+                <input required type="text" value={newCollabNome} onChange={e => setNewCollabNome(e.target.value)} className="w-full p-2.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-amber-400 transition shadow-inner font-bold text-gray-700 text-xs" />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-amber-900/70 mb-1 ml-1">Email Aziendale *</label>
+                <input required type="email" value={newCollabEmail} onChange={e => setNewCollabEmail(e.target.value)} className="w-full p-2.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-amber-400 transition shadow-inner font-bold text-gray-700 text-xs" />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <div>
                 <label className="block text-[10px] font-bold text-amber-900/70 mb-1 ml-1">Macro Area</label>
                 <select 
                   value={newCollabMacroArea} 
                   onChange={e => setNewCollabMacroArea(e.target.value)} 
-                  className="w-full p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-amber-400 transition shadow-inner font-bold text-gray-700 text-xs"
+                  className="w-full p-2.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-amber-400 transition shadow-inner font-bold text-gray-700 text-xs"
                 >
                   <option value="">-- Seleziona Macro Area --</option>
                   <option value="Disegnatori">Disegnatori</option>
@@ -784,19 +834,35 @@ export default function AnagraficaRisorseSection() {
                 </select>
               </div>
               <div>
-                <label className="block text-[10px] font-bold text-amber-900/70 mb-1 ml-1">Data di Nascita</label>
-                <div className="flex gap-2">
-                  <input 
-                    type="date" 
-                    title="Data di Nascita" 
-                    value={newCollabDataNascita} 
-                    onChange={e => setNewCollabDataNascita(e.target.value)} 
-                    className="flex-1 p-3 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-amber-400 transition shadow-inner font-bold text-gray-700 text-xs cursor-pointer" 
-                  />
-                  <button type="submit" className="bg-amber-600 text-white px-4 rounded-xl hover:bg-amber-700 transition font-bold shadow-md active:scale-95 flex items-center gap-1 shrink-0 cursor-pointer">
-                    <Plus className="w-4 h-4"/> Aggiungi
-                  </button>
-                </div>
+                <label className="block text-[10px] font-bold text-amber-900/70 mb-1 ml-1">Data Nascita (Opz.)</label>
+                <input 
+                  type="date" 
+                  title="Data di Nascita" 
+                  value={newCollabDataNascita} 
+                  onChange={e => setNewCollabDataNascita(e.target.value)} 
+                  className="w-full p-2.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-amber-400 transition shadow-inner font-bold text-gray-700 text-xs cursor-pointer" 
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-end">
+              <div>
+                <label className="block text-[10px] font-bold text-amber-900/70 mb-1 ml-1">Data Inizio / Assunz. (Opz.)</label>
+                <input 
+                  type="date" 
+                  title="Data di Assunzione / Inizio Collaborazione" 
+                  value={newCollabDataAssunzione} 
+                  onChange={e => setNewCollabDataAssunzione(e.target.value)} 
+                  className="w-full p-2.5 border-none rounded-xl bg-white/60 focus:bg-white outline-none focus:ring-2 focus:ring-amber-400 transition shadow-inner font-bold text-gray-700 text-xs cursor-pointer" 
+                />
+              </div>
+              <div>
+                <button 
+                  type="submit" 
+                  className="w-full p-2.5 bg-amber-600 text-white rounded-xl hover:bg-amber-700 transition font-bold shadow-md active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer text-xs"
+                >
+                  <Plus className="w-4 h-4"/> Aggiungi Collaboratore
+                </button>
               </div>
             </div>
           </form>
@@ -828,11 +894,18 @@ export default function AnagraficaRisorseSection() {
                 <div className="flex-1 min-w-0">
                   <div className="font-bold text-amber-900 truncate">{d.nome}</div>
                   <div className="text-xs text-amber-600/70 truncate">{d.email || 'Nessuna email'}</div>
-                  {d.dataNascita && (
-                    <div className="text-[10.5px] font-bold text-gray-500 mt-0.5">
-                      🎂 Nascita: {d.dataNascita.split('-').reverse().join('/')}
-                    </div>
-                  )}
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
+                    {d.dataNascita && (
+                      <span className="text-[10.5px] font-bold text-gray-500">
+                        🎂 Nascita: {d.dataNascita.split('-').reverse().join('/')}
+                      </span>
+                    )}
+                    {d.dataAssunzione && (
+                      <span className="text-[10.5px] font-bold text-amber-700">
+                        💼 Inizio: {d.dataAssunzione.split('-').reverse().join('/')}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <button 
@@ -1100,19 +1173,33 @@ export default function AnagraficaRisorseSection() {
                 </div>
               )}
 
-              {/* Data Cessazione Lavoro (Solo NON Soci) */}
+              {/* Data Assunzione e Data Cessazione Lavoro (Solo NON Soci) */}
               {!isSoci(editingDip.nome) && (
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 mb-1 ml-1">Data Cessazione Rapporto Lavorativo (Opzionale)</label>
-                  <input
-                    type="date"
-                    value={editDataCessazione}
-                    onChange={e => setEditDataCessazione(e.target.value)}
-                    className="w-full p-3 border border-gray-200 rounded-xl bg-gray-50 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition font-bold text-gray-705 text-xs cursor-pointer"
-                  />
-                  <p className="text-[10.5px] text-gray-400 font-medium mt-1 ml-1">
-                    Se impostata una data antecedente a oggi, la risorsa sarà archiviata tra i cessati e non riceverà più notifiche né potrà accedere.
-                  </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1 ml-1">Data Assunzione / Inizio (Opz.)</label>
+                    <input
+                      type="date"
+                      value={editDataAssunzione}
+                      onChange={e => setEditDataAssunzione(e.target.value)}
+                      className="w-full p-3 border border-gray-200 rounded-xl bg-gray-50 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition font-bold text-gray-705 text-xs cursor-pointer"
+                    />
+                    <p className="text-[10px] text-gray-400 font-medium mt-1 ml-1">
+                      I giorni precedenti saranno bloccati e barrati.
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1 ml-1">Data Cessazione Rapporto (Opz.)</label>
+                    <input
+                      type="date"
+                      value={editDataCessazione}
+                      onChange={e => setEditDataCessazione(e.target.value)}
+                      className="w-full p-3 border border-gray-200 rounded-xl bg-gray-50 focus:bg-white outline-none focus:ring-2 focus:ring-indigo-400 transition font-bold text-gray-705 text-xs cursor-pointer"
+                    />
+                    <p className="text-[10px] text-gray-400 font-medium mt-1 ml-1">
+                      I giorni successivi saranno bloccati e barrati.
+                    </p>
+                  </div>
                 </div>
               )}
 
