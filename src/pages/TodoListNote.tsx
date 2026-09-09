@@ -77,7 +77,7 @@ const NOTE_COLORS: Record<string, { bg: string; border: string; text: string; la
 };
 
 export default function TodoListNote() {
-  const { userEmail, myAssociatedName, dipendenti, commesse, assegnazioni, isAdmin, loadPlanningData } = useAuth();
+  const { userEmail, myAssociatedName, dipendenti, commesse, assegnazioni, isAdmin, loadPlanningData, isPlanningLoaded } = useAuth();
   const userIsSoci = isSoci(myAssociatedName);
 
   // Tab di navigazione principale: 'todo' o 'note'
@@ -227,21 +227,19 @@ export default function TodoListNote() {
   }, [userEmail]);
 
   useEffect(() => {
-    if (!initialDataLoadedRef.current) {
-      initialDataLoadedRef.current = true;
-      const hasCached = !!getCachedUnifiedTodos({
-        userEmail,
-        myAssociatedName: myAssociatedName || undefined,
-        commesseList: commesse,
-        assegnazioni,
-        includeOlderCompleted: showOlderCompleted,
-        includeClosedCommesse: false
-      });
-      loadData(!hasCached);
-    } else {
-      loadData(false);
-    }
-  }, [userEmail, myAssociatedName, commesse.length, loadData]);
+    if (!userEmail) return;
+    const hasCached = !!getCachedUnifiedTodos({
+      userEmail,
+      myAssociatedName: myAssociatedName || undefined,
+      commesseList: commesse,
+      assegnazioni,
+      includeOlderCompleted: showOlderCompleted,
+      includeClosedCommesse: false
+    });
+    const needSpinner = !initialDataLoadedRef.current && !hasCached;
+    initialDataLoadedRef.current = true;
+    loadData(needSpinner);
+  }, [userEmail, myAssociatedName, commesse.length, isPlanningLoaded, loadData]);
 
   // Data odierna in formato YYYY-MM-DD
   const todayIso = useMemo(() => {

@@ -427,87 +427,21 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       });
       setAssegnazioni(ass);
 
-      // 2. Determinazione ruolo e profilazione del caricamento commesse
-      const effectiveUserEmail = (impersonatedEmail || user?.email || '').toLowerCase().trim();
-      const effectiveAssociatedName = getAssociatedNameFromEmail(effectiveUserEmail, dipendenti) || '';
-
-      const isPrivilegedOrCoord = (
-        isSoci(effectiveUserEmail) ||
-        DEFAULT_ADMINS.some(e => e.toLowerCase().trim() === effectiveUserEmail) ||
-        dynamicAdmins.some(e => e.toLowerCase().trim() === effectiveUserEmail) ||
-        dynamicHrs.some(e => e.toLowerCase().trim() === effectiveUserEmail) ||
-        isDevEmail(effectiveUserEmail, dynamicDevs) ||
-        (coordinatori && coordinatori.length > 0 && coordinatori.some(c => (c.email || '').toLowerCase().trim() === effectiveUserEmail))
-      );
-
+      // 2. Carica tutte le commesse APERTE del catalogo attivo (escludendo l'archivio storico delle chiuse)
+      // Garantisce che tutti i collaboratori e dipendenti abbiano a disposizione i task delle loro commesse aperte
       let commesseDocs: any[] = [];
-
-      if (isPrivilegedOrCoord) {
-        // PER SOCI, ADMIN, HR, DEV E COORDINATORI:
-        // Carica tutte le commesse APERTE (escludendo l'intero archivio storico delle chiuse)
-        try {
-          const qOpen = query(collection(db, 'catalogo_commesse'), where('stato', '!=', 'Chiusa'));
-          const snapOpen = await getDocs(qOpen);
-          if (!snapOpen.empty) {
-            commesseDocs = snapOpen.docs;
-          } else {
-            const snapAll = await getDocs(collection(db, 'catalogo_commesse'));
-            commesseDocs = snapAll.docs.filter(d => (d.data().stato || 'Aperta') !== 'Chiusa');
-          }
-        } catch {
+      try {
+        const qOpen = query(collection(db, 'catalogo_commesse'), where('stato', '!=', 'Chiusa'));
+        const snapOpen = await getDocs(qOpen);
+        if (!snapOpen.empty) {
+          commesseDocs = snapOpen.docs;
+        } else {
           const snapAll = await getDocs(collection(db, 'catalogo_commesse'));
           commesseDocs = snapAll.docs.filter(d => (d.data().stato || 'Aperta') !== 'Chiusa');
         }
-      } else {
-        // PER COLLABORATORI E DIPENDENTI OPERATIVI:
-        // Carica SOLO le commesse aperte su cui lavora l'utente
-        const myAssignedCommessaIds = new Set<string>();
-        if (effectiveAssociatedName) {
-          assSnap.forEach(docSnap => {
-            const key = docSnap.id;
-            const dipName = key.split('-')[0];
-            if (areNamesEqual(dipName, effectiveAssociatedName)) {
-              const lista = docSnap.data().lista || [];
-              lista.forEach((item: any) => {
-                if (item && item.commessaId && Number(item.percentuale) > 0) {
-                  myAssignedCommessaIds.add(item.commessaId);
-                }
-              });
-            }
-          });
-        }
-
-        const docsMap = new Map<string, any>();
-        const queries: Promise<any>[] = [];
-        const colRef = collection(db, 'catalogo_commesse');
-
-        if (effectiveAssociatedName) {
-          queries.push(getDocs(query(colRef, where('responsabile', '==', effectiveAssociatedName))));
-          queries.push(getDocs(query(colRef, where('pm', 'array-contains', effectiveAssociatedName))));
-          queries.push(getDocs(query(colRef, where('abilitatiExtra', 'array-contains', effectiveAssociatedName))));
-        }
-
-        const assignedIdsArray = Array.from(myAssignedCommessaIds).filter(Boolean);
-        if (assignedIdsArray.length > 0) {
-          for (let i = 0; i < assignedIdsArray.length; i += 30) {
-            const chunk = assignedIdsArray.slice(i, i + 30);
-            queries.push(getDocs(query(colRef, where(documentId(), 'in', chunk))));
-          }
-        }
-
-        if (queries.length > 0) {
-          const results = await Promise.all(queries);
-          results.forEach(snap => {
-            snap.docs.forEach((docSnap: any) => {
-              const data = docSnap.data();
-              if ((data.stato || 'Aperta') !== 'Chiusa') {
-                docsMap.set(docSnap.id, docSnap);
-              }
-            });
-          });
-        }
-
-        commesseDocs = Array.from(docsMap.values());
+      } catch {
+        const snapAll = await getDocs(collection(db, 'catalogo_commesse'));
+        commesseDocs = snapAll.docs.filter(d => (d.data().stato || 'Aperta') !== 'Chiusa');
       }
 
       const commesseList = commesseDocs.map(mapDocToCommessa);

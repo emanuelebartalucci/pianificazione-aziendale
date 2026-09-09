@@ -958,13 +958,14 @@ export function getCachedUnifiedTodos(options: {
   const isIncludeOlder = !!options.includeOlderCompleted;
   const isIncludeClosed = !!options.includeClosedCommesse;
 
-  // 1. Ritorno immediato se l'array finale è già memorizzato con gli stessi filtri
+  // 1. Ritorno immediato se l'array finale è già memorizzato con gli stessi filtri e stesso numero di commesse
   if (
     unifiedTodosCache &&
     unifiedTodosCache.userEmail === cleanEmail &&
     unifiedTodosCache.myAssociatedName === cleanName &&
     unifiedTodosCache.includeOlderCompleted === isIncludeOlder &&
-    unifiedTodosCache.includeClosedCommesse === isIncludeClosed
+    unifiedTodosCache.includeClosedCommesse === isIncludeClosed &&
+    unifiedTodosCache.commesseCount === (options.commesseList || []).length
   ) {
     return unifiedTodosCache.todos;
   }
@@ -1022,6 +1023,7 @@ export async function fetchUnifiedTodos(options: {
   const isIncludeClosed = !!includeClosedCommesse;
 
   // Ritorno istantaneo dalla cache senza alcuna lettura Firestore né cicli pesanti
+  // (Invalida se il numero di commesse in memoria è cambiato, es. caricamento asincrono iniziale)
   if (
     !forceRefresh &&
     unifiedTodosCache &&
@@ -1029,6 +1031,7 @@ export async function fetchUnifiedTodos(options: {
     unifiedTodosCache.myAssociatedName === cleanName &&
     unifiedTodosCache.includeOlderCompleted === isIncludeOlder &&
     unifiedTodosCache.includeClosedCommesse === isIncludeClosed &&
+    unifiedTodosCache.commesseCount === (commesseList || []).length &&
     (now - unifiedTodosCache.timestamp < GENERIC_TODOS_CACHE_TTL)
   ) {
     return unifiedTodosCache.todos;
@@ -1039,41 +1042,17 @@ export async function fetchUnifiedTodos(options: {
 
   if (!rawDocs || userChanged || forceRefresh || (now - lastGenericTodosFetch > GENERIC_TODOS_CACHE_TTL)) {
     try {
-      // Query mirate su Firestore: scarica SOLO i ToDo generici pertinenti all'utente attivo
-      const queries: Promise<any>[] = [];
+      // Scarica i documenti della collezione todos_generici con cache 60s
+      // Il filtro per utente viene eseguito in memoria con areNamesEqual per garantire tolleranza totale su inversioni Nome/Cognome
       const colRef = collection(db, 'todos_generici');
-
-      if (cleanName) {
-        // 1. Assegnati all'utente (array)
-        queries.push(getDocs(query(colRef, where('assegnatiA', 'array-contains', cleanName))));
-        // 2. Assegnato all'utente (fallback stringa legacy)
-        queries.push(getDocs(query(colRef, where('assegnatoA', '==', cleanName))));
-        // 3. Creato dall'utente per nome
-        queries.push(getDocs(query(colRef, where('creatoDa', '==', cleanName))));
-      }
-      if (cleanEmail) {
-        // 4. Creato dall'utente per email
-        queries.push(getDocs(query(colRef, where('creatoDaEmail', '==', cleanEmail))));
-      }
-
-      if (queries.length === 0) {
-        rawDocs = [];
-      } else {
-        const snaps = await Promise.all(queries);
-        const docsMap = new Map<string, { id: string; data: any }>();
-        snaps.forEach(snap => {
-          snap.docs.forEach((d: any) => {
-            docsMap.set(d.id, { id: d.id, data: d.data() });
-          });
-        });
-        rawDocs = Array.from(docsMap.values());
-      }
+      const snap = await getDocs(colRef);
+      rawDocs = snap.docs.map((d: any) => ({ id: d.id, data: d.data() }));
 
       cachedGenericTodosRaw = rawDocs;
       cachedGenericTodosUser = cleanEmail;
       lastGenericTodosFetch = now;
     } catch (err) {
-      console.error("Errore fetch mirato todos_generici:", err);
+      console.error("Errore fetch todos_generici:", err);
       rawDocs = rawDocs || [];
     }
   }
