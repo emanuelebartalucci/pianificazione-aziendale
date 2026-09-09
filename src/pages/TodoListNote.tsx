@@ -243,7 +243,7 @@ export default function TodoListNote() {
   // Stati Drag & Drop e Focus View Note Personali
   const [draggedNoteId, setDraggedNoteId] = useState<string | null>(null);
   const [isDraggingStack, setIsDraggingStack] = useState<boolean>(false);
-  const [dragOverTarget, setDragOverTarget] = useState<{ id: string; action: 'reorder-before' | 'reorder-after' | 'stack'; slotIndex?: number; stackSlotIndex?: number; pilaId?: string } | null>(null);
+  const [dragOverTarget, setDragOverTarget] = useState<{ id: string; action: 'reorder-before' | 'reorder-after' | 'stack'; slotIndex?: number; stackSlotIndex?: number; stackTargetNoteId?: string; stackPosition?: 'before' | 'after'; isStackEnd?: boolean; pilaId?: string } | null>(null);
   const [focusedNote, setFocusedNote] = useState<NotaPersonale | null>(null);
   const isDraggingRef = useRef<boolean>(false);
 
@@ -1030,7 +1030,9 @@ export default function TodoListNote() {
     e.dataTransfer.dropEffect = 'move';
     if (!draggedNoteId) return;
 
-    const rect = e.currentTarget.getBoundingClientRect();
+    // Se l'evento proviene da una scheda interna o dal container della pila, usa il container della pila
+    const targetEl = (e.currentTarget as HTMLElement).closest('[data-stack-id]') || (e.currentTarget as HTMLElement);
+    const rect = targetEl.getBoundingClientRect();
     const relativeX = (e.clientX - rect.left) / rect.width;
     const relativeY = (e.clientY - rect.top) / rect.height;
 
@@ -1045,10 +1047,11 @@ export default function TodoListNote() {
       return;
     }
 
-    const isSelf = draggedNoteId === targetId;
+    const targetItem = noteGridItems.find(it => it.id === targetId);
+    const isSelf = draggedNoteId === targetId || Boolean(targetItem?.notes.some(n => n.id === draggedNoteId));
 
-    // Se il cursore si trova nella zona utile centrale (20%-80% X e 15%-85% Y) e non è se stessa: azione di impilamento ('stack')!
-    if (!isSelf && relativeX >= 0.20 && relativeX <= 0.80 && relativeY >= 0.15 && relativeY <= 0.85) {
+    // Se il cursore si trova nella zona utile centrale (20%-80% X e 10%-90% Y) e non è se stessa: azione di impilamento ('stack')!
+    if (!isSelf && relativeX >= 0.20 && relativeX <= 0.80 && relativeY >= 0.10 && relativeY <= 0.90) {
       setDragOverTarget({ id: targetId, action: 'stack' });
     } else {
       const slotIndex = itemIdx !== undefined ? (relativeX < 0.5 ? itemIdx : itemIdx + 1) : undefined;
@@ -1072,50 +1075,39 @@ export default function TodoListNote() {
     }
   };
 
-  // Drag over specifico per le singole schede dentro una pila (riordinamento interno in entrambe le direzioni)
-  const handleStackNoteDragOver = (e: React.DragEvent, targetNoteId: string, stackPilaId: string, cardIdx: number) => {
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = 'move';
+  // Calcola in modo continuo e deterministico lo slot di inserimento nella pila in base alla posizione Y globale della pila
+  const updateStackSlotFromPointer = (e: React.DragEvent, stackPilaId: string) => {
     if (!draggedNoteId || isDraggingStack) return;
 
     const draggedNote = notes.find(n => n.id === draggedNoteId);
-    if (draggedNote?.pilaId !== stackPilaId) return;
+    if (!draggedNote || draggedNote.pilaId !== stackPilaId) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+
+    const stackContainer = (e.currentTarget as HTMLElement).closest(`[data-stack-id="${stackPilaId}"]`) as HTMLElement || (e.currentTarget as HTMLElement);
+    const rect = stackContainer.getBoundingClientRect();
+    const pixelY = e.clientY - rect.top;
 
     const stackItem = noteGridItems.find(it => it.pilaId === stackPilaId);
     const stackNotes = stackItem?.notes || notes.filter(n => n.pilaId === stackPilaId);
     const totalNotes = stackNotes.length;
-    const isLastInStack = cardIdx === totalNotes - 1;
-
-    const rect = e.currentTarget.getBoundingClientRect();
-    const pixelY = e.clientY - rect.top;
 
     let targetSlot: number;
-
-    if (isLastInStack) {
-      // Sull'ultima scheda:
-      // Se il mouse è nei primi 22px in alto -> Slot (totalNotes - 1) [subito sopra l'ultima scheda]
-      // Se il mouse è oltre i 22px (nel resto del tab o corpo) -> Slot totalNotes [sotto l'ultima scheda, ovvero ULTIMA POSIZIONE DELLA PILA!]
-      if (pixelY < 22) {
-        targetSlot = totalNotes - 1;
-      } else {
-        targetSlot = totalNotes;
-      }
+    if (pixelY <= 17) {
+      targetSlot = 0;
+    } else if (pixelY >= (totalNotes - 1) * 34 + 26) {
+      targetSlot = totalNotes;
     } else {
-      // Su una scheda intermedia (la cui porzione visibile del tab è di 34px):
-      // Se nella metà superiore (< 17px) -> Slot cardIdx [sopra questa scheda]
-      // Se nella metà inferiore (>= 17px) -> Slot cardIdx + 1 [sotto questa scheda]
-      if (pixelY < 17) {
-        targetSlot = cardIdx;
-      } else {
-        targetSlot = cardIdx + 1;
-      }
+      targetSlot = Math.max(0, Math.min(totalNotes, Math.round(pixelY / 34)));
     }
 
     setDragOverTarget({
-      id: targetNoteId,
-      action: targetSlot <= cardIdx ? 'reorder-before' : 'reorder-after',
+      id: stackPilaId,
+      action: 'reorder-before',
       stackSlotIndex: targetSlot,
+      isStackEnd: targetSlot === totalNotes,
       pilaId: stackPilaId
     });
   };
@@ -1134,51 +1126,56 @@ export default function TodoListNote() {
 
   // Drop specifico su una scheda interna alla pila (per riordinare all'interno della pila)
   const handleStackNoteDrop = async (e: React.DragEvent, stackItem: GridNoteItem) => {
-    e.preventDefault();
-    e.stopPropagation();
     const draggedId = draggedNoteId || e.dataTransfer.getData('text/plain');
-    const slot = dragOverTarget?.stackSlotIndex;
     const stackPilaId = stackItem.pilaId;
-
-    setDraggedNoteId(null);
-    setDragOverTarget(null);
-    setIsDraggingStack(false);
-    setTimeout(() => {
-      isDraggingRef.current = false;
-    }, 150);
 
     if (!draggedId || !stackPilaId) return;
     const draggedNote = notes.find(n => n.id === draggedId);
     if (!draggedNote || draggedNote.pilaId !== stackPilaId) return;
 
-    let updatedNotes: NotaPersonale[] = [...notes];
-    const draggedObj = updatedNotes.find(n => n.id === draggedId)!;
-    updatedNotes = updatedNotes.filter(n => n.id !== draggedId);
+    e.preventDefault();
+    e.stopPropagation();
 
-    const remainingStackNotes = updatedNotes.filter(n => n.pilaId === stackPilaId);
-    const safeSlot = slot !== undefined ? slot : remainingStackNotes.length;
-
-    if (safeSlot < remainingStackNotes.length) {
-      const refNoteId = remainingStackNotes[safeSlot].id;
-      const insertIdx = updatedNotes.findIndex(n => n.id === refNoteId);
-      if (insertIdx >= 0) {
-        updatedNotes.splice(insertIdx, 0, draggedObj);
-      } else {
-        updatedNotes.push(draggedObj);
-      }
-    } else {
-      // Posiziona dopo l'ultima nota rimasta della pila
-      const lastRefId = remainingStackNotes[remainingStackNotes.length - 1].id;
-      const insertIdx = updatedNotes.findIndex(n => n.id === lastRefId);
-      if (insertIdx >= 0) {
-        updatedNotes.splice(insertIdx + 1, 0, draggedObj);
-      } else {
-        updatedNotes.push(draggedObj);
-      }
+    const targetSlot = dragOverTarget?.stackSlotIndex;
+    if (targetSlot === undefined || targetSlot === null) {
+      setDragOverTarget(null);
+      return;
     }
+
+    const currentStackNotes = notes.filter(n => n.pilaId === stackPilaId);
+    const dragIdx = currentStackNotes.findIndex(n => n.id === draggedId);
+    if (dragIdx === -1) return;
+
+    // Se lo slot coincide con la posizione attuale, nessuna modifica
+    if (targetSlot === dragIdx || targetSlot === dragIdx + 1) {
+      setDragOverTarget(null);
+      return;
+    }
+
+    // 1. Rimuovi la nota trascinata dalle note della pila
+    const remainingStackNotes = currentStackNotes.filter(n => n.id !== draggedId);
+    const draggedObj = currentStackNotes[dragIdx];
+
+    // 2. Calcola l'indice di inserimento in remainingStackNotes
+    const insertIdxInRemaining = Math.max(0, Math.min(remainingStackNotes.length, targetSlot > dragIdx ? targetSlot - 1 : targetSlot));
+
+    // 3. Inserisci la nota nella nuova posizione esatta
+    remainingStackNotes.splice(insertIdxInRemaining, 0, draggedObj);
+
+    // 4. Ricostruisci l'array generale 'notes' sostituendo le note della pila nel nuovo ordine
+    let stackOrderIdx = 0;
+    let updatedNotes = notes.map(n => {
+      if (n.pilaId === stackPilaId) {
+        const reordered = remainingStackNotes[stackOrderIdx];
+        stackOrderIdx++;
+        return reordered;
+      }
+      return n;
+    });
 
     updatedNotes = updatedNotes.map((n, idx) => ({ ...n, ordine: idx }));
     setNotes(updatedNotes);
+    setDragOverTarget(null);
     try {
       await reorderPersonalNotes(updatedNotes, userEmail || '');
       showToast("Ordine delle note nella pila aggiornato!", "success");
@@ -1204,11 +1201,60 @@ export default function TodoListNote() {
 
     if (!draggedId) return;
 
-    // Se stiamo trascinando una nota all'interno della sua stessa pila, esegui il riordino interno
+    // CASO A: Trascina INTERA PILA (tramite l'etichetta Pila)
+    if (wasDraggingStack) {
+      let targetSlot: number | undefined = explicitSlot ?? currentDragTarget?.slotIndex;
+
+      if (targetSlot === undefined && targetItem) {
+        const itemIdx = noteGridItems.findIndex(it => it.id === targetItem.id);
+        if (itemIdx >= 0) {
+          const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+          const relativeX = (e.clientX - rect.left) / rect.width;
+          targetSlot = relativeX < 0.5 ? itemIdx : itemIdx + 1;
+        }
+      }
+
+      if (targetSlot === undefined) {
+        targetSlot = noteGridItems.length;
+      }
+
+      const stackNotesToMove = notes.filter(n => n.pilaId === draggedId);
+      if (stackNotesToMove.length === 0) return;
+
+      let updatedNotes = notes.filter(n => n.pilaId !== draggedId);
+      const remainingGridItems = noteGridItems.filter(it => it.id !== draggedId);
+      const safeSlot = Math.min(targetSlot, remainingGridItems.length);
+
+      if (safeSlot < remainingGridItems.length) {
+        const refNoteId = remainingGridItems[safeSlot].notes[0].id;
+        const insertIdx = updatedNotes.findIndex(n => n.id === refNoteId);
+        if (insertIdx >= 0) {
+          updatedNotes.splice(insertIdx, 0, ...stackNotesToMove);
+        } else {
+          updatedNotes.push(...stackNotesToMove);
+        }
+      } else {
+        updatedNotes.push(...stackNotesToMove);
+      }
+
+      updatedNotes = updatedNotes.map((n, idx) => ({ ...n, ordine: idx }));
+      setNotes(updatedNotes);
+      try {
+        await reorderPersonalNotes(updatedNotes, userEmail || '');
+        showToast("Pila spostata di posto!", "success");
+      } catch (err) {
+        console.error("Errore spostamento pila:", err);
+        showToast("Errore durante lo spostamento della pila.", "error");
+      }
+      return;
+    }
+
+    // Da qui in avanti: trascina SINGOLA NOTA (libera o appartenente a una pila)
     const draggedNote = notes.find(n => n.id === draggedId);
     if (!draggedNote) return;
 
-    if (!wasDraggingStack && draggedNote.pilaId && targetItem?.pilaId && draggedNote.pilaId === targetItem.pilaId) {
+    // Se stiamo trascinando una nota all'interno della sua stessa pila, esegui il riordino interno
+    if (draggedNote.pilaId && targetItem?.pilaId && draggedNote.pilaId === targetItem.pilaId) {
       await handleStackNoteDrop(e, targetItem);
       return;
     }
@@ -1217,8 +1263,6 @@ export default function TodoListNote() {
     const isStackAction = currentDragTarget?.action === 'stack' && targetItem;
 
     if (isStackAction && targetItem) {
-      if (wasDraggingStack) return;
-
       if (!targetItem.isStack && targetItem.notes[0]?.id === draggedId) return;
 
       const isSameStack = Boolean(draggedNote.pilaId && targetItem.pilaId && draggedNote.pilaId === targetItem.pilaId);
@@ -1267,7 +1311,7 @@ export default function TodoListNote() {
       return;
     }
 
-    // 2. Azione di riordinamento nello slot condiviso della griglia
+    // 2. Azione di riordinamento nello slot condiviso della griglia per SINGOLA NOTA
     let targetSlot: number | undefined = explicitSlot ?? currentDragTarget?.slotIndex;
 
     if (targetSlot === undefined && targetItem) {
@@ -1281,39 +1325,6 @@ export default function TodoListNote() {
 
     if (targetSlot === undefined) {
       targetSlot = noteGridItems.length;
-    }
-
-    // CASO A: Trascina INTERA PILA (tramite l'etichetta Pila)
-    if (wasDraggingStack) {
-      const stackNotesToMove = notes.filter(n => n.pilaId === draggedId);
-      if (stackNotesToMove.length === 0) return;
-
-      let updatedNotes = notes.filter(n => n.pilaId !== draggedId);
-      const remainingGridItems = noteGridItems.filter(it => it.id !== draggedId);
-      const safeSlot = Math.min(targetSlot, remainingGridItems.length);
-
-      if (safeSlot < remainingGridItems.length) {
-        const refNoteId = remainingGridItems[safeSlot].notes[0].id;
-        const insertIdx = updatedNotes.findIndex(n => n.id === refNoteId);
-        if (insertIdx >= 0) {
-          updatedNotes.splice(insertIdx, 0, ...stackNotesToMove);
-        } else {
-          updatedNotes.push(...stackNotesToMove);
-        }
-      } else {
-        updatedNotes.push(...stackNotesToMove);
-      }
-
-      updatedNotes = updatedNotes.map((n, idx) => ({ ...n, ordine: idx }));
-      setNotes(updatedNotes);
-      try {
-        await reorderPersonalNotes(updatedNotes, userEmail || '');
-        showToast("Pila spostata di posto!", "success");
-      } catch (err) {
-        console.error("Errore spostamento pila:", err);
-        showToast("Errore durante lo spostamento della pila.", "error");
-      }
-      return;
     }
 
     // CASO B: Trascina SINGOLA NOTA (libera o estratta da una pila)
@@ -2978,20 +2989,7 @@ export default function TodoListNote() {
                     onDragOver={e => {
                       const draggedNote = notes.find(n => n.id === draggedNoteId);
                       if (draggedNote?.pilaId === item.id && !isDraggingStack) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        e.dataTransfer.dropEffect = 'move';
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        const pixelY = e.clientY - rect.top;
-                        const totalNotes = item.notes.length;
-                        if (pixelY >= (totalNotes - 1) * 34 + 22) {
-                          setDragOverTarget({
-                            id: item.notes[totalNotes - 1].id,
-                            action: 'reorder-after',
-                            stackSlotIndex: totalNotes,
-                            pilaId: item.id
-                          });
-                        }
+                        updateStackSlotFromPointer(e, item.id);
                         return;
                       }
                       handleNoteDragOver(e, item.id, itemIdx);
@@ -3018,6 +3016,29 @@ export default function TodoListNote() {
                       isOverStack ? 'ring-4 ring-amber-400 ring-dashed rounded-2xl scale-[1.02] z-30' : ''
                     } ${shiftClass}`}
                   >
+                    {/* Indicatore Laser Globale della Pila - SEMPRE VISIBILE IN CIMA A TUTTO (z-[80]) */}
+                    {dragOverTarget?.pilaId === item.id && dragOverTarget?.stackSlotIndex !== undefined && (
+                      <div 
+                        style={{ 
+                          top: dragOverTarget.stackSlotIndex === item.notes.length 
+                            ? `${(item.notes.length - 1) * 34 + 36}px` 
+                            : `${dragOverTarget.stackSlotIndex * 34 - 2}px` 
+                        }}
+                        className={`absolute left-2 ${
+                          dragOverTarget.stackSlotIndex === 0 ? 'right-28 sm:right-32' : 'right-2'
+                        } h-3 z-[80] pointer-events-none flex items-center transition-all duration-75`}
+                      >
+                        <div className="w-full h-1 bg-gradient-to-r from-indigo-500 via-indigo-600 to-indigo-500 rounded-full shadow-[0_0_12px_rgba(99,102,241,1)]" />
+                        <span className="absolute left-4 bg-indigo-600 text-white text-[10px] font-black tracking-wide px-2.5 py-0.5 rounded-full shadow-lg border border-indigo-300 flex items-center gap-1 uppercase whitespace-nowrap animate-pulse">
+                          {dragOverTarget.stackSlotIndex === 0 
+                            ? '↑ In cima alla pila' 
+                            : dragOverTarget.stackSlotIndex === item.notes.length 
+                              ? '↓ Sposta in fondo (ultima)' 
+                              : `Inserisci in posizione ${dragOverTarget.stackSlotIndex + 1}`}
+                        </span>
+                      </div>
+                    )}
+
                     {/* Spazio condiviso illuminato tra le note (slot a sinistra della pila) */}
                     {isLeftSlotActive && (
                       <div 
@@ -3073,13 +3094,10 @@ export default function TodoListNote() {
                     {item.notes.map((note, idx) => {
                       const colorConfig = NOTE_COLORS[note.colore || 'giallo'] || NOTE_COLORS.giallo;
                       const isDragging = draggedNoteId === note.id;
-                      const isLastInStack = idx === item.notes.length - 1;
                       const attachments = getTodoAttachments(note);
 
-                      // Slot attivo di inserimento per la pila corrente
-                      const activeStackSlot = (dragOverTarget && dragOverTarget.pilaId === item.id) ? dragOverTarget.stackSlotIndex : undefined;
-                      const isSlotAboveThis = activeStackSlot === idx;
-                      const isSlotBelowThis = isLastInStack && activeStackSlot === item.notes.length;
+                      // Bersaglio attivo per la scheda corrente
+                      const isNearTargetSlot = dragOverTarget?.pilaId === item.id && (dragOverTarget?.stackSlotIndex === idx || dragOverTarget?.stackSlotIndex === idx + 1);
 
                       return (
                         <div
@@ -3087,8 +3105,22 @@ export default function TodoListNote() {
                           draggable={true}
                           onDragStart={e => handleNoteDragStart(e, note.id)}
                           onDragEnd={handleNoteDragEnd}
-                          onDragOver={e => handleStackNoteDragOver(e, note.id, item.id, idx)}
-                          onDrop={e => handleStackNoteDrop(e, item)}
+                          onDragOver={e => {
+                            const draggedNote = notes.find(n => n.id === draggedNoteId);
+                            if (draggedNote?.pilaId === item.id && !isDraggingStack) {
+                              updateStackSlotFromPointer(e, item.id);
+                            } else {
+                              handleNoteDragOver(e, item.id, itemIdx);
+                            }
+                          }}
+                          onDrop={e => {
+                            const draggedNote = notes.find(n => n.id === draggedNoteId);
+                            if (draggedNote?.pilaId === item.id && !isDraggingStack) {
+                              handleStackNoteDrop(e, item);
+                            } else {
+                              handleNoteDrop(e, item, itemIdx);
+                            }
+                          }}
                           onClick={() => {
                             if (isDraggingRef.current) return;
                             setFocusedNote(note);
@@ -3097,29 +3129,15 @@ export default function TodoListNote() {
                             top: `${idx * 34}px`,
                             zIndex: 10 + idx * 5
                           }}
-                          className={`absolute left-0 right-0 h-[240px] rounded-2xl p-4 sm:p-5 border-2 ${colorConfig.bg} ${colorConfig.border} shadow-sm transition-[box-shadow,transform,border-color] duration-150 cursor-pointer flex flex-col justify-between group/card hover:!z-50 hover:-translate-y-2 hover:shadow-xl ${
-                            isDragging ? 'opacity-40 scale-[0.98]' : 'opacity-100'
-                          }`}
+                          className={`absolute left-0 right-0 h-[240px] rounded-2xl pt-2 px-4 sm:px-5 pb-4 sm:pb-5 border-2 ${colorConfig.bg} ${
+                            isNearTargetSlot ? 'border-indigo-500 ring-2 ring-indigo-400 ring-offset-1' : colorConfig.border
+                          } shadow-sm transition-[box-shadow,transform,border-color] duration-150 cursor-pointer flex flex-col justify-between group/card hover:!z-50 ${
+                            draggedNoteId ? '' : 'hover:-translate-y-2 hover:shadow-xl'
+                          } ${isDragging ? 'opacity-40 scale-[0.98] pointer-events-none' : 'opacity-100'}`}
                         >
-                          {/* Indicatore visivo di inserimento laser SOPRA questa scheda (slot idx) */}
-                          {isSlotAboveThis && (
-                            <div className="absolute -top-2 left-2 right-2 h-2.5 bg-indigo-600 rounded-full z-[70] shadow-[0_0_14px_rgba(79,70,229,0.95)] animate-pulse pointer-events-none flex items-center justify-center border border-white/50">
-                              <div className="w-8 h-1 bg-white rounded-full shadow" />
-                            </div>
-                          )}
-
-                          {/* Indicatore visivo di inserimento laser SOTTO l'ultima scheda (slot totalNotes = item.notes.length) */}
-                          {isSlotBelowThis && (
-                            <div 
-                              style={{ top: '34px' }}
-                              className="absolute left-2 right-2 h-2.5 bg-indigo-600 rounded-full z-[70] shadow-[0_0_14px_rgba(79,70,229,0.95)] animate-pulse pointer-events-none flex items-center justify-center border border-white/50"
-                            >
-                              <div className="w-8 h-1 bg-white rounded-full shadow" />
-                            </div>
-                          )}
-                          {/* Header della nota impilata */}
-                          <div className="flex items-start justify-between gap-2">
-                            <h3 className={`text-sm font-black ${colorConfig.text} leading-tight truncate flex-1`} title={note.titolo || 'Senza titolo'}>
+                          {/* Header della nota impilata - compatto per perfetta leggibilità nei 34px visibili */}
+                          <div className="flex items-center justify-between gap-2 h-5 shrink-0">
+                            <h3 className={`text-xs sm:text-sm font-black ${colorConfig.text} leading-none truncate flex-1`} title={note.titolo || 'Senza titolo'}>
                               {note.titolo || 'Senza titolo'}
                             </h3>
                             <div className="flex items-center gap-1 shrink-0">
@@ -3128,7 +3146,7 @@ export default function TodoListNote() {
                                 title="Trascina per riordinare nella pila o trascina fuori per estrarre"
                                 onClick={e => e.stopPropagation()}
                               >
-                                <GripVertical className="w-4 h-4" />
+                                <GripVertical className="w-3.5 h-3.5" />
                               </div>
                             </div>
                           </div>
