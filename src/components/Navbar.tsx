@@ -429,7 +429,9 @@ export default function Navbar() {
   };
 
   const handleNotifClick = (notif: UserNotification) => {
-    if (notif.id && !notif.letta) {
+    // Le notifiche 'todo_scaduto' non vengono marcate come lette al semplice click:
+    // rimangono attive fino a che l'attività non viene completata o la scadenza posticipata
+    if (notif.id && !notif.letta && notif.tipo !== 'todo_scaduto') {
       markNotificationAsRead(notif.id);
     }
     setIsNotifOpen(false);
@@ -631,7 +633,6 @@ export default function Navbar() {
                                 setIsNotifOpen(false);
                                 navigate(op.link);
                               }}
-                              title={`${op.titolo}\n\n${op.messaggio}`}
                               className="group p-3.5 flex items-start gap-3 bg-red-50/30 hover:bg-red-100/60 border-l-4 border-red-500 transition-all cursor-pointer"
                             >
                               <div className="mt-0.5 p-2 rounded-xl bg-red-100 text-red-600 border border-red-200 shrink-0 shadow-2xs">
@@ -672,7 +673,6 @@ export default function Navbar() {
                                 return (
                                   <div
                                     key={item.id}
-                                    title={`${item.titolo}\n\n${item.messaggio}`}
                                     className="group p-3.5 flex items-start gap-3 bg-white hover:bg-gray-50/90 border-l-4 border-emerald-400 select-text cursor-default transition-all"
                                   >
                                     <div className="mt-0.5 p-2 rounded-xl bg-emerald-50 border border-emerald-100 shrink-0 shadow-2xs">
@@ -720,7 +720,6 @@ export default function Navbar() {
                                       ? 'bg-blue-50/30 border-l-4 border-blue-500 hover:bg-blue-50/60' 
                                       : 'bg-white hover:bg-gray-50'
                                   }`}
-                                  title={`${n.titolo}\n\n${n.messaggio}${n.link ? '\n(Clicca per aprire la sezione)' : ''}`}
                                 >
                                   <div className="mt-0.5 p-2 rounded-xl bg-gray-50 border border-gray-100 shrink-0 shadow-2xs">
                                     {getNotifIcon(n.tipo)}

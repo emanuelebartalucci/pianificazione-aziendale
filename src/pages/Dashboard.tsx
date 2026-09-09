@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { 
   Briefcase, Calendar, Settings, FileText, MessageSquare, Plus, Trash2, Megaphone, X, Users, CalendarDays, Edit, AlertCircle, ChevronRight, HeartPulse, Package,
-  ListTodo, CheckCircle2, Clock, AlertTriangle, Check
+  ListTodo, CheckCircle2, Clock, AlertTriangle, Check, Folder, Paperclip
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
@@ -12,6 +12,8 @@ import {
   toggleUnifiedTodoStatus, 
   getCategoryBadgeProps, 
   isTaskAssignee,
+  openAttachedPath,
+  getTodoAttachments,
   type UnifiedTodoItem 
 } from '../services/todoService';
 import { collection, addDoc, doc, deleteDoc, query, orderBy, where, getDoc, getDocs, updateDoc } from 'firebase/firestore';
@@ -811,8 +813,16 @@ export default function Dashboard() {
           {/* Top Bar Widget */}
           <div className="flex items-center justify-between gap-3 pb-3 border-b border-gray-100">
             <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-blue-600 text-white flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-blue-600 text-white flex items-center justify-center shadow-sm group-hover:scale-105 transition-transform relative">
                 <ListTodo className="w-5 h-5" />
+                {sectionBadgeCounts.todo > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 flex h-5 w-5" title={`${sectionBadgeCounts.todo} nuove notifiche attività`}>
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-5 w-5 bg-indigo-600 text-[10px] font-black text-white items-center justify-center border-2 border-white shadow-md">
+                      {sectionBadgeCounts.todo > 99 ? '99+' : sectionBadgeCounts.todo}
+                    </span>
+                  </span>
+                )}
               </div>
               <div>
                 <h2 className="text-sm sm:text-base font-extrabold text-gray-900 tracking-tight flex items-center gap-2">
@@ -909,6 +919,31 @@ export default function Dashboard() {
                             {task.commessaCodice ? `${task.commessaCodice} ` : ''}{task.commessaNome}
                           </span>
                         )}
+
+                        {/* File o Cartelle collegate */}
+                        {(() => {
+                          const atts = getTodoAttachments(task);
+                          if (atts.length === 0) return null;
+                          return (
+                            <div className="inline-flex items-center gap-1 flex-wrap shrink-0">
+                              {atts.map((att, attIdx) => (
+                                <button
+                                  key={att.id || attIdx}
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openAttachedPath(att.percorso);
+                                  }}
+                                  className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 transition cursor-pointer shrink-0"
+                                  title={`📁 Apri in Windows:\n${att.percorso}`}
+                                >
+                                  {att.tipo === 'cartella' ? <Folder className="w-3 h-3 text-amber-600 shrink-0" /> : <Paperclip className="w-3 h-3 text-indigo-600 shrink-0" />}
+                                  <span className="hidden xl:inline max-w-[90px] truncate">{att.nome || 'Allegato'}</span>
+                                </button>
+                              ))}
+                            </div>
+                          );
+                        })()}
                       </div>
 
                       {/* Scadenza */}
@@ -950,9 +985,15 @@ export default function Dashboard() {
 
       {/* Banner Commesse ad Alta Priorità (visibile solo alle risorse interessate) */}
       {highPriorityCommesseThisWeek.length > 0 && (
-        <div className="bg-gradient-to-r from-red-500/10 via-rose-500/10 to-amber-500/10 backdrop-blur-xl border border-red-200/80 rounded-[1.8rem] p-4 sm:p-5 shadow-sm animate-in fade-in zoom-in-95 duration-200 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div 
+          onClick={(e) => {
+            const ids = highPriorityCommesseThisWeek.map(c => c.id).join(',');
+            handleNav(e, `/commesse?prioritaAlta=true&commessaIds=${encodeURIComponent(ids)}`);
+          }}
+          className="bg-gradient-to-r from-red-500/10 via-rose-500/10 to-amber-500/10 backdrop-blur-xl border border-red-200/80 rounded-[1.8rem] p-4 sm:p-5 shadow-sm animate-in fade-in zoom-in-95 duration-200 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 cursor-pointer hover:border-red-300 transition-all group"
+        >
           <div className="flex items-start sm:items-center gap-3.5">
-            <div className="p-2.5 bg-red-500 text-white rounded-2xl shadow-md shrink-0">
+            <div className="p-2.5 bg-red-500 text-white rounded-2xl shadow-md shrink-0 group-hover:scale-105 transition-transform">
               <AlertCircle className="w-5 h-5" />
             </div>
             <div>
@@ -977,7 +1018,11 @@ export default function Dashboard() {
           </div>
           <button
             type="button"
-            onClick={(e) => handleNav(e, '/commesse')}
+            onClick={(e) => {
+              e.stopPropagation();
+              const ids = highPriorityCommesseThisWeek.map(c => c.id).join(',');
+              handleNav(e, `/commesse?prioritaAlta=true&commessaIds=${encodeURIComponent(ids)}`);
+            }}
             className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-xl text-xs font-black transition shadow-md active:scale-95 shrink-0 cursor-pointer flex items-center gap-1.5 self-end md:self-auto"
           >
             <span>Vai a Pianificazione</span>

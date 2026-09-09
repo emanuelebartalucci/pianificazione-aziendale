@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth, isTechnicalUser, areNamesEqual } from '../contexts/AuthContext';
 import { db } from '../services/firebase';
 import { collection, doc, setDoc, getDocs, query, where, updateDoc, getDoc, deleteDoc, deleteField } from 'firebase/firestore';
-import { FileText, Printer, Save, Send, CheckCircle, AlertCircle, Edit, Edit3, Trash2, MessageSquare, Clock, MapPin, Check, X, ShieldAlert, Download, RefreshCw, Plus, Bell, ChevronRight } from 'lucide-react';
+import { FileText, Printer, Save, Send, CheckCircle, CheckCircle2, AlertCircle, Edit, Edit3, Trash2, MessageSquare, Clock, MapPin, Check, X, ShieldAlert, Download, RefreshCw, Plus, Bell, ChevronRight } from 'lucide-react';
 import { queueMail } from '../utils/mailSender';
 import ConfirmModal from '../components/ConfirmModal';
 import { isItalianHoliday, isWeekend as isWeekendGlobal } from '../utils/date';
@@ -62,6 +63,7 @@ interface RapportinoPresenze {
   noteDipendente: string;
   comunicazioniHR?: string;
   noteHR: string;
+  messaggioApprovazioneHR?: string;
   hrModified?: boolean;
   submittedAt?: string;
   approvedAt?: string;
@@ -388,8 +390,14 @@ export default function Presenze() {
   };
 
   // Date Selection
+  const [searchParams] = useSearchParams();
   const [selectedMonth, setSelectedMonth] = useState(() => getDefaultInitialDate().month); // 1-12
   const [selectedYear, setSelectedYear] = useState(() => getDefaultInitialDate().year);
+  
+  // Evidenziazione visiva e banner temporaneo al messaggio HR se arrivati da notifica
+  const [showHrNotificationBanner, setShowHrNotificationBanner] = useState(false);
+  const [isHrMessageHighlighted, setIsHrMessageHighlighted] = useState(false);
+  const hrMessageBannerRef = useRef<HTMLDivElement>(null);
   
   // Mode Selection: 'compila' (employee mode) or 'hr' (admin/hr dashboard)
   const [viewMode, setViewMode] = useState<'compila' | 'hr'>(() => {
@@ -399,6 +407,45 @@ export default function Presenze() {
   });
 
   const [hasSetDefaultDate, setHasSetDefaultDate] = useState(false);
+
+  // Gestione parametri URL (es. da click su notifica: /presenze?mese=9&anno=2026&highlight=messaggio_hr)
+  useEffect(() => {
+    const paramMese = searchParams.get('mese');
+    const paramAnno = searchParams.get('anno');
+    const paramHighlight = searchParams.get('highlight');
+
+    if (paramMese || paramAnno) {
+      if (paramMese) {
+        const m = parseInt(paramMese, 10);
+        if (!isNaN(m) && m >= 1 && m <= 12) {
+          setSelectedMonth(m);
+        }
+      }
+      if (paramAnno) {
+        const y = parseInt(paramAnno, 10);
+        if (!isNaN(y) && y >= 2020 && y <= 2050) {
+          setSelectedYear(y);
+        }
+      }
+      // Se l'utente atterra da una notifica, posizionalo direttamente in compilazione/visualizzazione del proprio foglio
+      setViewMode('compila');
+      setHasSetDefaultDate(true);
+    }
+
+    if (paramHighlight === 'messaggio_hr') {
+      setShowHrNotificationBanner(true);
+      setIsHrMessageHighlighted(true);
+      const timer = setTimeout(() => {
+        setIsHrMessageHighlighted(false);
+      }, 6000);
+      setTimeout(() => {
+        if (hrMessageBannerRef.current) {
+          hrMessageBannerRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 400);
+      return () => clearTimeout(timer);
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     if (hasSetDefaultDate) return;
@@ -459,6 +506,9 @@ export default function Presenze() {
   const [reviewingRapportino, setReviewingRapportino] = useState<RapportinoPresenze | null>(null);
   const [hrFeedbackNote, setHrFeedbackNote] = useState('');
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
+  const [isApproveModalOpen, setIsApproveModalOpen] = useState(false);
+  const [hrApproveMessage, setHrApproveMessage] = useState('');
+  const [hrApproveSubmitting, setHrApproveSubmitting] = useState(false);
   const [exportingAnnual, setExportingAnnual] = useState(false);
   const [selectedDipFilter, setSelectedDipFilter] = useState('');
   const [printTargetSheet, setPrintTargetSheet] = useState<RapportinoPresenze | null>(null);
@@ -2240,50 +2290,61 @@ export default function Presenze() {
       showToast(isCollab ? "Impossibile approvare una bozza fattura in stato Bozza." : "Impossibile approvare un rapportino in stato Bozza.", "warning");
       return;
     }
-    triggerConfirm(
-      isCollab ? "Approva Bozza Fattura" : "Approva Rapportino",
-      isCollab 
-        ? `Approvare la bozza fattura di ${reviewingRapportino.dipendenteNome}?`
-        : `Approvare il foglio presenze di ${reviewingRapportino.dipendenteNome}?`,
-      async () => {
-        try {
-          const docRef = doc(db, 'presenze', reviewingRapportino.id);
-          const updated: RapportinoPresenze = {
-            ...reviewingRapportino,
-            stato: 'Approvato',
-            approvedAt: new Date().toISOString(),
-            approvedBy: user?.email || 'HR'
-          };
-          await setDoc(docRef, updated);
+    setHrApproveMessage(reviewingRapportino.messaggioApprovazioneHR || '');
+    setIsApproveModalOpen(true);
+  };
 
-          if (isCollab && reviewingRapportino.collaboratoreData) {
-            await saveCollabProfileRates(reviewingRapportino.collaboratoreData, reviewingRapportino.dipendenteNome);
-          }
+  const handleHRApproveConfirm = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!reviewingRapportino) return;
+    const isCollab = isCollaboratore(reviewingRapportino.dipendenteNome, dipendenti);
 
-          // Invia notifica personale informativa al dipendente/collaboratore (solo se non è l'utente operante)
-          const isSelfTarget = (reviewingRapportino.dipendenteEmail?.toLowerCase() === (userEmail || '').toLowerCase()) || (myAssociatedName && areNamesEqual(reviewingRapportino.dipendenteNome, myAssociatedName));
-          if (reviewingRapportino.dipendenteEmail && !isSelfTarget) {
-            const meseLabel = MESI[reviewingRapportino.mese - 1] || `Mese ${reviewingRapportino.mese}`;
-            await createUserNotification({
-              destinatarioEmail: reviewingRapportino.dipendenteEmail,
-              destinatarioNome: reviewingRapportino.dipendenteNome,
-              titolo: isCollab ? '✅ Bozza Fattura Approvata' : '✅ Foglio Presenze Approvato',
-              messaggio: `Il tuo ${isCollab ? 'prospetto bozza fattura' : 'foglio presenze'} di ${meseLabel} ${reviewingRapportino.anno} è stato approvato dall'HR.`,
-              tipo: 'presenze_approvate',
-              link: '/presenze'
-            });
-          }
+    setHrApproveSubmitting(true);
+    try {
+      const docRef = doc(db, 'presenze', reviewingRapportino.id);
+      const cleanMessage = hrApproveMessage.trim();
+      const updated: RapportinoPresenze = {
+        ...reviewingRapportino,
+        stato: 'Approvato',
+        approvedAt: new Date().toISOString(),
+        approvedBy: user?.email || myAssociatedName || 'HR',
+        messaggioApprovazioneHR: cleanMessage || undefined
+      };
+      await setDoc(docRef, updated);
 
-          setReviewingRapportino(null);
-          showToast(isCollab ? "Bozza fattura approvata!" : "Rapportino approvato!");
-          loadPresenzeData();
-        } catch (err) {
-          console.error("Errore approvazione:", err);
-          showToast("Errore durante l'approvazione.", "error");
-        }
-      },
-      'info'
-    );
+      if (isCollab && reviewingRapportino.collaboratoreData) {
+        await saveCollabProfileRates(reviewingRapportino.collaboratoreData, reviewingRapportino.dipendenteNome);
+      }
+
+      // Invia notifica personale informativa in-app al dipendente/collaboratore (solo se non è l'utente operante)
+      // N.B. In conformità alle direttive di progetto: solo notifiche in-app, niente invio email per l'approvazione!
+      const isSelfTarget = (reviewingRapportino.dipendenteEmail?.toLowerCase() === (userEmail || '').toLowerCase()) || (myAssociatedName && areNamesEqual(reviewingRapportino.dipendenteNome, myAssociatedName));
+      if (reviewingRapportino.dipendenteEmail && !isSelfTarget) {
+        const meseLabel = MESI[reviewingRapportino.mese - 1] || `Mese ${reviewingRapportino.mese}`;
+        const baseMsg = `Il tuo ${isCollab ? 'prospetto bozza fattura' : 'foglio presenze'} di ${meseLabel} ${reviewingRapportino.anno} è stato approvato dall'HR.`;
+        const fullMsg = cleanMessage ? `${baseMsg}\n\n💬 Messaggio HR: "${cleanMessage}"` : baseMsg;
+
+        await createUserNotification({
+          destinatarioEmail: reviewingRapportino.dipendenteEmail,
+          destinatarioNome: reviewingRapportino.dipendenteNome,
+          titolo: isCollab ? '✅ Bozza Fattura Approvata' : '✅ Foglio Presenze Approvato',
+          messaggio: fullMsg,
+          tipo: 'presenze_approvate',
+          link: `/presenze?mese=${reviewingRapportino.mese}&anno=${reviewingRapportino.anno}&highlight=messaggio_hr`
+        });
+      }
+
+      setIsApproveModalOpen(false);
+      setReviewingRapportino(null);
+      setHrApproveMessage('');
+      showToast(isCollab ? "Bozza fattura approvata con successo!" : "Foglio presenze approvato con successo!");
+      loadPresenzeData();
+    } catch (err) {
+      console.error("Errore approvazione:", err);
+      showToast("Errore durante l'approvazione.", "error");
+    } finally {
+      setHrApproveSubmitting(false);
+    }
   };
 
   const handleHRRevokeApproval = () => {
@@ -2301,7 +2362,8 @@ export default function Presenze() {
             ...reviewingRapportino,
             stato: 'Inviato',
             approvedAt: undefined,
-            approvedBy: undefined
+            approvedBy: undefined,
+            messaggioApprovazioneHR: undefined
           };
           await setDoc(docRef, updated);
 
@@ -3459,7 +3521,10 @@ export default function Presenze() {
           {/* Selettore Mese (Dropdown) */}
           <select 
             value={selectedMonth}
-            onChange={e => setSelectedMonth(Number(e.target.value))}
+            onChange={e => {
+              setShowHrNotificationBanner(false);
+              setSelectedMonth(Number(e.target.value));
+            }}
             className="p-2.5 border-none bg-gray-100 rounded-xl font-bold text-gray-700 text-sm outline-none focus:ring-2 focus:ring-indigo-400 capitalize"
           >
             {MESI.map((m, idx) => (
@@ -3470,7 +3535,10 @@ export default function Presenze() {
           {/* Selettore Anno Diretto */}
           <select 
             value={selectedYear}
-            onChange={e => setSelectedYear(Number(e.target.value))}
+            onChange={e => {
+              setShowHrNotificationBanner(false);
+              setSelectedYear(Number(e.target.value));
+            }}
             className="p-2.5 border-none bg-gray-100 rounded-xl font-bold text-gray-700 text-sm outline-none focus:ring-2 focus:ring-indigo-400"
           >
             {(() => {
@@ -3988,6 +4056,67 @@ export default function Presenze() {
                 </div>
               )}
 
+              {/* Banner Temporaneo Messaggio Approvazione HR (mostrato al clic da Notifica) */}
+              {showHrNotificationBanner && rapportino.stato === 'Approvato' && rapportino.messaggioApprovazioneHR && (
+                <div 
+                  ref={hrMessageBannerRef}
+                  className={`p-5 rounded-2xl border transition-all duration-700 shadow-sm no-print relative ${
+                    isHrMessageHighlighted 
+                      ? 'bg-gradient-to-r from-emerald-100 to-teal-100 border-emerald-500 ring-4 ring-emerald-300 shadow-xl scale-[1.01]' 
+                      : 'bg-gradient-to-r from-emerald-50 to-teal-50/80 border-emerald-200 hover:border-emerald-300'
+                  }`}
+                >
+                  <button 
+                    type="button" 
+                    onClick={() => setShowHrNotificationBanner(false)}
+                    className="absolute top-3.5 right-3.5 text-emerald-800/60 hover:text-emerald-950 p-1.5 rounded-xl hover:bg-white/60 transition cursor-pointer"
+                    title="Chiudi avviso temporaneo"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+
+                  <div className="flex items-start gap-3.5 pr-6">
+                    <div className="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-md">
+                      <CheckCircle2 className="w-6 h-6" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-extrabold text-sm text-emerald-950">
+                            Messaggio dall'Amministrazione / HR
+                          </h4>
+                          <span className="text-[10px] font-black bg-emerald-200/90 text-emerald-900 px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                            Documento Approvato
+                          </span>
+                        </div>
+                        {rapportino.approvedAt && (
+                          <span className="text-[11px] text-emerald-800 font-semibold flex items-center gap-1 bg-white/60 px-2 py-0.5 rounded-lg border border-emerald-200/50 mr-4">
+                            <Clock className="w-3 h-3 text-emerald-600" />
+                            {new Date(rapportino.approvedAt).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' })} {new Date(rapportino.approvedAt).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs sm:text-sm text-emerald-950 font-medium whitespace-pre-wrap leading-relaxed bg-white/85 p-3.5 rounded-xl border border-emerald-200/70 mt-2 shadow-2xs">
+                        "{rapportino.messaggioApprovazioneHR}"
+                      </p>
+                      
+                      <div className="flex flex-wrap items-center justify-between gap-2 mt-3 pt-2 border-t border-emerald-200/50 text-[11px]">
+                        <span className="text-emerald-800/80 font-semibold">
+                          💡 Questo messaggio rimane conservato per sempre in fondo alla pagina, sotto le tue note.
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setShowHrNotificationBanner(false)}
+                          className="px-2.5 py-1 bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-900 font-extrabold rounded-lg transition cursor-pointer"
+                        >
+                          Ho letto, chiudi
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {isCollaboratore(myAssociatedName, dipendenti) ? (
                 // COLLABORATOR VIEW
                 <>
@@ -4339,6 +4468,26 @@ export default function Presenze() {
                         }}
                         className="w-full mt-2 p-3 text-xs border rounded-xl bg-white outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 font-medium resize-none overflow-hidden"
                       />
+
+                      {/* Eventuale Messaggio / Risposta di Approvazione HR */}
+                      {rapportino.messaggioApprovazioneHR && (
+                        <div className="mt-3 p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl">
+                          <div className="flex items-center justify-between gap-2 mb-1">
+                            <span className="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                              Risposta dell'Amministrazione / HR:
+                            </span>
+                            {rapportino.approvedAt && (
+                              <span className="text-[10px] text-emerald-700 font-semibold">
+                                {new Date(rapportino.approvedAt).toLocaleDateString('it-IT')}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-emerald-950 font-medium whitespace-pre-wrap pl-5 italic">
+                            "{rapportino.messaggioApprovazioneHR}"
+                          </p>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -5125,6 +5274,26 @@ export default function Presenze() {
                         style={{ minHeight: '48px' }}
                         className="w-full mt-2 p-3 text-xs border border-indigo-200 rounded-xl bg-indigo-50/30 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-medium resize-none overflow-hidden"
                       />
+
+                      {/* Eventuale Risposta / Messaggio di Approvazione HR */}
+                      {rapportino.messaggioApprovazioneHR && (
+                        <div className="mt-3 p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl">
+                          <div className="flex items-center justify-between gap-2 mb-1">
+                            <span className="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                              Risposta dell'Amministrazione / HR:
+                            </span>
+                            {rapportino.approvedAt && (
+                              <span className="text-[10px] text-emerald-700 font-semibold">
+                                {new Date(rapportino.approvedAt).toLocaleDateString('it-IT')}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-emerald-950 font-medium whitespace-pre-wrap pl-5 italic">
+                            "{rapportino.messaggioApprovazioneHR}"
+                          </p>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -5348,6 +5517,26 @@ export default function Presenze() {
                   </>
                 )}
               </div>
+
+              {/* Box Messaggio di Approvazione HR già inviato (se il documento è approvato) */}
+              {reviewingRapportino.messaggioApprovazioneHR && (
+                <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl flex items-start gap-3 no-print">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <h4 className="font-extrabold text-xs text-emerald-950">Messaggio allegato all'approvazione:</h4>
+                      {reviewingRapportino.approvedAt && (
+                        <span className="text-[10px] text-emerald-700 font-semibold">
+                          {new Date(reviewingRapportino.approvedAt).toLocaleDateString('it-IT')}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-emerald-900 font-medium whitespace-pre-wrap italic bg-white/70 p-2.5 rounded-lg border border-emerald-200/60">
+                      "{reviewingRapportino.messaggioApprovazioneHR}"
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {isCollaboratore(reviewingRapportino.dipendenteNome, dipendenti) ? (
                 // COLLABORATOR REVIEW LAYOUT
@@ -6514,6 +6703,119 @@ export default function Presenze() {
           </div>
         </div>
       )}
+
+      {/* ======================================================== */}
+      {/* 4b. MODAL DI APPROVAZIONE CON MESSAGGIO HR               */}
+      {/* ======================================================== */}
+      {isApproveModalOpen && reviewingRapportino && (() => {
+        const isCollab = isCollaboratore(reviewingRapportino.dipendenteNome, dipendenti);
+        const meseNome = MESI[reviewingRapportino.mese - 1] || `Mese ${reviewingRapportino.mese}`;
+        const userNotes = reviewingRapportino.noteDipendente;
+        const userComms = reviewingRapportino.comunicazioniHR;
+
+        return (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[70] p-4 no-print">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden transform transition-all border border-emerald-100 flex flex-col max-h-[90vh]">
+              {/* Header */}
+              <div className="bg-gradient-to-r from-emerald-600 to-teal-700 p-5 text-white flex justify-between items-center shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
+                    <CheckCircle2 className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-base leading-tight">
+                      {isCollab ? 'Approva Bozza Fattura' : 'Approva Foglio Presenze'}
+                    </h3>
+                    <p className="text-[11px] text-emerald-100 font-medium">
+                      {reviewingRapportino.dipendenteNome} — {meseNome} {reviewingRapportino.anno}
+                    </p>
+                  </div>
+                </div>
+                <button 
+                  type="button" 
+                  onClick={() => setIsApproveModalOpen(false)} 
+                  className="hover:bg-white/20 p-1.5 rounded-xl transition text-white/90 hover:text-white cursor-pointer"
+                >
+                  <X className="w-5 h-5"/>
+                </button>
+              </div>
+
+              {/* Form Content */}
+              <form onSubmit={handleHRApproveConfirm} className="p-6 space-y-4 overflow-y-auto flex-1">
+                {/* Note ricevute dall'utente (se presenti) */}
+                {(userNotes || userComms) && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2.5">
+                    <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider flex items-center gap-1.5">
+                      <MessageSquare className="w-3.5 h-3.5 text-slate-400" />
+                      Note inviate da {reviewingRapportino.dipendenteNome}:
+                    </span>
+                    {userNotes && (
+                      <div>
+                        <span className="text-[10px] font-bold text-slate-600">
+                          {isCollab ? 'Note e Dettagli:' : 'Certificati / Note presenze:'}
+                        </span>
+                        <p className="text-xs text-slate-800 italic bg-white p-2.5 rounded-xl border border-slate-200/80 mt-0.5 whitespace-pre-wrap font-medium">
+                          "{userNotes}"
+                        </p>
+                      </div>
+                    )}
+                    {userComms && (
+                      <div>
+                        <span className="text-[10px] font-bold text-slate-600">Comunicazioni per l'HR:</span>
+                        <p className="text-xs text-slate-800 italic bg-white p-2.5 rounded-xl border border-slate-200/80 mt-0.5 whitespace-pre-wrap font-medium">
+                          "{userComms}"
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Textarea Risposta / Messaggio HR */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-extrabold text-gray-800">
+                    Messaggio o Risposta per {reviewingRapportino.dipendenteNome}{' '}
+                    <span className="text-gray-400 font-medium">(facoltativo)</span>
+                  </label>
+                  <textarea
+                    rows={4}
+                    value={hrApproveMessage}
+                    onChange={e => setHrApproveMessage(e.target.value)}
+                    placeholder={
+                      isCollab
+                        ? "Es. Compenso e conteggi verificati, puoi procedere con l'emissione della fattura..."
+                        : "Es. Presenze approvate con successo. Le ore extra sono state correttamente registrate..."
+                    }
+                    className="w-full p-3.5 text-xs border border-emerald-200 bg-emerald-50/20 rounded-2xl outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 font-medium transition"
+                  />
+                  <p className="text-[10px] text-gray-500 leading-normal">
+                    💡 Questo messaggio verrà notificato in-app a {reviewingRapportino.dipendenteNome} e rimarrà visibile in modo permanente sul foglio approvato.
+                  </p>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex justify-end gap-2.5 pt-2 border-t border-gray-100">
+                  <button 
+                    type="button" 
+                    onClick={() => setIsApproveModalOpen(false)}
+                    disabled={hrApproveSubmitting}
+                    className="px-4 py-2.5 bg-gray-100 hover:bg-gray-200 rounded-xl text-xs font-bold text-gray-700 transition cursor-pointer disabled:opacity-50"
+                  >
+                    Annulla
+                  </button>
+                  <button 
+                    type="submit"
+                    disabled={hrApproveSubmitting}
+                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-extrabold shadow-md hover:shadow-lg transition active:scale-95 flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    <Check className="w-4 h-4" />
+                    {hrApproveSubmitting ? 'Approvazione in corso...' : 'Approva e Invia'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* MODAL RICHIESTA SBLOCCO DIPENDENTE */}
       {isUnlockModalOpen && (

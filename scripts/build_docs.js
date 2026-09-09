@@ -70,7 +70,7 @@ async function generateDocs() {
     }));
   }
 
-  let docSubtitle = "Pianificazione e Gestione Aziendale — Versione 1.0.15 (Settembre 2026)";
+  let docSubtitle = "Pianificazione e Gestione Aziendale — Versione 1.1.0 (Settembre 2026)";
   for (const l of lines) {
     if (l.startsWith('subtitle:')) {
       docSubtitle = l.replace('subtitle:', '').replace(/['"]/g, '').trim();

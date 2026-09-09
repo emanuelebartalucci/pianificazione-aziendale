@@ -18,6 +18,8 @@ export interface UserNotification {
   messaggio: string;
   tipo: 'ferie_approvate' | 'presenze_approvate' | 'pianificazione_aggiornata' | 'suggerimento_ricevuto' | 'todo_assegnato' | 'todo_completato' | 'todo_scaduto' | 'info';
   link?: string;
+  taskId?: string;
+  commessaId?: string;
   letta: boolean;
   createdAt: string;
 }
@@ -32,36 +34,36 @@ export async function createUserNotification(data: {
   messaggio: string;
   tipo: 'ferie_approvate' | 'presenze_approvate' | 'pianificazione_aggiornata' | 'suggerimento_ricevuto' | 'todo_assegnato' | 'todo_completato' | 'todo_scaduto' | 'info';
   link?: string;
+  taskId?: string;
+  commessaId?: string;
 }) {
   if (!data.destinatarioEmail || !data.destinatarioEmail.trim()) return;
   const targetEmail = data.destinatarioEmail.toLowerCase().trim();
   try {
-    // Controllo anti-duplicazione:
-    // Per 'todo_scaduto' controlliamo tutte le notifiche (anche se già lette) per non riproporre lo stesso alert
-    // Per gli altri tipi controlliamo solo le non lette
-    const qDuplicate = data.tipo === 'todo_scaduto'
-      ? query(
-          collection(db, 'notifiche_utenti'),
-          where('destinatarioEmail', '==', targetEmail)
-        )
-      : query(
-          collection(db, 'notifiche_utenti'),
-          where('destinatarioEmail', '==', targetEmail),
-          where('letta', '==', false)
-        );
+    // Controllo anti-duplicazione tra le non lette
+    const qDuplicate = query(
+      collection(db, 'notifiche_utenti'),
+      where('destinatarioEmail', '==', targetEmail),
+      where('letta', '==', false)
+    );
 
     const existingSnap = await getDocs(qDuplicate);
     const isDuplicate = existingSnap.docs.some(docSnap => {
       const d = docSnap.data();
+      if (data.tipo === 'todo_scaduto') {
+        if (data.taskId && d.taskId === data.taskId) return true;
+        if (d.titolo === data.titolo && (d.messaggio || '').trim() === (data.messaggio || '').trim()) return true;
+        return false;
+      }
       return d.titolo === data.titolo && (d.messaggio || '').trim() === (data.messaggio || '').trim();
     });
 
     if (isDuplicate) {
-      // Notifica identica già presente, non duplicare
+      // Notifica identica non ancora letta già presente, non duplicare
       return;
     }
 
-    await addDoc(collection(db, 'notifiche_utenti'), {
+    const payload: any = {
       destinatarioEmail: targetEmail,
       destinatarioNome: data.destinatarioNome || '',
       titolo: data.titolo,
@@ -70,7 +72,11 @@ export async function createUserNotification(data: {
       link: data.link || '',
       letta: false,
       createdAt: new Date().toISOString()
-    });
+    };
+    if (data.taskId) payload.taskId = data.taskId;
+    if (data.commessaId) payload.commessaId = data.commessaId;
+
+    await addDoc(collection(db, 'notifiche_utenti'), payload);
   } catch (err) {
     console.error("Errore salvataggio notifica informativa utente:", err);
   }
@@ -89,9 +95,11 @@ export async function markNotificationAsRead(id: string) {
 }
 
 /**
- * Segna tutte le notifiche non lette dell'utente come lette
+ * Segna tutte le notifiche non lette dell'utente come lette.
+ * Di default preserva le notifiche 'todo_scaduto', affinché rimangano attive
+ * fino al reale completamento o posticipo della scadenza dell'attività.
  */
-export async function markAllNotificationsAsRead(userEmail: string) {
+export async function markAllNotificationsAsRead(userEmail: string, preserveOverdue: boolean = true) {
   if (!userEmail || !userEmail.trim()) return;
   try {
     const q = query(
@@ -103,12 +111,65 @@ export async function markAllNotificationsAsRead(userEmail: string) {
     if (snap.empty) return;
 
     const batch = writeBatch(db);
+    let count = 0;
     snap.forEach(d => {
+      const data = d.data();
+      if (preserveOverdue && data.tipo === 'todo_scaduto') {
+        return;
+      }
       batch.update(d.ref, { letta: true });
+      count++;
     });
-    await batch.commit();
+    if (count > 0) {
+      await batch.commit();
+    }
   } catch (err) {
     console.error("Errore segna tutte come lette:", err);
+  }
+}
+
+/**
+ * Risolve/segna come lette le notifiche di attività scaduta ('todo_scaduto') per un compito specifico.
+ * Viene invocata quando l'attività viene contrassegnata come completata, eliminata
+ * o quando la data di scadenza viene posticipata ad oggi o nel futuro.
+ */
+export async function markOverdueNotificationsAsReadForTask(taskId: string, taskTitle?: string) {
+  if (!taskId && !taskTitle) return;
+  try {
+    const q = query(
+      collection(db, 'notifiche_utenti'),
+      where('tipo', '==', 'todo_scaduto'),
+      where('letta', '==', false)
+    );
+    const snap = await getDocs(q);
+    if (snap.empty) return;
+
+    const batch = writeBatch(db);
+    let count = 0;
+    const cleanTitle = taskTitle?.trim().toLowerCase();
+
+    snap.forEach(docSnap => {
+      const d = docSnap.data();
+      let match = false;
+      if (taskId && d.taskId === taskId) {
+        match = true;
+      } else if (taskId && d.link && (d.link.includes(`taskId=${encodeURIComponent(taskId)}`) || d.link.includes(`taskId=${taskId}`))) {
+        match = true;
+      } else if (cleanTitle && d.messaggio && d.messaggio.toLowerCase().includes(`"${cleanTitle}"`)) {
+        match = true;
+      }
+
+      if (match) {
+        batch.update(docSnap.ref, { letta: true });
+        count++;
+      }
+    });
+
+    if (count > 0) {
+      await batch.commit();
+    }
+  } catch (err) {
+    console.error("Errore pulizia notifiche scadenza per task:", err);
   }
 }
 

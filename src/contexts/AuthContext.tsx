@@ -50,6 +50,34 @@ export const areNamesEqual = (n1?: string | null, n2?: string | null): boolean =
   return parts1.sort().join(' ') === parts2.sort().join(' ');
 };
 
+export const isDevEmail = (email?: string | null, devsList: string[] = []): boolean => {
+  if (!email || typeof email !== 'string') return false;
+  const clean = email.toLowerCase().trim();
+  if (!clean) return false;
+  if (clean.includes('ebartalucci') || clean.includes('bartalucci')) return true;
+  return devsList.some(d => d && typeof d === 'string' && d.trim().toLowerCase() === clean);
+};
+
+export const getAssociatedNameFromEmail = (email?: string | null, dipendentiList: Dipendente[] = []): string | null => {
+  if (!email) return null;
+  const uClean = email.toLowerCase().trim();
+  const myDip = dipendentiList.find(d => {
+    const dEmail = (d.email || '').toLowerCase().trim();
+    if (dEmail && dEmail === uClean) return true;
+    const uUser = uClean.split('@')[0];
+    const dUser = dEmail.split('@')[0];
+    if (uUser && dUser && (uUser.includes(dUser) || dUser.includes(uUser))) return true;
+    return false;
+  });
+  if (myDip) return myDip.nome;
+  if (uClean.includes('ebartalucci')) return 'Emanuele Bartalucci';
+  if (uClean.includes('aprofeti')) return 'Andrea Profeti';
+  if (uClean.includes('mcorbellini')) return 'Marco Corbellini';
+  if (uClean.includes('taddei')) return 'Taddei Paolo';
+  if (uClean.includes('badalassi')) return 'Badalassi Federico';
+  return null;
+};
+
 export const TODO_CATEGORIE = [
   'aggiornare',
   'archiviare',
@@ -73,6 +101,14 @@ export const TODO_CATEGORIE = [
 
 export type ToDoCategoria = typeof TODO_CATEGORIE[number];
 
+export interface TodoAttachment {
+  id: string;
+  percorso: string;
+  nome: string;
+  tipo: 'file' | 'cartella';
+  estensione?: string;
+}
+
 export interface PunchListItem {
   id: string;
   categoria?: string; // una delle 18 categorie TODO_CATEGORIE
@@ -89,6 +125,13 @@ export interface PunchListItem {
   approvatoDa?: string;
   approvatoIl?: string;
   noteRevisione?: string;
+  // Collegamento a file o cartella su server (retrocompatibile)
+  allegatoPercorso?: string;
+  allegatoNome?: string;
+  allegatoTipo?: 'file' | 'cartella';
+  allegatoEstensione?: string;
+  // Nuovo supporto allegati multipli
+  allegati?: TodoAttachment[];
 }
 
 export interface Commessa {
@@ -113,6 +156,32 @@ export interface Commessa {
   progetti?: any[];
   abilitatiExtra?: string[];
 }
+
+export const mapDocToCommessa = (docSnap: any): Commessa => {
+  const data = typeof docSnap.data === 'function' ? docSnap.data() : docSnap;
+  return {
+    id: docSnap.id,
+    nome: data.nome || '',
+    colore: data.colore || '#3b82f6',
+    dataInizio: data.dataInizio || '',
+    dataFine: data.dataFine || '',
+    responsabile: data.responsabile || '',
+    pm: data.pm || '',
+    codiceCommessa: data.codiceCommessa || '',
+    anno: data.anno || '',
+    tipologia: data.tipologia || '',
+    cliente: data.cliente || '',
+    stato: data.stato || 'Aperta',
+    percorsoRete: data.percorsoRete || '',
+    punchList: data.punchList || [],
+    abilitatiExtra: Array.isArray(data.abilitatiExtra) ? data.abilitatiExtra : (data.abilitatiExtra ? [data.abilitatiExtra] : []),
+    giornateSeniorProject: data.giornateSeniorProject,
+    giornateProject: data.giornateProject,
+    giornateJuniorProject: data.giornateJuniorProject,
+    apertaDa: data.apertaDa || '',
+    progetti: data.progetti || []
+  };
+};
 
 export interface Coordinatore {
   id: string;
@@ -331,37 +400,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     if (isPlanningLoadingRef.current || isPlanningLoadedRef.current) return;
     isPlanningLoadingRef.current = true;
     try {
-      // Scarica tutte le commesse dal catalogo, clienti, priorità e tutte le assegnazioni del team
-      const [commesseSnap, clientiSnap, prioritySnap, assSnap] = await Promise.all([
-        getDocs(collection(db, 'catalogo_commesse')),
+      // 1. Scarica clienti, priorità e tutte le assegnazioni del team
+      const [clientiSnap, prioritySnap, assSnap] = await Promise.all([
         getDocs(collection(db, 'clienti')),
         getDocs(collection(db, 'priorita_commesse')),
         getDocs(collection(db, 'assegnazioni'))
       ]);
-
-      const commesseList = commesseSnap.docs.map(doc => ({
-        id: doc.id,
-        nome: doc.data().nome || '',
-        colore: doc.data().colore || '#3b82f6',
-        dataInizio: doc.data().dataInizio || '',
-        dataFine: doc.data().dataFine || '',
-        responsabile: doc.data().responsabile || '',
-        pm: doc.data().pm || '',
-        codiceCommessa: doc.data().codiceCommessa || '',
-        anno: doc.data().anno || '',
-        tipologia: doc.data().tipologia || '',
-        cliente: doc.data().cliente || '',
-        stato: doc.data().stato || 'Aperta',
-        percorsoRete: doc.data().percorsoRete || '',
-        punchList: doc.data().punchList || [],
-        abilitatiExtra: Array.isArray(doc.data().abilitatiExtra) ? doc.data().abilitatiExtra : (doc.data().abilitatiExtra ? [doc.data().abilitatiExtra] : []),
-        giornateSeniorProject: doc.data().giornateSeniorProject,
-        giornateProject: doc.data().giornateProject,
-        giornateJuniorProject: doc.data().giornateJuniorProject,
-        apertaDa: doc.data().apertaDa || '',
-        progetti: doc.data().progetti || []
-      }));
-      setCommesse(commesseList.sort((a, b) => a.nome.localeCompare(b.nome)));
 
       const clientiList = clientiSnap.docs.map(doc => ({
         id: doc.id,
@@ -383,6 +427,92 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       });
       setAssegnazioni(ass);
 
+      // 2. Determinazione ruolo e profilazione del caricamento commesse
+      const effectiveUserEmail = (impersonatedEmail || user?.email || '').toLowerCase().trim();
+      const effectiveAssociatedName = getAssociatedNameFromEmail(effectiveUserEmail, dipendenti) || '';
+
+      const isPrivilegedOrCoord = (
+        isSoci(effectiveUserEmail) ||
+        DEFAULT_ADMINS.some(e => e.toLowerCase().trim() === effectiveUserEmail) ||
+        dynamicAdmins.some(e => e.toLowerCase().trim() === effectiveUserEmail) ||
+        dynamicHrs.some(e => e.toLowerCase().trim() === effectiveUserEmail) ||
+        isDevEmail(effectiveUserEmail, dynamicDevs) ||
+        (coordinatori && coordinatori.length > 0 && coordinatori.some(c => (c.email || '').toLowerCase().trim() === effectiveUserEmail))
+      );
+
+      let commesseDocs: any[] = [];
+
+      if (isPrivilegedOrCoord) {
+        // PER SOCI, ADMIN, HR, DEV E COORDINATORI:
+        // Carica tutte le commesse APERTE (escludendo l'intero archivio storico delle chiuse)
+        try {
+          const qOpen = query(collection(db, 'catalogo_commesse'), where('stato', '!=', 'Chiusa'));
+          const snapOpen = await getDocs(qOpen);
+          if (!snapOpen.empty) {
+            commesseDocs = snapOpen.docs;
+          } else {
+            const snapAll = await getDocs(collection(db, 'catalogo_commesse'));
+            commesseDocs = snapAll.docs.filter(d => (d.data().stato || 'Aperta') !== 'Chiusa');
+          }
+        } catch {
+          const snapAll = await getDocs(collection(db, 'catalogo_commesse'));
+          commesseDocs = snapAll.docs.filter(d => (d.data().stato || 'Aperta') !== 'Chiusa');
+        }
+      } else {
+        // PER COLLABORATORI E DIPENDENTI OPERATIVI:
+        // Carica SOLO le commesse aperte su cui lavora l'utente
+        const myAssignedCommessaIds = new Set<string>();
+        if (effectiveAssociatedName) {
+          assSnap.forEach(docSnap => {
+            const key = docSnap.id;
+            const dipName = key.split('-')[0];
+            if (areNamesEqual(dipName, effectiveAssociatedName)) {
+              const lista = docSnap.data().lista || [];
+              lista.forEach((item: any) => {
+                if (item && item.commessaId && Number(item.percentuale) > 0) {
+                  myAssignedCommessaIds.add(item.commessaId);
+                }
+              });
+            }
+          });
+        }
+
+        const docsMap = new Map<string, any>();
+        const queries: Promise<any>[] = [];
+        const colRef = collection(db, 'catalogo_commesse');
+
+        if (effectiveAssociatedName) {
+          queries.push(getDocs(query(colRef, where('responsabile', '==', effectiveAssociatedName))));
+          queries.push(getDocs(query(colRef, where('pm', 'array-contains', effectiveAssociatedName))));
+          queries.push(getDocs(query(colRef, where('abilitatiExtra', 'array-contains', effectiveAssociatedName))));
+        }
+
+        const assignedIdsArray = Array.from(myAssignedCommessaIds).filter(Boolean);
+        if (assignedIdsArray.length > 0) {
+          for (let i = 0; i < assignedIdsArray.length; i += 30) {
+            const chunk = assignedIdsArray.slice(i, i + 30);
+            queries.push(getDocs(query(colRef, where(documentId(), 'in', chunk))));
+          }
+        }
+
+        if (queries.length > 0) {
+          const results = await Promise.all(queries);
+          results.forEach(snap => {
+            snap.docs.forEach((docSnap: any) => {
+              const data = docSnap.data();
+              if ((data.stato || 'Aperta') !== 'Chiusa') {
+                docsMap.set(docSnap.id, docSnap);
+              }
+            });
+          });
+        }
+
+        commesseDocs = Array.from(docsMap.values());
+      }
+
+      const commesseList = commesseDocs.map(mapDocToCommessa);
+      setCommesse(commesseList.sort((a, b) => a.nome.localeCompare(b.nome)));
+
       isPlanningLoadedRef.current = true;
       setIsPlanningLoaded(true);
     } catch (err) {
@@ -390,7 +520,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     } finally {
       isPlanningLoadingRef.current = false;
     }
-  }, []);
+  }, [user, impersonatedEmail, dipendenti, coordinatori, dynamicAdmins, dynamicHrs, dynamicDevs]);
 
   const loadAllCommesse = async () => {
     try {
@@ -398,28 +528,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         getDocs(collection(db, 'catalogo_commesse')),
         getDocs(collection(db, 'clienti'))
       ]);
-      const commesseList = allSnap.docs.map(doc => ({
-        id: doc.id,
-        nome: doc.data().nome || '',
-        colore: doc.data().colore || '#3b82f6',
-        dataInizio: doc.data().dataInizio || '',
-        dataFine: doc.data().dataFine || '',
-        responsabile: doc.data().responsabile || '',
-        pm: doc.data().pm || '',
-        codiceCommessa: doc.data().codiceCommessa || '',
-        anno: doc.data().anno || '',
-        tipologia: doc.data().tipologia || '',
-        cliente: doc.data().cliente || '',
-        stato: doc.data().stato || 'Aperta',
-        percorsoRete: doc.data().percorsoRete || '',
-        punchList: doc.data().punchList || [],
-        abilitatiExtra: Array.isArray(doc.data().abilitatiExtra) ? doc.data().abilitatiExtra : (doc.data().abilitatiExtra ? [doc.data().abilitatiExtra] : []),
-        giornateSeniorProject: doc.data().giornateSeniorProject,
-        giornateProject: doc.data().giornateProject,
-        giornateJuniorProject: doc.data().giornateJuniorProject,
-        apertaDa: doc.data().apertaDa || '',
-        progetti: doc.data().progetti || []
-      }));
+      const commesseList = allSnap.docs.map(mapDocToCommessa);
       setCommesse(commesseList.sort((a, b) => a.nome.localeCompare(b.nome)));
 
       const clientiList = clientiSnap.docs.map(doc => ({
@@ -440,6 +549,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     lastFetchTimestampRef.current = Date.now();
     await fetchAuthData();
     isPlanningLoadingRef.current = false;
+    isPlanningLoadedRef.current = false;
     await loadPlanningData();
   };
 
@@ -487,13 +597,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   // Calcolo ruoli derivati
   const realEmail = user?.email?.toLowerCase().trim() || '';
-  const isDevEmail = (email: string) => {
-    if (!email || typeof email !== 'string') return false;
-    const clean = email.toLowerCase().trim();
-    if (!clean) return false;
-    if (clean.includes('ebartalucci') || clean.includes('bartalucci')) return true;
-    return dynamicDevs.some(d => d && typeof d === 'string' && d.trim().toLowerCase() === clean);
-  };
   // isRealDev: riservato ESCLUSIVAMENTE a Emanuele Bartalucci (Lead Developer)
   // Consente l'abilitazione e l'uso dello strumento di simulazione utente (DevImpersonator)
   const isRealDev = realEmail.includes('bartalucci') || realEmail.includes('synerg');
@@ -501,7 +604,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   // Quando si impersonifica un utente, isDev valuta SOLO l'email simulata (userEmail),
   // così che la simulazione mostri l'esatta esperienza e permessi dell'utente impersonificato.
-  const isDev = isDevEmail(userEmail);
+  const isDev = isDevEmail(userEmail, dynamicDevs);
   const isSocio = userEmail.includes('aprofeti') || userEmail.includes('mcorbellini') || userEmail.includes('profeti') || userEmail.includes('corbellini');
 
   // isLeadDevActive: attivo solo per il Lead Developer (Emanuele Bartalucci) quando NON sta simulando un altro utente.
@@ -559,23 +662,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const isAccountCessato = Boolean(cessatoInfo?.isCessato);
 
-  const myDip = dipendenti.find(d => {
-    if (!userEmail) return false;
-    const uClean = userEmail.toLowerCase().trim();
-    const dEmail = (d.email || '').toLowerCase().trim();
-    if (dEmail && dEmail === uClean) return true;
-    const uUser = uClean.split('@')[0];
-    const dUser = dEmail.split('@')[0];
-    if (uUser && dUser && (uUser.includes(dUser) || dUser.includes(uUser))) return true;
-    return false;
-  });
-  const myAssociatedName = myDip ? myDip.nome : (userEmail ? (
-    userEmail.includes('ebartalucci') ? 'Emanuele Bartalucci' :
-    userEmail.includes('aprofeti') ? 'Andrea Profeti' :
-    userEmail.includes('mcorbellini') ? 'Marco Corbellini' :
-    userEmail.includes('taddei') ? 'Taddei Paolo' :
-    userEmail.includes('badalassi') ? 'Badalassi Federico' : null
-  ) : null);
+  const myAssociatedName = getAssociatedNameFromEmail(userEmail, dipendenti);
 
   // Listener real-time per priorità commesse (attivo solo quando la pianificazione è richiesta)
   useEffect(() => {

@@ -1,6 +1,6 @@
 import { db } from '../services/firebase';
 import { collection, getDocs } from 'firebase/firestore';
-import { createUserNotification } from './userNotificationService';
+import { createUserNotification, markOverdueNotificationsAsReadForTask } from './userNotificationService';
 
 const areNamesEqual = (n1?: string | null, n2?: string | null): boolean => {
   if (!n1 || !n2) return false;
@@ -55,19 +55,23 @@ export async function checkAndNotifyOverdueTasks(dipendentiList: any[] = []) {
     if (!commesseSnap.empty) {
       for (const commDoc of commesseSnap.docs) {
         const comm = { id: commDoc.id, ...commDoc.data() } as any;
+        if (comm.stato === 'Chiusa') continue;
         const punchList = comm.punchList;
         if (!punchList || !Array.isArray(punchList) || punchList.length === 0) continue;
 
         for (const task of punchList) {
-          if (!task.scadenza) continue;
-          if (task.stato === 'completato' || task.stato === 'eseguito' || task.done || task.categoria === 'completato' || task.categoria === 'approvato') continue;
+          const isDone = task.stato === 'completato' || task.stato === 'eseguito' || task.done || task.categoria === 'completato' || task.categoria === 'approvato';
+          const isNotOverdue = !task.scadenza || task.scadenza >= todayStr;
 
-          // Verifica condizione di scadenza
-          const scadenzaStr = task.scadenza;
-          if (scadenzaStr >= todayStr) {
+          if (isDone || isNotOverdue) {
+            // Se l'attività è stata completata o la sua scadenza è stata posticipata ad oggi o oltre,
+            // risolvi/segna come lette eventuali notifiche di scadenza ancora attive
+            await markOverdueNotificationsAsReadForTask(task.id, task.titolo);
             continue;
           }
 
+          // Verifica condizione di scadenza
+          const scadenzaStr = task.scadenza;
           if (scadenzaStr === yesterdayStr && currentHour < 9) {
             continue;
           }
@@ -76,7 +80,7 @@ export async function checkAndNotifyOverdueTasks(dipendentiList: any[] = []) {
           const catLabel = (task.categoria || 'da fare').toUpperCase();
           const taskTitle = task.titolo || 'Attività';
           const commName = comm.nome || 'Commessa';
-          const taskLink = `/todo?commessaId=${encodeURIComponent(comm.id)}`;
+          const taskLink = `/todo?commessaId=${encodeURIComponent(comm.id)}&taskId=${encodeURIComponent(task.id)}`;
 
           const assignees: string[] = Array.isArray(task.assegnatiA) && task.assegnatiA.length > 0
             ? task.assegnatiA.map((a: any) => String(a).trim()).filter(Boolean)
@@ -92,7 +96,9 @@ export async function checkAndNotifyOverdueTasks(dipendentiList: any[] = []) {
                 titolo: `⚠️ Attività ToDo scaduta: ${commName}`,
                 messaggio: `L'attività [${catLabel}] "${taskTitle}" nella commessa ${commName} è scaduta il ${formattedScadenza} e risulta ancora da completare.`,
                 tipo: 'todo_scaduto',
-                link: taskLink
+                link: taskLink,
+                taskId: task.id,
+                commessaId: comm.id
               });
             }
           }
@@ -114,7 +120,9 @@ export async function checkAndNotifyOverdueTasks(dipendentiList: any[] = []) {
                 titolo: `⚠️ Attività ToDo scaduta: ${commName}`,
                 messaggio: `L'attività [${catLabel}] "${taskTitle}" assegnata a ${assignees.join(', ') || 'Collaboratori'} nella commessa ${commName} è scaduta il ${formattedScadenza} e risulta ancora da completare.`,
                 tipo: 'todo_scaduto',
-                link: taskLink
+                link: taskLink,
+                taskId: task.id,
+                commessaId: comm.id
               });
             }
           }
@@ -127,14 +135,15 @@ export async function checkAndNotifyOverdueTasks(dipendentiList: any[] = []) {
       const genericSnap = await getDocs(collection(db, 'todos_generici'));
       for (const tDoc of genericSnap.docs) {
         const task = { id: tDoc.id, ...tDoc.data() } as any;
-        if (!task.scadenza) continue;
-        if (task.stato === 'completato' || task.stato === 'eseguito') continue;
+        const isDone = task.stato === 'completato' || task.stato === 'eseguito';
+        const isNotOverdue = !task.scadenza || task.scadenza >= todayStr;
 
-        const scadenzaStr = task.scadenza;
-        if (scadenzaStr >= todayStr) {
+        if (isDone || isNotOverdue) {
+          await markOverdueNotificationsAsReadForTask(task.id, task.titolo);
           continue;
         }
 
+        const scadenzaStr = task.scadenza;
         if (scadenzaStr === yesterdayStr && currentHour < 9) {
           continue;
         }
@@ -142,7 +151,7 @@ export async function checkAndNotifyOverdueTasks(dipendentiList: any[] = []) {
         const formattedScadenza = scadenzaStr.split('-').reverse().join('/');
         const catLabel = (task.categoria || 'da fare').toUpperCase();
         const taskTitle = task.titolo || 'Attività Generica';
-        const taskLink = '/todo';
+        const taskLink = `/todo?taskId=${encodeURIComponent(task.id)}`;
 
         const assignees: string[] = Array.isArray(task.assegnatiA) && task.assegnatiA.length > 0
           ? task.assegnatiA.map((a: any) => String(a).trim()).filter(Boolean)
@@ -158,7 +167,8 @@ export async function checkAndNotifyOverdueTasks(dipendentiList: any[] = []) {
               titolo: `⚠️ Attività Generica scaduta`,
               messaggio: `L'attività generica [${catLabel}] "${taskTitle}" a te assegnata è scaduta il ${formattedScadenza} ed è ancora da completare.`,
               tipo: 'todo_scaduto',
-              link: taskLink
+              link: taskLink,
+              taskId: task.id
             });
           }
         }
@@ -173,7 +183,8 @@ export async function checkAndNotifyOverdueTasks(dipendentiList: any[] = []) {
             titolo: `⚠️ Attività Generica scaduta`,
             messaggio: `L'attività generica [${catLabel}] "${taskTitle}" assegnata a ${assignees.join(', ') || 'Collaboratori'} è scaduta il ${formattedScadenza} ed è ancora da completare.`,
             tipo: 'todo_scaduto',
-            link: taskLink
+            link: taskLink,
+            taskId: task.id
           });
         }
       }

@@ -38,6 +38,7 @@ export interface SectionBadgeCounts {
   pianificazione: number;
   gestioneHr: number;
   commesse: number;
+  todo: number;
 }
 
 export interface OperativeNotificationItem {
@@ -129,7 +130,8 @@ export function useNotificationWatcher({
     presenze: 0,
     pianificazione: 0,
     gestioneHr: 0,
-    commesse: 0
+    commesse: 0,
+    todo: 0
   });
   
   // Traccia gli ID già noti per evitare di mandare notifiche desktop all'avvio su record vecchi già presenti
@@ -173,7 +175,8 @@ export function useNotificationWatcher({
         presenze: 0,
         pianificazione: 0,
         gestioneHr: 0,
-        commesse: 0
+        commesse: 0,
+        todo: 0
       });
       return;
     }
@@ -208,7 +211,8 @@ export function useNotificationWatcher({
       personalUnreadFerie: 0,
       personalUnreadPresenze: 0,
       personalUnreadCommesse: 0,
-      personalUnreadGestioneHr: 0
+      personalUnreadGestioneHr: 0,
+      personalUnreadTodo: 0
     };
 
     const updateAndNotify = () => {
@@ -248,7 +252,8 @@ export function useNotificationWatcher({
         presenze: countsMap.presenzeHR + countsMap.weekendHR + countsMap.sollecitiPresenzeUser + countsMap.personalUnreadPresenze,
         pianificazione: countsMap.disponibilitaCoord + countsMap.richiesteDisegnatoriCoord,
         gestioneHr: countsMap.suggerimentiHR,
-        commesse: countsMap.personalUnreadCommesse
+        commesse: countsMap.personalUnreadCommesse,
+        todo: countsMap.personalUnreadTodo
       });
 
       if (operativeCount > 0) {
@@ -954,14 +959,24 @@ export function useNotificationWatcher({
         let personalPresenze = 0;
         let personalCommesse = 0;
         let personalGestioneHr = 0;
+        let personalTodo = 0;
 
         unreadList.forEach(n => {
           const l = (n.link || '').toLowerCase();
-          if (l.includes('/forniture')) personalForniture++;
-          else if (l.includes('/ferie')) personalFerie++;
-          else if (l.includes('/presenze')) personalPresenze++;
-          else if (l.includes('/commesse')) personalCommesse++;
-          else if (l.includes('/gestione-hr')) personalGestioneHr++;
+          const t = n.tipo || '';
+          if (t.startsWith('todo_') || l.includes('/todo')) {
+            personalTodo++;
+          } else if (l.includes('/forniture')) {
+            personalForniture++;
+          } else if (l.includes('/ferie')) {
+            personalFerie++;
+          } else if (l.includes('/presenze')) {
+            personalPresenze++;
+          } else if (l.includes('/commesse')) {
+            personalCommesse++;
+          } else if (l.includes('/gestione-hr')) {
+            personalGestioneHr++;
+          }
         });
 
         countsMap.personalUnreadForniture = personalForniture;
@@ -969,6 +984,7 @@ export function useNotificationWatcher({
         countsMap.personalUnreadPresenze = personalPresenze;
         countsMap.personalUnreadCommesse = personalCommesse;
         countsMap.personalUnreadGestioneHr = personalGestioneHr;
+        countsMap.personalUnreadTodo = personalTodo;
 
         setUserNotifications(list);
         setUnreadUserNotificationsCount(unreadCount);
