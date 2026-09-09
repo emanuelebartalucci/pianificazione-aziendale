@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth, getAssociatedNameFromEmail } from '../contexts/AuthContext';
 import { 
   ListTodo, 
   X, 
@@ -14,7 +14,7 @@ import {
   Loader2, 
   ExternalLink, 
   Lock, 
-  Search,
+  Search, 
   AlertCircle
 } from 'lucide-react';
 import { 
@@ -29,8 +29,11 @@ import {
   getTodoAttachments, 
   getEligibleAssigneesForCommessa, 
   isUserInvolvedInCommessa, 
-  getAssignedCommessaIdsForUser 
+  getAssignedCommessaIdsForUser,
+  formatCommessaDisplay,
+  getCommessaTitleWithoutCode
 } from '../services/todoService';
+
 import AttachmentBadge from './AttachmentBadge';
 
 export interface TaskModalProps {
@@ -52,10 +55,11 @@ export default function TaskModal({
   defaultDate = '',
   onTaskSaved
 }: TaskModalProps) {
-  const { userEmail, myAssociatedName, dipendenti = [], commesse = [], assegnazioni = {} } = useAuth();
+  const { userEmail, myAssociatedName, dipendenti = [], commesse = [], assegnazioni = {}, updateCommessaPunchList } = useAuth();
 
   // Stati del form attività
   const [taskCategoria, setTaskCategoria] = useState<string>(TODO_CATEGORIE[0] || 'da fare');
+  const [taskPriorita, setTaskPriorita] = useState<'Alta' | 'Standard' | 'Bassa'>('Standard');
   const [taskCommessaId, setTaskCommessaId] = useState<string>('');
   const [taskTitolo, setTaskTitolo] = useState('');
   const [taskDescrizione, setTaskDescrizione] = useState('');
@@ -102,6 +106,7 @@ export default function TaskModal({
 
     if (editingTask) {
       setTaskCategoria(editingTask.categoria || TODO_CATEGORIE[0] || 'da fare');
+      setTaskPriorita(editingTask.priorita || 'Standard');
       setTaskCommessaId(fixedCommessaId || editingTask.commessaId || '');
       setTaskTitolo(editingTask.titolo || '');
       setTaskDescrizione(editingTask.descrizione || '');
@@ -116,6 +121,7 @@ export default function TaskModal({
       setTaskAllegati(getTodoAttachments(editingTask));
     } else {
       setTaskCategoria(TODO_CATEGORIE[0] || 'da fare');
+      setTaskPriorita('Standard'); // Default richiesto Standard
       setTaskCommessaId(fixedCommessaId || '');
       setTaskTitolo('');
       setTaskDescrizione('');
@@ -284,30 +290,40 @@ export default function TaskModal({
 
     setIsSavingTask(true);
     try {
-      const saved = await saveUnifiedTodo(
-        {
-          id: editingTask?.id,
-          commessaId: effectiveCommessaId,
-          titolo: taskTitolo,
-          descrizione: taskDescrizione,
-          categoria: taskCategoria,
-          scadenza: taskScadenza || undefined,
-          assegnatiA: taskAssegnatiA,
-          assegnatoA: taskAssegnatiA.join(', '),
-          stato: editingTask ? editingTask.stato : 'da_fare',
-          allegati: taskAllegati
-        },
-        {
-          name: myAssociatedName || 'Utente',
-          email: userEmail || ''
-        },
-        dipendenti || [],
-        commesse || []
-      );
+      const effectiveName = myAssociatedName || getAssociatedNameFromEmail(userEmail, dipendenti) || userEmail || 'Utente';
 
-      if (onTaskSaved) {
-        onTaskSaved(saved);
-      }
+      const saved = await saveUnifiedTodo(
+          {
+            id: editingTask?.id,
+            commessaId: effectiveCommessaId,
+            titolo: taskTitolo,
+            descrizione: taskDescrizione,
+            categoria: taskCategoria,
+            priorita: taskPriorita,
+            scadenza: taskScadenza || undefined,
+            assegnatiA: taskAssegnatiA,
+            assegnatoA: taskAssegnatiA.join(', '),
+            stato: editingTask ? editingTask.stato : 'da_fare',
+            allegati: taskAllegati
+          },
+          {
+            name: effectiveName,
+            email: userEmail || ''
+          },
+          dipendenti || [],
+          commesse || []
+        );
+
+        if (saved.tipo === 'commessa' && saved.commessaId && updateCommessaPunchList) {
+          const target = commesse.find(c => c.id === saved.commessaId);
+          if (target && target.punchList) {
+            updateCommessaPunchList(saved.commessaId, [...target.punchList]);
+          }
+        }
+
+        if (onTaskSaved) {
+          onTaskSaved(saved);
+        }
 
       onClose();
     } catch (err: any) {
@@ -352,9 +368,10 @@ export default function TaskModal({
               </div>
               <p className="text-xs text-gray-400 font-medium truncate">
                 {selectedTaskCommessaObj 
-                  ? `${selectedTaskCommessaObj.codiceCommessa ? `[${selectedTaskCommessaObj.codiceCommessa}] ` : ''}${selectedTaskCommessaObj.nome}`
+                  ? formatCommessaDisplay(selectedTaskCommessaObj.nome, selectedTaskCommessaObj.codiceCommessa)
                   : (editingTask ? 'Aggiorna i dettagli o le scadenze del compito' : 'Crea un nuovo promemoria o compito operativo')}
               </p>
+
             </div>
           </div>
           <button
@@ -421,7 +438,7 @@ export default function TaskModal({
                             [{selectedTaskCommessaObj.codiceCommessa}]
                           </span>
                         )}
-                        <span className="font-extrabold">{selectedTaskCommessaObj?.nome || 'Commessa selezionata'}</span>
+                        <span className="font-extrabold">{getCommessaTitleWithoutCode(selectedTaskCommessaObj?.nome, selectedTaskCommessaObj?.codiceCommessa) || 'Commessa selezionata'}</span>
                       </span>
                       {selectedTaskCommessaObj?.cliente && (
                         <span className="text-[10px] text-gray-500 font-normal truncate shrink-0">
@@ -439,7 +456,7 @@ export default function TaskModal({
                   <>
                     <button
                       type="button"
-                      title={selectedTaskCommessaObj ? `${selectedTaskCommessaObj.codiceCommessa ? `[${selectedTaskCommessaObj.codiceCommessa}] ` : ''}${selectedTaskCommessaObj.nome}${selectedTaskCommessaObj.cliente ? ` (Cliente: ${selectedTaskCommessaObj.cliente})` : ''}` : 'Nessuna commessa (Attività generica)'}
+                      title={selectedTaskCommessaObj ? formatCommessaDisplay(selectedTaskCommessaObj.nome, selectedTaskCommessaObj.codiceCommessa) + (selectedTaskCommessaObj.cliente ? ` (Cliente: ${selectedTaskCommessaObj.cliente})` : '') : 'Nessuna commessa (Attività generica)'}
                       onClick={() => {
                         setIsCommessaDropdownOpen(prev => !prev);
                         setIsColleaguesDropdownOpen(false);
@@ -457,7 +474,7 @@ export default function TaskModal({
                               {selectedTaskCommessaObj.codiceCommessa ? (
                                 <span className="font-mono text-indigo-600 mr-1.5 font-extrabold">[{selectedTaskCommessaObj.codiceCommessa}]</span>
                               ) : null}
-                              {selectedTaskCommessaObj.nome}
+                              {getCommessaTitleWithoutCode(selectedTaskCommessaObj.nome, selectedTaskCommessaObj.codiceCommessa)}
                             </span>
                             {selectedTaskCommessaObj.cliente && (
                               <span className="text-[10px] text-gray-400 font-normal truncate shrink-0">
@@ -471,6 +488,7 @@ export default function TaskModal({
                           </span>
                         )}
                       </div>
+
                       <ChevronDown className={`w-4 h-4 text-gray-400 shrink-0 transition-transform duration-200 ${isCommessaDropdownOpen ? 'rotate-180 text-indigo-600' : ''}`} />
                     </button>
 
@@ -540,8 +558,9 @@ export default function TaskModal({
                                           {c.codiceCommessa}
                                         </span>
                                       )}
-                                      <span className="truncate font-semibold">{c.nome}</span>
+                                      <span className="truncate font-semibold">{getCommessaTitleWithoutCode(c.nome, c.codiceCommessa)}</span>
                                     </div>
+
                                     {c.cliente && (
                                       <div className="text-[10px] text-gray-400 truncate mt-0.5">
                                         Cliente: {c.cliente}
@@ -732,17 +751,71 @@ export default function TaskModal({
                   </div>
                 </div>
 
-                {/* Data di Scadenza */}
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">
-                    Data di Scadenza (Opzionale)
-                  </label>
-                  <input
-                    type="date"
-                    value={taskScadenza}
-                    onChange={e => setTaskScadenza(e.target.value)}
-                    className="w-full px-3.5 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-900 outline-none focus:bg-white focus:ring-2 focus:ring-indigo-300 cursor-pointer"
-                  />
+                {/* Data di Scadenza & Priorità affiancate */}
+                <div className="grid grid-cols-1 sm:grid-cols-[1fr_1.35fr] gap-3">
+                  {/* Data di Scadenza */}
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">
+                      Data di Scadenza
+                    </label>
+                    <input
+                      type="date"
+                      value={taskScadenza}
+                      onChange={e => setTaskScadenza(e.target.value)}
+                      className="w-full px-3.5 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-900 outline-none focus:bg-white focus:ring-2 focus:ring-indigo-300 cursor-pointer"
+                    />
+                  </div>
+
+                  {/* Priorità */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider">
+                        Priorità
+                      </label>
+                      <span className="text-[10px] text-gray-400 font-medium">
+                        {taskPriorita === 'Alta' ? 'Urgente' : taskPriorita === 'Standard' ? 'Predefinita' : 'Differibile'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1 bg-gray-100/80 p-1 rounded-xl border border-gray-200">
+                      <button
+                        type="button"
+                        onClick={() => setTaskPriorita('Alta')}
+                        className={`flex-1 py-1.5 px-1 rounded-lg text-[11px] sm:text-xs font-bold transition-all cursor-pointer text-center whitespace-nowrap ${
+                          taskPriorita === 'Alta'
+                            ? 'bg-rose-600 text-white shadow-xs'
+                            : 'text-gray-600 hover:text-rose-700 hover:bg-rose-50'
+                        }`}
+                        title="Priorità Alta: compito urgente"
+                      >
+                        Alta
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTaskPriorita('Standard')}
+                        className={`flex-[1.3] py-1.5 px-1 rounded-lg text-[11px] sm:text-xs font-bold transition-all cursor-pointer text-center whitespace-nowrap ${
+                          taskPriorita === 'Standard'
+                            ? 'bg-indigo-600 text-white shadow-xs'
+                            : 'text-gray-600 hover:text-indigo-700 hover:bg-indigo-50'
+                        }`}
+                        title="Priorità Standard (predefinita)"
+                      >
+                        Standard
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTaskPriorita('Bassa')}
+                        className={`flex-1 py-1.5 px-1 rounded-lg text-[11px] sm:text-xs font-bold transition-all cursor-pointer text-center whitespace-nowrap ${
+                          taskPriorita === 'Bassa'
+                            ? 'bg-sky-600 text-white shadow-xs'
+                            : 'text-gray-600 hover:text-sky-800 hover:bg-sky-50'
+                        }`}
+                        title="Priorità Bassa: compito secondario"
+                      >
+                        Bassa
+                      </button>
+
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -771,7 +844,7 @@ export default function TaskModal({
 
                 {/* Lista degli elementi collegati */}
                 {taskAllegati.length > 0 && (
-                  <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1 custom-scrollbar">
+                  <div className="space-y-1.5 max-h-40 overflow-y-auto p-1 custom-scrollbar">
                     {taskAllegati.map(att => (
                       <div
                         key={att.id}

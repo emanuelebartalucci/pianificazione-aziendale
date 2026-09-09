@@ -14,8 +14,11 @@ import {
   isTaskAssignee,
   openAttachedPath,
   getTodoAttachments,
+  getPriorityScore,
+  formatCommessaDisplay,
   type UnifiedTodoItem 
 } from '../services/todoService';
+
 import { collection, addDoc, doc, deleteDoc, query, orderBy, where, getDoc, getDocs, updateDoc } from 'firebase/firestore';
 import ConfirmModal from '../components/ConfirmModal';
 import ClimaModal from '../components/ClimaModal';
@@ -157,14 +160,20 @@ export default function Dashboard() {
   const handleQuickCompleteTodo = async (task: UnifiedTodoItem, e: React.MouseEvent) => {
     e.stopPropagation();
     if (completingTaskId) return;
+    const completedByName = myAssociatedName || userEmail || 'Utente';
     try {
       setCompletingTaskId(task.id);
-      // Optimistic UI update:
-      setDashboardTodos(prev => prev.map(t => t.id === task.id ? { ...t, stato: 'completato' } : t));
+      // Optimistic UI update con nome corretto del completatore:
+      setDashboardTodos(prev => prev.map(t => t.id === task.id ? {
+        ...t,
+        stato: 'completato',
+        completatoDa: completedByName,
+        completatoIl: new Date().toISOString()
+      } : t));
       await toggleUnifiedTodoStatus(
         task, 
         'completato', 
-        { name: myAssociatedName || 'Utente', email: userEmail || '' }, 
+        { name: completedByName, email: userEmail || '' }, 
         dipendenti
       );
       showToast("Attività completata con successo! 🎉", "success");
@@ -177,15 +186,31 @@ export default function Dashboard() {
     }
   };
 
+
   const todayIso = useMemo(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }, []);
 
   const myDashboardPendingTasks = useMemo(() => {
-    return dashboardTodos.filter(t => {
+    const list = dashboardTodos.filter(t => {
       if (t.stato !== 'da_fare') return false;
       return isTaskAssignee(t, myAssociatedName);
+    });
+
+    // Ordina: prima per scadenza e, a parità di data, per priorità (Alta > Standard > Bassa)
+    return list.sort((a, b) => {
+      if (a.scadenza && !b.scadenza) return -1;
+      if (!a.scadenza && b.scadenza) return 1;
+      if (a.scadenza && b.scadenza) {
+        const cmpDate = a.scadenza.localeCompare(b.scadenza);
+        if (cmpDate !== 0) return cmpDate;
+      }
+      const scoreA = getPriorityScore(a.priorita);
+      const scoreB = getPriorityScore(b.priorita);
+      if (scoreA !== scoreB) return scoreB - scoreA;
+
+      return (b.creatoIl || '').localeCompare(a.creatoIl || '');
     });
   }, [dashboardTodos, myAssociatedName]);
 
@@ -908,6 +933,14 @@ export default function Dashboard() {
                           <span className="uppercase hidden sm:inline">{catProps.label}</span>
                         </span>
 
+                        {/* Badge priorità se Alta */}
+                        {task.priorita === 'Alta' && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black shrink-0 bg-rose-600 text-white shadow-2xs uppercase tracking-wider" title="Priorità Alta">
+                            <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                            Alta
+                          </span>
+                        )}
+
                         {/* Titolo */}
                         <span className="text-xs font-bold text-gray-800 truncate" title={task.titolo}>
                           {task.titolo}
@@ -915,10 +948,11 @@ export default function Dashboard() {
 
                         {/* Contesto (Commessa o Generico) */}
                         {task.tipo === 'commessa' && task.commessaNome && (
-                          <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 border border-blue-100 px-1.5 py-0.2 rounded truncate max-w-[120px] hidden md:inline" title={task.commessaNome}>
-                            {task.commessaCodice ? `${task.commessaCodice} ` : ''}{task.commessaNome}
+                          <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 border border-blue-100 px-1.5 py-0.2 rounded truncate max-w-[120px] hidden md:inline" title={formatCommessaDisplay(task.commessaNome, task.commessaCodice)}>
+                            {formatCommessaDisplay(task.commessaNome, task.commessaCodice)}
                           </span>
                         )}
+
 
                         {/* File o Cartelle collegate */}
                         {(() => {

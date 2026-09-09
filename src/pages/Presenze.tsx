@@ -1920,18 +1920,28 @@ export default function Presenze() {
   const saveCollabProfileRates = async (collabData: any, targetName?: string) => {
     try {
       const name = targetName || myAssociatedName;
-      if (!name) return;
+      if (!name || !collabData) return;
       const profile = dipendenti.find(d => d.nome.trim().toLowerCase() === name.trim().toLowerCase());
       if (profile) {
-        await updateDoc(doc(db, 'dipendenti', profile.id), {
-          dailyRate: collabData.dailyRate,
-          inpsRate: collabData.inpsRate,
-          ivaRate: collabData.ivaRate,
-          raRate: collabData.raRate,
-          importoFissoMensile: collabData.importoFissoMensile !== undefined && collabData.importoFissoMensile !== null ? Number(collabData.importoFissoMensile) : null,
-          bollo: collabData.bollo !== undefined && collabData.bollo !== null ? Number(collabData.bollo) : 0
-        });
-        await refreshData();
+        const updatePayload: any = {};
+        if (collabData.dailyRate !== undefined && collabData.dailyRate !== null) updatePayload.dailyRate = Number(collabData.dailyRate);
+        if (collabData.inpsRate !== undefined && collabData.inpsRate !== null) updatePayload.inpsRate = Number(collabData.inpsRate);
+        if (collabData.ivaRate !== undefined && collabData.ivaRate !== null) updatePayload.ivaRate = Number(collabData.ivaRate);
+        if (collabData.raRate !== undefined && collabData.raRate !== null) updatePayload.raRate = Number(collabData.raRate);
+        if (collabData.importoFissoMensile !== undefined) {
+          updatePayload.importoFissoMensile = (collabData.importoFissoMensile !== null && collabData.importoFissoMensile !== '')
+            ? Number(collabData.importoFissoMensile)
+            : null;
+        }
+        if (collabData.bollo !== undefined) {
+          updatePayload.bollo = (collabData.bollo !== null && collabData.bollo !== '')
+            ? Number(collabData.bollo)
+            : 0;
+        }
+        if (Object.keys(updatePayload).length > 0) {
+          await updateDoc(doc(db, 'dipendenti', profile.id), updatePayload);
+          await refreshData();
+        }
       }
     } catch (err) {
       console.error("Errore aggiornamento tariffe profilo:", err);
@@ -2287,7 +2297,12 @@ export default function Presenze() {
     if (!reviewingRapportino) return;
     const isCollab = isCollaboratore(reviewingRapportino.dipendenteNome, dipendenti);
     if (reviewingRapportino.stato === 'Bozza') {
-      showToast(isCollab ? "Impossibile approvare una bozza fattura in stato Bozza." : "Impossibile approvare un rapportino in stato Bozza.", "warning");
+      showToast(
+        isCollab 
+          ? "Questa bozza fattura è ancora in bozza e non è stata ancora inviata dal collaboratore. Il collaboratore deve cliccare su 'Invia all'HR' prima che tu possa approvarla." 
+          : "Questo foglio presenze è ancora in bozza e non è stato ancora inviato dal dipendente. Il dipendente deve prima cliccare su 'Invia all'HR'.", 
+        "warning"
+      );
       return;
     }
     setHrApproveMessage(reviewingRapportino.messaggioApprovazioneHR || '');
@@ -2303,13 +2318,17 @@ export default function Presenze() {
     try {
       const docRef = doc(db, 'presenze', reviewingRapportino.id);
       const cleanMessage = hrApproveMessage.trim();
-      const updated: RapportinoPresenze = {
+      const updated: any = {
         ...reviewingRapportino,
         stato: 'Approvato',
         approvedAt: new Date().toISOString(),
-        approvedBy: user?.email || myAssociatedName || 'HR',
-        messaggioApprovazioneHR: cleanMessage || undefined
+        approvedBy: user?.email || myAssociatedName || 'HR'
       };
+      if (cleanMessage) {
+        updated.messaggioApprovazioneHR = cleanMessage;
+      } else {
+        delete updated.messaggioApprovazioneHR;
+      }
       await setDoc(docRef, updated);
 
       if (isCollab && reviewingRapportino.collaboratoreData) {
@@ -2318,14 +2337,16 @@ export default function Presenze() {
 
       // Invia notifica personale informativa in-app al dipendente/collaboratore (solo se non è l'utente operante)
       // N.B. In conformità alle direttive di progetto: solo notifiche in-app, niente invio email per l'approvazione!
-      const isSelfTarget = (reviewingRapportino.dipendenteEmail?.toLowerCase() === (userEmail || '').toLowerCase()) || (myAssociatedName && areNamesEqual(reviewingRapportino.dipendenteNome, myAssociatedName));
-      if (reviewingRapportino.dipendenteEmail && !isSelfTarget) {
+      const targetProfile = dipendenti.find(d => d.nome.trim().toLowerCase() === reviewingRapportino.dipendenteNome.trim().toLowerCase());
+      const destEmail = reviewingRapportino.dipendenteEmail || targetProfile?.email || '';
+      const isSelfTarget = (destEmail.toLowerCase() === (userEmail || '').toLowerCase()) || (myAssociatedName && areNamesEqual(reviewingRapportino.dipendenteNome, myAssociatedName));
+      if (destEmail && !isSelfTarget) {
         const meseLabel = MESI[reviewingRapportino.mese - 1] || `Mese ${reviewingRapportino.mese}`;
         const baseMsg = `Il tuo ${isCollab ? 'prospetto bozza fattura' : 'foglio presenze'} di ${meseLabel} ${reviewingRapportino.anno} è stato approvato dall'HR.`;
         const fullMsg = cleanMessage ? `${baseMsg}\n\n💬 Messaggio HR: "${cleanMessage}"` : baseMsg;
 
         await createUserNotification({
-          destinatarioEmail: reviewingRapportino.dipendenteEmail,
+          destinatarioEmail: destEmail,
           destinatarioNome: reviewingRapportino.dipendenteNome,
           titolo: isCollab ? '✅ Bozza Fattura Approvata' : '✅ Foglio Presenze Approvato',
           messaggio: fullMsg,
@@ -2358,13 +2379,13 @@ export default function Presenze() {
       async () => {
         try {
           const docRef = doc(db, 'presenze', reviewingRapportino.id);
-          const updated: RapportinoPresenze = {
+          const updated: any = {
             ...reviewingRapportino,
-            stato: 'Inviato',
-            approvedAt: undefined,
-            approvedBy: undefined,
-            messaggioApprovazioneHR: undefined
+            stato: 'Inviato'
           };
+          delete updated.approvedAt;
+          delete updated.approvedBy;
+          delete updated.messaggioApprovazioneHR;
           await setDoc(docRef, updated);
 
           setReviewingRapportino(updated);
@@ -2399,11 +2420,13 @@ export default function Presenze() {
       loadPresenzeData();
 
       // Invia notifica al dipendente/collaboratore (se non è se stesso)
-      const isSelfTarget = (updated.dipendenteEmail?.toLowerCase() === userEmail?.toLowerCase()) || (myAssociatedName && updated.dipendenteNome === myAssociatedName);
-      if (updated.dipendenteEmail && !isSelfTarget) {
+      const targetEmpProfile = dipendenti.find(d => d.nome.trim().toLowerCase() === updated.dipendenteNome.trim().toLowerCase());
+      const destEmail = updated.dipendenteEmail || targetEmpProfile?.email || '';
+      const isSelfTarget = (destEmail.toLowerCase() === (userEmail || '').toLowerCase()) || (myAssociatedName && updated.dipendenteNome === myAssociatedName);
+      if (destEmail && !isSelfTarget) {
         const meseNome = MESI[selectedMonth - 1];
         await queueMail(
-          updated.dipendenteEmail,
+          destEmail,
           isCollabTarget 
             ? `[Pianificazione] Correzione richiesta per la tua Bozza Fattura - ${meseNome} ${selectedYear}`
             : `[Pianificazione] Correzione richiesta per il tuo Rapportino Presenze - ${meseNome} ${selectedYear}`,
@@ -2419,7 +2442,7 @@ export default function Presenze() {
         );
 
         await createUserNotification({
-          destinatarioEmail: updated.dipendenteEmail,
+          destinatarioEmail: destEmail,
           destinatarioNome: updated.dipendenteNome,
           titolo: isCollabTarget ? '⚠️ Modifica Bozza Fattura Richiesta' : '⚠️ Modifica Presenze Richiesta',
           messaggio: `L'HR richiede verifiche o correzioni per ${isCollabTarget ? 'la bozza di fattura' : 'il foglio presenze'} di ${meseNome} ${selectedYear}.`,

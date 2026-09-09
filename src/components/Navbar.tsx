@@ -90,7 +90,7 @@ export default function Navbar() {
     }
   };
 
-  const { user, isAdmin, isHR, isDev, myAssociatedName, userEmail, dipendenti, coordinatori } = useAuth();
+  const { user, isAdmin, isHR, isDev, myAssociatedName, userEmail, dipendenti, coordinatori, refreshCommesse } = useAuth();
   const { 
     totalPendingCount, 
     operativePendingCount,
@@ -435,6 +435,9 @@ export default function Navbar() {
       markNotificationAsRead(notif.id);
     }
     setIsNotifOpen(false);
+    if (notif.tipo === 'todo_assegnato' || notif.tipo === 'todo_completato' || notif.tipo === 'todo_scaduto') {
+      refreshCommesse?.();
+    }
     if (notif.link) {
       navigate(notif.link);
     }

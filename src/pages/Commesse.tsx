@@ -14,6 +14,7 @@ import { getPrintDateString, APP_VERSION } from '../config/version';
 import { TIPOLOGIE_COMMESSE, isSoci } from './Impostazioni';
 import { getCommesseNotificationEmails, sendNuovoClienteNotification } from '../utils/emailTemplateManager';
 import { triggerNativePicker, parseAttachmentPath, isSharedNetworkPath, type UnifiedTodoItem, getTodoAttachments } from '../services/todoService';
+
 import TaskModal from '../components/TaskModal';
 import AttachmentBadge from '../components/AttachmentBadge';
 
@@ -259,6 +260,7 @@ export default function Commesse() {
     prioritaCommesse = {},
     loadPlanningData,
     loadAllCommesse,
+    updateCommessaPunchList,
     refreshData,
     refreshDataIfStale
   } = useAuth();
@@ -774,7 +776,9 @@ export default function Commesse() {
     'fatturare': { label: 'Fatturare', icon: '💶', bg: 'bg-teal-50', text: 'text-teal-800', border: 'border-teal-200' },
     'firmare': { label: 'Firmare', icon: '✍️', bg: 'bg-rose-50', text: 'text-rose-800', border: 'border-rose-200' },
     'fissare appuntamento': { label: 'Fissare appuntamento', icon: '📅', bg: 'bg-amber-50', text: 'text-amber-800', border: 'border-amber-200' },
+    'intervento it': { label: 'Intervento IT', icon: '💻', bg: 'bg-indigo-50', text: 'text-indigo-800', border: 'border-indigo-300' },
     'inviare mail': { label: 'Inviare mail', icon: '✉️', bg: 'bg-blue-50', text: 'text-blue-800', border: 'border-blue-200' },
+
     'ordinare': { label: 'Ordinare', icon: '🛒', bg: 'bg-pink-50', text: 'text-pink-800', border: 'border-pink-200' },
     'pagare': { label: 'Pagare', icon: '💳', bg: 'bg-red-50', text: 'text-red-800', border: 'border-red-200' },
     'prenotare': { label: 'Prenotare', icon: '🎟️', bg: 'bg-orange-50', text: 'text-orange-800', border: 'border-orange-200' },
@@ -812,6 +816,7 @@ export default function Commesse() {
       assegnatoA: item.assegnatoA || assignees.join(', '),
       stato: (item.stato === 'completato' || item.stato === 'eseguito') ? 'completato' : 'da_fare',
       creatoDa: item.creatoDa,
+      creatoDaEmail: item.creatoDaEmail,
       creatoIl: item.creatoIl,
       completatoDa: item.completatoDa,
       completatoIl: item.completatoIl,
@@ -911,6 +916,7 @@ export default function Commesse() {
         creatoDa: item.creatoDa || 'Utente',
         creatoIl: item.creatoIl || new Date().toISOString()
       };
+      if (item.creatoDaEmail) cleanItem.creatoDaEmail = item.creatoDaEmail;
       if (item.descrizione && item.descrizione.trim()) cleanItem.descrizione = item.descrizione.trim();
       if (Array.isArray(item.assegnatiA)) cleanItem.assegnatiA = item.assegnatiA;
       if (item.scadenza) cleanItem.scadenza = item.scadenza;
@@ -940,6 +946,9 @@ export default function Commesse() {
     const target = commesse.find(c => c.id === commId);
     if (target) {
       target.punchList = cleanList;
+    }
+    if (updateCommessaPunchList) {
+      updateCommessaPunchList(commId, cleanList);
     }
     if (infoModalCommessa && infoModalCommessa.id === commId) {
       setInfoModalCommessa({ ...infoModalCommessa, punchList: cleanList });
@@ -6693,6 +6702,7 @@ export default function Commesse() {
                       const todayIso = new Date().toLocaleDateString('sv-SE');
                       const isOverdue = !done && task.scadenza && task.scadenza < todayIso;
                       const isToday = !done && task.scadenza && task.scadenza === todayIso;
+                      const prio = task.priorita || 'Standard';
                       const catConfig = CATEGORIA_CONFIG[task.categoria || 'da fare'] || CATEGORIA_CONFIG['da fare'];
                       const canToggle = canUserToggleTask(task, selectedCommessaForPunchList);
                       const canEditOrDelete = canUserEditOrDeleteTask(task, selectedCommessaForPunchList);
@@ -6710,13 +6720,27 @@ export default function Commesse() {
                           className={`rounded-2xl p-4 border transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-2xs hover:shadow-xs ${
                             done 
                               ? 'opacity-70 bg-gray-50/70 border-gray-200 border-l-4 border-l-gray-300' 
-                              : isAssignedToMe
-                                ? isOverdue 
-                                  ? 'border-red-300 bg-red-50/20 border-l-4 border-l-red-500 shadow-2xs' 
-                                  : isToday 
-                                    ? 'border-amber-300 bg-amber-50/20 border-l-4 border-l-amber-500 shadow-2xs' 
-                                    : 'border-indigo-100 bg-white border-l-4 border-l-indigo-600 hover:border-indigo-200 shadow-2xs'
-                                : 'bg-white border-slate-200 border-l-4 border-l-slate-300 hover:border-slate-300'
+                              : prio === 'Alta'
+                                ? isOverdue
+                                  ? 'border-red-400 bg-red-50/30 border-l-[6px] border-l-rose-700 shadow-xs'
+                                  : isToday
+                                    ? 'border-rose-300 bg-gradient-to-r from-rose-50/70 via-amber-50/20 to-white border-l-[6px] border-l-rose-600 shadow-xs'
+                                    : 'border-rose-200/90 bg-gradient-to-r from-rose-50/40 via-white to-white border-l-[5px] border-l-rose-600 hover:border-rose-300 shadow-xs'
+                                : prio === 'Bassa'
+                                  ? isOverdue
+                                    ? 'border-red-300 bg-red-50/20 border-l-4 border-l-red-500 shadow-xs'
+                                    : isToday
+                                      ? 'border-amber-300 bg-amber-50/20 border-l-4 border-l-amber-500 shadow-xs'
+                                      : isAssignedToMe
+                                        ? 'border-sky-200/90 bg-gradient-to-r from-sky-50/40 via-white to-white border-l-4 border-l-sky-500 hover:border-sky-300 shadow-xs'
+                                        : 'border-slate-200/80 bg-slate-50/40 border-l-4 border-l-slate-300 text-slate-700 hover:border-slate-300 shadow-xs'
+                                : isAssignedToMe
+                                  ? isOverdue 
+                                    ? 'border-red-300 bg-red-50/20 border-l-4 border-l-red-500 shadow-2xs' 
+                                    : isToday 
+                                      ? 'border-amber-300 bg-amber-50/20 border-l-4 border-l-amber-500 shadow-2xs' 
+                                      : 'border-indigo-100 bg-white border-l-4 border-l-indigo-600 hover:border-indigo-200 shadow-2xs'
+                                  : 'bg-white border-slate-200 border-l-4 border-l-slate-300 hover:border-slate-300'
                           }`}
                         >
                           
@@ -6758,6 +6782,19 @@ export default function Commesse() {
                                     <span>Assegnato a te</span>
                                   </span>
                                 )}
+
+                                {/* Badge Priorità */}
+                                <span className={`inline-flex items-center gap-1 text-[10px] uppercase px-2 py-0.5 rounded-md ${
+                                  prio === 'Alta'
+                                    ? 'bg-rose-600 text-white font-black shadow-xs tracking-wider border-transparent'
+                                    : prio === 'Standard'
+                                      ? 'bg-indigo-50 text-indigo-700 border border-indigo-200/80 font-bold'
+                                      : 'bg-sky-50 text-sky-700 border border-sky-200/80 font-bold'
+                                }`}>
+
+                                  {prio === 'Alta' && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse shrink-0" />}
+                                  <span>{prio}</span>
+                                </span>
 
                                 {/* Badge Categoria */}
                                 <span className={`inline-flex items-center gap-1 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border ${catConfig.bg} ${catConfig.text} ${catConfig.border}`}>
@@ -6812,7 +6849,7 @@ export default function Commesse() {
 
                               {/* Allegati collegati */}
                               {attachments.length > 0 && (
-                                <div className="pt-1 flex flex-wrap gap-2">
+                                <div className="pt-1 flex flex-wrap gap-2 p-1 -m-1">
                                   {attachments.map(att => (
                                     <AttachmentBadge
                                       key={att.id}
@@ -6829,7 +6866,12 @@ export default function Commesse() {
                               {/* Dettagli Autore / Completamento */}
                               <div className="text-[11px] text-gray-400 flex flex-wrap items-center gap-x-3 gap-y-0.5 pt-0.5 font-medium">
                                 <span>✍️ Creato da: <strong>{task.creatoDa}</strong></span>
-                                {task.completatoDa && <span className="text-emerald-700 font-bold">· ✓ Completato da: {task.completatoDa}</span>}
+                                {task.completatoDa && (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded-md">
+                                    <Check className="w-3 h-3 text-emerald-600 shrink-0" />
+                                    <span>Completata da: <strong className="font-extrabold">{task.completatoDa}</strong></span>
+                                  </span>
+                                )}
                               </div>
                             </div>
 
@@ -6916,6 +6958,7 @@ export default function Commesse() {
               assegnatoA: saved.assegnatoA,
               stato: saved.stato,
               creatoDa: saved.creatoDa,
+              creatoDaEmail: saved.creatoDaEmail,
               creatoIl: saved.creatoIl,
               completatoDa: saved.completatoDa,
               completatoIl: saved.completatoIl,
@@ -6938,6 +6981,9 @@ export default function Commesse() {
             const inCommesse = commesse.find(c => c.id === commId);
             if (inCommesse) {
               inCommesse.punchList = updatedList;
+            }
+            if (updateCommessaPunchList) {
+              updateCommessaPunchList(commId, updatedList);
             }
             if (loadPlanningData) loadPlanningData();
             if (refreshData) refreshData();

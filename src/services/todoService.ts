@@ -8,7 +8,8 @@ import {
   updateDoc, 
   deleteDoc, 
   query, 
-  where
+  where,
+  writeBatch
 } from 'firebase/firestore';
 import { createUserNotification, markOverdueNotificationsAsReadForTask } from '../utils/userNotificationService';
 import { areNamesEqual } from '../contexts/AuthContext';
@@ -24,6 +25,7 @@ export const TODO_CATEGORIE = [
   'fatturare',
   'firmare',
   'fissare appuntamento',
+  'intervento it',
   'inviare mail',
   'ordinare',
   'pagare',
@@ -33,6 +35,7 @@ export const TODO_CATEGORIE = [
   'scansionare',
   'stampare'
 ] as const;
+
 
 export type ToDoCategoria = typeof TODO_CATEGORIE[number];
 
@@ -53,6 +56,7 @@ export interface UnifiedTodoItem {
   titolo: string;
   descrizione?: string;
   categoria: string;
+  priorita?: 'Alta' | 'Standard' | 'Bassa'; // Priorità operativa (default: Standard)
   scadenza?: string; // YYYY-MM-DD
   assegnatiA: string[]; // Lista multi-assegnatari
   assegnatoA: string;   // Stringa retrocompatibile
@@ -78,6 +82,8 @@ export interface NotaPersonale {
   contenuto: string;
   colore: 'giallo' | 'blu' | 'verde' | 'rosa' | 'viola' | 'grigio';
   fissata?: boolean;
+  ordine?: number;
+  pilaId?: string;
   creataIl: string;
   aggiornataIl: string;
   // Collegamento a file o cartella su server / locale (retrocompatibile)
@@ -114,6 +120,15 @@ export function getTodoAttachments(item?: {
     }];
   }
   return [];
+}
+
+/**
+ * Punteggio numerico per ordinamento priorità: Alta = 3, Standard = 2, Bassa = 1
+ */
+export function getPriorityScore(priorita?: string): number {
+  if (priorita === 'Alta') return 3;
+  if (priorita === 'Bassa') return 1;
+  return 2; // Default per 'Standard' o valori non impostati
 }
 
 /**
@@ -461,7 +476,10 @@ export function getCategoryBadgeProps(cat?: string): { label: string; bg: string
       return { label: 'Prenotare', bg: 'bg-cyan-50', text: 'text-cyan-700', border: 'border-cyan-200', icon: '📅' };
     case 'fissare appuntamento':
       return { label: 'Appuntamento', bg: 'bg-violet-50', text: 'text-violet-700', border: 'border-violet-200', icon: '🤝' };
+    case 'intervento it':
+      return { label: 'Intervento IT', bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200', icon: '💻' };
     case 'attesa feedback':
+
       return { label: 'Attesa Feedback', bg: 'bg-yellow-50', text: 'text-yellow-800', border: 'border-yellow-200', icon: '⏳' };
     case 'archiviare':
       return { label: 'Archiviare', bg: 'bg-slate-50', text: 'text-slate-700', border: 'border-slate-200', icon: '📁' };
@@ -477,6 +495,40 @@ export function getCategoryBadgeProps(cat?: string): { label: string; bg: string
     default:
       return { label: 'Da Fare', bg: 'bg-gray-50', text: 'text-gray-700', border: 'border-gray-200', icon: '📋' };
   }
+}
+
+// ==========================================
+// HELPER FORMATTAZIONE COMMESSA
+// ==========================================
+
+/**
+ * Rimuove il codice commessa ridondante dall'inizio del titolo della commessa.
+ * Es: "U260000A - Gestione ufficio e attività varie" → "Gestione ufficio e attività varie"
+ * Se il codice non è presente nel titolo, restituisce il titolo invariato.
+ */
+export function getCommessaTitleWithoutCode(nome?: string, codice?: string): string {
+  if (!nome) return '';
+  if (!codice) return nome;
+  const clean = nome.trim();
+  const codePrefix1 = `${codice} - `;
+  const codePrefix2 = `${codice} — `;
+  if (clean.startsWith(codePrefix1)) return clean.slice(codePrefix1.length).trim();
+  if (clean.startsWith(codePrefix2)) return clean.slice(codePrefix2.length).trim();
+  if (clean.startsWith(codice)) return clean.slice(codice.length).replace(/^[\s\-—]+/, '').trim();
+  return clean;
+}
+
+/**
+ * Formatta la commessa nel formato uniforme "[Codice] Titolo" senza mai
+ * ripetere il codice due volte.
+ * Es: nome="U260000A - Gestione ufficio", codice="U260000A"
+ *  → "[U260000A] Gestione ufficio e attività varie"
+ */
+export function formatCommessaDisplay(nome?: string, codice?: string): string {
+  if (!nome) return '';
+  const title = getCommessaTitleWithoutCode(nome, codice);
+  if (codice) return `[${codice}] ${title}`;
+  return title;
 }
 
 // ==========================================
@@ -520,6 +572,23 @@ export function isTaskCreator(
   }
   if (cleanEmail && task.creatoDa && task.creatoDa.toLowerCase().trim() === cleanEmail) {
     return true;
+  }
+  // Tolleranza per prefisso email / username (es. e.bartalucci o p.taddei)
+  if (cleanEmail && task.creatoDa) {
+    const uName = cleanEmail.split('@')[0];
+    const cLower = task.creatoDa.toLowerCase().trim();
+    if (uName && (cLower === uName || cLower.includes(uName) || uName.includes(cLower))) {
+      return true;
+    }
+  }
+  // Tolleranza per singoli token significativi del nome (es. cognome o nome composti)
+  if (myAssociatedName && task.creatoDa) {
+    const tokensUser = myAssociatedName.toLowerCase().trim().split(/\s+/).filter(t => t.length > 2);
+    const tokensTask = task.creatoDa.toLowerCase().trim().split(/\s+/).filter(t => t.length > 2);
+    if (tokensUser.length > 0 && tokensTask.length > 0) {
+      const allMatch = tokensUser.every(u => tokensTask.some(t => t.includes(u) || u.includes(t)));
+      if (allMatch) return true;
+    }
   }
   return false;
 }
@@ -769,11 +838,13 @@ let lastGenericTodosFetch = 0;
 let unifiedTodosCache: UnifiedTodosCache | null = null;
 const GENERIC_TODOS_CACHE_TTL = 60 * 1000; // 60 secondi di validità cache
 
-export function invalidateGenericTodosCache() {
-  cachedGenericTodosRaw = null;
-  cachedGenericTodosUser = '';
-  lastGenericTodosFetch = 0;
+export function invalidateGenericTodosCache(clearRaw: boolean = false) {
   unifiedTodosCache = null;
+  if (clearRaw) {
+    cachedGenericTodosRaw = null;
+    cachedGenericTodosUser = '';
+    lastGenericTodosFetch = 0;
+  }
 }
 
 /**
@@ -851,6 +922,7 @@ export function buildUnifiedTodosFromData(
         titolo: p.titolo,
         descrizione: p.descrizione,
         categoria: p.categoria || 'da fare',
+        priorita: (p.priorita || 'Standard') as 'Alta' | 'Standard' | 'Bassa',
         scadenza: p.scadenza,
         assegnatiA: assegnatiList,
         assegnatoA: assegnatiList.length > 0 ? assegnatiList.join(', ') : (p.assegnatoA || 'Non assegnato'),
@@ -903,6 +975,7 @@ export function buildUnifiedTodosFromData(
         titolo: d.titolo || '',
         descrizione: d.descrizione,
         categoria: d.categoria || 'da fare',
+        priorita: (d.priorita || 'Standard') as 'Alta' | 'Standard' | 'Bassa',
         scadenza: d.scadenza,
         assegnatiA: assegnatiList,
         assegnatoA: assegnatiList.length > 0 ? assegnatiList.join(', ') : (d.assegnatoA || 'Non assegnato'),
@@ -921,7 +994,7 @@ export function buildUnifiedTodosFromData(
     }
   });
 
-  // 3. Ordinamento globale
+  // 3. Ordinamento globale predefinito (per Scadenza e Priorità)
   return unified.sort((a, b) => {
     if (a.stato === 'da_fare' && b.stato === 'completato') return -1;
     if (a.stato === 'completato' && b.stato === 'da_fare') return 1;
@@ -930,8 +1003,14 @@ export function buildUnifiedTodosFromData(
       if (a.scadenza && !b.scadenza) return -1;
       if (!a.scadenza && b.scadenza) return 1;
       if (a.scadenza && b.scadenza) {
-        return a.scadenza.localeCompare(b.scadenza);
+        const cmpDate = a.scadenza.localeCompare(b.scadenza);
+        if (cmpDate !== 0) return cmpDate;
       }
+      // A parità di data (o entrambe senza scadenza): prima priorità più alta
+      const scoreA = getPriorityScore(a.priorita);
+      const scoreB = getPriorityScore(b.priorita);
+      if (scoreA !== scoreB) return scoreB - scoreA;
+
       return (b.creatoIl || '').localeCompare(a.creatoIl || '');
     }
 
@@ -1089,6 +1168,7 @@ export async function saveUnifiedTodo(
     titolo: string;
     descrizione?: string;
     categoria: string;
+    priorita?: 'Alta' | 'Standard' | 'Bassa';
     scadenza?: string;
     assegnatiA?: string[];
     assegnatoA?: string;
@@ -1181,6 +1261,7 @@ export async function saveUnifiedTodo(
           ...item,
           titolo: task.titolo.trim(),
           categoria: task.categoria,
+          priorita: task.priorita || item.priorita || 'Standard',
           assegnatiA: assignedArray,
           assegnatoA: assignedStr,
           stato: task.stato || item.stato || 'da_fare'
@@ -1215,6 +1296,7 @@ export async function saveUnifiedTodo(
         id: taskId,
         titolo: task.titolo.trim(),
         categoria: task.categoria,
+        priorita: task.priorita || 'Standard',
         assegnatiA: assignedArray,
         assegnatoA: assignedStr,
         stato: 'da_fare',
@@ -1237,6 +1319,13 @@ export async function saveUnifiedTodo(
     }
 
     await updateDoc(commDocRef, { punchList: updatedList });
+
+    // Sincronizza immediatamente la commessa nell'array in-memory commesseList (se passato dal chiamante)
+    const targetComm = (commesseList || []).find(c => c.id === task.commessaId);
+    if (targetComm) {
+      targetComm.punchList = updatedList;
+    }
+
     invalidateGenericTodosCache();
 
     // Invia notifica se assegnato ad altri colleghi
@@ -1257,6 +1346,7 @@ export async function saveUnifiedTodo(
       titolo: finalItem.titolo,
       descrizione: finalItem.descrizione,
       categoria: finalItem.categoria,
+      priorita: finalItem.priorita || 'Standard',
       scadenza: finalItem.scadenza,
       assegnatiA: assignedArray,
       assegnatoA: finalItem.assegnatoA,
@@ -1286,6 +1376,7 @@ export async function saveUnifiedTodo(
     const payload: any = {
       titolo: task.titolo.trim(),
       categoria: task.categoria,
+      priorita: task.priorita || (existingSnap.exists() ? existingSnap.data()?.priorita : undefined) || 'Standard',
       assegnatiA: assignedArray,
       assegnatoA: assignedStr,
       stato
@@ -1318,6 +1409,15 @@ export async function saveUnifiedTodo(
       await updateDoc(todoDocRef, payload);
     }
 
+    if (cachedGenericTodosRaw) {
+      const itemData = { ...payload, id: taskId };
+      if (isNew) {
+        cachedGenericTodosRaw = [{ id: taskId, data: itemData }, ...cachedGenericTodosRaw];
+      } else {
+        cachedGenericTodosRaw = cachedGenericTodosRaw.map(d => d.id === taskId ? { id: taskId, data: itemData } : d);
+      }
+    }
+
     invalidateGenericTodosCache();
 
     // Invia notifica se assegnato ad altri colleghi
@@ -1335,6 +1435,7 @@ export async function saveUnifiedTodo(
       titolo: payload.titolo,
       descrizione: payload.descrizione,
       categoria: payload.categoria,
+      priorita: payload.priorita || 'Standard',
       scadenza: payload.scadenza,
       assegnatiA: assignedArray,
       assegnatoA: payload.assegnatoA,
@@ -1359,12 +1460,22 @@ export async function toggleUnifiedTodoStatus(
   task: UnifiedTodoItem,
   nextStatus: 'da_fare' | 'completato',
   updater: { name: string; email: string },
-  dipendentiList: any[] = []
+  dipendentiList: any[] = [],
+  commesseList: any[] = []
 ): Promise<void> {
   // Verifica permesso di completamento: SOLO le persone a cui è stato assegnato il compito
   if (!isTaskAssignee(task, updater.name)) {
     throw new Error("Solo le persone a cui è stato assegnato il compito possono segnarlo come completato o riaprirlo.");
   }
+
+  // Risoluzione robusta del nome reale del completatore
+  let resolvedUpdaterName = updater.name && updater.name.trim() && updater.name !== 'Utente' ? updater.name : '';
+  if (!resolvedUpdaterName && updater.email && dipendentiList.length > 0) {
+    const dip = dipendentiList.find(d => d.email && d.email.toLowerCase() === updater.email.toLowerCase());
+    if (dip?.nome) resolvedUpdaterName = dip.nome;
+  }
+  if (!resolvedUpdaterName) resolvedUpdaterName = updater.name || updater.email || 'Utente';
+  const resolvedUpdater = { ...updater, name: resolvedUpdaterName };
 
   const nowIso = new Date().toISOString();
 
@@ -1379,7 +1490,7 @@ export async function toggleUnifiedTodoStatus(
       if (item.id === task.id) {
         const u = { ...item, stato: nextStatus };
         if (nextStatus === 'completato') {
-          u.completatoDa = updater.name || updater.email;
+          u.completatoDa = resolvedUpdaterName;
           u.completatoIl = nowIso;
         } else {
           delete u.completatoDa;
@@ -1391,10 +1502,16 @@ export async function toggleUnifiedTodoStatus(
     });
 
     await updateDoc(commDocRef, { punchList: updatedList });
+
+    const targetComm = (commesseList || []).find(c => c.id === task.commessaId);
+    if (targetComm) {
+      targetComm.punchList = updatedList;
+    }
+
     invalidateGenericTodosCache();
 
     if (nextStatus === 'completato') {
-      await sendTaskCompletedNotification(task, commData.nome, dipendentiList, updater);
+      await sendTaskCompletedNotification(task, commData.nome, dipendentiList, resolvedUpdater);
       await markOverdueNotificationsAsReadForTask(task.id, task.titolo);
     }
   } else {
@@ -1403,7 +1520,7 @@ export async function toggleUnifiedTodoStatus(
       stato: nextStatus
     };
     if (nextStatus === 'completato') {
-      updatePayload.completatoDa = updater.name || updater.email;
+      updatePayload.completatoDa = resolvedUpdaterName;
       updatePayload.completatoIl = nowIso;
     } else {
       updatePayload.completatoDa = null;
@@ -1411,14 +1528,25 @@ export async function toggleUnifiedTodoStatus(
     }
 
     await updateDoc(todoDocRef, updatePayload);
+
+    if (cachedGenericTodosRaw) {
+      cachedGenericTodosRaw = cachedGenericTodosRaw.map(d => {
+        if (d.id === task.id) {
+          return { ...d, data: { ...d.data, ...updatePayload } };
+        }
+        return d;
+      });
+    }
+
     invalidateGenericTodosCache();
 
     if (nextStatus === 'completato') {
-      await sendTaskCompletedNotification(task, 'Attività Generica', dipendentiList, updater);
+      await sendTaskCompletedNotification(task, 'Attività Generica', dipendentiList, resolvedUpdater);
       await markOverdueNotificationsAsReadForTask(task.id, task.titolo);
     }
   }
 }
+
 
 /**
  * Elimina un ToDo
@@ -1447,9 +1575,20 @@ export async function deleteUnifiedTodo(
     const list: any[] = Array.isArray(commData.punchList) ? commData.punchList : [];
     const filtered = list.filter(i => i.id !== task.id);
     await updateDoc(commDocRef, { punchList: filtered });
+
+    const targetComm = (commesseList || []).find(c => c.id === task.commessaId);
+    if (targetComm) {
+      targetComm.punchList = filtered;
+    }
+
     invalidateGenericTodosCache();
   } else {
     await deleteDoc(doc(db, 'todos_generici', task.id));
+
+    if (cachedGenericTodosRaw) {
+      cachedGenericTodosRaw = cachedGenericTodosRaw.filter(d => d.id !== task.id);
+    }
+
     invalidateGenericTodosCache();
   }
 }
@@ -1480,6 +1619,8 @@ async function sendTaskAssignedNotification(
                    areNamesEqual(targetDip.nome, creator.name);
     if (isSelf) continue;
 
+    const notifLink = `/todo?notifTime=${Date.now()}&taskId=${task.id || ''}${task.commessaId ? `&commessaId=${task.commessaId}` : ''}`;
+
     try {
       await createUserNotification({
         destinatarioEmail: targetDip.email,
@@ -1487,7 +1628,7 @@ async function sendTaskAssignedNotification(
         titolo: `📋 Nuova attività ToDo: ${contextTitle}`,
         messaggio: `${creator.name || 'Un collega'} ti ha assegnato [${catProps.label}] "${task.titolo}"${deadlineStr}.`,
         tipo: 'todo_assegnato',
-        link: '/todo'
+        link: notifLink
       });
     } catch (err) {
       console.error("Errore invio notifica assegnazione:", err);
@@ -1497,11 +1638,22 @@ async function sendTaskAssignedNotification(
 
 async function sendTaskCompletedNotification(
   task: UnifiedTodoItem,
-  contextTitle: string,
+  _contextTitle: string,
   dipendentiList: any[],
   updater: { name: string; email: string }
 ) {
+
   if (!task.creatoDa || !task.creatoDa.trim()) return;
+
+  // Risoluzione robusta: cerca il nome reale del completatore dall'array dipendenti (lookup per email)
+  let updaterName = updater.name && updater.name.trim() && updater.name !== 'Utente' ? updater.name : '';
+  if (!updaterName && updater.email) {
+    const updaterDip = dipendentiList.find(d =>
+      d.email && d.email.toLowerCase() === updater.email.toLowerCase()
+    );
+    if (updaterDip?.nome) updaterName = updaterDip.nome;
+  }
+  if (!updaterName) updaterName = updater.name || updater.email || 'Un collega';
 
   const creatorDip = dipendentiList.find(d => 
     areNamesEqual(d.nome, task.creatoDa) || 
@@ -1513,24 +1665,27 @@ async function sendTaskCompletedNotification(
   if (!targetEmail) return;
 
   const isSelf = targetEmail.toLowerCase() === (updater.email || '').toLowerCase() ||
-                 areNamesEqual(targetName, updater.name);
+                 areNamesEqual(targetName, updaterName);
   if (isSelf) return;
 
   const catProps = getCategoryBadgeProps(task.categoria);
+  const commessaInfo = task.commessaNome ? ` (Commessa: ${getCommessaTitleWithoutCode(task.commessaNome, task.commessaCodice)})` : '';
+  const notifLink = `/todo?notifTime=${Date.now()}&taskId=${task.id || ''}${task.commessaId ? `&commessaId=${task.commessaId}` : ''}`;
 
   try {
     await createUserNotification({
       destinatarioEmail: targetEmail,
       destinatarioNome: targetName,
-      titolo: `✅ Attività ToDo completata: ${contextTitle}`,
-      messaggio: `${updater.name || 'Un collega'} ha completato l'attività [${catProps.label}] "${task.titolo}".`,
+      titolo: `✅ ${updaterName} ha completato un'attività: ${task.titolo}`,
+      messaggio: `${updaterName} ha completato l'attività [${catProps.label}] "${task.titolo}"${commessaInfo}.`,
       tipo: 'todo_completato',
-      link: '/todo'
+      link: notifLink
     });
   } catch (err) {
     console.error("Errore invio notifica completamento:", err);
   }
 }
+
 
 // ==========================================
 // SEZIONE NOTE PERSONALI (PRIVATE AL 100%)
@@ -1582,10 +1737,13 @@ export async function fetchPersonalNotes(userEmail: string, forceRefresh = false
       } as NotaPersonale);
     });
 
-    // Ordina: prima le fissate (pin), poi per data aggiornamento decrescente
+    // Ordina: se hanno ordine definito, rispetta ordine crescente; altrimenti data decrescente
     const sorted = notes.sort((a, b) => {
-      if (a.fissata && !b.fissata) return -1;
-      if (!a.fissata && b.fissata) return 1;
+      if (typeof a.ordine === 'number' && typeof b.ordine === 'number') {
+        return a.ordine - b.ordine;
+      }
+      if (typeof a.ordine === 'number') return -1;
+      if (typeof b.ordine === 'number') return 1;
       return (b.aggiornataIl || b.creataIl).localeCompare(a.aggiornataIl || a.creataIl);
     });
 
@@ -1609,6 +1767,8 @@ export async function savePersonalNote(
     contenuto: string;
     colore?: 'giallo' | 'blu' | 'verde' | 'rosa' | 'viola' | 'grigio';
     fissata?: boolean;
+    ordine?: number;
+    pilaId?: string;
     allegatoPercorso?: string;
     allegatoNome?: string;
     allegatoTipo?: 'file' | 'cartella';
@@ -1663,6 +1823,15 @@ export async function savePersonalNote(
     aggiornataIl: nowIso
   };
 
+  if (note.pilaId !== undefined) {
+    payload.pilaId = note.pilaId || null;
+  }
+  if (typeof note.ordine === 'number') {
+    payload.ordine = note.ordine;
+  } else if (!existing.exists()) {
+    payload.ordine = 0;
+  }
+
   if (normalizedAllegati.length > 0) {
     payload.allegati = normalizedAllegati;
     payload.allegatoPercorso = firstAtt ? firstAtt.percorso : null;
@@ -1693,6 +1862,8 @@ export async function savePersonalNote(
     contenuto: payload.contenuto,
     colore: payload.colore,
     fissata: payload.fissata,
+    ordine: typeof payload.ordine === 'number' ? payload.ordine : undefined,
+    pilaId: payload.pilaId || undefined,
     creataIl: existing.exists() ? existing.data()?.creataIl : nowIso,
     aggiornataIl: nowIso,
     allegatoPercorso: payload.allegatoPercorso || undefined,
@@ -1701,6 +1872,32 @@ export async function savePersonalNote(
     allegatoEstensione: payload.allegatoEstensione || undefined,
     allegati: normalizedAllegati
   };
+}
+
+export async function reorderPersonalNotes(notes: NotaPersonale[], userEmail: string): Promise<void> {
+  if (!userEmail || !notes || notes.length === 0) return;
+  const cleanEmail = userEmail.toLowerCase().trim();
+
+  // Aggiorna subito la cache in memoria per massima reattività
+  if (personalNotesCache && personalNotesCache.userEmail === cleanEmail) {
+    personalNotesCache.notes = notes;
+    personalNotesCache.timestamp = Date.now();
+  }
+
+  try {
+    const batch = writeBatch(db);
+    notes.forEach((note, index) => {
+      const noteRef = doc(db, 'note_personali', note.id);
+      batch.update(noteRef, {
+        ordine: index,
+        pilaId: note.pilaId || null
+      });
+    });
+    await batch.commit();
+  } catch (err) {
+    console.error("Errore salvataggio riordinamento note:", err);
+    throw err;
+  }
 }
 
 export async function deletePersonalNote(noteId: string): Promise<void> {

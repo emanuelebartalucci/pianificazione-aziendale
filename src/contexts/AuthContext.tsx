@@ -89,6 +89,7 @@ export const TODO_CATEGORIE = [
   'fatturare',
   'firmare',
   'fissare appuntamento',
+  'intervento it',
   'inviare mail',
   'ordinare',
   'pagare',
@@ -98,6 +99,7 @@ export const TODO_CATEGORIE = [
   'scansionare',
   'stampare'
 ] as const;
+
 
 export type ToDoCategoria = typeof TODO_CATEGORIE[number];
 
@@ -112,6 +114,7 @@ export interface TodoAttachment {
 export interface PunchListItem {
   id: string;
   categoria?: string; // una delle 18 categorie TODO_CATEGORIE
+  priorita?: 'Alta' | 'Standard' | 'Bassa'; // Priorità operativa (default: Standard)
   titolo: string;
   descrizione?: string;
   scadenza?: string; // YYYY-MM-DD
@@ -119,6 +122,7 @@ export interface PunchListItem {
   assegnatoA: string; // Nome dipendente incaricato (retrocompatibile)
   stato: 'da_fare' | 'completato' | 'eseguito' | 'da_rivedere';
   creatoDa: string;
+  creatoDaEmail?: string;
   creatoIl: string; // ISO date
   completatoDa?: string;
   completatoIl?: string;
@@ -219,6 +223,8 @@ interface AuthContextType {
   prioritaCommesse: Record<string, 'Alta' | 'Standard' | 'Bassa'>;
   isPlanningLoaded: boolean;
   loadPlanningData: () => Promise<void>;
+  updateCommessaPunchList: (commessaId: string, punchList: PunchListItem[]) => void;
+  refreshCommesse: () => Promise<void>;
   refreshData: () => Promise<void>;
   refreshDataIfStale: () => Promise<void>;
   loadAllCommesse?: () => Promise<void>;
@@ -476,6 +482,28 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  // Aggiornamento reattivo immediato della punchList di una commessa nello stato in-memory
+  const updateCommessaPunchList = useCallback((commessaId: string, updatedPunchList: PunchListItem[]) => {
+    setCommesse(prev => prev.map(c => c.id === commessaId ? { ...c, punchList: updatedPunchList } : c));
+  }, []);
+
+  // Refresh rapido mirato delle commesse aperte da Firestore (per sincronizzare i ToDo di commessa senza ricaricare tutta l'app)
+  const refreshCommesse = useCallback(async () => {
+    try {
+      const qOpen = query(collection(db, 'catalogo_commesse'), where('stato', '!=', 'Chiusa'));
+      let snapOpen = await getDocs(qOpen);
+      let docs = snapOpen.docs;
+      if (docs.length === 0) {
+        const snapAll = await getDocs(collection(db, 'catalogo_commesse'));
+        docs = snapAll.docs.filter(d => (d.data().stato || 'Aperta') !== 'Chiusa');
+      }
+      const list = docs.map(mapDocToCommessa);
+      setCommesse(list.sort((a, b) => a.nome.localeCompare(b.nome)));
+    } catch (err) {
+      console.error("Errore refresh rapido commesse:", err);
+    }
+  }, []);
+
   // Timestamp dell'ultimo fetch completo (per throttle refreshDataIfStale)
   const lastFetchTimestampRef = useRef<number>(0);
 
@@ -678,6 +706,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       prioritaCommesse,
       isPlanningLoaded,
       loadPlanningData,
+      updateCommessaPunchList,
+      refreshCommesse,
       refreshData,
       refreshDataIfStale,
       loadAllCommesse,

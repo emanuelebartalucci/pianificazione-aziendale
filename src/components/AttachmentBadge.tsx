@@ -75,7 +75,7 @@ export function AttachmentBadge({
       onClick={clickable ? handleClick : undefined}
       title={`📁 Percorso: ${percorso}\nClicca per aprire direttamente in Windows`}
       className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-bold border transition-all ${visual.bg} ${visual.text} ${visual.border} ${
-        clickable ? 'hover:shadow-md hover:scale-[1.02] cursor-pointer active:scale-95' : ''
+        clickable ? 'hover:shadow-md hover:-translate-y-0.5 cursor-pointer active:translate-y-0 active:scale-[0.98]' : ''
       }`}
     >
       <span className="shrink-0">
