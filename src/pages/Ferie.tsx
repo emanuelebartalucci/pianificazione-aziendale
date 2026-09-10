@@ -1558,7 +1558,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
       return;
     }
 
-    if ((tipoRichiesta === 'permesso' || tipoRichiesta === 'assenza') && frazioneTipo === 'orario') {
+    if ((tipoRichiesta === 'permesso' || tipoRichiesta === 'assenza' || tipoRichiesta === 'smart' || tipoRichiesta === 'ex_l104' || tipoRichiesta === 'studio') && frazioneTipo === 'orario') {
       if (!oraInizio || !oraFine) {
         showToast("Inserisci l'ora di inizio e di fine dell'assenza.", "warning");
         return;
@@ -1675,7 +1675,7 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
         payload.dataFine = dataFine;
       }
 
-      if (tipoRichiesta === 'permesso' || tipoRichiesta === 'assenza' || tipoRichiesta === 'smart') {
+      if (tipoRichiesta === 'permesso' || tipoRichiesta === 'assenza' || tipoRichiesta === 'smart' || tipoRichiesta === 'ex_l104' || tipoRichiesta === 'studio') {
         payload.frazioneTipo = frazioneTipo;
         if (frazioneTipo === 'orario') {
           payload.oraInizio = oraInizio;
@@ -3523,14 +3523,17 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                       <div className="grid grid-cols-2 gap-2.5">
                         {[
                           { value: 'giornata', label: 'Giornata Intera' },
-                          { value: 'mattina', label: 'Solo Mattina (AM)' },
-                          { value: 'pomeriggio', label: 'Solo Pomeriggio (PM)' },
                           { value: 'orario', label: 'Orario Specifico' }
                         ].map((item) => (
                           <button
                             key={item.value}
                             type="button"
-                            onClick={() => setFrazioneTipo(item.value as any)}
+                            onClick={() => {
+                              setFrazioneTipo(item.value as any);
+                              if (item.value !== 'giornata') {
+                                setRequestMode('singolo');
+                              }
+                            }}
                             className={`p-3 rounded-xl border text-xs font-bold text-center transition-all ${
                               frazioneTipo === item.value
                                 ? 'bg-green-600 text-white border-transparent shadow-sm'
@@ -4375,11 +4378,14 @@ const FerieContent = memo(({ isHR, isAdmin, myAssociatedName, dipendenti }: Feri
                         <label className="block text-[11px] font-black text-gray-800 uppercase tracking-wider">
                           {modTipo === 'smart' ? 'Frazionamento Lavoro da Casa' : (modTipo === 'assenza' ? 'Frazionamento Assenza' : 'Frazionamento Permesso')}
                         </label>
+                        {(modFrazioneTipo === 'mattina' || modFrazioneTipo === 'pomeriggio') && (
+                          <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 px-3 py-2 rounded-xl">
+                            Valore attuale registrato in precedenza: <strong>{modFrazioneTipo === 'mattina' ? 'Solo Mattina (AM)' : 'Solo Pomeriggio (PM)'}</strong>. Seleziona <em>Giornata Intera</em> o <em>Orario Specifico</em> per aggiornarlo.
+                          </div>
+                        )}
                         <div className="grid grid-cols-2 gap-2">
                           {[
                             { value: 'giornata', label: 'Giornata Intera' },
-                            { value: 'mattina', label: 'Solo Mattina (AM)' },
-                            { value: 'pomeriggio', label: 'Solo Pomeriggio (PM)' },
                             { value: 'orario', label: 'Orario Specifico' }
                           ].map((item) => (
                             <button

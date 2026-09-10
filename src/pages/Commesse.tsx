@@ -769,6 +769,7 @@ export default function Commesse() {
     'aggiornare': { label: 'Aggiornare', icon: '🔄', bg: 'bg-blue-50', text: 'text-blue-800', border: 'border-blue-300' },
     'archiviare': { label: 'Archiviare', icon: '🗄️', bg: 'bg-gray-100', text: 'text-gray-800', border: 'border-gray-300' },
     'attesa feedback': { label: 'Attesa feedback', icon: '⏳', bg: 'bg-yellow-50', text: 'text-yellow-800', border: 'border-yellow-300' },
+    'bim/cad': { label: 'BIM/CAD', icon: '📐', bg: 'bg-cyan-50', text: 'text-cyan-800', border: 'border-cyan-300' },
     'chiamare': { label: 'Chiamare', icon: '📞', bg: 'bg-emerald-50', text: 'text-emerald-800', border: 'border-emerald-200' },
     'consegnare': { label: 'Consegnare', icon: '🚚', bg: 'bg-lime-50', text: 'text-lime-800', border: 'border-lime-300' },
     'da fare': { label: 'Da fare', icon: '📋', bg: 'bg-purple-50', text: 'text-purple-800', border: 'border-purple-200' },
@@ -5451,7 +5452,7 @@ export default function Commesse() {
                     Scheda Informativa Commessa
                   </h3>
                   <p className="text-xs text-gray-500 font-semibold">
-                    Dettagli strutturali e progetti associati (Sola Lettura)
+                    Dettagli strutturali (Sola Lettura)
                   </p>
                 </div>
               </div>
@@ -5586,78 +5587,6 @@ export default function Commesse() {
                 )}
               </div>
 
-              {/* Sezione Dettaglio Progetti & SGQ (Sola Lettura) */}
-              <div className="bg-gradient-to-br from-indigo-50/40 to-slate-50 p-5 rounded-2xl border border-indigo-100/70 space-y-3">
-                <h4 className="text-xs font-black text-indigo-950 uppercase tracking-wide flex items-center gap-1.5 border-b border-indigo-100 pb-2">
-                  🔀 Dettaglio Progetti & Utenti Abilitati
-                </h4>
-
-                <div className="space-y-3">
-                  {(!Array.isArray(infoModalCommessa.progetti) || infoModalCommessa.progetti.length === 0) ? (
-                    <p className="text-xs text-slate-400 italic">Nessun dettaglio progetto specificato per questa commessa.</p>
-                  ) : (
-                    infoModalCommessa.progetti.map((progetto: any, idx: number) => {
-                      const utenti = progetto.utentiDaAbilitare || progetto.utentiAbilitati || [];
-                      const verificatori = progetto.verificatori || [];
-
-                      return (
-                        <div key={idx} className="bg-white p-4 rounded-xl border border-slate-200/80 shadow-xs space-y-2.5">
-                          <div className="font-extrabold text-slate-900 text-xs sm:text-sm">
-                            {progetto.descrizione || '(Nessuna descrizione)'}
-                          </div>
-
-                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 text-xs pt-2 border-t border-slate-100">
-                            <div>
-                              <span className="text-slate-400 text-[10px] font-bold uppercase block">Project Manager</span>
-                              <span className="font-bold text-slate-800">{progetto.pm || 'Non assegnato'}</span>
-                            </div>
-
-                            <div>
-                              <span className="text-slate-400 text-[10px] font-bold uppercase block">Abilitazione SGQ</span>
-                              <span className={`font-black ${progetto.sgq === 'SI' ? 'text-indigo-700' : 'text-slate-600'}`}>
-                                {progetto.sgq === 'SI' ? '✓ SI (SGQ Abilitato)' : 'NO'}
-                              </span>
-                            </div>
-
-                            <div>
-                              <span className="text-slate-400 text-[10px] font-bold uppercase block">Giornate Stimate</span>
-                              <span className="font-bold text-slate-700">
-                                Senior: {progetto.giornateSenior || 0} gg | Project: {progetto.giornateProject || 0} gg | Junior: {progetto.giornateJunior || 0} gg
-                              </span>
-                            </div>
-                          </div>
-
-                          {utenti.length > 0 && (
-                            <div className="pt-2 border-t border-slate-100">
-                              <span className="text-[10px] font-bold text-emerald-800 uppercase block mb-1">Utenti Abilitati sul Progetto</span>
-                              <div className="flex flex-wrap gap-1">
-                                {utenti.map((u: string) => (
-                                  <span key={u} className="bg-emerald-50 text-emerald-800 border border-emerald-200/80 px-2 py-0.5 rounded-md text-[10px] font-bold">
-                                    {u}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-
-                          {progetto.sgq === 'SI' && verificatori.length > 0 && (
-                            <div className="pt-1">
-                              <span className="text-[10px] font-bold text-indigo-800 uppercase block mb-1">Verificatori / Validatori SGQ</span>
-                              <div className="flex flex-wrap gap-1">
-                                {verificatori.map((v: string) => (
-                                  <span key={v} className="bg-indigo-50 text-indigo-800 border border-indigo-200/80 px-2 py-0.5 rounded-md text-[10px] font-bold">
-                                    {v}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
 
             </div>
 

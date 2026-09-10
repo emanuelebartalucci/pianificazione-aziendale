@@ -18,6 +18,7 @@ export const TODO_CATEGORIE = [
   'aggiornare',
   'archiviare',
   'attesa feedback',
+  'bim/cad',
   'chiamare',
   'consegnare',
   'da fare',
@@ -478,6 +479,8 @@ export function getCategoryBadgeProps(cat?: string): { label: string; bg: string
       return { label: 'Appuntamento', bg: 'bg-violet-50', text: 'text-violet-700', border: 'border-violet-200', icon: '🤝' };
     case 'intervento it':
       return { label: 'Intervento IT', bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200', icon: '💻' };
+    case 'bim/cad':
+      return { label: 'BIM/CAD', bg: 'bg-cyan-50', text: 'text-cyan-800', border: 'border-cyan-300', icon: '📐' };
     case 'attesa feedback':
 
       return { label: 'Attesa Feedback', bg: 'bg-yellow-50', text: 'text-yellow-800', border: 'border-yellow-200', icon: '⏳' };

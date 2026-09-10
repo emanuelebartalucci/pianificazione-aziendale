@@ -481,6 +481,8 @@ export default function Presenze() {
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [decorrenzaGiorno, setDecorrenzaGiorno] = useState<number>(1);
+  const [decorrenzaMese, setDecorrenzaMese] = useState<number>(() => new Date().getMonth() + 1);
+  const [decorrenzaAnno, setDecorrenzaAnno] = useState<number>(() => new Date().getFullYear());
   const [localOrarioSettimanale, setLocalOrarioSettimanale] = useState<Record<string, number | ''>>({ lun: 8, mar: 8, mer: 8, gio: 8, ven: 8 });
 
   useEffect(() => {
@@ -490,6 +492,10 @@ export default function Presenze() {
       const h = profile.oreContratto;
       setLocalOrarioSettimanale({ lun: h, mar: h, mer: h, gio: h, ven: h });
     }
+    const n = new Date();
+    setDecorrenzaGiorno(profile?.decorrenzaOrario?.giorno ?? 1);
+    setDecorrenzaMese(n.getMonth() + 1);
+    setDecorrenzaAnno(n.getFullYear());
   }, [profile]);
   const [chiusureAziendali, setChiusureAziendali] = useState<Array<{ dataInizio: string; dataFine: string }>>([]);
 
@@ -798,12 +804,25 @@ export default function Presenze() {
 
         let dayContractHours = 0;
         if (!isNotWorkingPeriod && !isWknd && !isHoliday) {
-          if (profile?.orarioSettimanale) {
-            const weekdayKeys = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
-            const key = weekdayKeys[dayOfWeek];
-            dayContractHours = profile.orarioSettimanale[key as 'lun' | 'mar' | 'mer' | 'gio' | 'ven'] ?? 8;
+          const weekdayKeys = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
+          const key = weekdayKeys[dayOfWeek];
+
+          let activeOrario = profile?.orarioSettimanale;
+          let activeOreContratto = profile?.oreContratto ?? 8;
+
+          // Se per questo mese e anno c'è una decorrenza impostata
+          if (profile?.decorrenzaOrario && profile.decorrenzaOrario.anno === selectedYear && profile.decorrenzaOrario.mese === selectedMonth) {
+            if (day < profile.decorrenzaOrario.giorno) {
+              // Fino al giorno precedente decorrenza: applica il vecchio orario!
+              activeOrario = profile.decorrenzaOrario.vecchioOrarioSettimanale || activeOrario;
+              activeOreContratto = profile.decorrenzaOrario.vecchioOreContratto ?? activeOreContratto;
+            }
+          }
+
+          if (activeOrario) {
+            dayContractHours = activeOrario[key as 'lun' | 'mar' | 'mer' | 'gio' | 'ven'] ?? activeOreContratto;
           } else {
-            dayContractHours = profile?.oreContratto ?? 8;
+            dayContractHours = activeOreContratto;
           }
         }
 
@@ -1338,13 +1357,23 @@ export default function Presenze() {
 
                 // Ricava le ore di contratto specifiche di questa giornata dall'orario settimanale del dipendente
                 let expectedDayContractHours = contractHours;
-                if (profile?.orarioSettimanale) {
+                let activeOrario = profile?.orarioSettimanale;
+                let activeOreContratto = contractHours;
+
+                if (profile?.decorrenzaOrario && profile.decorrenzaOrario.anno === selectedYear && profile.decorrenzaOrario.mese === selectedMonth) {
+                  if (day < profile.decorrenzaOrario.giorno) {
+                    activeOrario = profile.decorrenzaOrario.vecchioOrarioSettimanale || activeOrario;
+                    activeOreContratto = profile.decorrenzaOrario.vecchioOreContratto ?? contractHours;
+                  }
+                }
+
+                if (activeOrario) {
                   if (isWeekend || isHoliday) {
                     expectedDayContractHours = 0;
                   } else {
                     const weekdayKeys = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
                     const key = weekdayKeys[dayOfWeek];
-                    expectedDayContractHours = profile.orarioSettimanale[key as 'lun' | 'mar' | 'mer' | 'gio' | 'ven'] ?? contractHours;
+                    expectedDayContractHours = activeOrario[key as 'lun' | 'mar' | 'mer' | 'gio' | 'ven'] ?? activeOreContratto;
                   }
                 } else if (isWeekend || isHoliday) {
                   expectedDayContractHours = 0;
@@ -3871,16 +3900,47 @@ export default function Presenze() {
 
                     <div className="w-[1px] h-6 bg-gray-200" />
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Decorrenza dal giorno:</span>
                       <select 
                         value={decorrenzaGiorno}
                         onChange={(e) => setDecorrenzaGiorno(Number(e.target.value))}
-                        className="border border-gray-300 rounded-xl p-1.5 font-bold outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900 bg-white text-xs"
+                        className="border border-gray-300 rounded-xl p-1.5 font-bold outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900 bg-white text-xs cursor-pointer shadow-2xs"
                       >
                         {Array.from({ length: 31 }).map((_, idx) => (
                           <option key={idx + 1} value={idx + 1}>{idx + 1}</option>
                         ))}
+                      </select>
+                      <span className="text-[11px] font-bold text-gray-600">
+                        del mese:
+                      </span>
+                      <select
+                        value={`${decorrenzaAnno}-${decorrenzaMese}`}
+                        onChange={(e) => {
+                          const [y, m] = e.target.value.split('-').map(Number);
+                          setDecorrenzaAnno(y);
+                          setDecorrenzaMese(m);
+                        }}
+                        className="border border-gray-300 rounded-xl p-1.5 font-bold outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900 bg-white text-xs cursor-pointer capitalize shadow-2xs"
+                      >
+                        {(() => {
+                          const options = [];
+                          const now = new Date();
+                          const curY = now.getFullYear();
+                          const curM = now.getMonth() + 1;
+                          for (let offset = -1; offset <= 1; offset++) {
+                            const d = new Date(curY, curM - 1 + offset, 1);
+                            const y = d.getFullYear();
+                            const m = d.getMonth() + 1;
+                            const label = new Intl.DateTimeFormat('it-IT', { month: 'long', year: 'numeric' }).format(d);
+                            options.push(
+                              <option key={`${y}-${m}`} value={`${y}-${m}`}>
+                                {label} {offset === 0 ? '(In Corso)' : ''}
+                              </option>
+                            );
+                          }
+                          return options;
+                        })()}
                       </select>
                     </div>
 
@@ -3901,84 +3961,200 @@ export default function Presenze() {
                             const totalWeeklyHours = Object.values(newOrario).reduce((a, b) => a + b, 0);
                             const avgDailyHours = totalWeeklyHours / 5;
                             const oldContractHours = profile.oreContratto ?? 8;
+                            const oldWeeklySchedule = profile.orarioSettimanale || { lun: 8, mar: 8, mer: 8, gio: 8, ven: 8 };
                             
-                            // 1. Aggiorna anagrafica dipendente
+                            // 1. Aggiorna anagrafica dipendente con storico decorrenza
                             await updateDoc(doc(db, 'dipendenti', profile.id), {
                               orarioSettimanale: newOrario,
-                              oreContratto: avgDailyHours
+                              oreContratto: avgDailyHours,
+                              decorrenzaOrario: {
+                                giorno: decorrenzaGiorno,
+                                mese: decorrenzaMese,
+                                anno: decorrenzaAnno,
+                                vecchioOrarioSettimanale: oldWeeklySchedule,
+                                vecchioOreContratto: oldContractHours
+                              }
                             });
 
-                            // 2. Se c'è un rapportino correntemente caricato ed è modificabile, aggiorna le ore della tabella a partire dalla data di decorrenza
-                            if (rapportino && (rapportino.stato === 'Bozza' || rapportino.stato === 'Richiede Modifica')) {
-                              const updatedGiorni = { ...rapportino.giorni };
-                              let changed = false;
+                            // 2. Se il mese di decorrenza coincide con il mese visualizzato ed è modificabile, aggiorna le ore della tabella
+                            if (decorrenzaAnno === selectedYear && decorrenzaMese === selectedMonth) {
+                              if (rapportino && (rapportino.stato === 'Bozza' || rapportino.stato === 'Richiede Modifica')) {
+                                const updatedGiorni = { ...rapportino.giorni };
+                                let changed = false;
 
-                              for (let d = 1; d <= 31; d++) {
-                                const dayKey = String(d);
-                                const g = updatedGiorni[dayKey];
-                                if (g) {
-                                  const appliesToThisDay = d >= decorrenzaGiorno;
+                                for (let d = 1; d <= 31; d++) {
+                                  const dayKey = String(d);
+                                  const g = updatedGiorni[dayKey];
+                                  if (g) {
+                                    const appliesToThisDay = d >= decorrenzaGiorno;
 
-                                  if (appliesToThisDay) {
-                                    const dateObj = new Date(selectedYear, selectedMonth - 1, d);
-                                    const dayOfWeek = dateObj.getDay();
-                                    const weekdayKeys = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
-                                    const key = weekdayKeys[dayOfWeek];
-                                    const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
-                                    
-                                    const val = isWknd ? 0 : (newOrario[key as keyof typeof newOrario] ?? 8);
-                                    
-                                    let dayChanged = false;
-                                    const oldDayContractHours = g.oreContratto ?? oldContractHours;
-                                    g.oreContratto = val;
-                                    
-                                    // Aggiorna giornate intere di ferie, permessi speciali o malattia
-                                    if (g.ferie === oldDayContractHours) {
-                                      g.ferie = val;
-                                      dayChanged = true;
-                                    } else if (g.permessoExL104 === oldDayContractHours) {
-                                      g.permessoExL104 = val;
-                                      dayChanged = true;
-                                    } else if (g.permessoStudio === oldDayContractHours) {
-                                      g.permessoStudio = val;
-                                      dayChanged = true;
-                                    } else if (g.permessoDonazione === oldDayContractHours) {
-                                      g.permessoDonazione = val;
-                                      dayChanged = true;
-                                    } else if (g.permessoElettorale === oldDayContractHours) {
-                                      g.permessoElettorale = val;
-                                      dayChanged = true;
-                                    }
-
-                                    // Aggiorna giornate intere lavorate
-                                    if (g.ore === oldDayContractHours) {
-                                      g.ore = val;
-                                      dayChanged = true;
-                                    } else if (g.permessi > 0 || g.ferie > 0 || (g.permessoExL104 || 0) > 0 || (g.permessoStudio || 0) > 0) {
-                                      // Ricalcola bilanciamento per giornate parziali
-                                      const oldOre = g.ore;
-                                      const totalAbs = (g.ferie || 0) + (g.permessi || 0) + (g.permessoExL104 || 0) + (g.permessoStudio || 0);
-                                      g.ore = Math.max(0, val - totalAbs);
-                                      if (g.ore !== oldOre) {
+                                    if (appliesToThisDay) {
+                                      const dateObj = new Date(selectedYear, selectedMonth - 1, d);
+                                      const dayOfWeek = dateObj.getDay();
+                                      const weekdayKeys = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
+                                      const key = weekdayKeys[dayOfWeek];
+                                      const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
+                                      
+                                      const val = isWknd ? 0 : (newOrario[key as keyof typeof newOrario] ?? 8);
+                                      
+                                      let dayChanged = false;
+                                      const oldDayContractHours = g.oreContratto ?? oldContractHours;
+                                      g.oreContratto = val;
+                                      
+                                      // Aggiorna giornate intere di ferie, permessi speciali o malattia
+                                      if (g.ferie === oldDayContractHours) {
+                                        g.ferie = val;
+                                        dayChanged = true;
+                                      } else if (g.permessoExL104 === oldDayContractHours) {
+                                        g.permessoExL104 = val;
+                                        dayChanged = true;
+                                      } else if (g.permessoStudio === oldDayContractHours) {
+                                        g.permessoStudio = val;
+                                        dayChanged = true;
+                                      } else if (g.permessoDonazione === oldDayContractHours) {
+                                        g.permessoDonazione = val;
+                                        dayChanged = true;
+                                      } else if (g.permessoElettorale === oldDayContractHours) {
+                                        g.permessoElettorale = val;
                                         dayChanged = true;
                                       }
-                                    }
 
-                                    if (dayChanged || g.oreContratto !== oldDayContractHours) {
-                                      changed = true;
+                                      // Aggiorna giornate intere lavorate
+                                      if (g.ore === oldDayContractHours) {
+                                        g.ore = val;
+                                        dayChanged = true;
+                                      } else if (g.permessi > 0 || g.ferie > 0 || (g.permessoExL104 || 0) > 0 || (g.permessoStudio || 0) > 0) {
+                                        // Ricalcola bilanciamento per giornate parziali
+                                        const oldOre = g.ore;
+                                        const totalAbs = (g.ferie || 0) + (g.permessi || 0) + (g.permessoExL104 || 0) + (g.permessoStudio || 0);
+                                        g.ore = Math.max(0, val - totalAbs);
+                                        if (g.ore !== oldOre) {
+                                          dayChanged = true;
+                                        }
+                                      }
+
+                                      if (dayChanged || g.oreContratto !== oldDayContractHours) {
+                                        changed = true;
+                                      }
+                                    } else {
+                                      // Giorni precedenti alla decorrenza: d < decorrenzaGiorno
+                                      const dateObj = new Date(selectedYear, selectedMonth - 1, d);
+                                      const dayOfWeek = dateObj.getDay();
+                                      const weekdayKeys = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
+                                      const key = weekdayKeys[dayOfWeek];
+                                      const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
+                                      const expectedOldVal = isWknd ? 0 : (oldWeeklySchedule[key as keyof typeof oldWeeklySchedule] ?? oldContractHours);
+                                      if (g.oreContratto === undefined || g.oreContratto === null) {
+                                        g.oreContratto = expectedOldVal;
+                                        changed = true;
+                                      }
                                     }
                                   }
                                 }
+
+                                if (changed) {
+                                  const updatedRapportino = {
+                                    ...rapportino,
+                                    giorni: updatedGiorni,
+                                    timestamp: new Date().toISOString()
+                                  };
+                                  await setDoc(doc(db, 'presenze', rapportino.id), updatedRapportino);
+                                  setRapportino(updatedRapportino);
+                                }
+                              }
+                            } else {
+                              // Se il mese di decorrenza è diverso da quello visualizzato, aggiorna il documento di quel mese se esiste
+                              const targetDocId = `${profile.nome}-${decorrenzaAnno}-${String(decorrenzaMese).padStart(2, '0')}`;
+                              let targetDocRef = doc(db, 'presenze', targetDocId);
+                              let targetDocSnap = await getDoc(targetDocRef);
+                              if (!targetDocSnap.exists()) {
+                                const qPres = query(
+                                  collection(db, 'presenze'),
+                                  where('dipendenteNome', '==', profile.nome),
+                                  where('anno', '==', decorrenzaAnno),
+                                  where('mese', '==', decorrenzaMese)
+                                );
+                                const qSnap = await getDocs(qPres);
+                                if (!qSnap.empty) {
+                                  targetDocRef = doc(db, 'presenze', qSnap.docs[0].id);
+                                  targetDocSnap = qSnap.docs[0];
+                                }
                               }
 
-                              if (changed) {
-                                const updatedRapportino = {
-                                  ...rapportino,
-                                  giorni: updatedGiorni,
-                                  timestamp: new Date().toISOString()
-                                };
-                                await setDoc(doc(db, 'presenze', rapportino.id), updatedRapportino);
-                                setRapportino(updatedRapportino);
+                              if (targetDocSnap.exists()) {
+                                const targetData = targetDocSnap.data() as any;
+                                if (targetData && (targetData.stato === 'Bozza' || targetData.stato === 'Richiede Modifica')) {
+                                  const updatedGiorni = { ...(targetData.giorni || {}) };
+                                  let changed = false;
+
+                                  for (let d = 1; d <= 31; d++) {
+                                    const dayKey = String(d);
+                                    const g = updatedGiorni[dayKey];
+                                    if (g) {
+                                      const appliesToThisDay = d >= decorrenzaGiorno;
+
+                                      if (appliesToThisDay) {
+                                        const dateObj = new Date(decorrenzaAnno, decorrenzaMese - 1, d);
+                                        const dayOfWeek = dateObj.getDay();
+                                        const weekdayKeys = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
+                                        const key = weekdayKeys[dayOfWeek];
+                                        const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
+                                        const val = isWknd ? 0 : (newOrario[key as keyof typeof newOrario] ?? 8);
+
+                                        let dayChanged = false;
+                                        const oldDayContractHours = g.oreContratto ?? oldContractHours;
+                                        g.oreContratto = val;
+
+                                        if (g.ferie === oldDayContractHours) {
+                                          g.ferie = val;
+                                          dayChanged = true;
+                                        } else if (g.permessoExL104 === oldDayContractHours) {
+                                          g.permessoExL104 = val;
+                                          dayChanged = true;
+                                        } else if (g.permessoStudio === oldDayContractHours) {
+                                          g.permessoStudio = val;
+                                          dayChanged = true;
+                                        } else if (g.permessoDonazione === oldDayContractHours) {
+                                          g.permessoDonazione = val;
+                                          dayChanged = true;
+                                        } else if (g.permessoElettorale === oldDayContractHours) {
+                                          g.permessoElettorale = val;
+                                          dayChanged = true;
+                                        }
+
+                                        if (g.ore === oldDayContractHours) {
+                                          g.ore = val;
+                                          dayChanged = true;
+                                        } else if (g.permessi > 0 || g.ferie > 0 || (g.permessoExL104 || 0) > 0 || (g.permessoStudio || 0) > 0) {
+                                          const oldOre = g.ore;
+                                          const totalAbs = (g.ferie || 0) + (g.permessi || 0) + (g.permessoExL104 || 0) + (g.permessoStudio || 0);
+                                          g.ore = Math.max(0, val - totalAbs);
+                                          if (g.ore !== oldOre) dayChanged = true;
+                                        }
+
+                                        if (dayChanged || g.oreContratto !== oldDayContractHours) changed = true;
+                                      } else {
+                                        const dateObj = new Date(decorrenzaAnno, decorrenzaMese - 1, d);
+                                        const dayOfWeek = dateObj.getDay();
+                                        const weekdayKeys = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
+                                        const key = weekdayKeys[dayOfWeek];
+                                        const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
+                                        const expectedOldVal = isWknd ? 0 : (oldWeeklySchedule[key as keyof typeof oldWeeklySchedule] ?? oldContractHours);
+                                        if (g.oreContratto === undefined || g.oreContratto === null) {
+                                          g.oreContratto = expectedOldVal;
+                                          changed = true;
+                                        }
+                                      }
+                                    }
+                                  }
+
+                                  if (changed) {
+                                    await updateDoc(targetDocRef, {
+                                      giorni: updatedGiorni,
+                                      timestamp: new Date().toISOString()
+                                    });
+                                  }
+                                }
                               }
                             }
 

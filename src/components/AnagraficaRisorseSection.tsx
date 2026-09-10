@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useAuth, isTechnicalUser } from '../contexts/AuthContext';
 import { isCollaboratore, isSoci } from '../pages/Impostazioni';
 import { db } from '../services/firebase';
-import { collection, addDoc, doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { collection, addDoc, doc, updateDoc, deleteDoc, getDoc, getDocs, query, where } from 'firebase/firestore';
 import { Users, Crown, Pencil, Plus, Search, Printer, UserX, X } from 'lucide-react';
 import { APP_VERSION, getPrintDateString } from '../config/version';
 import ConfirmModal from './ConfirmModal';
@@ -76,6 +76,14 @@ export default function AnagraficaRisorseSection() {
   const [editIvaRate, setEditIvaRate] = useState('');
   const [editRaRate, setEditRaRate] = useState('');
   const [editImportoFisso, setEditImportoFisso] = useState('');
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth() + 1;
+
+  const [editDecorrenzaGiorno, setEditDecorrenzaGiorno] = useState<number>(1);
+  const [editDecorrenzaMese, setEditDecorrenzaMese] = useState<number>(currentMonth);
+  const [editDecorrenzaAnno, setEditDecorrenzaAnno] = useState<number>(currentYear);
+
   const [editOrarioSettimanale, setEditOrarioSettimanale] = useState<Record<string, number | ''>>({
     lun: 8, mar: 8, mer: 8, gio: 8, ven: 8
   });
@@ -101,6 +109,12 @@ export default function AnagraficaRisorseSection() {
       gio: dip.oreContratto ?? 8,
       ven: dip.oreContratto ?? 8
     });
+
+    // Inizializzazione Decorrenza con selezione automatica del mese corrente
+    setEditDecorrenzaGiorno(dip.decorrenzaOrario?.giorno ?? 1);
+    setEditDecorrenzaMese(currentMonth);
+    setEditDecorrenzaAnno(currentYear);
+
     setIsEditModalOpen(true);
   };
 
@@ -127,6 +141,24 @@ export default function AnagraficaRisorseSection() {
 
       const isSocio = isSoci(editingDip.nome);
       const todayStr = new Date().toISOString().split('T')[0];
+
+      const oldOrario = editingDip.orarioSettimanale || {
+        lun: editingDip.oreContratto ?? 8,
+        mar: editingDip.oreContratto ?? 8,
+        mer: editingDip.oreContratto ?? 8,
+        gio: editingDip.oreContratto ?? 8,
+        ven: editingDip.oreContratto ?? 8,
+      };
+      const oldContractHours = editingDip.oreContratto ?? 8;
+
+      const decorrenzaData = {
+        giorno: editDecorrenzaGiorno,
+        mese: editDecorrenzaMese,
+        anno: editDecorrenzaAnno,
+        vecchioOrarioSettimanale: oldOrario,
+        vecchioOreContratto: oldContractHours,
+      };
+
       const payload: any = {
         nome: editNome.trim(),
         email: editEmail.trim().toLowerCase(),
@@ -137,6 +169,7 @@ export default function AnagraficaRisorseSection() {
         dataNascita: editDataNascita || null,
         orarioSettimanale: (isSocio || editTipo === 'collaboratore') ? null : cleanOrario,
         oreContratto: (isSocio || editTipo === 'collaboratore') ? null : avgDaily,
+        decorrenzaOrario: (isSocio || editTipo === 'collaboratore') ? null : decorrenzaData,
       };
 
       if (!isSocio && editDataCessazione && editDataCessazione <= todayStr) {
@@ -158,6 +191,116 @@ export default function AnagraficaRisorseSection() {
       }
 
       await updateDoc(docRef, payload);
+
+      // ALLINEAMENTO CON IL REGISTRO PRESENZE (per i dipendenti)
+      if (!isSocio && editTipo === 'dipendente') {
+        try {
+          const docId = `${editingDip.nome.trim()}-${editDecorrenzaAnno}-${String(editDecorrenzaMese).padStart(2, '0')}`;
+          let presDocRef = doc(db, 'presenze', docId);
+          let presDocSnap = await getDoc(presDocRef);
+
+          if (!presDocSnap.exists()) {
+            const qPres = query(
+              collection(db, 'presenze'),
+              where('dipendenteNome', '==', editingDip.nome.trim()),
+              where('anno', '==', editDecorrenzaAnno),
+              where('mese', '==', editDecorrenzaMese)
+            );
+            const qSnap = await getDocs(qPres);
+            if (!qSnap.empty) {
+              presDocRef = doc(db, 'presenze', qSnap.docs[0].id);
+              presDocSnap = qSnap.docs[0];
+            }
+          }
+
+          if (presDocSnap.exists()) {
+            const presData = presDocSnap.data() as any;
+            if (presData && (presData.stato === 'Bozza' || presData.stato === 'Richiede Modifica')) {
+              const updatedGiorni = { ...(presData.giorni || {}) };
+              let changed = false;
+
+              for (let d = 1; d <= 31; d++) {
+                const dayKey = String(d);
+                const g = updatedGiorni[dayKey];
+                if (g) {
+                  const appliesToThisDay = d >= editDecorrenzaGiorno;
+
+                  if (appliesToThisDay) {
+                    const dateObj = new Date(editDecorrenzaAnno, editDecorrenzaMese - 1, d);
+                    const dayOfWeek = dateObj.getDay();
+                    const weekdayKeys = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
+                    const key = weekdayKeys[dayOfWeek];
+                    const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
+
+                    const val = isWknd ? 0 : (cleanOrario[key as keyof typeof cleanOrario] ?? 8);
+
+                    let dayChanged = false;
+                    const oldDayContractHours = g.oreContratto ?? oldContractHours;
+                    g.oreContratto = val;
+
+                    // Aggiorna giornate intere di assenza se erano pari all'orario pieno precedente
+                    if (g.ferie === oldDayContractHours) {
+                      g.ferie = val;
+                      dayChanged = true;
+                    } else if (g.permessoExL104 === oldDayContractHours) {
+                      g.permessoExL104 = val;
+                      dayChanged = true;
+                    } else if (g.permessoStudio === oldDayContractHours) {
+                      g.permessoStudio = val;
+                      dayChanged = true;
+                    } else if (g.permessoDonazione === oldDayContractHours) {
+                      g.permessoDonazione = val;
+                      dayChanged = true;
+                    } else if (g.permessoElettorale === oldDayContractHours) {
+                      g.permessoElettorale = val;
+                      dayChanged = true;
+                    }
+
+                    // Aggiorna giornate ordinarie lavorate
+                    if (g.ore === oldDayContractHours) {
+                      g.ore = val;
+                      dayChanged = true;
+                    } else if (g.permessi > 0 || g.ferie > 0 || (g.permessoExL104 || 0) > 0 || (g.permessoStudio || 0) > 0) {
+                      const oldOre = g.ore;
+                      const totalAbs = (g.ferie || 0) + (g.permessi || 0) + (g.permessoExL104 || 0) + (g.permessoStudio || 0);
+                      g.ore = Math.max(0, val - totalAbs);
+                      if (g.ore !== oldOre) {
+                        dayChanged = true;
+                      }
+                    }
+
+                    if (dayChanged || g.oreContratto !== oldDayContractHours) {
+                      changed = true;
+                    }
+                  } else {
+                    // Giorni precedenti la decorrenza (d < editDecorrenzaGiorno):
+                    // DEVONO MANTENERE le vecchie oreContratto!
+                    const dateObj = new Date(editDecorrenzaAnno, editDecorrenzaMese - 1, d);
+                    const dayOfWeek = dateObj.getDay();
+                    const weekdayKeys = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
+                    const key = weekdayKeys[dayOfWeek];
+                    const isWknd = dayOfWeek === 0 || dayOfWeek === 6;
+                    const expectedOldVal = isWknd ? 0 : (oldOrario[key as keyof typeof oldOrario] ?? oldContractHours);
+                    if (g.oreContratto === undefined || g.oreContratto === null) {
+                      g.oreContratto = expectedOldVal;
+                      changed = true;
+                    }
+                  }
+                }
+              }
+
+              if (changed) {
+                await updateDoc(presDocRef, {
+                  giorni: updatedGiorni,
+                  timestamp: new Date().toISOString()
+                });
+              }
+            }
+          }
+        } catch (presErr) {
+          console.error("Errore allineamento presenze durante salvataggio anagrafica:", presErr);
+        }
+      }
       await refreshData();
       showToast("Risorsa aggiornata con successo!", "success");
       setIsEditModalOpen(false);
@@ -1103,6 +1246,57 @@ export default function AnagraficaRisorseSection() {
                         />
                       </div>
                     ))}
+                  </div>
+
+                  {/* Decorrenza Orario */}
+                  <div className="pt-3 border-t border-indigo-100/80 space-y-2">
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[11px] font-black text-indigo-900 uppercase tracking-wider">
+                          Decorrenza dal giorno:
+                        </span>
+                        <select 
+                          value={editDecorrenzaGiorno}
+                          onChange={(e) => setEditDecorrenzaGiorno(Number(e.target.value))}
+                          className="border border-indigo-200 rounded-xl p-1.5 font-bold outline-none focus:ring-2 focus:ring-indigo-400 text-gray-900 bg-white text-xs cursor-pointer shadow-2xs"
+                        >
+                          {Array.from({ length: 31 }).map((_, idx) => (
+                            <option key={idx + 1} value={idx + 1}>{idx + 1}</option>
+                          ))}
+                        </select>
+                        <span className="text-[11px] font-bold text-indigo-800">
+                          del mese:
+                        </span>
+                        <select
+                          value={`${editDecorrenzaAnno}-${editDecorrenzaMese}`}
+                          onChange={(e) => {
+                            const [y, m] = e.target.value.split('-').map(Number);
+                            setEditDecorrenzaAnno(y);
+                            setEditDecorrenzaMese(m);
+                          }}
+                          className="border border-indigo-200 rounded-xl p-1.5 font-bold outline-none focus:ring-2 focus:ring-indigo-400 text-gray-900 bg-white text-xs cursor-pointer capitalize shadow-2xs"
+                        >
+                          {(() => {
+                            const options = [];
+                            for (let offset = -1; offset <= 1; offset++) {
+                              const d = new Date(currentYear, currentMonth - 1 + offset, 1);
+                              const y = d.getFullYear();
+                              const m = d.getMonth() + 1;
+                              const label = new Intl.DateTimeFormat('it-IT', { month: 'long', year: 'numeric' }).format(d);
+                              options.push(
+                                <option key={`${y}-${m}`} value={`${y}-${m}`}>
+                                  {label} {offset === 0 ? '(In Corso)' : ''}
+                                </option>
+                              );
+                            }
+                            return options;
+                          })()}
+                        </select>
+                      </div>
+                    </div>
+                    <p className="text-[10.5px] text-indigo-700/80 font-semibold leading-tight">
+                      ℹ️ Fino al giorno precedente rimangono valide le vecchie ore sul registro presenze; dal giorno indicato parte il nuovo orario contrattuale.
+                    </p>
                   </div>
                 </div>
               )}

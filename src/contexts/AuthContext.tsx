@@ -21,6 +21,13 @@ export interface Dipendente {
   dataAssunzione?: string;
   dataNascita?: string;
   orarioSettimanale?: { lun: number; mar: number; mer: number; gio: number; ven: number };
+  decorrenzaOrario?: {
+    giorno: number;
+    mese: number;
+    anno: number;
+    vecchioOrarioSettimanale?: { lun: number; mar: number; mer: number; gio: number; ven: number };
+    vecchioOreContratto?: number;
+  };
   notificheEmail?: boolean;
 }
 
@@ -82,6 +89,7 @@ export const TODO_CATEGORIE = [
   'aggiornare',
   'archiviare',
   'attesa feedback',
+  'bim/cad',
   'chiamare',
   'consegnare',
   'da fare',
@@ -353,6 +361,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           dataAssunzione: doc.data().dataAssunzione || '',
           dataNascita: doc.data().dataNascita || '',
           orarioSettimanale: doc.data().orarioSettimanale || undefined,
+          decorrenzaOrario: doc.data().decorrenzaOrario || undefined,
           notificheEmail: doc.data().notificheEmail === true,
         }))
         .filter(d => !isTechnicalUser(d));
