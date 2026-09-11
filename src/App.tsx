@@ -1,7 +1,7 @@
 import { useEffect, useState, lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
-import { APP_VERSION, getPrintDateString } from './config/version';
+import { APP_VERSION, getPrintDateString, getCopyrightText } from './config/version';
 
 // Pagine principali precaricate direttamente per navigazione istantanea a zero latenza
 import Dashboard from './pages/Dashboard';
@@ -211,12 +211,17 @@ function App() {
                 </ErrorBoundary>
               </main>
             </div>
-            <footer className="py-6 px-6 text-xs text-gray-400 select-none print:hidden border-t border-gray-200/50 mt-auto">
-              <div className="max-w-[1400px] mx-auto grid grid-cols-1 sm:grid-cols-3 items-center gap-2 text-center">
-                <div className="hidden sm:block"></div>
-                <span className="opacity-60 font-medium text-center">Sviluppato da Emanuele Bartalucci</span>
-                <div className="sm:text-right">
-                  <span className="inline-block font-bold bg-gray-200/70 px-3 py-1 rounded-full text-gray-600 border border-gray-300/50">
+            {/* Footer con 3 sezioni coordinate (stesso font, dimensione, colore) e centro matematico */}
+            <footer className="max-w-7xl mx-auto mt-10 mb-4 pt-4 border-t border-slate-200/60 print:hidden select-none px-4 w-full">
+              <div className="grid grid-cols-1 md:grid-cols-3 items-center gap-2 text-xs text-slate-500 font-normal">
+                <div className="text-center md:text-left">
+                  {getCopyrightText()}
+                </div>
+                <div className="text-center">
+                  Sviluppato da Emanuele Bartalucci
+                </div>
+                <div className="text-center md:text-right">
+                  <span className="inline-block border border-slate-300/80 bg-slate-100/60 px-2.5 py-0.5 rounded-md">
                     {APP_VERSION}
                   </span>
                 </div>

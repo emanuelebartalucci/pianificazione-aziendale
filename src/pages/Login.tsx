@@ -3,6 +3,7 @@ import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswor
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
 import { Mail, Lock, AlertCircle, ArrowRight } from 'lucide-react';
+import { APP_VERSION, getCopyrightText } from '../config/version';
 
 export default function Login() {
   const [isLoginMode, setIsLoginMode] = useState(true);
@@ -212,8 +213,12 @@ export default function Login() {
         </div>
       </div>
 
-      <footer className="text-center py-6 text-xs text-gray-400 opacity-40 select-none relative z-10">
-        Sviluppato da Emanuele Bartalucci
+      <footer className="text-center py-6 text-xs text-slate-400 font-normal select-none relative z-10 flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-3 px-4">
+        <span>{getCopyrightText()}</span>
+        <span className="hidden sm:inline text-slate-300">•</span>
+        <span>Sviluppato da Emanuele Bartalucci</span>
+        <span className="hidden sm:inline text-slate-300">•</span>
+        <span className="border border-slate-300/60 bg-white/40 px-2 py-0.5 rounded-md">{APP_VERSION}</span>
       </footer>
     </div>
   );

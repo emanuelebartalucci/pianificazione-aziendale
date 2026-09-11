@@ -25,6 +25,23 @@ export const getPrintDateString = () => {
   }
 };
 
+export const APP_CREATION_YEAR = 2026;
+export const COPYRIGHT_COMPANY = "Ingegno P&C S.r.l.";
+
+/**
+ * Restituisce la dicitura di copyright societaria conforme agli standard legali del software:
+ * - Nel 2026 (anno di prima pubblicazione): "© 2026 Ingegno P&C S.r.l. - Tutti i diritti riservati."
+ * - Negli anni successivi: "© 2026–YYYY Ingegno P&C S.r.l. - Tutti i diritti riservati."
+ * In questo modo si tutela sia l'anno originario di creazione sia la validità continuativa degli aggiornamenti.
+ */
+export const getCopyrightText = (): string => {
+  const currentYear = new Date().getFullYear();
+  const yearString = currentYear > APP_CREATION_YEAR 
+    ? `${APP_CREATION_YEAR}–${currentYear}` 
+    : `${APP_CREATION_YEAR}`;
+  return `© ${yearString} ${COPYRIGHT_COMPANY} - Tutti i diritti riservati.`;
+};
+
 export const getPrintFooterHtml = () => `
   <div style="position: fixed; bottom: 0.1cm; right: 0.2cm; left: 0.2cm; display: flex; justify-content: space-between; align-items: center; font-size: 7.5pt; color: #6b7280; font-family: system-ui, -apple-system, sans-serif; pointer-events: none; z-index: 99999;">
     <span>Piattaforma Pianificazione Aziendale</span>
